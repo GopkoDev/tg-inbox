@@ -13,9 +13,10 @@ import { createPasswordHasher } from './modules/auth/infra/password-hasher.js';
 import { createResetLinkRepo } from './modules/auth/infra/reset-link-repo.js';
 import { createSessionRepo } from './modules/auth/infra/session-repo.js';
 import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-repo.js';
+import { createAcceptInvitation } from './modules/workspaces/app/accept-invitation.js';
 import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
-import { KyselyUnitOfWork } from './modules/workspaces/infra/unit-of-work.js';
+import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
@@ -78,6 +79,16 @@ export async function buildApp(
     clock,
     auth: accountUseCases,
   });
+  const workspaceUow = new KyselyUnitOfWork(db);
+  const acceptInvitation = createAcceptInvitation({
+    uow: workspaceUow,
+    invitations: workspaceRepos(db).invitations,
+    memberships: workspaceRepos(db).memberships,
+    accounts: accountUseCases,
+    credentials: credentialUseCases,
+    sessions: sessionUseCases,
+    clock,
+  });
   // --- end workspaces dependencies ---
 
   await registerHealth(app, { db });
@@ -92,7 +103,17 @@ export async function buildApp(
     { prefix: '/api' },
   );
   await app.register(
-    async (api) => registerWorkspaces(api, { access: workspaceAccess, authenticate }),
+    async (api) =>
+      registerWorkspaces(api, {
+        access: workspaceAccess,
+        authenticate,
+        invitationRoutes: {
+          invitations: acceptInvitation,
+          sessionUseCases,
+          accountUseCases,
+          cookie: { secure: config.NODE_ENV !== 'development' },
+        },
+      }),
     { prefix: '/api' },
   );
 
