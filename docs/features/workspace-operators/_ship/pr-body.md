@@ -17,6 +17,7 @@ See the [spec](docs/features/workspace-operators/spec.md) and the [changelog](do
 - AC-04: an existing account confirms its own password, and the new membership is added without touching the others ✓
 - AC-04b: an invitation for another email is refused while signed in, with "sign out and reopen" guidance ✓
 - AC-05: a password under 10 characters is refused ✓
+- AC-05b: each form checks its fields with the server's shared rules and messages before sending (added by fix `2026-10-11-shared-form-validation`) ✓
 - AC-06: an expired, used, revoked or replaced invitation is refused, with the right person to ask ✓
 - AC-07: sign-in opens the last-used workspace, the only one, or a picker ✓
 - AC-08: an unknown email and a wrong password get the same refusal ✓
@@ -42,7 +43,8 @@ See the [spec](docs/features/workspace-operators/spec.md) and the [changelog](do
 - Decisions: `docs/features/workspace-operators/adr/`, ADR-0001 to ADR-0005
 - Data model and migrations: `docs/features/workspace-operators/data-model.md` (migrations `1791681109972` to `1791681109978`)
 - API: `docs/features/workspace-operators/contracts/openapi.yaml`
-- Review: `docs/features/workspace-operators/_review/`. Round 11 passed.
+- Review: `docs/features/workspace-operators/_review/`. Round 11 passed. Round 12 reviewed the post-ship fix and requested changes, which were fixed in `74bbeab`; round 13 re-reviews them.
+- Fix: `docs/features/workspace-operators/_fixes/2026-10-11-shared-form-validation.md` (adds AC-05b).
 
 ## Tasks (SDD-Task trailers)
 
@@ -117,11 +119,16 @@ See the [spec](docs/features/workspace-operators/spec.md) and the [changelog](do
 
 </details>
 
+Fix commits (`SDD-Fix: 2026-10-11-shared-form-validation`):
+
+- `61ec6be` fix: workspace-operators web forms validate with the shared zod schemas
+- `74bbeab` fix: workspace-operators make AC-05b hold on every form and endpoint
+
 ## Verification
 
-All checks ran on Node 26.11.1 at `d36f22b`.
+All checks ran on Node 26.11.1. The live run below was at `d36f22b`; tests and lint were re-run at `74bbeab`.
 
-- **Tests:** `pnpm test` passed: 70 files and 528/528 tests across api, shared and web, including the Testcontainers integration suites.
+- **Tests:** `pnpm test` passed: 70 files and 543/543 tests across api, shared and web, including the Testcontainers integration suites.
 - **Lint and types:** `pnpm lint` (eslint, prettier and tsc for api, web and e2e) is clean.
 - **Live run:** I ran the API (`src/main.ts`) against a throwaway Postgres 16 with all 8 migrations applied, and drove it with the admin CLI and curl. What I observed:
   - AC-01: `workspace:create` printed the invite link once. AC-02: a bad `--owner-email` gave exit 2 with `VALIDATION_ERROR` naming the field.

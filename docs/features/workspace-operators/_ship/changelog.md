@@ -7,6 +7,7 @@
 - A platform admin creates a workspace for a pilot business from the server-side admin CLI. The CLI also issues a single-use, 7-day invitation link for the business owner.
 - People accept an invitation by setting a password (at least 10 characters), or by confirming the password of the account they already have, and land in that workspace.
 - Business owners run their own team in the panel. They can invite operators or owners, revoke pending invitations, deactivate members, reactivate them and see the team list. A workspace always keeps at least one active owner.
+- The panel's forms check passwords, names and emails with the same shared rules and messages as the server, before sending anything (AC-05b, added by [fix 2026-10-11](../_fixes/2026-10-11-shared-form-validation.md)).
 - One account can belong to several workspaces and switch between them. A workspace's data is visible only to its active members: anyone else gets "not found", and a deactivated member gets "access removed".
 - Sign-in uses email and password. The lockout (10 failures in 15 minutes) is identical for unknown and existing emails, so it does not reveal whether an account exists. A forgotten password is handled by an admin-issued, 24-hour, single-use reset link, which ends every other session of that account.
 
@@ -55,7 +56,7 @@ Each command prints the link once, to stdout, and writes an audit event to stder
 | Area | Criteria |
 |---|---|
 | Workspace creation and owner invitation | AC-01, AC-01b, AC-02 |
-| Accepting invitations | AC-03, AC-04, AC-04b, AC-05, AC-06 |
+| Accepting invitations | AC-03, AC-04, AC-04b, AC-05, AC-05b, AC-06 |
 | Sign-in, lockout and sign-out | AC-07, AC-08, AC-09, AC-10, AC-11 |
 | Workspace switching and isolation | AC-12, AC-13 |
 | Team management | AC-14 to AC-20 |
