@@ -29,7 +29,9 @@ function ConfirmDisconnectBody({ workspaceId, bot, onClose }: Props & { bot: Bot
     onRefusal: (refusal) => {
       // Stale: the bot was disconnected meanwhile — show what the server holds now.
       if (refusal.code !== ErrorCode.NO_BOT_CONNECTED || !refusal.settings) return false;
-      useBotStore.getState().replace(refusal.settings, { tone: 'info', text: refusal.message });
+      useBotStore
+        .getState()
+        .replace(workspaceId, refusal.settings, { tone: 'info', text: refusal.message });
       onClose();
       return true;
     },

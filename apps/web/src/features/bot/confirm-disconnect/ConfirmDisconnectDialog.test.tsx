@@ -39,7 +39,9 @@ beforeEach(() => {
   vi.resetAllMocks();
   guard.mockRejectedValue(new Error('unhandled'));
   useBotStore.getState().clear();
-  useBotStore.getState().replace(connected);
+  // The page has loaded w1's settings before any dialog opens.
+  useBotStore.setState({ workspaceId: 'w1' });
+  useBotStore.getState().replace('w1', connected);
 });
 
 describe('ConfirmDisconnectDialog (SCR-05)', () => {

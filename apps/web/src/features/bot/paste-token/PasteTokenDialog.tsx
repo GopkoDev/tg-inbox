@@ -75,7 +75,7 @@ function PasteTokenBody({ workspaceId, mode, notice, onBusy, onClose, onTakeover
     onBusy(true);
     setSubmitting(true);
     try {
-      replace(await pasteBotToken(workspaceId, { token, confirm_takeover: false }));
+      replace(workspaceId, await pasteBotToken(workspaceId, { token, confirm_takeover: false }));
       onBusy(false);
       onClose();
       return;
@@ -103,12 +103,12 @@ function PasteTokenBody({ workspaceId, mode, notice, onBusy, onClose, onTakeover
     }
     if (refusal?.code === ErrorCode.TELEGRAM_UNAVAILABLE) return setAlert(refusal.message);
     if (refusal?.code === ErrorCode.OWNER_ONLY) {
-      markRefused('owners_only');
+      markRefused(workspaceId, 'owners_only');
       return onClose();
     }
     try {
       const outcome = await guard(failure, workspaceId);
-      if (outcome === 'not-found') markRefused('not_found');
+      if (outcome === 'not-found') markRefused(workspaceId, 'not_found');
       onClose();
     } catch {
       setAlert(UNEXPECTED);

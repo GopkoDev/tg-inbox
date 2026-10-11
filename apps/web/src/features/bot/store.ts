@@ -25,10 +25,14 @@ interface BotStoreState {
   notice: BotNotice | null;
   /** Loads the settings; refusals other than OWNER_ONLY go to the shell guard when given. */
   load: (workspaceId: string, guard?: GuardFn, options?: { background?: boolean }) => Promise<void>;
-  replace: (settings: BotSettings, notice?: BotNotice | null) => void;
-  setNotice: (notice: BotNotice | null) => void;
+  /**
+   * The action writers take the workspace the action was sent for: a response that arrives after
+   * the store has left that workspace (switch, access removed, sign-out) is dropped, as in `load`.
+   */
+  replace: (workspaceId: string, settings: BotSettings, notice?: BotNotice | null) => void;
+  setNotice: (workspaceId: string, notice: BotNotice | null) => void;
   /** An action was refused for the whole page (an operator, or no membership). */
-  markRefused: (status: 'owners_only' | 'not_found') => void;
+  markRefused: (workspaceId: string, status: 'owners_only' | 'not_found') => void;
   clear: () => void;
 }
 
@@ -38,8 +42,9 @@ export const useBotStore = create<BotStoreState>()((set, get) => ({
   ...EMPTY,
   async load(workspaceId, guard, options) {
     if (get().workspaceId !== workspaceId) set({ ...EMPTY, workspaceId });
-    // A foreground (re)load shows the loading state; a background refresh keeps what is shown.
-    else if (!options?.background) set({ status: 'loading' });
+    // A foreground (re)load shows the loading state and drops an old notice; a background
+    // refresh keeps what is shown.
+    else if (!options?.background) set({ status: 'loading', notice: null });
     // A response for a workspace the store has since left is dropped.
     const stillHere = () => get().workspaceId === workspaceId;
     try {
@@ -67,9 +72,15 @@ export const useBotStore = create<BotStoreState>()((set, get) => ({
       }
     }
   },
-  replace: (settings, notice = null) => set({ settings, status: 'ready', notice }),
-  setNotice: (notice) => set({ notice }),
-  markRefused: (status) => set({ settings: null, status, notice: null }),
+  replace: (workspaceId, settings, notice = null) => {
+    if (get().workspaceId === workspaceId) set({ settings, status: 'ready', notice });
+  },
+  setNotice: (workspaceId, notice) => {
+    if (get().workspaceId === workspaceId) set({ notice });
+  },
+  markRefused: (workspaceId, status) => {
+    if (get().workspaceId === workspaceId) set({ settings: null, status, notice: null });
+  },
   clear: () => set({ ...EMPTY }),
 }));
 

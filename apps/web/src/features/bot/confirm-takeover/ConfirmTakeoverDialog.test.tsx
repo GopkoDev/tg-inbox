@@ -44,6 +44,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   guard.mockRejectedValue(new Error('unhandled'));
   useBotStore.getState().clear();
+  // The page has loaded w1's settings before any dialog opens.
+  useBotStore.setState({ workspaceId: 'w1' });
 });
 
 describe('ConfirmTakeoverDialog (SCR-04)', () => {
@@ -54,6 +56,21 @@ describe('ConfirmTakeoverDialog (SCR-04)', () => {
     expect(dialog).toHaveTextContent('Only do this if you no longer use that service.');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled();
     expect(connect()).toHaveAttribute('data-variant', 'destructive');
+  });
+
+  it('a server message that already ends with a period is not given a second one', () => {
+    render(
+      <ConfirmTakeoverDialog
+        workspaceId="w1"
+        request={{ bot, message: `${MESSAGE}.`, resubmit: () => resubmit() }}
+        onClose={onClose}
+        onRefused={onRefused}
+      />,
+    );
+    expect(screen.getByRole('alertdialog')).not.toHaveTextContent('..');
+    expect(screen.getByRole('alertdialog')).toHaveTextContent(
+      `${MESSAGE}. Only do this if you no longer use that service.`,
+    );
   });
 
   it('closed: renders nothing', () => {

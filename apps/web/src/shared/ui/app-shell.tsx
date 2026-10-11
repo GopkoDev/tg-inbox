@@ -80,12 +80,22 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className="hidden flex-1 items-center gap-1 sm:flex">
             {isOwner && teamHref && (
               <Button asChild variant="ghost">
-                <NavLink to={teamHref}>Team</NavLink>
+                <NavLink
+                  to={teamHref}
+                  className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground"
+                >
+                  Team
+                </NavLink>
               </Button>
             )}
             {isOwner && botHref && (
               <Button asChild variant="ghost">
-                <NavLink to={botHref}>Bot</NavLink>
+                <NavLink
+                  to={botHref}
+                  className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground"
+                >
+                  Bot
+                </NavLink>
               </Button>
             )}
           </nav>
@@ -116,12 +126,22 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {account && <DropdownMenuLabel>{account.email}</DropdownMenuLabel>}
                 {isOwner && teamHref && (
                   <DropdownMenuItem asChild>
-                    <NavLink to={teamHref}>Team</NavLink>
+                    <NavLink
+                      to={teamHref}
+                      className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground"
+                    >
+                      Team
+                    </NavLink>
                   </DropdownMenuItem>
                 )}
                 {isOwner && botHref && (
                   <DropdownMenuItem asChild>
-                    <NavLink to={botHref}>Bot</NavLink>
+                    <NavLink
+                      to={botHref}
+                      className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground"
+                    >
+                      Bot
+                    </NavLink>
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />

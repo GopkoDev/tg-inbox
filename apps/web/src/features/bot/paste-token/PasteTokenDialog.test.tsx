@@ -59,6 +59,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   guard.mockRejectedValue(new Error('unhandled'));
   useBotStore.getState().clear();
+  // The page has loaded w1's settings before any dialog opens.
+  useBotStore.setState({ workspaceId: 'w1' });
 });
 
 describe('PasteTokenDialog (SCR-03)', () => {

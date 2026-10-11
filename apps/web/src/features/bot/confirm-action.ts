@@ -33,7 +33,7 @@ export function useConfirmAction({
     setAlert(null);
     const { replace, markRefused } = useBotStore.getState();
     try {
-      replace(await request());
+      replace(workspaceId, await request());
       return onClose();
     } catch (failure) {
       const refusal = botRefusal(failure);
@@ -42,12 +42,12 @@ export function useConfirmAction({
       } else if (refusal && onRefusal(refusal)) {
         return;
       } else if (refusal?.code === ErrorCode.OWNER_ONLY) {
-        markRefused('owners_only');
+        markRefused(workspaceId, 'owners_only');
         return onClose();
       } else {
         try {
           const outcome = await guard(failure, workspaceId);
-          if (outcome === 'not-found') markRefused('not_found');
+          if (outcome === 'not-found') markRefused(workspaceId, 'not_found');
           return onClose();
         } catch {
           setAlert(UNEXPECTED);

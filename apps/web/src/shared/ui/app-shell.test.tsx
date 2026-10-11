@@ -174,5 +174,9 @@ describe('AppShell', () => {
     const nav = screen.getByRole('navigation');
     expect(within(nav).getByRole('link', { name: 'Bot' })).toHaveAttribute('aria-current', 'page');
     expect(within(nav).getByRole('link', { name: 'Team' })).not.toHaveAttribute('aria-current');
+    // Marked visibly too, not only for assistive technology.
+    expect(within(nav).getByRole('link', { name: 'Bot' }).className).toMatch(
+      /aria-\[current=page\]:bg-accent/,
+    );
   });
 });

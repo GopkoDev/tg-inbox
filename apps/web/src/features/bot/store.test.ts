@@ -87,14 +87,43 @@ describe('bot store', () => {
   it('replace: every action response replaces the settings (and may set a notice)', async () => {
     getBotSettings.mockResolvedValue(notConnected);
     await useBotStore.getState().load('w1');
-    useBotStore.getState().replace(connected, { tone: 'success', text: 'Bot connected' });
+    useBotStore.getState().replace('w1', connected, { tone: 'success', text: 'Bot connected' });
     expect(useBotStore.getState()).toMatchObject({
       settings: connected,
       status: 'ready',
       notice: { tone: 'success', text: 'Bot connected' },
     });
-    useBotStore.getState().replace(notConnected);
+    useBotStore.getState().replace('w1', notConnected);
     expect(useBotStore.getState()).toMatchObject({ settings: notConnected, notice: null });
+  });
+
+  it('an action response for a workspace the store has since left is dropped', async () => {
+    getBotSettings.mockResolvedValue(notConnected);
+    await useBotStore.getState().load('w2');
+    useBotStore.getState().replace('w1', connected, { tone: 'success', text: 'Bot connected' });
+    useBotStore.getState().setNotice('w1', { tone: 'error', text: 'Telegram is not responding' });
+    expect(useBotStore.getState()).toMatchObject({
+      workspaceId: 'w2',
+      settings: notConnected,
+      status: 'ready',
+      notice: null,
+    });
+    useBotStore.getState().markRefused('w1', 'owners_only');
+    expect(useBotStore.getState()).toMatchObject({ settings: notConnected, status: 'ready' });
+
+    useBotStore.getState().clear();
+    useBotStore.getState().replace('w1', connected);
+    expect(useBotStore.getState()).toMatchObject({ workspaceId: null, settings: null });
+  });
+
+  it('a foreground reload of the same workspace drops the old notice', async () => {
+    getBotSettings.mockResolvedValue(connected);
+    await useBotStore.getState().load('w1');
+    useBotStore.getState().setNotice('w1', { tone: 'error', text: 'Telegram is not responding' });
+    await useBotStore.getState().load('w1', undefined, { background: true });
+    expect(useBotStore.getState().notice).not.toBeNull();
+    await useBotStore.getState().load('w1');
+    expect(useBotStore.getState().notice).toBeNull();
   });
 
   it('clear: empties the store', async () => {

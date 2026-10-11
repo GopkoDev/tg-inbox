@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { BotSettings } from '@tg/shared';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { useEffect } from 'react';
+import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useBotStore } from '@/features/bot/store';
@@ -53,9 +54,20 @@ const err = (status: number, code: string, message = code, details?: unknown) =>
 const TAKEOVER = 'Connecting will stop this bot delivering messages to another service';
 const takeoverRefusal = () => err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', TAKEOVER, { bot });
 
+/** Lets a test change the URL the way browser history does (no in-app link). */
+const nav: { current: NavigateFunction } = { current: () => undefined };
+function CaptureNavigate() {
+  const navigate = useNavigate();
+  useEffect(() => {
+    nav.current = navigate;
+  }, [navigate]);
+  return null;
+}
+
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/w/w1/bot']}>
+      <CaptureNavigate />
       <Routes>
         <Route path="/w/:workspaceId/bot" element={<BotSettingsPage />} />
         <Route path="/w/:workspaceId" element={<p>home screen</p>} />
@@ -190,6 +202,23 @@ describe('BotSettingsPage (SCR-02)', () => {
       expect(useBotStore.getState().settings).toEqual(settingsOf());
     });
 
+    it('a reconnect answered after a switch to another workspace does not touch its page', async () => {
+      let resolve!: (s: BotSettings) => void;
+      reconnectBot.mockReturnValue(new Promise((r) => (resolve = r)));
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+      // The owner switches to Bolt Bikes (clears the bot store) and its settings load first.
+      act(() => useWorkspaceStore.getState().setCurrent({ ...acme, id: 'w2', name: 'Bolt' }));
+      getBotSettings.mockResolvedValue(notConnected);
+      await act(() => useBotStore.getState().load('w2'));
+      await act(async () => resolve(settingsOf()));
+      expect(useBotStore.getState()).toMatchObject({
+        workspaceId: 'w2',
+        settings: notConnected,
+        notice: null,
+      });
+    });
+
     it('takeover warning → SCR-04 with details.bot and the server message', async () => {
       reconnectBot.mockRejectedValue(takeoverRefusal());
       renderPage();
@@ -319,6 +348,16 @@ describe('BotSettingsPage (SCR-02)', () => {
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
       expectNoToken(container);
       expect(JSON.stringify(useBotStore.getState())).not.toContain(TOKEN);
+    });
+
+    it('a URL change to another workspace drops an open takeover (and its token) for good', async () => {
+      await pasteUntilTakeover();
+      enterWorkspace.mockReturnValue(new Promise(() => undefined));
+      await act(() => nav.current('/w/w2/bot'));
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      await act(() => nav.current('/w/w1/bot'));
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
     it('takeover cancelled: no request, still not connected, the token is dropped', async () => {

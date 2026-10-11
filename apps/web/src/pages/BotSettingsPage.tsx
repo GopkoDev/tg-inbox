@@ -76,11 +76,11 @@ export function BotSettingsPage() {
   const onTakeoverRefused = (refusal: BotRefusal) => {
     const { replace } = useBotStore.getState();
     if (refusal.code === ErrorCode.NOTHING_TO_RECONNECT && refusal.settings) {
-      replace(refusal.settings, { tone: 'info', text: refusal.message });
+      replace(workspaceId, refusal.settings, { tone: 'info', text: refusal.message });
       return;
     }
     if (refusal.code === ErrorCode.BOT_NEEDS_NEW_TOKEN && refusal.settings) {
-      replace(refusal.settings);
+      replace(workspaceId, refusal.settings);
     }
     openPaste(refusal.message);
   };

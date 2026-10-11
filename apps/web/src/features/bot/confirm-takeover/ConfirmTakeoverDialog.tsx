@@ -66,7 +66,7 @@ function ConfirmTakeoverBody({
         <AlertDialogHeader>
           <AlertDialogTitle>Take over @{request.bot.username}?</AlertDialogTitle>
           <AlertDialogDescription>
-            {request.message}. Only do this if you no longer use that service.
+            {request.message.replace(/\.$/, '')}. Only do this if you no longer use that service.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {alert && (

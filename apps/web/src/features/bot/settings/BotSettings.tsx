@@ -73,27 +73,27 @@ export function BotSettings({
 
   const reconnect = async () => {
     setReconnecting(true);
-    setNotice(null);
+    setNotice(workspaceId, null);
     try {
-      replace(await reconnectBot(workspaceId, { confirm_takeover: false }));
+      replace(workspaceId, await reconnectBot(workspaceId, { confirm_takeover: false }));
     } catch (error) {
       const refusal = botRefusal(error);
       if (refusal?.code === ErrorCode.TAKEOVER_CONFIRMATION_REQUIRED && refusal.bot) {
         onTakeoverWarning?.(refusal.bot, refusal.message);
       } else if (refusal?.code === ErrorCode.BOT_NEEDS_NEW_TOKEN && refusal.settings) {
-        replace(refusal.settings);
+        replace(workspaceId, refusal.settings);
         onPasteToken?.(refusal.message);
       } else if (refusal?.code === ErrorCode.NOTHING_TO_RECONNECT && refusal.settings) {
-        replace(refusal.settings, { tone: 'info', text: refusal.message });
+        replace(workspaceId, refusal.settings, { tone: 'info', text: refusal.message });
       } else if (refusal?.code === ErrorCode.TELEGRAM_UNAVAILABLE) {
-        setNotice({ tone: 'error', text: refusal.message });
+        setNotice(workspaceId, { tone: 'error', text: refusal.message });
       } else if (error instanceof ApiError && error.code === ErrorCode.OWNER_ONLY) {
         void load(workspaceId, guard);
       } else {
         try {
           await guard(error, workspaceId);
         } catch {
-          setNotice({ tone: 'error', text: SOMETHING_WRONG });
+          setNotice(workspaceId, { tone: 'error', text: SOMETHING_WRONG });
         }
       }
     } finally {
