@@ -54,7 +54,7 @@ Confidence: **high** = a column (or a sad.md/ADR rule) with a matching type and 
 | lookUpInvitation → account_exists | derived: an `accounts` row with `email = invitations.email` (flow 2 "whether an account exists") | high |
 | InvitationInvalid.details.ask | derived: workspace has no memberships ⇒ first-owner invitation (data-model.md "First-owner invitation") → AC-06 hint | medium |
 | acceptInvitation.token | sad.md §8 → `invitations.token_hash` | high |
-| acceptInvitation.password | sad.md §8 (10–1024) + AC-05 | high |
+| acceptInvitation.password | ≤ 1024 at the body; the 10–1024 policy for a new account (sad.md §8, AC-05); verified for an existing account (AC-04) | high |
 | acceptInvitation.display_name | data-model.md → `accounts.display_name` (1–200 after trim) | high |
 | acceptInvitation → WorkspaceSummary | data-model.md → `workspaces.id`, `workspaces.name`, `memberships.role` | high |
 | enterWorkspace.workspaceId | data-model.md → `workspaces.id`; writes `memberships.last_used_at` (flow 7) | high |
@@ -168,3 +168,4 @@ No `low` rows and no field without an origin.
 - 2026-10-11 (T57, review R9 AD1–AD2): the request log also masks backslash-separated link forms (`/invite\<t>`), which only a raw client sends. No operation, status or error code changed.
 - 2026-10-11 (T58, review R10 AE1): the request log also masks link forms separated by an encoded backslash (`/invite%5C<t>`, any case), which no router resolves but a browser sends as typed. No operation, status or error code changed.
 - 2026-10-11 (review R11, accepted residual): link-token masking covers every form the SPA router or Fastify resolves to a link route, plus the encoded twins of the separators it handles (`%2F`, `%5C`) and dot segments. Raw spellings that open no route are deliberately not chased; known examples are double-encoded separators (`/invite%255C<t>`, `/invite%252F<t>`) and a `;` straight after the prefix (`/invite;p/<t>`). No operation, status or error code changed.
+- 2026-10-11 (fix 2026-10-11-shared-form-validation, review R14 H3 / R15 I2): the `acceptInvitation` request schema is relaxed — `password` is bound-only (`maxLength: 1024`), and the 10–1024 policy stays a 400 on `field: password` for a new account. No operation, status or error code changed.

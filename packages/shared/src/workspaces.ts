@@ -99,9 +99,10 @@ export const InvitationPreview = z.strictObject({
 });
 export type InvitationPreview = z.infer<typeof InvitationPreview>;
 
+/** The password is bound-only: the 10–1024 policy applies to a new account, in the use case (AC-05). */
 export const InvitationAccept = z.strictObject({
   token: LinkToken,
-  password: Password,
+  password: PasswordBound,
   display_name: DisplayName.optional(),
 });
 export type InvitationAccept = z.infer<typeof InvitationAccept>;

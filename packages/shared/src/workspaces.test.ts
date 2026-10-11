@@ -55,10 +55,10 @@ describe('invitations', () => {
     expect(InvitationCreate.parse({ email: ' A@B.com', role: 'owner' }).email).toBe('a@b.com');
     expect(InvitationCreate.safeParse({ email: 'a@b.com', role: 'admin' }).success).toBe(false);
   });
-  it('InvitationAccept enforces 10-char password', () => {
+  it("InvitationAccept only bounds the password: the policy is the use case's (AC-04, AC-05)", () => {
     const token = 'a'.repeat(43);
-    expect(InvitationAccept.safeParse({ token, password: 'short' }).success).toBe(false);
-    expect(InvitationAccept.safeParse({ token, password: 'longenough1' }).success).toBe(true);
+    expect(InvitationAccept.safeParse({ token, password: 'short' }).success).toBe(true);
+    expect(InvitationAccept.safeParse({ token, password: 'x'.repeat(1025) }).success).toBe(false);
   });
   it('PendingInvitation has no link', () => {
     const base = { id: uuid, email: 'a@b.co', role: 'operator', created_at: now, expires_at: now };

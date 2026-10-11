@@ -76,13 +76,31 @@ RED evidence (server, quoted):
 [review-2026-10-11-r13.md](../_review/review-2026-10-11-r13.md) G1: an empty password from an existing account on the accept form was blocked client-side with zod's default text, while the server would answer 401. The fix:
 
 - The new shared `PasswordBound` (upper bound only) backs `AcceptBody.password` and the accept form's existing-account check, so an empty password reaches the server as before (401).
-- `CurrentPassword` (sign-in) gains `PASSWORD_REQUIRED_MESSAGE` ("Enter your password"), so an empty sign-in password gets the same shared message on both sides. The sign-in form also gained `noValidate` in round 14 (H1), without which the browser's `required` bubble pre-empted the shared messages for empty fields.
+- `CurrentPassword` (sign-in) gains `PASSWORD_REQUIRED_MESSAGE` ("Enter your password"), so an empty sign-in password gets the same shared message on both sides. 
 
 Pinning tests:
 
 - web: `AC-05b: an existing account with an empty password is not blocked client-side`;
-- web (round 14): `AC-05b: an empty email shows the shared email message under the email` and `AC-05b: an empty password shows the shared required message under the password`. RED: both failed, because the `required` check blocked the submit;
 - api: `AC-05b: an empty password is 400 on password with the shared message` (RED: `+ "message": "Too small: expected string to have >=1 characters"`).
+
+## Round-14 and round-15 review follow-ups
+
+[review-2026-10-11-r14.md](../_review/review-2026-10-11-r14.md), `34784d9`:
+
+- **H1:** the sign-in form gained `noValidate`, like the other three forms. Before that, the browser's `required` bubble pre-empted the shared messages for an empty email or password.
+  - Pinning tests (web): `AC-05b: an empty email shows the shared email message under the email` and `AC-05b: an empty password shows the shared required message under the password`.
+  - RED: both failed, because the `required` check blocked the submit.
+- **Spec and contract:**
+  - AC-05b's sign-in password rule became 1–1024.
+  - The SCR-01 validation row now names the shared messages for empty fields.
+  - `contracts/openapi.yaml` `InvitationAccept.password` became bound-only (`maxLength: 1024`). Its description says the 10–1024 policy applies only when `account_exists` is false.
+
+[review-2026-10-11-r15.md](../_review/review-2026-10-11-r15.md), round-15 commit:
+
+- **I3:** the shared zod `InvitationAccept.password` is now `PasswordBound` as well, so the shared schema, the contract and the route body agree. `AcceptBody` no longer overrides the password.
+  - Pinning test (shared): `InvitationAccept only bounds the password`.
+  - RED: a short password was refused by the shared schema.
+- **I2 and I4:** the api-sync report and the test-plan row are updated.
 
 ## Spec patch
 
@@ -90,7 +108,11 @@ This is a gap: no AC required the panel and the server to apply the same rule wi
 
 > **AC-05b (US-02) — error.** **Given** a person filling in a web panel form: accept invitation, set new password, sign in or invite a member **When** a field breaks a rule the server enforces for it on that form: a new password of 10–1024 characters (accepting as a new account, setting a new password), an existing account's password of 1–1024 characters (signing in) or of at most 1024 characters (accepting with an existing account), a name of 1–200 characters after trimming (accepting as a new account), or a valid email address (signing in, inviting) **Then** the panel shows the server's own message for that rule under the field and sends nothing; the same value sent to the server would be refused with the same message
 
-This is the wording after round 12 (`74bbeab`). The first version said "a password of 10–1024 characters" for every form, which did not fit sign-in or an existing account.
+This is the wording after round 14 (`34784d9`). Its history:
+
+- The first version (`61ec6be`) said "a password of 10–1024 characters" for every form.
+- Round 12 (`74bbeab`) reworded it per form.
+- Round 14 (`34784d9`) split the existing-account password rule into "1–1024 (signing in)" and "at most 1024 (accepting with an existing account)".
 
 The validation rows of the screens manifest for SCR-01, SCR-02, SCR-08 and SCR-09 now say the check also runs client-side, with the shared rule. The test plan has an AC-05b row.
 

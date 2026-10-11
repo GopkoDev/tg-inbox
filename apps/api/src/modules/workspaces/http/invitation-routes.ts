@@ -6,7 +6,6 @@ import {
   InvitationAccept,
   InvitationPreview,
   LinkTokenBody,
-  PasswordBound,
   WorkspaceSummary,
 } from '@tg/shared';
 import type { SessionUseCases } from '../../auth/app/sessions.js';
@@ -28,11 +27,10 @@ export interface InvitationRoutesDeps {
 }
 
 /**
- * The password policy and the display-name rule are enforced by the use case (so the error carries
- * `details.field`); the body schema only bounds the size.
+ * The display-name rule is enforced by the use case (so the error carries `details.field`); the body
+ * schema only bounds its size. The shared `InvitationAccept` already bounds the password only.
  */
 const AcceptBody = InvitationAccept.extend({
-  password: PasswordBound,
   display_name: z.string().max(1024, DISPLAY_NAME_MESSAGE).optional(),
 });
 
