@@ -15,6 +15,8 @@ const CHECK_EXPIRE_SECONDS = 30;
 export interface BotJobsOptions {
   /** Worker idle poll; pg-boss's default unless set (tests lower it). */
   pollingIntervalSeconds?: number;
+  /** Called after each cron tick with the number of checks enqueued — the "tick ran" signal. */
+  onTick?: (enqueued: number) => void;
 }
 
 /**
@@ -51,7 +53,7 @@ export async function registerBotJobs(
   }
 
   await boss.work(SCHEDULE_HEALTH_CHECKS_QUEUE, work, async () => {
-    await enqueueDueChecks();
+    options.onTick?.(await enqueueDueChecks());
   });
 
   await boss.work(CHECK_HEALTH_QUEUE, work, async (jobs) => {

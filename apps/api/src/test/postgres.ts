@@ -131,5 +131,9 @@ export function testConfig(databaseUrl: string): Config {
     TELEGRAM_WEBHOOK_BASE_URL: 'https://tg-inbox.example.test',
     TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
     BOT_TOKEN_ENCRYPTION_KEY: TEST_BOT_TOKEN_ENCRYPTION_KEY,
+    // Never Telegram from a test: the health-check cron registered by buildApp() may tick mid-test.
+    // Port 9 (discard) refuses the connection → a transient outcome, nothing written. Suites that
+    // talk to Telegram point this at their fake Bot API.
+    TELEGRAM_API_ROOT: 'http://127.0.0.1:9',
   };
 }

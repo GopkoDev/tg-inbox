@@ -26,6 +26,7 @@ describe('bots health-check jobs (pg-boss)', () => {
   const telegram = fakeGateway();
   const outcomes: { botId: string; outcome: CheckOutcome }[] = [];
   let enqueueDueChecks: () => Promise<number>;
+  const ticks: number[] = [];
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -47,6 +48,7 @@ describe('bots health-check jobs (pg-boss)', () => {
     };
     ({ enqueueDueChecks } = await registerBotJobs(boss, recording, {
       pollingIntervalSeconds: 0.5,
+      onTick: (enqueued) => ticks.push(enqueued),
     }));
   });
 
@@ -57,6 +59,15 @@ describe('bots health-check jobs (pg-boss)', () => {
   });
 
   const outcomesOf = (botId: string) => outcomes.filter((o) => o.botId === botId);
+
+  it('a tick reports how many checks it enqueued (the "tick ran" signal)', async () => {
+    const w = await insertWorkspace(db);
+    await insertBot(db, { workspaceId: w, state: 'connected', lastCheckedAt: T0 });
+    telegram.webhook = 'ours';
+    await boss.send(SCHEDULE_HEALTH_CHECKS_QUEUE, {});
+    await vi.waitFor(() => expect(ticks.length).toBeGreaterThan(0), { timeout: 10_000 });
+    expect(ticks[0]).toBeGreaterThanOrEqual(1);
+  });
 
   it('schedules the cron tick every minute', async () => {
     const schedules = await boss.getSchedules(SCHEDULE_HEALTH_CHECKS_QUEUE);
