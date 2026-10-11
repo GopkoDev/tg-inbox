@@ -343,17 +343,15 @@ No production target is chosen yet (architecture map: deferred until the first p
 
 ## 9. Architecture decisions
 
-<!-- 🎯 Why: the REVERSE INDEX onto the adr/ folder. `ls adr/` gives the files; §9 gives the
-     semantics — why they exist, which SAD section they attach to, what status.
-     📋 Write: a 4-column table, one row per ADR. Mixed status is fine.
-     📌 e.g. «0001 | Store content as a table of typed blocks | Accepted | §4». -->
-
 | # | Title | Status | Section |
 |---|---|---|---|
-| <NNNN> | <imperative — e.g. "Use a sliding-window counter for rate limiting"> | Accepted | §<N> |
-| <NNNN> | <imperative — e.g. "Co-locate the worker in the API process"> | Accepted | §<N> |
+| [0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md) | Build an API, a SPA and a server-side admin CLI | Accepted | §4 |
+| [0002](adr/0002-use-opaque-cookie-sessions-stored-in-postgres.md) | Use opaque cookie sessions stored in Postgres | Accepted | §4 |
+| [0003](adr/0003-carry-the-active-workspace-in-the-url-and-check-membership-on-every-request.md) | Carry the active workspace in the URL and check membership on every request | Accepted | §4 |
+| [0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md) | Serve the SPA and the API from one origin under /api | Accepted | §4 |
+| [0005](adr/0005-split-identity-into-an-auth-module-and-a-workspaces-module.md) | Split identity into an auth module and a workspaces module | Accepted | §5 |
 
-ADR files live under `docs/features/<slug>/adr/NNNN-<title>.md`.
+ADR files live under `docs/features/workspace-operators/adr/NNNN-<title>.md`. Repo-wide foundations (stack, modular monolith, Postgres + Kysely + tenancy) are repo ADRs [0001](../../adr/0001-use-a-typescript-pnpm-monorepo-on-node-26.md), [0002](../../adr/0002-organize-the-backend-as-a-modular-monolith-with-layered-modules.md) and [0004](../../adr/0004-use-postgres-with-kysely-reversible-migrations-and-workspace-scoped-tenancy.md).
 
 ## 10. Quality requirements
 
