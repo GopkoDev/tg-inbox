@@ -12,6 +12,11 @@ export interface BotTokenEncryptionKey {
   key: Buffer;
 }
 
+/** The key with its derived id: the first 4 bytes of SHA-256(key), hex. */
+export function botTokenEncryptionKey(key: Buffer): BotTokenEncryptionKey {
+  return { id: createHash('sha256').update(key).digest('hex').slice(0, 8), key };
+}
+
 // Issues never echo the value (zod omits the input unless asked), so a bad key is not logged.
 const BotTokenEncryptionKeySchema = z
   .string({ error: 'BOT_TOKEN_ENCRYPTION_KEY is required (32 bytes, base64)' })
@@ -19,10 +24,7 @@ const BotTokenEncryptionKeySchema = z
   .refine((v) => BASE64.test(v) && Buffer.from(v, 'base64').length === 32, {
     error: 'BOT_TOKEN_ENCRYPTION_KEY must be exactly 32 bytes, base64-encoded',
   })
-  .transform((v): BotTokenEncryptionKey => {
-    const key = Buffer.from(v, 'base64');
-    return { id: createHash('sha256').update(key).digest('hex').slice(0, 8), key };
-  });
+  .transform((v) => botTokenEncryptionKey(Buffer.from(v, 'base64')));
 
 /** Default `max_connections` for setWebhook; kept below the database pool size. */
 const DEFAULT_WEBHOOK_MAX_CONNECTIONS = 10;

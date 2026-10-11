@@ -4,7 +4,7 @@ import { Kysely, PostgresDialect } from 'kysely';
 import { Migrator } from 'kysely/migration';
 import { TSFileMigrationProvider } from 'kysely-ctl';
 import pg from 'pg';
-import type { Config } from '../platform/config.js';
+import { botTokenEncryptionKey, type Config } from '../platform/config.js';
 
 const MIGRATION_FOLDER = resolve(import.meta.dirname, '../../migrations');
 
@@ -115,6 +115,9 @@ async function migrateToLatest(connectionString: string, migrationFolder: string
   }
 }
 
+/** Visibly fake test key (never a real secret); fixtures encrypt their fake tokens with it. */
+export const TEST_BOT_TOKEN_ENCRYPTION_KEY = botTokenEncryptionKey(Buffer.alloc(32, 0x5a));
+
 export function testConfig(databaseUrl: string): Config {
   return {
     NODE_ENV: 'test',
@@ -127,7 +130,6 @@ export function testConfig(databaseUrl: string): Config {
     PUBLIC_WEB_URL: 'http://localhost:5173',
     TELEGRAM_WEBHOOK_BASE_URL: 'https://tg-inbox.example.test',
     TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
-    // Visibly fake test key (never a real secret).
-    BOT_TOKEN_ENCRYPTION_KEY: { id: 'test0001', key: Buffer.alloc(32, 0x5a) },
+    BOT_TOKEN_ENCRYPTION_KEY: TEST_BOT_TOKEN_ENCRYPTION_KEY,
   };
 }

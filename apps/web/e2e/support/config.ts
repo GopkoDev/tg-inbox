@@ -1,5 +1,6 @@
 import { resolve } from 'node:path';
 import type { Config } from '../../../api/src/platform/config.ts';
+import { TEST_BOT_TOKEN_ENCRYPTION_KEY } from '../../../api/src/test/postgres.ts';
 
 /** Same shape the API's integration tests use, plus the built SPA so /api and the panel share an origin. */
 export function e2eConfig(databaseUrl: string, port: number): Config {
@@ -15,7 +16,6 @@ export function e2eConfig(databaseUrl: string, port: number): Config {
     WEB_DIST_DIR: resolve(import.meta.dirname, '../../dist'),
     TELEGRAM_WEBHOOK_BASE_URL: `http://localhost:${port}`,
     TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
-    // Visibly fake test key (never a real secret).
-    BOT_TOKEN_ENCRYPTION_KEY: { id: 'test0001', key: Buffer.alloc(32, 0x5a) },
+    BOT_TOKEN_ENCRYPTION_KEY: TEST_BOT_TOKEN_ENCRYPTION_KEY,
   };
 }
