@@ -133,7 +133,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 ### AC-05b (US-02) — error <!-- added-by-fix: 2026-10-11 -->
 
 **Given** a person filling in a web panel form: accept invitation, set new password, sign in or invite a member
-**When** a field breaks a rule the server enforces for it: a password of 10–1024 characters, a name of 1–200 characters after trimming, or a valid email address
+**When** a field breaks a rule the server enforces for it on that form: a new password of 10–1024 characters (accepting as a new account, setting a new password), an existing account's password of at most 1024 characters (signing in, accepting with an existing account), a name of 1–200 characters after trimming (accepting as a new account), or a valid email address (signing in, inviting)
 **Then** the panel shows the server's own message for that rule under the field and sends nothing; the same value sent to the server would be refused with the same message
 
 ### AC-06 (US-02) — domain invariant

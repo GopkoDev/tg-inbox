@@ -44,6 +44,33 @@ The fix itself:
 - `Password.max` and `DisplayName` now carry explicit messages (`PASSWORD_MAX_MESSAGE` and `DISPLAY_NAME_MESSAGE`), so the client and the server word the error the same way.
 - Two existing InviteDialog tests and one existing SignIn test exercise the server's 400 path. They previously used malformed emails; they now use well-formed ones so they still reach the server.
 
+## Round-12 review follow-up
+
+The round-12 review ([review-2026-10-11-r12.md](../_review/review-2026-10-11-r12.md)) found that AC-05b's "same message" claim did not hold everywhere. It was fixed under the same fix id:
+
+- **F1:** `invitation-routes.ts` `AcceptBody` now carries `PASSWORD_MAX_MESSAGE` and `DISPLAY_NAME_MESSAGE` on its `max(1024)` bounds. It still has no minimum, so AC-04 continues to allow an existing password of any length.
+- **F2:** the display-name `ValidationError` no longer carries the `display_name: ` prefix.
+- **F3:**
+  - The new shared `CurrentPassword` (1–1024, with the max message) backs `SignIn.password`.
+  - The sign-in form checks it client-side and routes a server 400 to the field named by `details.field`.
+  - The accept form checks `CurrentPassword` for existing accounts.
+- **F4:** added component tests:
+  - a blank, whitespace-only or over-200-character name;
+  - an existing account's short password not being blocked (AC-04);
+  - an existing account's over-long password;
+  - sign-in's over-long password, and a server 400 on `password`.
+
+  Integration tests now cover accept (new and existing account) and sign-in with a 1025-character password, and accept with a blank name.
+- **F6:** the tests are titled AC-05b.
+
+AC-05b was reworded to name the rule each form applies.
+
+RED evidence (server, quoted):
+
+> `- "message": "The password must be at most 1024 characters long"` / `+ "message": "Too big: expected string to have <=1024 characters"`
+>
+> `- "message": "Enter your name (up to 200 characters)"` / `+ "message": "display_name: Enter your name (up to 200 characters)"`
+
 ## Spec patch
 
 This is a gap: no AC required the panel and the server to apply the same rule with the same message. The following AC was added to spec.md §5 after AC-05, with the marker `<!-- added-by-fix: 2026-10-11 -->`:
@@ -55,6 +82,4 @@ The validation rows of the screens manifest for SCR-01, SCR-02, SCR-08 and SCR-0
 ## Follow-ups
 
 - The server's `auth/domain/password-policy.ts` still holds its own `PASSWORD_MIN_LENGTH` / `PASSWORD_MAX_LENGTH` and message templates. This is a third copy of the `Password` rule; derive it from `@tg/shared`, or derive the shared schema from it.
-- `invitation-routes.ts` `AcceptBody` relaxes `password` and `display_name` to `max(1024)` so that the use case can attach `details.field`. Consider a zod-error-to-`details.field` mapping in the error handler instead.
-- The use case prefixes the display-name error with `display_name: `, and the client shows that prefix verbatim on a server 400.
 - AC-09's integration test `20 parallel wrong passwords record at most 10 failures` flaked once under full-suite load: it got 4 records where 10 were expected. It passed 3/3 when run alone, and this fix does not change API code. Investigate whether the parallelism makes the test flaky or exposes a real race.

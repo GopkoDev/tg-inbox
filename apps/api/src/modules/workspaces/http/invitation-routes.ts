@@ -1,7 +1,14 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
-import { InvitationAccept, InvitationPreview, LinkTokenBody, WorkspaceSummary } from '@tg/shared';
+import {
+  DISPLAY_NAME_MESSAGE,
+  InvitationAccept,
+  InvitationPreview,
+  LinkTokenBody,
+  PASSWORD_MAX_MESSAGE,
+  WorkspaceSummary,
+} from '@tg/shared';
 import type { SessionUseCases } from '../../auth/app/sessions.js';
 import {
   SESSION_COOKIE,
@@ -25,8 +32,8 @@ export interface InvitationRoutesDeps {
  * `details.field`); the body schema only bounds the size.
  */
 const AcceptBody = InvitationAccept.extend({
-  password: z.string().max(1024),
-  display_name: z.string().max(1024).optional(),
+  password: z.string().max(1024, PASSWORD_MAX_MESSAGE),
+  display_name: z.string().max(1024, DISPLAY_NAME_MESSAGE).optional(),
 });
 
 /** Public routes: they read an optional session and treat any failure to resolve it as anonymous. */

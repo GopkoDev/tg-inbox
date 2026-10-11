@@ -1,4 +1,4 @@
-import { EmailInput, ErrorCode } from '@tg/shared';
+import { CurrentPassword, EmailInput, ErrorCode } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -25,6 +25,7 @@ export function SignInForm() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [emailError, setEmailError] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [alert, setAlert] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,15 +45,19 @@ export function SignInForm() {
     event.preventDefault();
     setAlert(null);
     const nextEmailError = firstIssue(EmailInput, email);
+    const nextPasswordError = firstIssue(CurrentPassword, password);
     setEmailError(nextEmailError);
-    if (nextEmailError) return;
+    setPasswordError(nextPasswordError);
+    if (nextEmailError || nextPasswordError) return;
     setSubmitting(true);
     try {
       await signIn({ email, password });
       await resolveWorkspace((to) => void navigate(to));
     } catch (error) {
       if (error instanceof ApiError && error.code === ErrorCode.VALIDATION_ERROR) {
-        setEmailError(error.message);
+        const field = (error.details as { field?: string } | undefined)?.field;
+        if (field === 'password') setPasswordError(error.message);
+        else setEmailError(error.message);
       } else if (error instanceof ApiError && error.code === ErrorCode.INVALID_CREDENTIALS) {
         setPassword('');
         setAlert(error.message);
@@ -121,8 +126,15 @@ export function SignInForm() {
                 required
                 disabled={submitting}
                 value={password}
+                aria-invalid={passwordError ? true : undefined}
+                aria-describedby={passwordError ? 'password-error' : undefined}
                 onChange={(e) => setPassword(e.target.value)}
               />
+              {passwordError && (
+                <p id="password-error" className="text-destructive text-sm">
+                  {passwordError}
+                </p>
+              )}
             </div>
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}

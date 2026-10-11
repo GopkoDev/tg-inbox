@@ -97,7 +97,7 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
         const parsed = DisplayName.safeParse(input.displayName ?? '');
         if (!parsed.success) {
           const reason = parsed.error.issues[0]?.message ?? 'is invalid';
-          throw new ValidationError(`display_name: ${reason}`, { field: 'display_name', reason });
+          throw new ValidationError(reason, { field: 'display_name', reason });
         }
         displayName = parsed.data;
       }

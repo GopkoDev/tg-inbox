@@ -133,11 +133,35 @@ describe('SignInPage', () => {
 });
 
 describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
-  it('an invalid email is blocked client-side with the server message', async () => {
+  it('AC-05b: an invalid email is blocked client-side with the server message', async () => {
     renderPage();
     await fill('not-an-email');
     expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
     expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('AC-05b: a password over 1024 characters is blocked client-side under the password', async () => {
+    renderPage();
+    await fill('o@x.io', 'x'.repeat(1025));
+    expect(
+      await screen.findByText('The password must be at most 1024 characters long', {
+        selector: 'p#password-error',
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Password')).toHaveAttribute('aria-invalid', 'true');
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('a server 400 on details.field password shows under the password, not the email', async () => {
+    signIn.mockRejectedValue(
+      new ApiError(400, ErrorCode.VALIDATION_ERROR, 'Password says no', { field: 'password' }),
+    );
+    renderPage();
+    await fill();
+    expect(
+      await screen.findByText('Password says no', { selector: 'p#password-error' }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid');
   });
 });

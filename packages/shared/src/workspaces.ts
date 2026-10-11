@@ -21,6 +21,10 @@ export type Email = z.infer<typeof Email>;
 export const Password = z.string().min(10, PASSWORD_MESSAGE).max(1024, PASSWORD_MAX_MESSAGE);
 export type Password = z.infer<typeof Password>;
 
+/** The password of an existing account: no policy minimum, only the upper bound. */
+export const CurrentPassword = z.string().min(1).max(1024, PASSWORD_MAX_MESSAGE);
+export type CurrentPassword = z.infer<typeof CurrentPassword>;
+
 export const DisplayName = z
   .string()
   .trim()

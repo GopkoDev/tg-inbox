@@ -1,4 +1,11 @@
-import { DisplayName, ErrorCode, LinkToken, Password, type InvitationPreview } from '@tg/shared';
+import {
+  CurrentPassword,
+  DisplayName,
+  ErrorCode,
+  LinkToken,
+  Password,
+  type InvitationPreview,
+} from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -92,7 +99,7 @@ export function AcceptInvitationForm() {
     const newAccount = !preview.account_exists;
     const trimmed = name.trim();
     const nextNameError = newAccount ? firstIssue(DisplayName, name) : null;
-    const nextPasswordError = newAccount ? firstIssue(Password, password) : null;
+    const nextPasswordError = firstIssue(newAccount ? Password : CurrentPassword, password);
     setNameError(nextNameError);
     setPasswordError(nextPasswordError);
     setAlert(null);

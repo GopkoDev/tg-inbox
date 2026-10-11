@@ -170,7 +170,7 @@ describe('ResetPasswordPage', () => {
 });
 
 describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
-  it('a password over 1024 characters is blocked client-side with the server message', async () => {
+  it('AC-05b: a password over 1024 characters is blocked client-side with the server message', async () => {
     renderPage();
     await screen.findByLabelText('New password');
     typePassword('x'.repeat(1025));

@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { EmailInput, LinkToken, Password } from './workspaces.js';
+import { CurrentPassword, EmailInput, LinkToken, Password } from './workspaces.js';
 
-/** Sign-in carries no password policy hint: 1–1024 chars only. */
+/** Sign-in carries no password policy hint: 1–1024 chars only (the shared `CurrentPassword`). */
 export const SignIn = z.strictObject({
   email: EmailInput,
-  password: z.string().min(1).max(1024),
+  password: CurrentPassword,
 });
 export type SignIn = z.infer<typeof SignIn>;
 

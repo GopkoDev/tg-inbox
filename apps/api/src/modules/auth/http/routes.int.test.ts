@@ -299,4 +299,14 @@ describe('auth routes (postgres)', () => {
       }
     }
   });
+
+  it('AC-05b: a password over 1024 characters is 400 on password with the shared message', async () => {
+    const res = await signIn('long@x.com', 'x'.repeat(1025));
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      code: 'VALIDATION_ERROR',
+      message: 'The password must be at most 1024 characters long',
+      details: { field: 'password' },
+    });
+  });
 });

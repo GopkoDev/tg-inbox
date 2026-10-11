@@ -219,7 +219,7 @@ describe('InviteDialog (SCR-08)', () => {
 });
 
 describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
-  it('an invalid email is blocked client-side with the server message', async () => {
+  it('AC-05b: an invalid email is blocked client-side with the server message', async () => {
     setup();
     typeEmail('nope');
     submit();

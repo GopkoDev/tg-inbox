@@ -225,4 +225,38 @@ describe('invitation routes (postgres)', () => {
     expect(unknown.json().error.details).toEqual({ ask: 'business_owner' });
     expect((await lookup('bad')).statusCode).toBe(400);
   });
+
+  it.each([
+    ['a new account', 'long-new@x.com', false],
+    ['an existing account', 'long-old@x.com', true],
+  ])(
+    'AC-05b: a password over 1024 characters for %s is 400 with the shared message',
+    async (_who, email, existing) => {
+      const ws = await insertWorkspace(db);
+      if (existing) await insertAccount(db, { email, passwordHash });
+      const inv = await insertInvitation(db, ws, { email });
+      const res = await accept({
+        token: inv.token,
+        password: 'x'.repeat(1025),
+        display_name: 'Sam',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error).toMatchObject({
+        code: 'VALIDATION_ERROR',
+        message: 'The password must be at most 1024 characters long',
+        details: { field: 'password' },
+      });
+    },
+  );
+
+  it('AC-05b: a blank display_name is 400 with the shared message, no field prefix', async () => {
+    const ws = await insertWorkspace(db);
+    const inv = await insertInvitation(db, ws, { email: 'blank@x.com' });
+    const res = await accept({ token: inv.token, password: PASSWORD, display_name: '   ' });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      message: 'Enter your name (up to 200 characters)',
+      details: { field: 'display_name' },
+    });
+  });
 });

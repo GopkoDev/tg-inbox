@@ -277,11 +277,56 @@ describe('AcceptInvitationPage', () => {
 });
 
 describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
-  it('AC-05: a password over 1024 characters is blocked client-side with the server message', async () => {
+  it('AC-05b: a password over 1024 characters is blocked client-side with the server message', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     renderPage();
     await screen.findByLabelText('Your name');
     change('Your name', 'Nina');
+    change('Password', 'x'.repeat(1025));
+    join();
+    expect(
+      await screen.findByText('The password must be at most 1024 characters long', {
+        selector: 'p#password-error',
+      }),
+    ).toBeInTheDocument();
+    expect(acceptInvitation).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['blank', ''],
+    ['whitespace-only', '   '],
+    ['over 200 characters', 'n'.repeat(201)],
+  ])('AC-05b: a %s name is blocked client-side with the server message', async (_case, value) => {
+    lookUpInvitation.mockResolvedValue(preview(false));
+    renderPage();
+    await screen.findByLabelText('Your name');
+    change('Your name', value);
+    change('Password', 'longenough1');
+    join();
+    expect(
+      await screen.findByText('Enter your name (up to 200 characters)', {
+        selector: 'p#name-error',
+      }),
+    ).toBeInTheDocument();
+    expect(acceptInvitation).not.toHaveBeenCalled();
+  });
+
+  it('AC-04: an existing account is not held to the new-password minimum', async () => {
+    lookUpInvitation.mockResolvedValue(preview(true));
+    acceptInvitation.mockResolvedValue(WS);
+    renderPage();
+    await screen.findByLabelText('Password');
+    change('Password', 'short-pw');
+    join();
+    await waitFor(() =>
+      expect(acceptInvitation).toHaveBeenCalledWith({ token: TOKEN, password: 'short-pw' }),
+    );
+  });
+
+  it('AC-05b: an existing account password over 1024 characters is blocked client-side', async () => {
+    lookUpInvitation.mockResolvedValue(preview(true));
+    renderPage();
+    await screen.findByLabelText('Password');
     change('Password', 'x'.repeat(1025));
     join();
     expect(
