@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
-import { stubRadixDom } from '@/test/radix';
+import { openMenu, stubRadixDom } from '@/test/radix';
 
 vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
@@ -31,6 +31,7 @@ vi.mock('@/features/workspaces/resolve', () => ({
 }));
 
 import { TeamPage } from './TeamPage';
+import { WorkspaceHomePage } from './WorkspaceHomePage';
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
 const mem = (id: string, name: string, over: Record<string, unknown> = {}) => ({
@@ -416,6 +417,95 @@ describe('TeamPage (SCR-07)', () => {
     fireEvent.click(await lastButton('Deactivate'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+  });
+});
+
+describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
+  const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'owner' as const };
+  let failLate: (e: unknown) => void = () => undefined;
+
+  /** Both workspace routes render their own shell, as in `app/routes.tsx`. */
+  function renderBoth(to: string) {
+    return render(
+      <MemoryRouter initialEntries={['/w/w1/team']}>
+        <Routes>
+          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+          <Route path="/sign-in" element={<p>sign-in screen</p>} />
+          <Route path="*" element={<p>other</p>} />
+        </Routes>
+        <Jump to={to} />
+        <Where />
+      </MemoryRouter>,
+    );
+  }
+  async function startDeactivate() {
+    await screen.findByText('Bob');
+    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    fireEvent.click(await lastButton('Deactivate'));
+  }
+
+  beforeEach(() => {
+    deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
+    resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w9'));
+    enterWorkspace.mockReturnValue(new Promise(() => undefined));
+  });
+
+  it('/w/w1/team -> /w/w2 (SCR-10), late 403 for w1: no notice, no resolution, stays on /w/w2', async () => {
+    enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
+    renderBoth('/w/w2');
+    await startDeactivate();
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByText('Page not found')).toBeInTheDocument();
+    expect(screen.queryByText(/was removed/)).not.toBeInTheDocument();
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2');
+  });
+
+  it('/w/w1/team -> /w/w2 (entered), late 403 for w1: no notice, no resolution, stays on /w/w2', async () => {
+    enterWorkspace.mockResolvedValue(bolt);
+    renderBoth('/w/w2');
+    await startDeactivate();
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
+    await waitFor(() => expect(useWorkspaceStore.getState().current).toEqual(bolt));
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2');
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(screen.queryByText(/was removed/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+  });
+
+  it('sign-out while the action is pending, then a late 403: no notice survives, stays on sign-in', async () => {
+    renderBoth('/w/w2');
+    await startDeactivate();
+    openMenu('o@x.io');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
+    expect(await screen.findByText('sign-in screen')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('where')).toHaveTextContent('/sign-in');
+  });
+
+  it('/w/w1/team -> /w/w1, late 403 for w1: notice and resolution still happen (AC-17)', async () => {
+    renderBoth('/w/w1');
+    await startDeactivate();
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await waitFor(() => expect(resolveWorkspace).toHaveBeenCalledTimes(1));
+    expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('Acme Flowers');
+    expect(screen.queryByText('Your inbox arrives here')).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/w/w9'));
   });
 });
 

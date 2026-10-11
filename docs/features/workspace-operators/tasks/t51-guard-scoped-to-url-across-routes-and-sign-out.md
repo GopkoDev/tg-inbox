@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r5"
-status: "todo"
+status: "done"
 ---
 
 # T51 — Scope the shell guard to the URL workspace across routes and sign-out
@@ -52,10 +52,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] One "workspace of the current address" value shared by every shell, not a per-instance ref. Suggested: a store field in `features/workspaces/store.ts`, set from the shell's (or `useWorkspaceFromUrl`'s) layout effect. On unmount, the shell resets it only if it still holds its own id, so the shell that mounts next is never overwritten. Reading the router location is also acceptable.
-- [ ] `shellGuard` compares the refusal's id with that shared value. Once the shell for w1 is gone, or the person has signed out, a refusal for w1 has no effect: no notice, no resolution, no navigation, no error row.
-- [ ] A refusal for the workspace still in the address keeps working on every route of that workspace. For example, an action started on `/w/w1/team` and refused after a move to `/w/w1` must still show the notice and resolve.
-- [ ] Tests (render the real `WorkspaceHomePage` on `/w/:workspaceId` beside `TeamPage`):
+- [x] One "workspace of the current address" value shared by every shell, not a per-instance ref. Suggested: a store field in `features/workspaces/store.ts`, set from the shell's (or `useWorkspaceFromUrl`'s) layout effect. On unmount, the shell resets it only if it still holds its own id, so the shell that mounts next is never overwritten. Reading the router location is also acceptable.
+- [x] `shellGuard` compares the refusal's id with that shared value. Once the shell for w1 is gone, or the person has signed out, a refusal for w1 has no effect: no notice, no resolution, no navigation, no error row.
+- [x] A refusal for the workspace still in the address keeps working on every route of that workspace. For example, an action started on `/w/w1/team` and refused after a move to `/w/w1` must still show the notice and resolve.
+- [x] Tests (render the real `WorkspaceHomePage` on `/w/:workspaceId` beside `TeamPage`):
   - a late 403 `ACCESS_REMOVED` for w1 after the switcher-style jump `/w/w1/team` → `/w/w2`, in the SCR-10 case: no notice, `resolveWorkspace` not called, the operator stays on `/w/w2`;
   - the same jump, in the entered-w2 case: no notice, no resolution, stays;
   - sign-out while the action is pending, then the late refusal: no notice left in the store;
@@ -73,8 +73,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] A refusal for a workspace that is no longer in the address has no visible effect, whatever route the person moved to
-- [ ] A refusal for the workspace in the address still runs AC-17 on every route of that workspace
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] A refusal for a workspace that is no longer in the address has no visible effect, whatever route the person moved to
+- [x] A refusal for the workspace in the address still runs AC-17 on every route of that workspace
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

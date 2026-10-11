@@ -1,5 +1,5 @@
 import { Menu, UserRound, X } from 'lucide-react';
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
@@ -34,16 +34,20 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { workspaceId = '' } = useParams();
   const entry = useWorkspaceFromUrl(workspaceId, guard);
   const { markError } = entry;
-  const urlRef = useRef(workspaceId);
+  // One address workspace for every shell: the team and home routes each mount their own, and
+  // sign-out clears it, so a pending call from an unmounted shell sees the address it left.
   useLayoutEffect(() => {
-    urlRef.current = workspaceId;
-  });
-  // A refusal for a workspace the person has left has no effect (no notice, no resolution, no
-  // error row). A page call whose access-removed resolution fails leaves nothing entered: show
-  // Retry, not a skeleton.
+    useWorkspaceStore.getState().setAddressWorkspace(workspaceId);
+    return () => useWorkspaceStore.getState().releaseAddressWorkspace(workspaceId);
+  }, [workspaceId]);
+  // A refusal for a workspace the person has left (or after sign-out) has no effect (no notice,
+  // no resolution, no error row). A page call whose access-removed resolution fails leaves
+  // nothing entered: show Retry, not a skeleton.
   const shellGuard = useCallback<GuardFn>(
     async (error, id) => {
-      if (id !== undefined && id !== urlRef.current) return 'handled';
+      if (id !== undefined && id !== useWorkspaceStore.getState().addressWorkspaceId) {
+        return 'handled';
+      }
       try {
         return await guard(error, id);
       } catch (cause) {
