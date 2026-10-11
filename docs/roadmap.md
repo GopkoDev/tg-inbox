@@ -98,4 +98,4 @@ flowchart LR
 
 | Step | Shipped | Link |
 |---|---|---|
-| 2 · Workspace & operator accounts | 2026-10-11 | [changelog](features/workspace-operators/_ship/changelog.md) · PR: branch `feature/workspace-operators` (no remote yet) |
+| 2 · Workspace & operator accounts | 2026-10-11 | [changelog](features/workspace-operators/_ship/changelog.md) · [PR #1](https://github.com/GopkoDev/tg-inbox/pull/1) |
