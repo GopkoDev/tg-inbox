@@ -5,7 +5,7 @@ import { ApiError } from '@/shared/api/client';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 
-/** SCR-10 body, rendered in place inside the shell (no landmark, `h2` under the page's `h1`). */
+/** SCR-10 body, rendered in place inside the shell (no landmark; `h2` by default, the shell passes `headingLevel={1}`). */
 export function NotFoundCard({ headingLevel = 2 }: { headingLevel?: 1 | 2 }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
@@ -40,7 +40,7 @@ export function NotFoundCard({ headingLevel = 2 }: { headingLevel?: 1 | 2 }) {
   );
 }
 
-/** SCR-10 as a whole page (the `*` route, or the shell when the workspace is unknown). */
+/** SCR-10 as a whole page (the `*` route; the shell renders `NotFoundCard` itself). */
 export function NotFoundPage() {
   return (
     <main className="flex min-h-svh items-center justify-center px-4 py-6">

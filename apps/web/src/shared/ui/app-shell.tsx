@@ -1,11 +1,11 @@
 import { Menu, UserRound, X } from 'lucide-react';
-import { useEffect, type ReactNode } from 'react';
+import { useCallback, useEffect, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
 import { useSignOut } from '@/features/auth/useSignOut';
-import { useGuard } from '@/features/workspaces/guard';
+import { useGuard, type GuardFn } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
@@ -33,6 +33,19 @@ export function AppShell({ children }: { children: ReactNode }) {
   const guard = useGuard();
   const { workspaceId = '' } = useParams();
   const entry = useWorkspaceFromUrl(workspaceId, guard);
+  const { markError } = entry;
+  // A page call whose access-removed resolution fails leaves nothing entered: show Retry, not a skeleton.
+  const shellGuard = useCallback<GuardFn>(
+    async (error, id) => {
+      try {
+        return await guard(error, id);
+      } catch (cause) {
+        if (!useWorkspaceStore.getState().current) markError();
+        throw cause;
+      }
+    },
+    [guard, markError],
+  );
   const current = useWorkspaceStore((s) => s.current);
   const notice = useWorkspaceStore((s) => s.accessRemovedNotice);
   const account = useAuthStore((s) => s.account);
@@ -48,7 +61,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <ShellGuardContext.Provider value={guard}>
+    <ShellGuardContext.Provider value={shellGuard}>
       <div className="min-h-svh">
         <header className="flex items-center gap-2 border-b px-4 py-2">
           <WorkspaceSwitcher />

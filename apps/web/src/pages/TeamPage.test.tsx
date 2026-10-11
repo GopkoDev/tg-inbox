@@ -239,6 +239,28 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.queryByText('Olga')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['a network error', new TypeError('Failed to fetch')],
+    ['a 500', err(500, 'INTERNAL')],
+  ])(
+    '403 ACCESS_REMOVED then resolution fails with %s: error row with Retry, no data; Retry lands on the next workspace (AC-17)',
+    async (_name, failure) => {
+      deactivateMembership.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+      resolveWorkspace.mockRejectedValueOnce(failure);
+      renderPage();
+      await screen.findByText('Bob');
+      fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+      fireEvent.click(await lastButton('Deactivate'));
+      expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
+      expect(screen.queryByText('Bob')).not.toBeInTheDocument();
+      expect(screen.queryByTestId('shell-body-skeleton')).not.toBeInTheDocument();
+      enterWorkspace.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+      resolveWorkspace.mockResolvedValue(undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      await waitFor(() => expect(resolveWorkspace).toHaveBeenCalledTimes(2));
+    },
+  );
+
   it('401: guard goes to sign-in', async () => {
     listMemberships.mockRejectedValue(err(401, 'UNAUTHENTICATED'));
     listPendingInvitations.mockRejectedValue(err(401, 'UNAUTHENTICATED'));

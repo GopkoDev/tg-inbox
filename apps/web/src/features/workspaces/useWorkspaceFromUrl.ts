@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { enterWorkspace } from './api';
 import type { GuardFn } from './guard';
 import { useWorkspaceStore } from './store';
@@ -58,5 +58,10 @@ export function useWorkspaceFromUrl(workspaceId: string, guard: GuardFn) {
     setFailure(null);
     setAttempt((n) => n + 1);
   };
-  return { status, retry };
+  /** A page call's guard rejected after the workspace was dropped: show the error row. */
+  const markError = useCallback(
+    () => setFailure({ id: workspaceId, kind: 'error' }),
+    [workspaceId],
+  );
+  return { status, retry, markError };
 }
