@@ -8,15 +8,15 @@ async function signIn(page: Page, email: string, password = PASSWORD) {
   await page.waitForURL((url) => !url.pathname.startsWith('/sign-in'));
 }
 
-/** Opens SCR-07 the way an owner does: workspace home (which enters it), then the Team link. */
-async function openTeam(page: Page, workspaceId: string) {
-  await page.goto(`/w/${workspaceId}`);
-  await page.getByRole('banner').getByRole('link', { name: 'Team' }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/team$`));
-}
-
 const workspaceButton = (page: Page, name: string) =>
   page.getByRole('banner').getByRole('button', { name });
+
+/** Opens SCR-07 by its address, as a bookmark or reload would — the app shell must enter the workspace itself. */
+async function openTeam(page: Page, workspaceId: string, workspaceName: string) {
+  await page.goto(`/w/${workspaceId}/team`);
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/team$`));
+  await expect(workspaceButton(page, workspaceName)).toBeVisible();
+}
 
 async function signOut(page: Page, email: string) {
   await page.getByRole('banner').getByRole('button', { name: email }).click();
@@ -99,6 +99,28 @@ test('switch workspace shows only the picked workspace name (AC-12)', async ({ p
   await expect(page.getByRole('banner').getByText('Acme Flowers')).toHaveCount(0);
 });
 
+test('sign in opens the last-used workspace, not the picker (AC-07, AC-12)', async ({
+  page,
+  world,
+}) => {
+  await world.workspaceWithOwner('Acme Flowers', 'boss@example.test');
+  const bolt = await world.workspaceWithOwner('Bolt Bikes', 'chief@example.test');
+  await world.joinOperator('chief@example.test', bolt, 'boss@example.test');
+
+  await page.goto('/sign-in');
+  await signIn(page, 'boss@example.test');
+  await page.goto(`/w/${bolt}`);
+  await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
+
+  await signOut(page, 'boss@example.test');
+  await expect(page).toHaveURL(/\/sign-in$/);
+  await signIn(page, 'boss@example.test');
+
+  await expect(page).toHaveURL(new RegExp(`/w/${bolt}$`));
+  await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
+  await expect(page.getByRole('banner').getByText('Acme Flowers')).toHaveCount(0);
+});
+
 test('invite a teammate: link shown once, then a pending row without it (AC-14)', async ({
   page,
   world,
@@ -107,7 +129,7 @@ test('invite a teammate: link shown once, then a pending row without it (AC-14)'
 
   await page.goto('/sign-in');
   await signIn(page, 'boss@example.test');
-  await openTeam(page, workspaceId);
+  await openTeam(page, workspaceId, 'Acme Flowers');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
   await page.getByLabel('Email').fill('hire@example.test');
   await page.getByRole('button', { name: 'Create invitation' }).click();
@@ -127,6 +149,7 @@ test('invite a teammate: link shown once, then a pending row without it (AC-14)'
   await expect(pending.getByText('/invite/')).toHaveCount(0);
   await expect(page.getByText(link)).toHaveCount(0);
   await page.reload();
+  await expect(workspaceButton(page, 'Acme Flowers')).toBeVisible();
   await expect(
     page.getByTestId('pending-invitations').getByText('hire@example.test'),
   ).toBeVisible();
@@ -146,14 +169,14 @@ test('deactivating a member with a second tab open shows the access-removed noti
   const member = await memberContext.newPage();
   await member.goto('/sign-in');
   await signIn(member, 'sam@example.test');
-  await openTeam(member, acme);
+  await openTeam(member, acme, 'Acme Flowers');
   await expect(member.getByRole('button', { name: 'Invite', exact: true })).toBeVisible();
 
   const ownerContext = await browser.newContext();
   const owner = await ownerContext.newPage();
   await owner.goto('/sign-in');
   await signIn(owner, 'boss@example.test');
-  await openTeam(owner, acme);
+  await openTeam(owner, acme, 'Acme Flowers');
   await owner.getByRole('row', { name: /Sam/ }).getByRole('button', { name: 'Deactivate' }).click();
   await owner.getByRole('alertdialog').getByRole('button', { name: 'Deactivate' }).click();
   await expect(owner.getByRole('row', { name: /Sam/ }).getByText('Deactivated')).toBeVisible();

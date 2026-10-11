@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T37 — Exercise last-used workspace and direct Team loads in the browser flows
@@ -55,9 +55,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] AC-07 flow: seed two workspaces for one account, enter the second, sign out, sign in → the second opens (not the picker).
-- [ ] Replace the helper workaround: open `/w/<id>/team` directly and assert the header shows the workspace name; after `page.reload()` assert the header again.
-- [ ] Run the Playwright suite locally (`pnpm --filter @tg/web test:e2e`, needs Docker) and keep it out of `pnpm test`.
+- [x] AC-07 flow: seed two workspaces for one account, enter the second, sign out, sign in → the second opens (not the picker).
+- [x] Replace the helper workaround: open `/w/<id>/team` directly and assert the header shows the workspace name; after `page.reload()` assert the header again.
+- [x] Run the Playwright suite locally (`pnpm --filter @tg/web test:e2e`, needs Docker) and keep it out of `pnpm test`.
 
 ## Edge cases
 
@@ -67,7 +67,7 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Playwright flows green locally
-- [ ] `tsc -p e2e` clean; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Playwright flows green locally
+- [x] `tsc -p e2e` clean; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
