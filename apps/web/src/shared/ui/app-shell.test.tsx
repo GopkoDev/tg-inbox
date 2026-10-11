@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
@@ -34,6 +34,14 @@ function renderShell(path = '/w/w1') {
           }
         />
         <Route path="/w/:workspaceId/team" element={<p>team screen</p>} />
+        <Route
+          path="/w/:workspaceId/bot"
+          element={
+            <AppShell>
+              <p>bot body</p>
+            </AppShell>
+          }
+        />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
       </Routes>
     </MemoryRouter>,
@@ -129,5 +137,42 @@ describe('AppShell', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+  });
+
+  it('owner sees Bot right after Team in the desktop nav (SCR-01)', () => {
+    useWorkspaceStore.getState().setCurrent(acme);
+    renderShell();
+    const nav = screen.getByRole('navigation');
+    const names = within(nav)
+      .getAllByRole('link')
+      .map((l) => l.textContent);
+    expect(names).toEqual(['Team', 'Bot']);
+    expect(within(nav).getByRole('link', { name: 'Bot' })).toHaveAttribute('href', '/w/w1/bot');
+    expect(within(nav).getByRole('link', { name: 'Bot' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('phone menu offers Bot after Team to owners', () => {
+    useWorkspaceStore.getState().setCurrent(acme);
+    renderShell();
+    openMenu('Menu');
+    const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
+    expect(items.indexOf('Bot')).toBe(items.indexOf('Team') + 1);
+    expect(screen.getByRole('menuitem', { name: 'Bot' })).toHaveAttribute('href', '/w/w1/bot');
+  });
+
+  it('operator sees no Bot entry, also not in the phone menu (AC-03)', () => {
+    useWorkspaceStore.getState().setCurrent(bolt);
+    renderShell('/w/w2');
+    expect(screen.queryByRole('link', { name: 'Bot' })).not.toBeInTheDocument();
+    openMenu('Menu');
+    expect(screen.queryByRole('menuitem', { name: 'Bot' })).not.toBeInTheDocument();
+  });
+
+  it('the Bot link is marked current on the bot settings page', () => {
+    useWorkspaceStore.getState().setCurrent(acme);
+    renderShell('/w/w1/bot');
+    const nav = screen.getByRole('navigation');
+    expect(within(nav).getByRole('link', { name: 'Bot' })).toHaveAttribute('aria-current', 'page');
+    expect(within(nav).getByRole('link', { name: 'Team' })).not.toHaveAttribute('aria-current');
   });
 });

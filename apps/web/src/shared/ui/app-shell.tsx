@@ -1,6 +1,6 @@
 import { Menu, UserRound, X } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, type ReactNode } from 'react';
-import { Link, useParams } from 'react-router';
+import { NavLink, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
@@ -23,7 +23,7 @@ import {
 import { ShellGuardContext } from './app-shell-context';
 
 /**
- * The workspace area frame (SCR-06/07/08): switcher, owner-only Team link, account menu with
+ * The workspace area frame (SCR-06/07/08): switcher, owner-only Team and Bot links, account menu with
  * sign-out (collapsed into a menu at phone width) and the dismissible `access-removed` notice.
  * It enters the workspace of the URL (`useWorkspaceFromUrl`) and shows SCR-10 / a retry row when
  * that fails, and renders the page body only once that entry is `ready` (a skeleton before, so no
@@ -63,6 +63,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { busy, signOut } = useSignOut();
   const isOwner = current?.role === 'owner';
   const teamHref = current ? `/w/${current.id}/team` : null;
+  const botHref = current ? `/w/${current.id}/bot` : null;
 
   useEffect(() => {
     if (useAuthStore.getState().account) return;
@@ -79,7 +80,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           <nav className="hidden flex-1 items-center gap-1 sm:flex">
             {isOwner && teamHref && (
               <Button asChild variant="ghost">
-                <Link to={teamHref}>Team</Link>
+                <NavLink to={teamHref}>Team</NavLink>
+              </Button>
+            )}
+            {isOwner && botHref && (
+              <Button asChild variant="ghost">
+                <NavLink to={botHref}>Bot</NavLink>
               </Button>
             )}
           </nav>
@@ -110,7 +116,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {account && <DropdownMenuLabel>{account.email}</DropdownMenuLabel>}
                 {isOwner && teamHref && (
                   <DropdownMenuItem asChild>
-                    <Link to={teamHref}>Team</Link>
+                    <NavLink to={teamHref}>Team</NavLink>
+                  </DropdownMenuItem>
+                )}
+                {isOwner && botHref && (
+                  <DropdownMenuItem asChild>
+                    <NavLink to={botHref}>Bot</NavLink>
                   </DropdownMenuItem>
                 )}
                 <DropdownMenuSeparator />

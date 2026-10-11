@@ -1,6 +1,7 @@
 import { createBrowserRouter } from 'react-router';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
+import { BotSettingsPage } from '@/pages/BotSettingsPage';
 import { NoAccessPage } from '@/pages/NoAccessPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
@@ -18,6 +19,7 @@ export const routes = [
   { path: '/no-access', element: <NoAccessPage /> },
   { path: '/w/:workspaceId', element: <WorkspaceHomePage /> },
   { path: '/w/:workspaceId/team', element: <TeamPage /> },
+  { path: '/w/:workspaceId/bot', element: <BotSettingsPage /> },
   { path: '*', element: <NotFoundPage /> },
 ];
 
