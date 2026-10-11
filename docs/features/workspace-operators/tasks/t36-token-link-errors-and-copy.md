@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T36 — Send malformed token links to SCR-03 and align screen copy with the manifest
@@ -55,9 +55,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Check the token against the shared `LinkToken` schema on the client before the lookup, and also map a lookup `400 VALIDATION_ERROR` to SCR-03 (`invitation-invalid` / `reset-link-invalid`).
-- [ ] Change the copy to screens.md's exact strings for SCR-01, SCR-02 and SCR-10; update `e2e/flows.spec.ts:36` (button name) and any unit-test selectors.
-- [ ] Tests: a truncated token on `/invite/<t>` and `/reset/<t>` renders SCR-03 with the right ask; the new copy is asserted.
+- [x] Check the token against the shared `LinkToken` schema on the client before the lookup, and also map a lookup `400 VALIDATION_ERROR` to SCR-03 (`invitation-invalid` / `reset-link-invalid`).
+- [x] Change the copy to screens.md's exact strings for SCR-01, SCR-02 and SCR-10; update `e2e/flows.spec.ts:36` (button name) and any unit-test selectors.
+- [x] Tests: a truncated token on `/invite/<t>` and `/reset/<t>` renders SCR-03 with the right ask; the new copy is asserted.
 
 ## Edge cases
 
@@ -68,8 +68,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Every token page reaches SCR-03 on any unusable link
-- [ ] Copy equals screens.md
-- [ ] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Every token page reaches SCR-03 on any unusable link
+- [x] Copy equals screens.md
+- [x] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

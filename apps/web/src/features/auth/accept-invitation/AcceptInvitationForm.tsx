@@ -1,4 +1,4 @@
-import { ErrorCode, PASSWORD_MESSAGE, type InvitationPreview } from '@tg/shared';
+import { ErrorCode, LinkToken, PASSWORD_MESSAGE, type InvitationPreview } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -42,6 +42,7 @@ export function AcceptInvitationForm() {
   const navigate = useNavigate();
 
   const [preview, setPreview] = useState<InvitationPreview | null>(null);
+  const malformed = !LinkToken.safeParse(token).success;
   const [unavailable, setUnavailable] = useState<Fatal>(null);
   const [lookupFailed, setLookupFailed] = useState(false);
 
@@ -55,6 +56,7 @@ export function AcceptInvitationForm() {
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
+    if (malformed) return;
     let live = true;
     lookUpInvitation(token)
       .then((p) => {
@@ -62,20 +64,25 @@ export function AcceptInvitationForm() {
       })
       .catch((error: unknown) => {
         if (!live) return;
-        const fatal = toUnavailable(error);
+        // On lookup only the token can fail validation: a damaged link is as dead as an expired one.
+        const fatal: Fatal =
+          error instanceof ApiError && error.code === ErrorCode.VALIDATION_ERROR
+            ? { reason: 'invitation-invalid', ask: 'business_owner' }
+            : toUnavailable(error);
         if (fatal) setUnavailable(fatal);
         else setLookupFailed(true);
       });
     return () => {
       live = false;
     };
-  }, [token, attempt]);
+  }, [token, attempt, malformed]);
 
   function retryLookup() {
     setLookupFailed(false);
     setAttempt((n) => n + 1);
   }
 
+  if (malformed) return <LinkUnavailable reason="invitation-invalid" ask="business_owner" />;
   if (unavailable) return <LinkUnavailable {...unavailable} />;
 
   async function onSubmit(event: FormEvent) {
@@ -121,10 +128,16 @@ export function AcceptInvitationForm() {
     <Card className="w-full max-w-md">
       <CardHeader>
         <CardTitle>
-          <h1>Accept invitation</h1>
+          <h1>{preview ? `Join ${preview.workspace_name}` : 'Accept invitation'}</h1>
         </CardTitle>
         <CardDescription>
-          {preview ? 'You were invited to a tg-inbox workspace.' : 'Checking your invitation…'}
+          {preview ? (
+            <>
+              You are invited as <Badge variant="secondary">{preview.role}</Badge>
+            </>
+          ) : (
+            'Checking your invitation…'
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -145,10 +158,6 @@ export function AcceptInvitationForm() {
           </div>
         ) : (
           <form onSubmit={(e) => void onSubmit(e)} className="space-y-4" noValidate>
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-medium">{preview.workspace_name}</span>
-              <Badge variant="secondary">{preview.role}</Badge>
-            </div>
             {alert && (
               <Alert variant="destructive">
                 <AlertDescription>{alert}</AlertDescription>
@@ -205,7 +214,7 @@ export function AcceptInvitationForm() {
             </div>
             <Button type="submit" className="w-full" disabled={submitting}>
               {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
-              Join workspace
+              {preview.account_exists ? 'Join workspace' : 'Create account and join'}
             </Button>
           </form>
         )}

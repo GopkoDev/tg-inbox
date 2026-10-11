@@ -126,7 +126,7 @@ export function SignInForm() {
               Sign in
             </Button>
             <p className="text-muted-foreground text-sm">
-              Forgot your password? Ask a platform admin for a reset link.
+              Forgot your password? Ask the tg-inbox team for a reset link.
             </p>
           </form>
         )}

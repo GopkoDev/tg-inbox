@@ -35,9 +35,11 @@ const preview = (account_exists: boolean): InvitationPreview => ({
   account_exists,
 });
 
-function renderPage() {
+const TOKEN = 'A'.repeat(43);
+
+function renderPage(path: string = TOKEN) {
   return render(
-    <MemoryRouter initialEntries={['/invite/tok123']}>
+    <MemoryRouter initialEntries={[`/invite/${path}`]}>
       <Routes>
         <Route path="/invite/:token" element={<AcceptInvitationPage />} />
         <Route path="/w/:id" element={<p>workspace home</p>} />
@@ -56,18 +58,52 @@ beforeEach(() => {
   enterWorkspace.mockResolvedValue(WS);
 });
 
+describe('malformed invitation tokens (review #16)', () => {
+  it.each([
+    ['42 chars', 'A'.repeat(42)],
+    ['bad paste with %', `${'A'.repeat(40)}%20x`],
+  ])('AC-06 %s: SCR-03 without a lookup', async (_name, bad) => {
+    renderPage(bad);
+    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(screen.getByText(/ask a business owner for a new one/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(lookUpInvitation).not.toHaveBeenCalled();
+  });
+
+  it('AC-06 lookup 400 VALIDATION_ERROR maps to SCR-03, not Retry', async () => {
+    lookUpInvitation.mockRejectedValue(new ApiError(400, ErrorCode.VALIDATION_ERROR, 'bad'));
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+
+  it('SCR-02 copy: Join <workspace> heading, invited-as line and button names', async () => {
+    lookUpInvitation.mockResolvedValue(preview(false));
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Join Acme' })).toBeInTheDocument();
+    expect(screen.getByText('You are invited as')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Create account and join' })).toBeInTheDocument();
+  });
+
+  it('SCR-02 copy: existing account keeps "Join workspace"', async () => {
+    lookUpInvitation.mockResolvedValue(preview(true));
+    renderPage();
+    expect(await screen.findByRole('button', { name: 'Join workspace' })).toBeInTheDocument();
+  });
+});
+
 describe('AcceptInvitationPage', () => {
   it('loading: shows a skeleton while the lookup is in flight', () => {
     lookUpInvitation.mockReturnValue(new Promise(() => undefined));
     renderPage();
     expect(screen.getByTestId('invitation-loading')).toBeInTheDocument();
-    expect(lookUpInvitation).toHaveBeenCalledWith('tok123');
+    expect(lookUpInvitation).toHaveBeenCalledWith(TOKEN);
   });
 
   it('AC-03 default: new account shows workspace, read-only email, role, name and password', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     renderPage();
-    expect(await screen.findByText('Acme')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Join Acme' })).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveValue('new@x.io');
     expect(screen.getByLabelText('Email')).toHaveAttribute('readonly');
     expect(screen.getByText('operator')).toBeInTheDocument();
@@ -92,7 +128,7 @@ describe('AcceptInvitationPage', () => {
     join();
     expect(await screen.findByText('workspace home')).toBeInTheDocument();
     expect(acceptInvitation).toHaveBeenCalledWith({
-      token: 'tok123',
+      token: TOKEN,
       password: 'longenough1',
       display_name: 'Nina',
     });
@@ -107,7 +143,7 @@ describe('AcceptInvitationPage', () => {
     change('Password', 'existing-pass');
     join();
     await screen.findByText('workspace home');
-    expect(acceptInvitation).toHaveBeenCalledWith({ token: 'tok123', password: 'existing-pass' });
+    expect(acceptInvitation).toHaveBeenCalledWith({ token: TOKEN, password: 'existing-pass' });
   });
 
   it('submitting: disables the form while acceptInvitation is in flight', async () => {

@@ -23,9 +23,31 @@ import { ResetPasswordPage } from './ResetPasswordPage';
 
 const invalid = () => new ApiError(404, ErrorCode.RESET_LINK_INVALID, 'invalid');
 
-function renderPage() {
+const TOKEN = 'A'.repeat(43);
+
+describe('malformed reset tokens (review #16)', () => {
+  it.each([
+    ['42 chars', 'A'.repeat(42)],
+    ['bad paste with %', `${'A'.repeat(40)}%20x`],
+  ])('AC-22 %s: SCR-03 without a lookup', async (_name, bad) => {
+    renderPage(bad);
+    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(screen.getByText(/ask the tg-inbox team for a new one/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+    expect(lookUpPasswordResetLink).not.toHaveBeenCalled();
+  });
+
+  it('AC-22 lookup 400 VALIDATION_ERROR maps to SCR-03, not Retry', async () => {
+    lookUpPasswordResetLink.mockRejectedValue(new ApiError(400, ErrorCode.VALIDATION_ERROR, 'bad'));
+    renderPage();
+    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
+  });
+});
+
+function renderPage(path: string = TOKEN) {
   return render(
-    <MemoryRouter initialEntries={['/reset-password/tok123']}>
+    <MemoryRouter initialEntries={[`/reset-password/${path}`]}>
       <Routes>
         <Route path="/reset-password/:token" element={<ResetPasswordPage />} />
       </Routes>
@@ -49,7 +71,7 @@ describe('ResetPasswordPage', () => {
     lookUpPasswordResetLink.mockReturnValue(new Promise(() => undefined));
     renderPage();
     expect(screen.getByTestId('reset-loading')).toBeInTheDocument();
-    expect(lookUpPasswordResetLink).toHaveBeenCalledWith('tok123');
+    expect(lookUpPasswordResetLink).toHaveBeenCalledWith(TOKEN);
   });
 
   it('default: password field with hint and footer', async () => {
@@ -137,7 +159,7 @@ describe('ResetPasswordPage', () => {
     submit();
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
     expect(redeemPasswordResetLink).toHaveBeenCalledWith({
-      token: 'tok123',
+      token: TOKEN,
       password: 'correct horse battery',
     });
   });

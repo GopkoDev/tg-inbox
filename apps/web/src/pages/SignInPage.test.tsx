@@ -53,7 +53,9 @@ describe('SignInPage', () => {
     renderPage();
     expect(await screen.findByLabelText('Email')).toBeInTheDocument();
     expect(screen.getByLabelText('Password')).toBeInTheDocument();
-    expect(screen.getByText(/forgot your password/i)).toBeInTheDocument();
+    expect(
+      screen.getByText('Forgot your password? Ask the tg-inbox team for a reset link.'),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('link')).not.toBeInTheDocument();
   });
 

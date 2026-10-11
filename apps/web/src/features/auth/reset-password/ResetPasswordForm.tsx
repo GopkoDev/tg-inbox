@@ -1,4 +1,4 @@
-import { ErrorCode, PASSWORD_MESSAGE } from '@tg/shared';
+import { ErrorCode, LinkToken, PASSWORD_MESSAGE } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -18,9 +18,14 @@ const GENERIC = 'Something went wrong';
 const isInvalid = (error: unknown) =>
   error instanceof ApiError && error.code === ErrorCode.RESET_LINK_INVALID;
 
+// On lookup only the token can fail validation: a damaged link is as dead as an expired one.
+const isUnusableOnLookup = (error: unknown) =>
+  isInvalid(error) || (error instanceof ApiError && error.code === ErrorCode.VALIDATION_ERROR);
+
 export function ResetPasswordForm() {
   const { token = '' } = useParams();
   const navigate = useNavigate();
+  const malformed = !LinkToken.safeParse(token).success;
 
   const [ready, setReady] = useState(false);
   const [unavailable, setUnavailable] = useState(false);
@@ -33,6 +38,7 @@ export function ResetPasswordForm() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    if (malformed) return;
     let live = true;
     lookUpPasswordResetLink(token)
       .then(() => {
@@ -40,20 +46,20 @@ export function ResetPasswordForm() {
       })
       .catch((error: unknown) => {
         if (!live) return;
-        if (isInvalid(error)) setUnavailable(true);
+        if (isUnusableOnLookup(error)) setUnavailable(true);
         else setLookupFailed(true);
       });
     return () => {
       live = false;
     };
-  }, [token, attempt]);
+  }, [token, attempt, malformed]);
 
   function retryLookup() {
     setLookupFailed(false);
     setAttempt((n) => n + 1);
   }
 
-  if (unavailable) return <LinkUnavailable reason="reset-link-invalid" />;
+  if (malformed || unavailable) return <LinkUnavailable reason="reset-link-invalid" />;
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();

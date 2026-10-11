@@ -33,7 +33,7 @@ test('join as a new person lands on the workspace home (AC-03)', async ({ page, 
   await expect(page.getByLabel('Email')).toHaveValue('ana@example.test');
   await page.getByLabel('Name').fill('Ana');
   await page.getByLabel('Password').fill(PASSWORD);
-  await page.getByRole('button', { name: 'Join workspace' }).click();
+  await page.getByRole('button', { name: 'Create account and join' }).click();
 
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
   await expect(workspaceButton(page, 'Acme Flowers')).toBeVisible();

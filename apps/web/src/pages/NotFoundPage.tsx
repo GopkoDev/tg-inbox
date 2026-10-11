@@ -28,7 +28,10 @@ export function NotFoundCard({ headingLevel = 2 }: { headingLevel?: 1 | 2 }) {
           {headingLevel === 1 ? <h1>Page not found</h1> : <h2>Page not found</h2>}
         </CardTitle>
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
+        <p className="text-muted-foreground text-sm">
+          This page doesn&apos;t exist or you don&apos;t have access to it.
+        </p>
         <Button className="w-full" disabled={busy} onClick={() => void onGo()}>
           Go to my workspace
         </Button>

@@ -35,6 +35,9 @@ describe('NotFoundPage (AC-13)', () => {
       </MemoryRouter>,
     );
     expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
+    expect(
+      screen.getByText("This page doesn't exist or you don't have access to it."),
+    ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/3f2b8c1e|Bolt Bikes/);
   });
 
@@ -52,8 +55,8 @@ describe('NotFoundPage (AC-13)', () => {
 describe('route table', () => {
   it.each([
     ['/sign-in', 'Sign in'],
-    ['/invite/abc', 'Accept invitation'],
-    ['/reset-password/abc', 'Set a new password'],
+    [`/invite/${'A'.repeat(43)}`, 'Accept invitation'],
+    [`/reset-password/${'A'.repeat(43)}`, 'Set a new password'],
     ['/workspaces', 'Your workspaces'],
     ['/no-access', 'You no longer have access to any workspace'],
     ['/w/w1', 'Workspace home'],
