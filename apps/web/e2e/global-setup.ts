@@ -9,7 +9,14 @@ const WEB_DIR = resolve(import.meta.dirname, '..');
 
 /** Ephemeral Postgres (migrated) + the API serving the freshly built SPA on one origin. */
 export default async function globalSetup(config: FullConfig) {
-  const run = (...args: string[]) => execFileSync('pnpm', args, { cwd: WEB_DIR, stdio: 'inherit' });
+  // An empty VITE_API_URL makes the client call relative /api paths, whatever a local .env says
+  // (process env wins over .env files in Vite), so the SPA and the API share one origin.
+  const run = (...args: string[]) =>
+    execFileSync('pnpm', args, {
+      cwd: WEB_DIR,
+      stdio: 'inherit',
+      env: { ...process.env, VITE_API_URL: '' },
+    });
   run('exec', 'vite', 'build');
 
   const database = await startTestDatabase();
