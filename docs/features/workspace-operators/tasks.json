@@ -1201,6 +1201,21 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t54-harden-link-token-log-masking.md",
       "source": "review-2026-10-11-r6"
+    },
+    {
+      "id": "T55",
+      "title": "Mask link tokens by a normalised path, not a pattern",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for any path the SPA router would resolve to `/invite/:token` or `/reset-password/:token`, nor for dot-segment variants; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t55-mask-link-tokens-by-normalised-path.md",
+      "source": "review-2026-10-11-r7"
     }
   ]
 }
