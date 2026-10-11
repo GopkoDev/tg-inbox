@@ -2,6 +2,7 @@ import cookie from '@fastify/cookie';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
+import type { DestinationStream } from 'pino';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
@@ -17,9 +18,9 @@ import type { Clock } from './platform/clock.js';
 /** Composition root: builds every dependency and registers every module plugin. */
 export async function buildApp(
   config: Config,
-  overrides: { clock?: Clock } = {},
+  overrides: { clock?: Clock; logStream?: DestinationStream } = {},
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: loggerOptions(config), frameworkErrors });
+  const app = Fastify({ logger: loggerOptions(config, overrides.logStream), frameworkErrors });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerErrorHandler(app, {

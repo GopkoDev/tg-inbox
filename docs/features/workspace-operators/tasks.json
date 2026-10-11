@@ -1113,7 +1113,7 @@
       "layer": "infra",
       "deps": [],
       "acs": [],
-      "dod": "No API response body outside the error envelope for any 4xx/5xx; unit + integration green; `pnpm lint` clean",
+      "dod": "No API response body outside the error envelope for any 4xx/5xx on the router and handler paths (transport-level exceptions documented in contracts/api-sync-report.md); unit + integration green; `pnpm lint` clean",
       "files_hint": [
         "apps/api/src/app.ts",
         "apps/api/src/platform/errors.ts",

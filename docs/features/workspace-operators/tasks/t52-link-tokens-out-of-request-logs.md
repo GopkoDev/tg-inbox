@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r5"
-status: "todo"
+status: "done"
 ---
 
 # T52 — Keep link tokens out of request logs; document the transport-level error exceptions
@@ -40,16 +40,16 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 (logging), CLAU
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: a `req` serializer that logs `method`, a masked `url`, and the remote address / host, as Fastify's default does. The segment after `/invite/` and `/reset-password/` becomes e.g. `[redacted]`, and the query string is kept. Keep every existing `REDACT` path.
-- [ ] Router-level errors must not carry the raw path. Either:
+- [x] `platform/logger.ts`: a `req` serializer that logs `method`, a masked `url`, and the remote address / host, as Fastify's default does. The segment after `/invite/` and `/reset-password/` becomes e.g. `[redacted]`, and the query string is kept. Keep every existing `REDACT` path.
+- [x] Router-level errors must not carry the raw path. Either:
   - log a fixed message / the error `code` instead of `err.message` for `FST_ERR_BAD_URL` / `FST_ERR_MAX_PARAM_LENGTH`; or
   - mask `err.message` through the same masking helper.
 
   The 400 response for those two codes answers a fixed message (e.g. `Invalid request URL`), not Fastify's text with the path in it.
-- [ ] Tests:
+- [x] Tests:
   - unit (`logger.test.ts`): the masking helper / serializer masks `/invite/<t>`, `/reset-password/<t>` and `/invite/<t>?x=1`, and leaves other URLs unchanged;
   - integration (`app.int.test.ts`, with `WEB_DIST_DIR` set and the log captured to a stream at info level): `GET /invite/<t>` and `GET /reset-password/<t>`, plus a malformed variant (`/reset-password/<t>%E0%A4%A`). No captured log line contains `<t>`, and the malformed response body does not contain `<t>` either.
-- [ ] Z3 docs:
+- [x] Z3 docs:
   - `contracts/api-sync-report.md`: add an entry listing the transport-level exceptions (503 from `return503OnClosing` during shutdown; 400/408/431 from Fastify's `clientErrorHandler` at the socket level). Say that they are outside the envelope by design and that the web client maps an unparseable body to `INTERNAL_ERROR`.
   - Narrow the T50 DoD wording (task file + `tasks.json` `dod`) to "router and handler paths".
 
@@ -64,8 +64,8 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 (logging), CLAU
 
 ## Definition of Done
 
-- [ ] No log line written by the API contains an invitation or reset token
-- [ ] The transport-level exceptions are documented and the T50 DoD no longer claims more than the code does
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No log line written by the API contains an invitation or reset token
+- [x] The transport-level exceptions are documented and the T50 DoD no longer claims more than the code does
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

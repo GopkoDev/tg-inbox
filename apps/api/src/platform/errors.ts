@@ -99,6 +99,9 @@ function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnv
   return { error: details === undefined ? { code, message } : { code, message, details } };
 }
 
+/** Router-level errors whose Fastify message embeds the request path. */
+const URL_ERROR_CODES = new Set(['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH']);
+
 /** The one mapping from any thrown error to the envelope + status. */
 function sendError(
   error: FastifyError,
@@ -123,6 +126,11 @@ function sendError(
   }
   const status = error.statusCode;
   if (status !== undefined && status >= 400 && status < 500) {
+    if (URL_ERROR_CODES.has(error.code)) {
+      // Fastify's message quotes the raw path, which may hold an invitation / reset token.
+      request.log.info({ code: error.code }, 'client error');
+      return reply.status(400).send(envelope(ErrorCode.VALIDATION_ERROR, 'Invalid request URL'));
+    }
     request.log.info({ err: error }, 'client error');
     if (status === 415) {
       return reply

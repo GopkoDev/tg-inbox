@@ -55,7 +55,7 @@ None of the findings maps to a §5 AC. They enforce the error contract: CLAUDE.m
 
 ## Definition of Done
 
-- [x] No API response body outside the error envelope for any 4xx/5xx
+- [x] No API response body outside the error envelope for any 4xx/5xx on the router and handler paths (the transport-level exceptions — 503 from `return503OnClosing`, 400/408/431 from `clientErrorHandler` — are documented in `contracts/api-sync-report.md`, T52)
 - [x] Unit + integration green; `pnpm lint` clean
 - [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
 - [x] the regression test for each closed finding fails without the fix (RED first)
