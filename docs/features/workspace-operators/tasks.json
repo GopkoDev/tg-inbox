@@ -1223,7 +1223,7 @@
       "layer": "infra",
       "deps": [],
       "acs": [],
-      "dod": "No `incoming request` line contains an invitation or reset token for any path the SPA router or Fastify would resolve to a link route (including absolute-form targets), nor for any url whose normalisation passes through `[linkPrefix, token]`; the mask's comments state its real scope; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "dod": "No `incoming request` line contains an invitation or reset token for any path the SPA router or Fastify would resolve to a link route (including absolute-form targets), nor for any url whose normalisation reaches `[linkPrefix]` before a further segment; the mask's comments state its real scope; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
       "files_hint": [
         "apps/api/src/platform/logger.ts",
         "apps/api/src/platform/logger.test.ts",

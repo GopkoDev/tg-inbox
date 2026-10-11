@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r8"
-status: "todo"
+status: "done"
 ---
 
 # T56 — Mask link tokens in absolute-form and trailing-dot-segment urls; fix the mask's comments
@@ -33,12 +33,12 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: before splitting, strip a leading `scheme://authority` (`^[a-z][a-z0-9+.-]*:\/\/[^/?]*`, any case) from the path.
-- [ ] `platform/logger.ts`: during the segment walk, record a hit whenever the segments are exactly `[linkPrefix, x]` (prefix ignoring case); mask when any hit was recorded, not only when the final segments match. Output stays `/<prefix as sent>/[redacted]` plus the original query.
-- [ ] Reword the comments at `logger.ts:18-20` and `logger.test.ts:18-20`: the mask covers a superset on purpose — every form the router or Fastify resolves to a link route, plus forms a raw client might send.
-- [ ] Add an api-sync-report line for this change (no operation, status or code changes).
-- [ ] Tests (unit, `logger.test.ts`): `http://host/invite/<t>`, `HTTP://host/Invite/<t>?x=1`, `http://host/reset-password/<t>`, `/invite/<t>/..`, `/invite/<t>/%2e%2e`, `/invite/<t>%2F..`, `/invite/%2e%2e/<t>`, plus every existing case. Unchanged: `http://host/assets/invite/x.js`, `http://host/`, and every existing unchanged case.
-- [ ] RED proof: the new masked cases fail against the current `maskLinkTokens`.
+- [x] `platform/logger.ts`: before splitting, strip a leading `scheme://authority` (`^[a-z][a-z0-9+.-]*:\/\/[^/?]*`, any case) from the path.
+- [x] `platform/logger.ts`: during the segment walk, mask whatever follows as soon as the normalised segments are exactly `[linkPrefix]` (prefix ignoring case) — a `[linkPrefix, x]` check would miss `/invite/%2e%2e/<t>`, where that state never occurs. Output stays `/<prefix as sent>/[redacted]` plus the original query.
+- [x] Reword the comments at `logger.ts:18-20` and `logger.test.ts:18-20`: the mask covers a superset on purpose — every form the router or Fastify resolves to a link route, plus forms a raw client might send.
+- [x] Add an api-sync-report line for this change (no operation, status or code changes).
+- [x] Tests (unit, `logger.test.ts`): `http://host/invite/<t>`, `HTTP://host/Invite/<t>?x=1`, `http://host/reset-password/<t>`, `/invite/<t>/..`, `/invite/<t>/%2e%2e`, `/invite/<t>%2F..`, `/invite/%2e%2e/<t>`, plus every existing case. Unchanged: `http://host/assets/invite/x.js`, `http://host/`, and every existing unchanged case.
+- [x] RED proof: the new masked cases fail against the current `maskLinkTokens`.
 
 ## Edge cases
 
@@ -52,8 +52,8 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Definition of Done
 
-- [ ] No `incoming request` line contains an invitation or reset token for any path the SPA router or Fastify would resolve to a link route (including absolute-form targets), nor for any url whose normalisation passes through `[linkPrefix, token]`
-- [ ] The mask's comments state its real scope
-- [ ] The serializer never throws on a malformed url
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] No `incoming request` line contains an invitation or reset token for any path the SPA router or Fastify would resolve to a link route (including absolute-form targets), nor for any url whose normalisation reaches `[linkPrefix]` before a further segment
+- [x] The mask's comments state its real scope
+- [x] The serializer never throws on a malformed url
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds

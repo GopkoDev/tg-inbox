@@ -15,8 +15,9 @@ describe('maskLinkTokens', () => {
     expect(maskLinkTokens(url)).toBe(masked);
   });
 
-  // Non-canonical forms the SPA router still resolves to /invite/:token or /reset-password/:token
-  // (case, extra slashes, encoded segments, dot segments): the token must not be logged; the
+  // Non-canonical forms: the mask covers a superset on purpose — every form the SPA router or
+  // Fastify resolves to a link route (case, encoded letters, absolute-form targets), plus forms only
+  // a raw client sends (extra slashes, `%2F`, dot segments). The token must not be logged; the
   // normalised prefix that is logged instead is free-form.
   it.each([
     '/invite/tok123/',
@@ -32,6 +33,13 @@ describe('maskLinkTokens', () => {
     '/./invite/tok123',
     '/x/../invite/tok123',
     '/reset-password//tok123',
+    'http://host/invite/tok123',
+    'HTTP://host/Invite/tok123?x=1',
+    'http://host/reset-password/tok123',
+    '/invite/tok123/..',
+    '/invite/tok123/%2e%2e',
+    '/invite/tok123%2F..',
+    '/invite/%2e%2e/tok123',
   ])('hides the token in %s', (url) => {
     const masked = maskLinkTokens(url);
     expect(masked).not.toContain('tok123');
@@ -40,6 +48,10 @@ describe('maskLinkTokens', () => {
 
   it('keeps the query of a non-canonical link', () => {
     expect(maskLinkTokens('/invite//tok123?x=1')).toContain('?x=1');
+  });
+
+  it('keeps the query of an absolute-form link', () => {
+    expect(maskLinkTokens('HTTP://host/Invite/tok123?x=1')).toBe('/Invite/[redacted]?x=1');
   });
 
   it.each([
@@ -53,6 +65,8 @@ describe('maskLinkTokens', () => {
     '/health?x=1',
     '/assets/invite/x.js',
     '/%E0%A4%A',
+    'http://host/assets/invite/x.js',
+    'http://host/',
   ])('leaves %s unchanged', (url) => {
     expect(maskLinkTokens(url)).toBe(url);
   });

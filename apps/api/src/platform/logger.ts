@@ -15,10 +15,13 @@ const REDACT = [
 ];
 
 // Invitation and reset links carry their token in the path (`/invite/<t>`, `/reset-password/<t>`).
-// The SPA router resolves them after decoding and normalising the path, so the mask works on the same
-// normal form (not a pattern over the raw url): `//`, `%2F`, percent-encoded letters, any case and
-// `.` / `..` segments all reach the same page.
+// The mask works on a normalised path, not a pattern over the raw url, and covers a superset on
+// purpose: every form the SPA router or Fastify resolves to a link route (any case, encoded letters,
+// an absolute-form `http://host/...` target), plus forms only a raw client sends (`//`, `%2F`,
+// `.` / `..` segments). Once the normalised path is exactly a link prefix, whatever follows is masked,
+// even when a later `..` walks back over the token.
 const LINK_PREFIXES = new Set(['invite', 'reset-password']);
+const ABSOLUTE_FORM_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i;
 
 function decodeSegment(segment: string): string {
   try {
@@ -31,19 +34,20 @@ function decodeSegment(segment: string): string {
 /** Masks the token segment of an invitation / reset link; any other url is returned unchanged. */
 export function maskLinkTokens(url: string): string {
   const queryAt = url.indexOf('?');
-  const path = queryAt === -1 ? url : url.slice(0, queryAt);
+  const path = (queryAt === -1 ? url : url.slice(0, queryAt)).replace(ABSOLUTE_FORM_AUTHORITY, '');
   const query = queryAt === -1 ? '' : url.slice(queryAt);
   const segments: string[] = [];
   for (const raw of path.split(/\/|%2f/i)) {
     const segment = decodeSegment(raw);
+    if (segment === '') continue;
+    const [prefix] = segments;
+    if (segments.length === 1 && prefix !== undefined && LINK_PREFIXES.has(prefix.toLowerCase())) {
+      return `/${prefix}/[redacted]${query}`;
+    }
     if (segment === '..') segments.pop();
-    else if (segment !== '' && segment !== '.') segments.push(segment);
+    else if (segment !== '.') segments.push(segment);
   }
-  const [prefix, token] = segments;
-  if (prefix === undefined || token === undefined || !LINK_PREFIXES.has(prefix.toLowerCase())) {
-    return url;
-  }
-  return `/${prefix}/[redacted]${query}`;
+  return url;
 }
 
 /** Fastify's default `req` serializer (minus `version`: no route versioning), link tokens masked. */
