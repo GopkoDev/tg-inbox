@@ -49,5 +49,9 @@
 | T42 | [Make Docker-backed tests remove their containers and data, even on failure](./t42-docker-tests-clean-up-after-themselves.md) | infra | Dmytro Hopko | S | T38 | done |
 | T43 | [Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell](./t43-shell-renders-body-only-when-entered.md) | ui | Dmytro Hopko | S | — | done |
 | T44 | [Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test](./t44-scr02-scr03-copy-and-accept-test.md) | ui | Dmytro Hopko | S | — | done |
+| T45 | [Show role labels, not raw role values, in the picker, switcher and Team; reconcile the manifest](./t45-role-labels-in-picker-and-team.md) | ui | Dmytro Hopko | S | — | todo |
+| T46 | [Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments](./t46-shell-guard-failure-shows-retry.md) | ui | Dmytro Hopko | S | — | todo |
+| T47 | [Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch](./t47-framework-4xx-codes-and-hook-pin.md) | infra | Dmytro Hopko | S | — | todo |
+| T48 | [Remove test containers on every failure path and drop the named-volume loop from the clean script](./t48-test-container-teardown-on-every-failure.md) | infra | Dmytro Hopko | S | — | todo |
 
-**Total:** 44 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`, T38–T44 from `_review/review-2026-10-11-r2.md`), ~19.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.
+**Total:** 48 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`, T38–T44 from `_review/review-2026-10-11-r2.md`, T45–T48 from `_review/review-2026-10-11-r3.md`), ~21.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.

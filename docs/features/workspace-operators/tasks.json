@@ -993,6 +993,92 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t44-scr02-scr03-copy-and-accept-test.md",
       "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T45",
+      "title": "Show role labels, not raw role values, in the picker, switcher and Team; reconcile the manifest",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-12",
+        "AC-14"
+      ],
+      "dod": "No raw role value rendered anywhere in the web UI screens.md has one label per role Web unit tests green; e2e typecheck clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/workspaces/picker/WorkspacePicker.tsx",
+        "apps/web/src/features/workspaces/picker/WorkspaceSwitcher.tsx",
+        "apps/web/src/features/workspaces/team/Team.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "apps/web/src/shared/lib/roles.ts",
+        "apps/web/src/features/workspaces/invite/InviteDialog.tsx",
+        "apps/web/e2e/flows.spec.ts",
+        "docs/features/workspace-operators/screens.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t45-role-labels-in-picker-and-team.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T46",
+      "title": "Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "No reachable state leaves the shell on an endless skeleton Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/features/workspaces/team/useTeam.ts",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/NotFoundPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t46-shell-guard-failure-shows-retry.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T47",
+      "title": "Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-14",
+        "AC-21"
+      ],
+      "dod": "Every status/code pair the error handler can produce is in openapi.yaml Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/content-type.ts",
+        "apps/api/src/platform/content-type.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/errors.test.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t47-framework-4xx-codes-and-hook-pin.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T48",
+      "title": "Remove test containers on every failure path and drop the named-volume loop from the clean script",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No failure path in test setup/teardown leaves a container or volume Unit + integration green; `pnpm lint` clean; `docker ps -a --filter label=org.testcontainers=true` empty after the run",
+      "files_hint": [
+        "apps/api/src/test/postgres.ts",
+        "apps/api/src/test/postgres.int.test.ts",
+        "apps/web/e2e/global-setup.ts",
+        "scripts/clean-test-containers.sh"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t48-test-container-teardown-on-every-failure.md",
+      "source": "review-2026-10-11-r3"
     }
   ]
 }
