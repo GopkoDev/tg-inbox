@@ -1,0 +1,144 @@
+import { DisplayName } from '@tg/shared';
+import type { Clock } from '../../../platform/clock.js';
+import {
+  AlreadyAMemberError,
+  InvitationForAnotherEmailError,
+  InvitationInvalidError,
+  ValidationError,
+} from '../../../platform/errors.js';
+import { newId } from '../../../platform/ids.js';
+import { hashToken } from '../../../platform/tokens.js';
+import type { AccountUseCases } from '../../auth/app/accounts.js';
+import type { CredentialUseCases } from '../../auth/app/credentials.js';
+import type { SessionUseCases } from '../../auth/app/sessions.js';
+import { askFor, invitationIsUsable } from '../domain/invitation.js';
+import type { Role } from '../domain/membership.js';
+import type { InvitationRepo, MembershipRepo, UnitOfWork } from './ports.js';
+
+export interface AcceptInvitationDeps {
+  uow: UnitOfWork;
+  /** Non-transactional reads for the lookup (possession of the link is the scope). */
+  invitations: Pick<InvitationRepo, 'findByTokenHash'>;
+  memberships: Pick<MembershipRepo, 'hasAnyMember'>;
+  accounts: Pick<AccountUseCases, 'findAccountIdByEmail' | 'createAccount'>;
+  credentials: Pick<CredentialUseCases, 'verifyPassword'>;
+  sessions: Pick<SessionUseCases, 'openSession'>;
+  clock: Clock;
+}
+
+export interface SignedInAccount {
+  id: string;
+  email: string;
+}
+
+export interface InvitationView {
+  workspaceName: string;
+  email: string;
+  role: Role;
+  accountExists: boolean;
+}
+
+export interface InvitationAccepted {
+  workspace: { id: string; name: string; role: Role };
+  sessionToken: string;
+}
+
+const NO_LONGER_VALID = 'This invitation is no longer valid';
+
+export function createAcceptInvitation(deps: AcceptInvitationDeps) {
+  const { uow, invitations, memberships, accounts, credentials, sessions, clock } = deps;
+
+  async function lookUp(token: string, signedIn?: SignedInAccount) {
+    const invitation = await invitations.findByTokenHash(hashToken(token));
+    if (!invitation) throw new InvitationInvalidError(NO_LONGER_VALID, 'business_owner');
+    if (!invitationIsUsable(invitation, clock.now())) {
+      const ask = askFor(await memberships.hasAnyMember(invitation.workspaceId));
+      throw new InvitationInvalidError(NO_LONGER_VALID, ask);
+    }
+    if (signedIn && signedIn.email.trim().toLowerCase() !== invitation.email) {
+      throw new InvitationForAnotherEmailError(
+        'This invitation belongs to another email. Sign out and open the link again to accept it',
+      );
+    }
+    const accountId = await accounts.findAccountIdByEmail(invitation.email);
+    return { invitation, accountId };
+  }
+
+  return {
+    async lookUpInvitation(token: string, signedIn?: SignedInAccount): Promise<InvitationView> {
+      const { invitation, accountId } = await lookUp(token, signedIn);
+      return {
+        workspaceName: invitation.workspaceName,
+        email: invitation.email,
+        role: invitation.role,
+        accountExists: accountId !== undefined,
+      };
+    },
+
+    async acceptInvitation(
+      input: { token: string; password: string; displayName?: string },
+      signedIn?: SignedInAccount,
+    ): Promise<InvitationAccepted> {
+      const { invitation, accountId: existingId } = await lookUp(input.token, signedIn);
+
+      let displayName = '';
+      if (existingId === undefined) {
+        const parsed = DisplayName.safeParse(input.displayName ?? '');
+        if (!parsed.success) {
+          const reason = parsed.error.issues[0]?.message ?? 'is invalid';
+          throw new ValidationError(`display_name: ${reason}`, { field: 'display_name', reason });
+        }
+        displayName = parsed.data;
+      }
+
+      // Existing account: verified outside any transaction so a failure is committed on its own.
+      const verifiedId =
+        existingId === undefined
+          ? undefined
+          : await credentials.verifyPassword(invitation.email, input.password);
+
+      return uow.run(async (repos, tx) => {
+        const now = clock.now();
+        await repos.workspaces.lockForUpdate(invitation.workspaceId);
+        // A new account comes first: it enforces the password policy, so a rejection writes nothing.
+        const accountId =
+          verifiedId ??
+          (
+            await accounts.createAccount(
+              { email: invitation.email, displayName, password: input.password },
+              tx,
+            )
+          ).id;
+        const consumed = await repos.invitations.consume(
+          invitation.workspaceId,
+          invitation.tokenHash,
+          now,
+        );
+        if (!consumed) {
+          const ask = askFor(await repos.memberships.hasAnyMember(invitation.workspaceId));
+          throw new InvitationInvalidError(NO_LONGER_VALID, ask);
+        }
+        const existing = await repos.memberships.findByAccount(invitation.workspaceId, accountId);
+        if (existing) throw new AlreadyAMemberError('This person is already a member');
+        await repos.memberships.insert(invitation.workspaceId, {
+          id: newId(),
+          accountId,
+          role: invitation.role,
+          state: 'active',
+          lastUsedAt: null,
+          deactivatedAt: null,
+          createdAt: now,
+        });
+        const sessionToken = await sessions.openSession(accountId, tx);
+        return {
+          workspace: {
+            id: invitation.workspaceId,
+            name: invitation.workspaceName,
+            role: invitation.role,
+          },
+          sessionToken,
+        };
+      });
+    },
+  };
+}

@@ -1,3 +1,4 @@
+import type { Db } from '../../../platform/db.js';
 import type { MembershipState, Role } from '../domain/membership.js';
 
 export type InvitationState = 'pending' | 'accepted' | 'revoked' | 'superseded';
@@ -97,7 +98,10 @@ export interface WorkspaceRepos {
   invitations: InvitationRepo;
 }
 
-/** Runs `fn` in one transaction; all repos handed to it share that transaction. */
+/**
+ * Runs `fn` in one transaction; all repos handed to it share that transaction. `tx` is the same
+ * transaction, for passing to other modules' app layers (e.g. auth) so they join it.
+ */
 export interface UnitOfWork {
-  run<T>(fn: (repos: WorkspaceRepos) => Promise<T>): Promise<T>;
+  run<T>(fn: (repos: WorkspaceRepos, tx: Db) => Promise<T>): Promise<T>;
 }

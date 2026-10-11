@@ -16,7 +16,7 @@ export function workspaceRepos(db: Kysely<DB>): WorkspaceRepos {
 export class KyselyUnitOfWork implements UnitOfWork {
   constructor(private readonly db: Kysely<DB>) {}
 
-  run<T>(fn: (repos: WorkspaceRepos) => Promise<T>): Promise<T> {
-    return this.db.transaction().execute((trx) => fn(workspaceRepos(trx)));
+  run<T>(fn: (repos: WorkspaceRepos, tx: Kysely<DB>) => Promise<T>): Promise<T> {
+    return this.db.transaction().execute((trx) => fn(workspaceRepos(trx), trx));
   }
 }

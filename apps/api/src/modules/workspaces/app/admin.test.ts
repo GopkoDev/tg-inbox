@@ -42,7 +42,7 @@ function setup() {
       },
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos) };
+  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
   const clock = fixedClock(T0);
   const admin = createWorkspaceAdmin({ uow, clock, publicWebUrl: 'http://web.test' });
   return { admin, workspaces, invitations, members, clock };
