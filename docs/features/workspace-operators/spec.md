@@ -34,6 +34,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 - Automatic emails for invitations and password resets — links are copied and passed on by hand, so v1 does not depend on mail delivery.
 - Changing the role of an existing member and fine-grained permissions — two fixed roles (business owner, operator) cover teams of 3–10 people.
 - Connecting the business bot — that is roadmap step 3.
+- Self-service profile changes — a signed-in person cannot change their own password, name or email from the web panel in v1; a forgotten password goes through a platform admin (US-08).
 
 ## 4. User stories
 
@@ -91,7 +92,13 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** a platform admin and a pilot business named "Acme Flowers" together with its owner's email address
 **When** the platform admin creates the workspace with that name and owner email
-**Then** the workspace exists, awaiting its first business owner, with an invitation carrying the business owner role issued for that email, and the platform admin sees the invitation link to pass on; until that invitation is accepted nobody can see or act in the workspace
+**Then** the workspace exists, awaiting its first business owner, with an invitation carrying the business owner role issued for that email, and the platform admin sees the invitation link once, right after creation, to pass on; until that invitation is accepted nobody can see or act in the workspace
+
+### AC-01b (US-01) — happy path
+
+**Given** a workspace still awaiting its first business owner, whose owner invitation has expired or whose link was lost
+**When** a platform admin re-issues the first business owner invitation for that workspace
+**Then** the earlier invitation stops working, a new 7-day invitation with the business owner role is issued for the same email, and the platform admin sees its link once, right after issuing it
 
 ### AC-02 (US-01) — error
 
@@ -107,9 +114,15 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 ### AC-04 (US-02) — cross-context
 
-**Given** a valid invitation for an email that already has an account with an active membership in another workspace
+**Given** a valid invitation for an email that already has an account (whatever the state of its other memberships, and even if that account is already signed in on this device)
 **When** the person opens the invitation link
-**Then** the system asks them to sign in with their existing password instead of creating a new one, and after they sign in adds the new membership while their other memberships stay unchanged
+**Then** the system asks them to enter that account's existing password instead of creating a new one, and after they confirm it adds the new membership while their other memberships stay unchanged
+
+### AC-04b (US-02) — authorization
+
+**Given** a person signed in with an account whose email differs from the email the invitation was issued for
+**When** they open the invitation link
+**Then** the system does not add any membership to the signed-in account and tells them the invitation belongs to another email — sign out and open the link again to accept it
 
 ### AC-05 (US-02) — error
 
@@ -127,7 +140,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** an operator with an active account and at least one active membership
 **When** they sign in with the correct email and password
-**Then** the system opens the workspace they used last (or their only workspace)
+**Then** the system opens the workspace they used last; when they have exactly one active membership it opens that one; when the last-used workspace is no longer available to them (or there is none yet) and they have several active memberships, it shows the list of those workspaces and lets them pick one
 
 ### AC-08 (US-03) — error
 
@@ -139,7 +152,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** 10 failed sign-in attempts for the same email within 15 minutes
 **When** anyone tries to sign in to that email again within the next 15 minutes
-**Then** the system refuses even a correct password and tells them to try again later — "too many failed attempts"
+**Then** the system refuses even a correct password and tells them to try again later — "too many failed attempts"; it behaves exactly the same for an email that has no account, so the lockout never reveals whether an account exists. The 15 minutes count from the 10th failure; a successful sign-in or a password reset clears the failure count
 
 ### AC-10 (US-03) — authorization
 
@@ -157,11 +170,11 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** an operator with active memberships in "Acme Flowers" and "Bolt Bikes", currently working in "Acme Flowers"
 **When** they switch to "Bolt Bikes"
-**Then** the panel shows only "Bolt Bikes" data from then on, and their next sign-in opens "Bolt Bikes"
+**Then** on that device the panel shows only "Bolt Bikes" data from then on, while their other signed-in devices stay in the workspace they were in; their next sign-in on any device opens "Bolt Bikes"
 
 ### AC-13 (US-04) — authorization
 
-**Given** an operator who is not an active member of the "Bolt Bikes" workspace
+**Given** an operator who has never been a member of the "Bolt Bikes" workspace (a deactivated former member is covered by AC-17)
 **When** they try to open anything belonging to "Bolt Bikes" (for example through a link a colleague shared)
 **Then** the system behaves as if it does not exist — no data, no hint that the workspace or the item exists
 
@@ -169,7 +182,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** a business owner of "Acme Flowers"
 **When** they invite a new hire's email address as an operator
-**Then** a pending invitation valid for 7 days appears in the team list and the owner sees its link to copy; any earlier pending invitation for the same email stops working
+**Then** a pending invitation valid for 7 days appears in the team list and the owner sees its link to copy once, right after creating it (a lost link is replaced by inviting the same email again); any earlier pending invitation for the same email stops working
 
 ### AC-15 (US-05) — authorization
 
@@ -187,13 +200,13 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** an operator with active memberships in "Acme Flowers" and "Bolt Bikes", currently signed in to "Acme Flowers"
 **When** a business owner of "Acme Flowers" deactivates their membership
-**Then** within 5 seconds the operator can no longer see or do anything in "Acme Flowers", while their account and their access to "Bolt Bikes" stay intact
+**Then** from at most 5 seconds after the deactivation, every action or data load the operator makes in "Acme Flowers" is refused; at the first such refusal the panel removes "Acme Flowers" data from the screen and tells them their access to "Acme Flowers" was removed, then moves them to another workspace where they are active (or to the no-access screen of AC-10 when there is none); their account and their access to "Bolt Bikes" stay intact
 
 ### AC-18 (US-06) — domain invariant
 
-**Given** "Acme Flowers" has exactly one active business owner
-**When** that owner tries to deactivate their own membership
-**Then** the system refuses and explains that a workspace must always have at least one active business owner
+**Given** "Acme Flowers" has active business owners
+**When** any deactivation — of oneself or of another owner, including two deactivations made at the same moment — would leave the workspace with no active business owner
+**Then** the system refuses that deactivation and explains that a workspace must always have at least one active business owner (of two simultaneous deactivations at most the one that keeps an active owner succeeds); an owner may deactivate themselves while another active business owner remains
 
 ### AC-19 (US-06) — happy path
 
@@ -205,13 +218,13 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 
 **Given** a business owner of "Acme Flowers" with three members and one pending invitation
 **When** they open the team list and revoke the pending invitation
-**Then** they see each member's name, email, role and state, the revoked invitation disappears from the pending list, and its link stops working
+**Then** they see each member's name, email, role and state and each pending invitation's email, role and expiry (but not its link), the revoked invitation disappears from the pending list, and its link stops working
 
 ### AC-21 (US-08) — happy path
 
 **Given** a person who forgot the password of their account and asked the tg-inbox team for help
 **When** a platform admin issues a password-reset link for that account and the person sets a new valid password through it
-**Then** the person can sign in with the new password, every other session of that account ends, and the link cannot be used again
+**Then** the person is signed in on that device with the new password, every other session of that account ends, the failure count of AC-09 is cleared, and the link cannot be used again; the platform admin sees the link once, right after issuing it, and issuing a new reset link for the same account makes any earlier unused one stop working
 
 ### AC-22 (US-08) — domain invariant
 
@@ -225,28 +238,30 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 |---|---|---|
 | Latency p95 sign-in | ≤ 500 ms (deliberately slow password check included) | server request-duration logs, weekly p95 |
 | Latency p95 team / switch / invite actions | ≤ 300 ms | server request-duration logs, weekly p95 |
-| Deactivation takes effect | ≤ 5 s on every open session of the member in that workspace | integration test + manual check per release |
+| Deactivation takes effect | ≤ 5 s from deactivation until every action or data load of the member in that workspace is refused, on every open session (no proactive push to idle screens in v1) | integration test + manual check per release |
 | Availability | 99.5% monthly | uptime check on the health endpoint, monthly window |
 | Brute-force protection | ≤ 10 failed sign-in attempts per email per 15 min, then a 15-min lockout | integration test |
-| Session lifetime | ends after 30 days without activity; ends at once on sign-out (that device) or password reset (all devices) | integration test |
+| Session lifetime | ends after 30 days without activity (activity = an authenticated request triggered by a user action; automatic background checks do not extend the session); ends at once on sign-out (that device) or password reset (all devices) | integration test |
 | Cross-workspace isolation | 0 data reads or writes across workspaces | an isolation test for every data-access path, run in CI |
 
 ## 6.1 Security / privacy
 
 - **Data classification:** confidential — account credentials and the membership graph control access to every business's customer data.
+- **Email identity:** an email is compared ignoring letter case and surrounding spaces everywhere (accounts, invitations, membership checks, sign-in lockout) — `Bob@x.com` and ` bob@x.com` are the same account.
 - **Personal data touched:** account email (identifier, confidential), display name (low), password (secret — never stored or logged in recoverable form, never shown back), workspace name (internal).
 - **AuthZ/AuthN impact:** introduces authentication (email + password sessions) and two workspace roles. Every workspace-scoped action checks that the caller has an active membership in the active workspace; team management additionally requires the business owner role; creating workspaces and issuing reset links are platform-admin capabilities outside the web panel.
 - **Abuse cases:**
   - Cross-tenant access (opening another workspace's item by link or identifier): hide existence — the item behaves as not found, so workspace names and ids cannot be probed.
-  - Credential stuffing / password guessing: 10 failures per email per 15 min → 15-min lockout; one generic error for unknown email and wrong password (no account enumeration).
-  - Forwarded or intercepted invitation link: single use, 7-day expiry, bound to one email, revocable; the owner sees who joined in the team list.
+  - Credential stuffing / password guessing: 10 failures per email per 15 min → 15-min lockout, applied identically to emails with and without an account; one generic error for unknown email and wrong password (no account enumeration).
+  - Forwarded or intercepted invitation link: single use, 7-day expiry, bound to one email (a different signed-in account cannot accept it), revocable, shown only once at creation; the owner sees who joined in the team list.
+  - Unverified email ownership (accepted risk): with no mail delivery nobody proves they own the invited email — whoever holds the link becomes that email's account. Mitigated by passing links over a trusted channel and by the owner seeing who joined; revisit together with automatic emails (§3).
   - Former staff keeping access: deactivation cuts access to that workspace within 5 s; a password reset ends every session of the account.
   - Over-reaching business owner: an owner can never reset another person's password or touch that person's other memberships — reset links come only from a platform admin.
 - **Security review:** Required — new authentication boundary, new personal data (email, password) and the tenancy boundary every later feature relies on.
 
 ## 7. Metrics / KPIs
 
-- **Pilot workspaces with ≥3 active operators** (members who signed in during the last 7 days) — baseline: 0, target: ≥5 workspaces within 30 days of onboarding the first pilot.
+- **Pilot workspaces with ≥3 active operators** (members who made at least one user action in that workspace during the last 7 days) — baseline: 0, target: ≥5 workspaces within 30 days of onboarding the first pilot.
 - **Time from workspace creation to the owner's first sign-in** — baseline: none (no workspaces yet), target: median ≤ 1 day across pilots.
 - **Invitation acceptance rate** (accepted ÷ issued, excluding revoked) — baseline: none, target: ≥ 80% accepted within 7 days.
 - **Manual password resets** issued by platform admins — baseline: 0, target: ≤ 1 per workspace per month (above that, self-serve reset by email moves up the roadmap).
@@ -256,3 +271,4 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary o
 - [ ] Should operators (not only business owners) see the team list — e.g. to know whom to hand a conversation to? Default now: business owners only. — owner: Dmytro Hopko, due: before roadmap step 5 (assignment) is specified
 - [ ] Does a platform admin need to suspend a whole workspace when a pilot ends? Default now: no — deactivate its members instead. — owner: Dmytro Hopko, due: before `sdd:design workspace-operators`
 - [ ] When does self-serve password reset by email replace admin-issued reset links? Default now: admin-issued links through the pilot phase. — owner: Dmytro Hopko, due: before onboarding pilot #6
+- [ ] Through what channel does a platform admin act (create workspace, re-issue the first owner invitation, issue reset links) and how is the admin authenticated? Default now: a command run on the server by the tg-inbox team — access to the server is the authority, no HTTP surface, every action written to a log. — owner: Dmytro Hopko, due: during `sdd:design workspace-operators`

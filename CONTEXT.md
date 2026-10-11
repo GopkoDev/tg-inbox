@@ -7,7 +7,7 @@ updated_at: "2026-10-11"
 
 ## Glossary
 
-- Account — a person's single sign-in identity on the platform (email + password), shared across every workspace they belong to. NOT Operator (an operator is the role an account holds inside one workspace).
+- Account — a person's single sign-in identity on the platform (email + password), shared across every workspace they belong to; its email is compared ignoring letter case and surrounding spaces. NOT Operator (an operator is the role an account holds inside one workspace).
 - Business owner — a workspace member with the owner role: manages the workspace's team (invites, deactivates and reactivates operators and other business owners) and can do everything an operator can. NOT Platform admin (an owner manages only their own workspace).
 - End customer — a person who writes to a workspace's bot in Telegram and never uses the web panel. NOT Operator (operators answer end customers from the web).
 - Invitation — a single-use, expiring link for one email address and one role, through which that person joins the workspace; created by a business owner, or by a platform admin for a workspace's first business owner. NOT Membership (an invitation only offers a membership until it is accepted).
