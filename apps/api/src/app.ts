@@ -2,15 +2,20 @@ import cookie from '@fastify/cookie';
 import websocket from '@fastify/websocket';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { createAccountUseCases } from './modules/auth/app/accounts.js';
 import { createCredentialUseCases } from './modules/auth/app/credentials.js';
 import { createResetLinkUseCases } from './modules/auth/app/reset-links.js';
 import { createSessionUseCases } from './modules/auth/app/sessions.js';
 import { registerAuth } from './modules/auth/http/routes.js';
+import { createSessionResolver } from './modules/auth/http/session-resolver.js';
 import { createAccountRepo } from './modules/auth/infra/account-repo.js';
 import { createPasswordHasher } from './modules/auth/infra/password-hasher.js';
 import { createResetLinkRepo } from './modules/auth/infra/reset-link-repo.js';
 import { createSessionRepo } from './modules/auth/infra/session-repo.js';
 import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-repo.js';
+import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
+import { registerWorkspaces } from './modules/workspaces/http/routes.js';
+import { KyselyUnitOfWork } from './modules/workspaces/infra/unit-of-work.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
@@ -63,7 +68,17 @@ export async function buildApp(
     transaction: (fn) => db.transaction().execute(fn),
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
+  const accountUseCases = createAccountUseCases({ accounts: accountRepo, hasher, clock });
+  const authenticate = createSessionResolver({ sessionUseCases, accountUseCases });
   // --- end auth dependencies ---
+
+  // --- workspaces dependencies (T17 extracts this block into a shared dependency builder) ---
+  const workspaceAccess = createWorkspaceAccess({
+    uow: new KyselyUnitOfWork(db),
+    clock,
+    auth: accountUseCases,
+  });
+  // --- end workspaces dependencies ---
 
   await registerHealth(app, { db });
   await app.register(
@@ -74,6 +89,10 @@ export async function buildApp(
         resetLinkUseCases,
         cookie: { secure: config.NODE_ENV !== 'development' },
       }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) => registerWorkspaces(api, { access: workspaceAccess, authenticate }),
     { prefix: '/api' },
   );
 
