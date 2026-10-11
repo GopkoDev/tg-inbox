@@ -26,12 +26,13 @@ Telegram may deliver updates for one bot over several parallel connections and r
 ## Considered options
 
 1. **Telegram's message id as the order key; edits applied by Telegram's edit time** — each message stores the Telegram message id (unique per conversation), the send time and the receive time; reads order by message id; an edit updates the text only when its `edit_date` is later than the stored one (ties broken by the larger `update_id`).
-2. **Arrival order** — order by the time tg-inbox received the message; edits applied as they arrive.
-3. **Telegram send time** — order by `date`, tie-broken by arrival.
+2. **Telegram send time** — order by `date`, tie-broken by Telegram message id where dates are equal.
+
+(Arrival order is not listed: AC-11 excludes it explicitly.)
 
 ## Decision outcome
 
-**Chosen:** Option 1. It is the only key that is exact, stable under redelivery and parallel delivery, and identical to what the customer sees in Telegram. Option 2 breaks AC-11 by definition. Option 3 cannot order several messages sent within the same second (common for albums and quick bursts). The edit rule is a conditional update, so concurrent or out-of-order edits converge on the last one; an edit whose message is not stored matches no row and is dropped, as AC-10 requires. Shared live-location updates arrive as edits without text and change nothing (AC-09).
+**Chosen:** Option 1. It is the only key that is exact, stable under redelivery and parallel delivery, and identical to what the customer sees in Telegram. Option 2 needs the message id as a tie-breaker anyway, because albums and quick bursts share one second, so it reduces to option 1 with a redundant first key — and it would let a corrected device clock reorder history. The edit rule is a conditional update, so concurrent or out-of-order edits converge on the last one; an edit whose message is not stored matches no row and is dropped, as AC-10 requires. Shared live-location updates arrive as edits without text and change nothing (AC-09).
 
 ## Consequences
 

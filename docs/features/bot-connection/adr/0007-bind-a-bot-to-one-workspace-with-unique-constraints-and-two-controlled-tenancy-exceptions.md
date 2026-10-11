@@ -26,11 +26,11 @@ A bot belongs to at most one workspace and a workspace keeps at most one bot (CO
 ## Considered options
 
 1. **Unique constraints decide ownership; two listed reads produce the workspace id** — the bots table has a unique `workspace_id` and a unique `telegram_bot_id`; a bot row lives while the bot is connected or has captured conversations, and is deleted on disconnect when nothing was captured. Connecting inserts or updates the workspace's own row; a unique violation on `telegram_bot_id` means "belongs to another workspace". The only reads without a `workspaceId`: *bot by webhook id* (scoped by possession of the matching webhook secret) and *bots due for a health check* (a system job; returns ids and workspace ids only).
-2. **Ownership checked by a cross-workspace query** — before connecting, read whether any other workspace's row holds this Telegram bot id; release the binding on every disconnect.
+2. **Ownership checked by a cross-workspace query under a lock** — the same row lifecycle (rows with captures outlive a disconnect), but before connecting the application reads whether any other workspace's row holds this Telegram bot id, serialised by an advisory lock on that id.
 
 ## Decision outcome
 
-**Chosen:** Option 1. The database enforces both invariants under concurrency (two owners in two workspaces pasting the same token at once), and the refusal is decided without the application ever reading another workspace's row, so there is nothing to leak. Option 2 needs an extra cross-tenant read on the hottest owner action, races without a lock, and releasing the binding on every disconnect contradicts AC-04 and AC-05 (history keeps the bot bound). Keeping the row after a disconnect that had captures is also what makes AC-19 work: the same bot reconnects to the same row and existing conversations continue.
+**Chosen:** Option 1. The database enforces both invariants under concurrency (two owners in two workspaces pasting the same token at once), and the refusal is decided without the application ever reading another workspace's row, so there is nothing to leak. Option 2 adds a third cross-tenant read to the exception list on the owner's main action and needs a lock to be correct, where a constraint is correct by construction. Keeping the row after a disconnect that had captures is also what makes AC-19 work: the same bot reconnects to the same row and existing conversations continue.
 
 The two exceptions are added to the list kept in the workspace-operators SAD §5 and `CLAUDE.md`; each gets its own isolation test.
 

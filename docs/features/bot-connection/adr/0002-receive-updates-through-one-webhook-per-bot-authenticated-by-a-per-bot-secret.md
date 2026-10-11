@@ -28,12 +28,13 @@ Every connected bot must deliver its private messages to tg-inbox (AC-01, AC-07)
 ## Considered options
 
 1. **One webhook URL per bot, authenticated by a per-bot secret** — `POST /api/telegram/webhook/<bot id>` where `<bot id>` is tg-inbox's own bot row id; `setWebhook` registers a random per-bot `secret_token`, which Telegram echoes in `X-Telegram-Bot-Api-Secret-Token`; only its hash is stored and compared in constant time.
-2. **One webhook URL per bot with the bot token in the path** — the classic Bot API pattern; the token itself is the authenticator.
-3. **Long polling per bot inside the API process** — one `getUpdates` loop per connected bot; no public endpoint.
+2. **Long polling per bot inside the API process** — one `getUpdates` loop per connected bot; no public endpoint.
+
+(A webhook path carrying the bot token — Telegram's classic pattern — is not listed: the repo's Telegram convention already requires header authentication and forbids tokens in logs.)
 
 ## Decision outcome
 
-**Chosen:** Option 1. A public HTTPS endpoint is needed anyway for later steps, and webhooks give push latency without one long-lived loop per tenant in the shared process (option 3 also makes "another service took the messages over" invisible until a poll fails with a conflict, and makes takeover-by-webhook a silent loss). Option 2 puts the token in every request line, proxy log and access log, breaking the token-secrecy target. With option 1 the URL reveals only an opaque id, the secret proves Telegram sent the request for that bot, and `getWebhookInfo` comparing the registered URL with ours detects takeover. `setWebhook` always sets `allowed_updates: ["message", "edited_message"]` and a bounded `max_connections` (sad.md §7).
+**Chosen:** Option 1. A public HTTPS endpoint is needed anyway for later steps, and webhooks give push latency without one long-lived loop per tenant in the shared process (option 2 also makes "another service took the messages over" invisible until a poll fails with a conflict, and makes takeover-by-webhook a silent loss). With option 1 the URL reveals only an opaque id, the secret proves Telegram sent the request for that bot, and `getWebhookInfo` comparing the registered URL with ours detects takeover. `setWebhook` always sets `allowed_updates: ["message", "edited_message"]` and a bounded `max_connections` (sad.md §7).
 
 Responses: unknown bot id or a missing / mismatched secret → `401` with an empty body and nothing recorded (AC-14); a disconnected bot keeps neither token nor secret, so any late delivery for it fails the secret check the same way and nothing is captured (AC-18); a bot in "needs a new token" or "taken over" state still captures anything Telegram delivers with the right secret, since the secret proves origin; a captured or deliberately ignored update → `200`; a server failure → `5xx` so Telegram redelivers.
 

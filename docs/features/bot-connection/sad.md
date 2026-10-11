@@ -30,7 +30,7 @@ target_surfaces: [backend-service, web-frontend]
 | Tech Lead | SAD approval | Yes |
 | Security Lead | Security review of the new tenant secret, the unauthenticated inbound entry point and end-customer personal data (spec §6.1: review required) | Yes |
 
-<!-- Decision overrides (¶4) — populated by the critic resolution loop, empty otherwise. -->
+- Decision override: AC-15's "a failed exchange with Telegram changes the state at once" is read as Telegram *answering* with a failure about the bot — the stored token rejected (→ "needs a new token") or the webhook registered elsewhere (→ "taken over"); when Telegram cannot be reached (network, 5xx, rate limit) the state is kept and the page shows when it was last checked — rationale: an outage of Telegram or of our network is not a fault of the bot, and flipping every bot to "not working" on a blip would send owners to BotFather for nothing; see §11 (state may age past 5 minutes during a Telegram outage) and ADR-0008.
 
 ## 2. Constraints
 
@@ -143,13 +143,13 @@ The backend keeps the repo's modular-monolith layering unchanged and adds three 
 **Controlled exceptions to the tenancy rule** (added to the list in workspace-operators SAD §5 and `CLAUDE.md`, each with its own isolation test):
 
 - *bot by webhook id* (`bots`) — scoped by possession of the matching webhook secret: the lookup returns the row only when the secret's hash matches, and produces the workspace id for the capture;
-- *bots due for a health check* (`bots`) — used only by the scheduled job; returns bot ids and workspace ids of connected or taken-over bots whose last check is at least 4 minutes old; each check then runs scoped by that workspace id.
+- *bots due for a health check* (`bots`) — used only by the scheduled job; returns bot ids and workspace ids of connected or taken-over bots whose last check is at least 3 minutes old (§8 freshness budget); each check then runs scoped by that workspace id.
 
 Every other method of the three modules takes `workspaceId`. The AC-04 "belongs to another workspace" refusal comes from the unique constraint on `telegram_bot_id`, not from a read.
 
 **Cross-module app-layer calls:**
 
-- `bots` → `conversations`: *capture inbound message* (workspace id, bot id, capture epoch, normalised message), *last message received time*, *has conversations* (decides whether a disconnect deletes the bot row and whether AC-05 applies).
+- `bots` → `conversations`: *capture inbound message* (workspace id, normalised message — `bots` has already applied the inbound filter and the capture epoch), *last message received time*, *has conversations* (decides whether a disconnect deletes the bot row and whether AC-05 applies).
 - `conversations` → `contacts`: *upsert contact from profile* within the capture transaction (refreshes name, username and language only when the message is newer than the stored profile).
 - `bots` → `contacts`: *count contacts* for the settings page.
 
@@ -159,7 +159,8 @@ Every other method of the three modules takes `workspaceId`. The AC-04 "belongs 
 apps/api/src/
 ├── modules/bots/
 │   ├── domain/       connection states + transitions, token format check, update filter
-│   │                 (private chat, human sender, no business connection), update → normalised message
+│   │                 (private chat, human sender, no business connection, not before the capture
+│   │                 epoch), update → normalised message
 │   ├── app/          connect-or-rotate (paste), reconnect with stored token, disconnect,
 │   │                 get bot settings, accept webhook update, run health check; ports: bot repo,
 │   │                 Telegram gateway, token cipher, capture (conversations), contact count (contacts)
@@ -257,22 +258,22 @@ sequenceDiagram
                 Bots-->>Http: workspace keeps one business bot
             else no row or the same bot
                 Bots->>Tg: getWebhookInfo
-                alt registered URL is another service's and no confirmation sent
+                Tg-->>Bots: registered webhook URL
+                Bots->>Db: begin, insert or update the row with the encrypted token and state connected
+                alt unique Telegram bot id violated
+                    Db-->>Bots: bot bound to another workspace, rolled back
+                    Bots-->>Http: bot already belongs to another workspace
+                else registered URL is another service's and no confirmation sent
+                    Bots->>Db: roll back
                     Bots-->>Http: confirmation required with bot name and username
-                    Http-->>Web: show the takeover warning
                 else no foreign webhook or the owner confirmed
-                    Bots->>Db: insert or update the row with the encrypted token and state connected
-                    alt unique Telegram bot id violated
-                        Db-->>Bots: bot bound to another workspace
-                        Bots-->>Http: bot already belongs to another workspace
-                    else saved
-                        Bots->>Tg: setWebhook with our URL, secret, allowed updates, drop pending only on a new connection
-                        alt setWebhook fails
-                            Bots->>Db: restore the previous row
-                            Bots-->>Http: Telegram unavailable, try again
-                        else registered
-                            Bots-->>Http: connected bot name, username and state
-                        end
+                    Bots->>Db: commit
+                    Bots->>Tg: setWebhook with our URL, secret, allowed updates, drop pending only on a new connection
+                    alt setWebhook fails
+                        Bots->>Db: restore the previous row
+                        Bots-->>Http: Telegram unavailable, try again
+                    else registered
+                        Bots-->>Http: connected bot name, username and state
                     end
                 end
             end
@@ -282,7 +283,7 @@ sequenceDiagram
     Web-->>Owner: Bot settings, or the reason on the paste dialog
 ```
 
-The confirming request after a takeover warning repeats the whole flow with the confirmation flag, so a webhook change between the two requests is re-checked. Reconnect after a takeover with the stored token (AC-16b) runs the same steps from `getMe`, with the decrypted stored token instead of a pasted one; a rejection there moves the bot to "needs a new token" (ADR-0008).
+The ownership refusal (AC-04) is decided before the takeover warning, as in `ux-flows.md`: the row write is attempted in a transaction that is rolled back when confirmation is still needed, so an owner is never asked to confirm a takeover of a bot that belongs to another workspace; no Telegram call runs inside that transaction. The confirming request after a takeover warning repeats the whole flow with the confirmation flag, so a webhook change between the two requests is re-checked. Reconnect after a takeover with the stored token (AC-16b) runs the same steps from `getMe`, with the decrypted stored token instead of a pasted one; a rejection there moves the bot to "needs a new token" (ADR-0008).
 
 **Critical flow 2: Capture an inbound message (US-02, US-03, US-04 — AC-07, AC-08, AC-09, AC-11, AC-12, AC-14)**
 
@@ -382,7 +383,7 @@ No production target is chosen yet (architecture map: deferred until the first p
 | Authorization | Bot routes live under `/api/workspaces/:workspaceId/bot…` behind the `workspaces` guard (non-member → not found) and require the owner role (`OwnerOnlyError` for operators, AC-03); the webhook route is outside the workspace prefix and resolves the workspace only through the secret | workspace-operators ADR-0003 |
 | Tenancy | Every repository method takes `workspaceId`, except the two reads of §5; isolation tests per repository and per route; the bot ↔ workspace binding is enforced by unique constraints | [ADR-0007](adr/0007-bind-a-bot-to-one-workspace-with-unique-constraints-and-two-controlled-tenancy-exceptions.md) |
 | Secrets | Bot tokens: AES-256-GCM with a key id, decrypted only in the `bots` infra layer right before a Bot API call, dropped on disconnect, never in any response schema. Webhook secrets: 32 random bytes in Telegram's allowed alphabet, only a SHA-256 hash stored | [ADR-0006](adr/0006-encrypt-bot-tokens-at-rest-with-an-application-key.md) |
-| Telegram calls | Every call through `telegramApi(token)` (with `TELEGRAM_API_ROOT` when set), behind a `bots` gateway port; per-call timeout so owner actions stay within 3 s; outcomes classified as unauthorized (state change), transient (no state change, retry) or other | `CLAUDE.md` + [ADR-0008](adr/0008-check-bot-health-with-a-scheduled-job-and-show-the-stored-state.md) |
+| Telegram calls | Every call through `telegramApi(token)` (with `TELEGRAM_API_ROOT` when set), behind a `bots` gateway port; per-call timeout of 1 s on owner actions (so connect / rotate / disconnect stay within 3 s) and 10 s in health checks; outcomes classified as unauthorized (state change), transient (no state change, retry) or other | `CLAUDE.md` + [ADR-0008](adr/0008-check-bot-health-with-a-scheduled-job-and-show-the-stored-state.md) |
 | Side-effect ordering | Owner actions: validate with Telegram outside any transaction, write the row, then call `setWebhook`; on failure restore the previous row. Disconnect: call `deleteWebhook` (dropping pending updates) only when `getWebhookInfo` shows our URL — never remove another service's webhook; an unauthorized answer means the token is dead and the disconnect proceeds; a transient failure refuses with "try again" and changes nothing | here |
 | Idempotency and order | Messages unique per (conversation, Telegram message id); contacts per (workspace, Telegram user id); conversations per (workspace, contact); order by Telegram message id; edits by edit time with update-id tie-break; profile refresh by message time | [ADR-0003](adr/0003-capture-each-update-inside-the-webhook-request-with-idempotent-writes.md), [ADR-0004](adr/0004-order-messages-by-telegram-message-id-and-apply-edits-by-telegram-edit-time.md) |
 | Inbound filter | `allowed_updates` = message, edited_message; only `chat.type = private`, a non-bot sender and no `business_connection_id` are captured; anything else is acknowledged and dropped (AC-12) | here |
@@ -390,7 +391,8 @@ No production target is chosen yet (architecture map: deferred until the first p
 | Time | Domain times (connected-at, last-checked-at, received-at) come from the clock port; Telegram's `date` / `edit_date` are stored as given | workspace-operators §8 |
 | Error handling | The existing envelope; new specific codes (indicative, fixed at the `api` stage): bot token invalid, bot belongs to another workspace, workspace keeps one bot (connected / history variants), takeover confirmation required, Telegram unavailable, no bot connected | `CLAUDE.md` + here |
 | ID strategy | UUIDv7 from `newId()` for bots, contacts, conversations, messages; Telegram ids as `bigint` | `CLAUDE.md` |
-| Events / jobs | pg-boss queues `bots.schedule-health-checks` (cron, every minute) and `bots.check-health` (one singleton job per bot); capture emits nothing in this step | [ADR-0008](adr/0008-check-bot-health-with-a-scheduled-job-and-show-the-stored-state.md) |
+| Events / jobs | pg-boss queues `bots.schedule-health-checks` (cron, every minute) and `bots.check-health` (one singleton job per bot); capture emits nothing in this step |
+| Freshness budget | AC-15's 5 minutes = a check becomes due 3 minutes after the last one + up to 1 minute until the next cron tick + two Bot API calls of at most 10 s each + queue pickup, leaving ~40 s of slack; the due threshold lives in the `bots` domain, not in config | [ADR-0008](adr/0008-check-bot-health-with-a-scheduled-job-and-show-the-stored-state.md) |
 | Live updates | None — the Bot settings page loads on open and after each action; no WebSocket push | [ADR-0008](adr/0008-check-bot-health-with-a-scheduled-job-and-show-the-stored-state.md) |
 | Internationalisation | N/A — one UI language; the contact's Telegram language code is stored as data | — |
 | Rate limiting | None on the webhook (Telegram's `max_connections` bounds per-bot concurrency); per-sender limits deferred (spec §6.1) | here |
@@ -412,7 +414,7 @@ ADR files live under `docs/features/bot-connection/adr/NNNN-<title>.md`. Repo-wi
 
 ## 10. Quality requirements
 
-Each §1 quality goal expanded into testable scenarios; targets are quoted from spec §6.
+Each §1 quality goal expanded into testable scenarios; targets are quoted from spec §6, except QG-3b whose target is quoted from spec AC-15.
 
 **QG-1a. Capture completeness and order**
 - **When:** Telegram delivers updates for a connected bot, including the same update twice, concurrent deliveries, a late redelivery of an older message, out-of-order edits, and deliveries during a database outage that Telegram retries.
@@ -439,10 +441,10 @@ Each §1 quality goal expanded into testable scenarios; targets are quoted from 
 - **Then:** "Latency p95 connect / rotate / disconnect ≤ 3 s (includes the round-trips to Telegram)"; "Bot settings load p95 ≤ 300 ms".
 - **How verify:** "server request-duration logs, weekly p95" per route; the settings route is asserted in review to make no Bot API call.
 
-**QG-3b. State freshness**
+**QG-3b. State freshness** (target from spec AC-15 — spec §6 has no freshness row)
 - **When:** a bot's token is revoked, the bot is deleted, or another service takes over its webhook.
-- **Then:** the state, name and username are "never more than 5 minutes old, and a failed exchange with Telegram changes the state at once" (AC-15); the owner sees "not working — needs a new token" (AC-16) or "not receiving messages — another service took them over" (AC-16b).
-- **How verify:** integration tests with a controllable clock and a fake Bot API: a bot last checked 4 minutes ago is checked on the next tick, an unauthorized `getMe` moves it to "needs a new token", a foreign webhook URL moves it to "taken over", and a transient failure leaves the state unchanged.
+- **Then:** the state, name and username are "never more than 5 minutes old, and a failed exchange with Telegram changes the state at once" (AC-15, read per the §1 ¶4 override); the owner sees "not working — needs a new token" (AC-16) or "not receiving messages — another service took them over" (AC-16b).
+- **How verify:** integration tests with a controllable clock and a fake Bot API: a bot last checked 3 minutes ago is checked on the next tick and no bot's last check is ever older than 5 minutes across a simulated hour, an unauthorized `getMe` moves it to "needs a new token", a foreign webhook URL moves it to "taken over", and a transient failure leaves the state unchanged.
 
 **QG-4. Availability**
 - **When:** the service runs through a calendar month.
