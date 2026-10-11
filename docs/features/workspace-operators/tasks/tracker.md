@@ -22,7 +22,7 @@
 | T15 | [Expose the invitation lookup and acceptance routes](./t15-invitation-routes.md) | ports | Dmytro Hopko | M | T10, T14 | done |
 | T16 | [Expose the owner-only team routes](./t16-team-routes.md) | ports | Dmytro Hopko | M | T12, T14 | done |
 | T17 | [Extract the shared dependency builder, serve the SPA from one origin, update the conventions docs](./t17-wiring-same-origin.md) | wiring | Dmytro Hopko | M | T14, T15, T16 | done |
-| T18 | [Build the admin CLI with its three commands](./t18-admin-cli.md) | ports | Dmytro Hopko | M | T8, T9, T17 | todo |
+| T18 | [Build the admin CLI with its three commands](./t18-admin-cli.md) | ports | Dmytro Hopko | M | T8, T9, T17 | done |
 | T19 | [Lay the web foundation: shadcn primitives, API client, shared guard handling, stores](./t19-web-foundation.md) | ui | Dmytro Hopko | M | T2, T3 | done |
 | T20 | [Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found](./t20-sign-in-and-resolution.md) | ui | Dmytro Hopko | M | T19 | done |
 | T21 | [Build SCR-02 accept invitation and SCR-03 link unavailable](./t21-accept-invitation-screens.md) | ui | Dmytro Hopko | M | T20 | done |
