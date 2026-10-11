@@ -7,6 +7,7 @@ import { registerAuth } from './modules/auth/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import type { Config } from './platform/config.js';
+import { requireJsonBodies } from './platform/content-type.js';
 import { registerErrorHandler } from './platform/errors.js';
 import { startJobs } from './platform/jobs.js';
 import { loggerOptions } from './platform/logger.js';
@@ -32,6 +33,7 @@ export async function buildApp(
       return true;
     },
   });
+  requireJsonBodies(app);
   await app.register(websocket);
   await app.register(cookie);
   if (config.WEB_DIST_DIR) {

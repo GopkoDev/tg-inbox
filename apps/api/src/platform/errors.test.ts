@@ -1,4 +1,6 @@
 import Fastify from 'fastify';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
+import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
 import {
   AccessRemovedError,
@@ -60,5 +62,32 @@ describe('error handler', () => {
     });
     const res = await app.inject('/e');
     expect(res.json().error.details).toEqual({ ask: 'tg_inbox_team' });
+  });
+
+  it('shapes route zod validation errors as plain message + field details', async () => {
+    const app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    registerErrorHandler(app);
+    app.post(
+      '/v',
+      {
+        schema: {
+          body: z.object({
+            password: z.string().min(10, 'The password must be at least 10 characters long'),
+          }),
+        },
+      },
+      () => ({ ok: true }),
+    );
+    const res = await app.inject({ method: 'POST', url: '/v', payload: { password: 'short' } });
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toEqual({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'The password must be at least 10 characters long',
+        details: { field: 'password' },
+      },
+    });
   });
 });

@@ -23,6 +23,17 @@ describe('skeleton smoke test', () => {
     expect(response.json()).toEqual({ status: 'ok', db: 'up' });
   });
 
+  it('refuses a text/plain POST to a mutating /api route before the handler runs', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-out',
+      headers: { 'content-type': 'text/plain' },
+      payload: 'x',
+    });
+    expect(response.statusCode).toBe(415);
+    expect(response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+  });
+
   it('answers unknown routes with the error envelope', async () => {
     const response = await app.inject({ method: 'GET', url: '/nope' });
     expect(response.statusCode).toBe(404);

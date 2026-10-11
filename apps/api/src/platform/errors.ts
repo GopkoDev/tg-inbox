@@ -115,9 +115,17 @@ export function registerErrorHandler(
         .send(envelope(error.code, error.message, error.details));
     }
     if (error.validation) {
+      const first = error.validation[0];
+      const field = first?.instancePath.split('/').filter(Boolean).at(-1);
       return reply
         .status(400)
-        .send(envelope(ErrorCode.VALIDATION_ERROR, error.message, error.validation));
+        .send(
+          envelope(
+            ErrorCode.VALIDATION_ERROR,
+            first?.message ?? 'Invalid request',
+            field ? { field } : undefined,
+          ),
+        );
     }
     request.log.error({ err: error }, 'unhandled error');
     return reply.status(500).send(envelope(ErrorCode.INTERNAL_ERROR, 'Internal server error'));

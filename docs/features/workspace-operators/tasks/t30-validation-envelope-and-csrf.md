@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T30 — Shape route validation errors as the contract's field details and accept only JSON on mutating routes
@@ -47,9 +47,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] In `registerErrorHandler`, when `error.validation` is a zod issue list, answer `400 VALIDATION_ERROR` with `message` = the first issue's plain message (no `body/<path>` prefix) and `details` = `{ field: <last path segment of the first issue> }`.
-- [ ] Reject unsafe-method requests under `/api` whose `content-type` is present and not `application/json` with `415` (or remove the `text/plain` content-type parser) — a body-less POST with no content-type must still work for the panel's fetch client. Place the hook in `platform/` and register it in `buildApp()`.
-- [ ] Tests: a route with a zod body schema returns `{ error: { code: 'VALIDATION_ERROR', message: '<plain>', details: { field: 'password' } } }`; a `text/plain` POST to a body-less mutating route is refused; an empty JSON POST is accepted.
+- [x] In `registerErrorHandler`, when `error.validation` is a zod issue list, answer `400 VALIDATION_ERROR` with `message` = the first issue's plain message (no `body/<path>` prefix) and `details` = `{ field: <last path segment of the first issue> }`.
+- [x] Reject unsafe-method requests under `/api` whose `content-type` is present and not `application/json` with `415` (or remove the `text/plain` content-type parser) — a body-less POST with no content-type must still work for the panel's fetch client. Place the hook in `platform/` and register it in `buildApp()`.
+- [x] Tests: a route with a zod body schema returns `{ error: { code: 'VALIDATION_ERROR', message: '<plain>', details: { field: 'password' } } }`; a `text/plain` POST to a body-less mutating route is refused; an empty JSON POST is accepted.
 
 ## Edge cases
 
@@ -61,8 +61,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Every route-schema 400 matches the contract error shape
-- [ ] CSRF content-type rule enforced and tested
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Every route-schema 400 matches the contract error shape
+- [x] CSRF content-type rule enforced and tested
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
