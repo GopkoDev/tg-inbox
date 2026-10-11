@@ -35,7 +35,7 @@
 | T28 | [Make concurrent invitation acceptance refuse cleanly instead of failing with 500](./t28-accept-invitation-concurrency.md) | app | Dmytro Hopko | M | T29 | todo |
 | T29 | [Make the sign-in lockout atomic per email and use the contract's credential message](./t29-atomic-sign-in-lockout.md) | app | Dmytro Hopko | M | — | done |
 | T30 | [Shape route validation errors as the contract's field details and accept only JSON on mutating routes](./t30-validation-envelope-and-csrf.md) | infra | Dmytro Hopko | S | — | done |
-| T31 | [Align team-route ids, statuses and error messages with the contract](./t31-team-routes-contract-fidelity.md) | ports | Dmytro Hopko | S | — | todo |
+| T31 | [Align team-route ids, statuses and error messages with the contract](./t31-team-routes-contract-fidelity.md) | ports | Dmytro Hopko | S | — | done |
 | T32 | [Move the session cookie helpers out of auth's HTTP layer, add response schemas, end the previous session on sign-in](./t32-session-cookie-boundary-and-response-schemas.md) | ports | Dmytro Hopko | M | T29, T30 | todo |
 | T33 | [Route the CLI audit through the platform logger, fix the admin script, update the architecture map](./t33-cli-audit-logger-and-docs.md) | wiring | Dmytro Hopko | S | — | done |
 | T34 | [Make the app shell enter the workspace in the URL, guard late responses, keep the access-removed notice](./t34-shell-enters-workspace-from-url.md) | ui | Dmytro Hopko | M | — | done |
