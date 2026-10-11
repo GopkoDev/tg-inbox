@@ -93,7 +93,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
       }
     },
 
-    async update(workspaceId, botId, patch, tx) {
+    async update(workspaceId, botId, patch, tx, ifRead) {
       try {
         const result = await (tx ?? db)
           .updateTable('bots')
@@ -110,6 +110,12 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
           })
           .where('workspace_id', '=', workspaceId)
           .where('id', '=', botId)
+          .$if(ifRead === 'disconnected', (qb) => qb.where('state', '=', 'disconnected'))
+          .$if(ifRead !== undefined && ifRead !== 'disconnected', (qb) =>
+            qb
+              .where('state', '<>', 'disconnected')
+              .where('connected_at', '=', (ifRead as { connectedAt: Date }).connectedAt),
+          )
           .executeTakeFirst();
         return result.numUpdatedRows > 0n ? { ok: true } : { ok: false, reason: 'not_found' };
       } catch (err) {

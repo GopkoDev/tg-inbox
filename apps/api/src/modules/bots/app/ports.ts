@@ -56,11 +56,16 @@ export interface BotRepo {
   findByWorkspace(workspaceId: string, tx?: Executor): Promise<BotRecord | null>;
   /** A second bot of the workspace still rejects (`bots_workspace_id_key`, the AC-05 backstop). */
   insert(workspaceId: string, bot: NewBot, tx?: Executor): Promise<BotWriteResult>;
+  /**
+   * `ifRead`: write only when the row is still what the caller decided on — `'disconnected'`, or
+   * live with this capture epoch; otherwise `not_found` (a concurrent paste or disconnect won).
+   */
   update(
     workspaceId: string,
     botId: string,
     patch: BotPatch,
     tx?: Executor,
+    ifRead?: 'disconnected' | { connectedAt: Date },
   ): Promise<BotWriteResult>;
   /**
    * Records the outcome of a Bot API exchange on a live bot; false when no live row matched.

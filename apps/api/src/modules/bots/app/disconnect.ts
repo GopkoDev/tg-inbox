@@ -39,7 +39,8 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
       const { bot, token } = found;
 
       // A token the current key cannot decrypt (ADR-0006) is treated like a dead one: no Telegram
-      // call; its webhook no longer authenticates anyway (the derived secret changed with the key).
+      // call is possible. Deliveries to its webhook stop authenticating once the clear below
+      // removes the secret hash.
       if (token !== null) {
         const target = await telegram.getWebhook(
           token,
@@ -57,7 +58,8 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
       // Clear first: from here no delivery authenticates, so no new first conversation can
       // appear after the check below. A delivery that authenticated earlier and commits between
       // the clear and the check is seen by it; only one still in flight past the check remains
-      // (a sub-millisecond window, accepted).
+      // (a sub-millisecond window, accepted). Should the check fail after the clear, the paste
+      // that follows finishes the delete of a disconnected row nobody wrote through.
       await bots.clearOnDisconnect(workspaceId, bot.id);
       if (!(await conversations.hasConversations(workspaceId))) {
         await bots.delete(workspaceId, bot.id);

@@ -30,6 +30,7 @@ describe('pasteToken (Postgres + fake Bot API)', () => {
     const bots = createBotRepo(db, createTokenCipher(testBotKey));
     paste = createPasteToken({
       bots,
+      conversations: fakeConversationsApi(),
       telegram: createTelegramGateway({ apiRoot: fake.apiRoot, maxConnections: 5 }),
       secrets: createWebhookSecrets(testBotKey.key),
       clock: fixedClock(new Date('2026-10-11T10:00:00Z')),

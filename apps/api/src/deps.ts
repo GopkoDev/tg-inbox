@@ -135,7 +135,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   };
   const bots = {
     settings: botSettings,
-    paste: createPasteToken({ ...botOwnerDeps, transaction }),
+    paste: createPasteToken({ ...botOwnerDeps, conversations, transaction }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
     acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),

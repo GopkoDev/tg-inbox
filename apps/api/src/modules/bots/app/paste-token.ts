@@ -14,6 +14,7 @@ import {
   OWNER_ACTION_TIMEOUT,
   type BotRecord,
   type BotRepo,
+  type ConversationsApi,
   type TelegramGateway,
   type Transaction,
   type WebhookSecrets,
@@ -23,6 +24,7 @@ import { webhookUrl } from './webhook-url.js';
 
 export interface PasteTokenDeps {
   bots: BotRepo;
+  conversations: Pick<ConversationsApi, 'hasConversations'>;
   telegram: TelegramGateway;
   secrets: WebhookSecrets;
   clock: Clock;
@@ -46,7 +48,8 @@ export interface PasteToken {
 class RowChanged extends Error {}
 
 export function createPasteToken(deps: PasteTokenDeps): PasteToken {
-  const { bots, telegram, secrets, clock, transaction, settings, webhookBaseUrl } = deps;
+  const { bots, conversations, telegram, secrets, clock, transaction, settings, webhookBaseUrl } =
+    deps;
   const newId = deps.newId ?? defaultNewId;
 
   return {
@@ -82,7 +85,14 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
     identity: { name: string; username: string },
     confirmTakeover: boolean,
   ) {
-    const row = await bots.findByWorkspace(workspaceId);
+    let row = await bots.findByWorkspace(workspaceId);
+    // A disconnected row is kept only because customers wrote through the bot (AC-05). One with
+    // no conversation is what a disconnect cut short between its clear and its delete leaves:
+    // finish that delete instead of binding the workspace to a bot nobody wrote to.
+    if (row?.state === 'disconnected' && !(await conversations.hasConversations(workspaceId))) {
+      await bots.delete(workspaceId, row.id);
+      row = null;
+    }
     const decision = decidePaste(row, telegramBotId);
     if (decision.action === 'refuse') throw new WorkspaceKeepsOneBotError(decision.reason);
 
@@ -135,6 +145,11 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
                 ...(decision.action === 'connectAgain' && { connectedAt: now }),
               },
               tx,
+              // Only the row this decision was taken on: a concurrent connect-again or a
+              // disconnect in between makes it `not_found`, and the paste decides again.
+              decision.action === 'connectAgain'
+                ? 'disconnected'
+                : { connectedAt: row?.connectedAt ?? now },
             );
       if (!written.ok) {
         if (written.reason === 'bound_elsewhere') throw new BotBelongsToAnotherWorkspaceError();

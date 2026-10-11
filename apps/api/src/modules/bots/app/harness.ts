@@ -52,6 +52,7 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
   const settings = createBotSettings({ bots, conversations, contacts });
   const paste = createPasteToken({
     bots,
+    conversations,
     telegram,
     secrets,
     clock,

@@ -68,6 +68,7 @@ describe('pasteToken — refusals in order', () => {
       connectedAt: null,
     });
     const h = createBotsHarness([kept]);
+    h.conversations.withConversations.add('ws-a');
     const err = await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false));
     expect((err as WorkspaceKeepsOneBotError).details).toEqual({ reason: 'history' });
     expect(h.bots.rows).toEqual([kept]);
@@ -207,6 +208,7 @@ describe('pasteToken — connect again (AC-19)', () => {
 
   it('same bot after a disconnect → same row, new capture epoch and secret, pending dropped', async () => {
     const h = createBotsHarness([kept]);
+    h.conversations.withConversations.add('ws-a');
     h.telegram.me = ME;
     await h.paste.pasteToken('ws-a', NEW_TOKEN, false);
     expect(h.bots.rows).toHaveLength(1);
@@ -228,6 +230,7 @@ describe('pasteToken — connect again (AC-19)', () => {
 
   it('setWebhook fails → the row is disconnected again as before', async () => {
     const h = createBotsHarness([kept]);
+    h.conversations.withConversations.add('ws-a');
     h.telegram.me = ME;
     h.telegram.setResult = 'failed';
     expect(await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false))).toBeInstanceOf(
@@ -311,5 +314,94 @@ describe('pasteToken — rotate (AC-17, AC-16, AC-16b)', () => {
       TelegramUnavailableError,
     );
     expect(h.bots.rows[0]).toMatchObject({ state: 'needs_token', name: 'Old Name' });
+  });
+});
+
+describe('pasteToken — concurrent writes to one workspace (R2)', () => {
+  /** Holds both pastes at getWebhook until both have read the row, then lets them go in order. */
+  function gateGetWebhook(h: ReturnType<typeof createBotsHarness>, between: () => void) {
+    const inner = h.telegram.getWebhook.bind(h.telegram);
+    const waiting: (() => void)[] = [];
+    let released = false;
+    h.telegram.getWebhook = async (token, ourUrl, timeoutMs) => {
+      if (!released) {
+        await new Promise<void>((resolve) => {
+          waiting.push(resolve);
+          if (waiting.length === 2) {
+            released = true;
+            waiting[0]!();
+            // The second paste continues only after the first has written and set its webhook.
+            setTimeout(() => {
+              between();
+              waiting[1]!();
+            }, 0);
+          }
+        });
+      }
+      return inner(token, ourUrl, timeoutMs);
+    };
+  }
+
+  it('two "connect again" pastes of the same bot: one epoch, and Telegram holds the stored secret', async () => {
+    const kept = botRow({
+      state: 'disconnected',
+      token: null,
+      webhookSecret: null,
+      connectedAt: null,
+      lastCheckedAt: at(100),
+    });
+    const h = createBotsHarness([kept]);
+    h.conversations.withConversations.add('ws-a');
+    h.telegram.me = ME;
+    gateGetWebhook(h, () => h.clock.advance(1000));
+    const results = await Promise.allSettled([
+      h.paste.pasteToken('ws-a', NEW_TOKEN, false),
+      h.paste.pasteToken('ws-a', NEW_TOKEN, false),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    const row = h.bots.rows[0]!;
+    expect(row.state).toBe('connected');
+    const sets = h.telegram.calls.filter((c) => c.method === 'setWebhook');
+    expect(sets.length).toBeGreaterThan(0);
+    for (const set of sets) expect(set.webhook!.secret).toBe(row.webhookSecret);
+    expect(row.webhookSecret).toBe(h.secrets.secretFor(row.id, row.connectedAt!));
+  });
+
+  it('a rotation racing a disconnect never writes a connected row without epoch or secret', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.conversations.withConversations.add('ws-a');
+    h.telegram.me = ME;
+    const inner = h.telegram.getWebhook.bind(h.telegram);
+    let raced = false;
+    h.telegram.getWebhook = async (token, ourUrl, timeoutMs) => {
+      if (!raced) {
+        raced = true;
+        await h.bots.clearOnDisconnect('ws-a', botRow().id);
+      }
+      return inner(token, ourUrl, timeoutMs);
+    };
+    expect(await h.paste.pasteToken('ws-a', NEW_TOKEN, false)).toMatchObject({
+      state: 'connected',
+    });
+    const row = h.bots.rows[0]!;
+    expect(row.connectedAt).not.toBeNull();
+    expect(row.webhookSecret).toBe(h.secrets.secretFor(row.id, row.connectedAt!));
+  });
+
+  it('a disconnected row nobody wrote through (a disconnect cut short) does not bind the workspace', async () => {
+    const stuck = botRow({
+      telegramBotId: 999n,
+      state: 'disconnected',
+      token: null,
+      webhookSecret: null,
+      connectedAt: null,
+    });
+    const h = createBotsHarness([stuck]);
+    h.telegram.me = ME;
+    expect(await h.paste.pasteToken('ws-a', NEW_TOKEN, false)).toMatchObject({
+      state: 'connected',
+    });
+    expect(h.bots.rows).toHaveLength(1);
+    expect(h.bots.rows[0]).toMatchObject({ telegramBotId: 100001n, state: 'connected' });
   });
 });

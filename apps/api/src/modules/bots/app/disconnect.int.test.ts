@@ -61,6 +61,7 @@ describe('reconnect and disconnect (Postgres + fake Bot API)', () => {
     owner = {
       paste: createPasteToken({
         ...common,
+        conversations,
         transaction: (fn) => db.transaction().execute(fn),
       }),
       reconnect: createReconnect(common),

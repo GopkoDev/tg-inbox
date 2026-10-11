@@ -53,9 +53,28 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       rows.push({ ...bot, workspaceId });
       return { ok: true };
     },
-    async update(workspaceId, botId, patch) {
+    async update(workspaceId, botId, patch, _tx, ifRead) {
       const row = find(workspaceId, botId);
       if (!row) return { ok: false, reason: 'not_found' };
+      if (ifRead === 'disconnected' && row.state !== 'disconnected') {
+        return { ok: false, reason: 'not_found' };
+      }
+      if (
+        ifRead &&
+        ifRead !== 'disconnected' &&
+        (row.state === 'disconnected' ||
+          row.connectedAt?.getTime() !== ifRead.connectedAt.getTime())
+      ) {
+        return { ok: false, reason: 'not_found' };
+      }
+      const next = { ...row, ...patch };
+      // The bots_*_state_check constraints: a live row has token, secret hash and epoch.
+      if (
+        next.state !== 'disconnected' &&
+        (next.token === null || next.webhookSecret === null || next.connectedAt === null)
+      ) {
+        throw new Error('check violation: a live bot row needs token, secret and epoch');
+      }
       Object.assign(row, patch);
       if (patch.token !== undefined) delete row.undecryptable;
       return { ok: true };

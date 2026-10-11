@@ -217,6 +217,31 @@ describe('bot repository', () => {
     });
   });
 
+  it('update with ifRead writes only onto the row the caller decided on', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w, connectedAt: at(1) });
+    // Live with another epoch, or expected disconnected: not_found, nothing written.
+    expect(await repo.update(w, bot.id, { name: 'X' }, undefined, { connectedAt: at(2) })).toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(await repo.update(w, bot.id, { name: 'X' }, undefined, 'disconnected')).toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(await repo.findByWorkspace(w)).toMatchObject({ name: bot.name });
+    expect(await repo.update(w, bot.id, { name: 'Y' }, undefined, { connectedAt: at(1) })).toEqual({
+      ok: true,
+    });
+    // A disconnect in between: a rotation decided on the live row no longer matches.
+    await repo.clearOnDisconnect(w, bot.id);
+    expect(await repo.update(w, bot.id, { name: 'Z' }, undefined, { connectedAt: at(1) })).toEqual({
+      ok: false,
+      reason: 'not_found',
+    });
+    expect(await repo.findByWorkspace(w)).toMatchObject({ name: 'Y', state: 'disconnected' });
+  });
+
   it('setState does not touch a disconnected row', async () => {
     const w = await insertWorkspace(db);
     const { bot } = await insertBot(db, { workspaceId: w, state: 'disconnected' });
