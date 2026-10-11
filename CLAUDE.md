@@ -7,7 +7,8 @@ the short version. When they disagree, the map wins — fix this file.
 ## Layout
 
 - `apps/api` — Fastify 5 + grammY + Kysely on Node 26 (modular monolith)
-  - `src/app.ts` — `buildApp(config)`, the composition root: builds deps, registers every module
+  - `src/deps.ts` — `buildDeps(config)`, the shared dependency builder (db, clock, `auth` + `workspaces` use cases, `destroy()`); no Fastify import, also used by the admin CLI
+  - `src/app.ts` — `buildApp(config)`, the composition root: calls `buildDeps()`, registers plugins and every module under `/api` (`/health` stays at root); with `WEB_DIST_DIR` set it serves the built SPA from the same origin (HTML `GET` fallback to `index.html`, unknown `/api/*` stays a JSON 404)
   - `src/platform/` — config, db, errors, ids, logger, jobs (pg-boss), telegram
   - `src/modules/<m>/{domain,app,infra,http}` — one module per roadmap capability; `modules/health` is the precedent
   - `migrations/` — Kysely migrations (kysely-ctl)
@@ -16,12 +17,12 @@ the short version. When they disagree, the map wins — fix this file.
 
 ## Rules
 
-- **Module wiring:** each module exports `register<Module>(app, deps)` from `modules/<m>/http/routes.ts`; only `buildApp()` constructs deps and registers modules. No self-registration, no globals.
+- **Module wiring:** each module exports `register<Module>(app, deps)` from `modules/<m>/http/routes.ts`; only `buildDeps()` constructs module dependencies (shared by `buildApp()` and the CLI) and only `buildApp()` registers modules. No self-registration, no globals.
 - **Layers:** `domain` (pure, no I/O) → `app` (use cases, ports) → `infra` (Kysely repos, Telegram adapters) → `http` (routes, zod schemas). Imports flow inward only.
 - **Cross-module:** call the other module's **app layer** (passed in via the composition root). Never query another module's tables. Async work → pg-boss queue `<module>.<job>`.
-- **Errors:** throw `ValidationError` / `NotFoundError` / `ForbiddenError` / `ConflictError` from `src/platform/errors.ts`. The one error handler returns `{ "error": { "code", "message", "details"? } }`; codes are declared in `packages/shared/src/errors.ts`.
+- **Errors:** throw `ValidationError` / `NotFoundError` / `ForbiddenError` / `ConflictError` / `UnauthenticatedError` / `TooManyRequestsError` (or a specific-code subclass such as `InvalidCredentialsError`) from `src/platform/errors.ts`. The one error handler returns `{ "error": { "code", "message", "details"? } }`; codes are declared in `packages/shared/src/errors.ts`.
 - **IDs:** UUIDv7 from `newId()` (`src/platform/ids.ts`), never DB defaults. Telegram ids are `bigint` columns, never primary keys.
-- **Tenancy:** every tenant-owned table has a non-null `workspace_id`; every repository method takes `workspaceId` and filters by it. Every repository gets an integration test proving cross-workspace isolation.
+- **Tenancy:** every tenant-owned table has a non-null `workspace_id`; every repository method takes `workspaceId` and filters by it. Every repository gets an integration test proving cross-workspace isolation. Three `workspaces` reads are the controlled exceptions because they produce the workspace id: memberships of an account, invitation by token hash, membership for the guard (account id + workspace id from the URL); a new exception needs a change to the SAD.
 - **DB:** one shared `Kysely<DB>` (`src/platform/db.ts`). `DB` is generated into `src/platform/db.types.gen.ts` — never hand-edit it. No triggers or stored procedures; constraints are fine.
 - **Migrations:** reversible — every migration exports a working `up` **and** `down`. After migrating, run `pnpm db:codegen` and commit the regenerated types. Destructive changes still go expand → migrate → contract.
 - **Contracts:** request/response bodies are zod schemas in `packages/shared`, validated by `fastify-type-provider-zod`; the web client parses responses with the same schemas (`apps/web/src/shared/api/client.ts`).

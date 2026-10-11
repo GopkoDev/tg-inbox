@@ -1,4 +1,4 @@
-import type { FastifyError, FastifyInstance } from 'fastify';
+import type { FastifyError, FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ErrorCode, type ErrorEnvelope } from '@tg/shared';
 
 /** Base class for every expected failure; the error handler maps it to the envelope + status. */
@@ -99,7 +99,15 @@ function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnv
   return { error: details === undefined ? { code, message } : { code, message, details } };
 }
 
-export function registerErrorHandler(app: FastifyInstance): void {
+export interface ErrorHandlerOptions {
+  /** Tried before the JSON 404; returns true when it already answered (SPA index.html). */
+  spaFallback?: (request: FastifyRequest, reply: FastifyReply) => Promise<boolean> | boolean;
+}
+
+export function registerErrorHandler(
+  app: FastifyInstance,
+  options: ErrorHandlerOptions = {},
+): void {
   app.setErrorHandler((error: FastifyError, request, reply) => {
     if (error instanceof AppError) {
       return reply
@@ -115,9 +123,10 @@ export function registerErrorHandler(app: FastifyInstance): void {
     return reply.status(500).send(envelope(ErrorCode.INTERNAL_ERROR, 'Internal server error'));
   });
 
-  app.setNotFoundHandler((request, reply) =>
-    reply
+  app.setNotFoundHandler(async (request, reply) => {
+    if (options.spaFallback && (await options.spaFallback(request, reply))) return reply;
+    return reply
       .status(404)
-      .send(envelope(ErrorCode.NOT_FOUND, `Route ${request.method} ${request.url} not found`)),
-  );
+      .send(envelope(ErrorCode.NOT_FOUND, `Route ${request.method} ${request.url} not found`));
+  });
 }
