@@ -28,12 +28,12 @@ workspace-operators has three kinds of actors (sad.md §3): business owners and 
 ## Considered options
 
 1. **API + SPA + a server-side admin CLI** — `[backend-service, web-frontend, cli]`; admin commands run on the server against the same app-layer use cases; server access is the authority.
-2. **API + SPA with an admin area inside the SPA** — `[backend-service, web-frontend]`; accounts carry a platform-admin flag that unlocks admin routes and screens.
+2. **API + SPA + a separate admin web app** — `[backend-service, web-frontend, web-frontend (admin)]`; a second browser app on its own origin with its own platform-admin sign-in, calling admin HTTP routes — outside the operators' web panel, as spec §6.1 requires.
 3. **API + SPA + admin HTTP routes behind a static API key** — `[backend-service, web-frontend]`; an `ADMIN_API_KEY` from config authorises admin calls made with an HTTP client.
 
 ## Decision outcome
 
-**Chosen:** Option 1. It keeps every platform-wide capability off the internet — there is no admin endpoint or admin session to steal — and matches the spec §8 default, closing that open question. Option 2 widens the attack surface to "one compromised admin session controls every workspace" and still needs a server-side bootstrap for the first admin; option 3 turns a single leaked key into full remote control with no per-person attribution.
+**Chosen:** Option 1. It keeps every platform-wide capability off the internet — there is no admin endpoint or admin session to steal — and matches the spec §8 default, closing that open question. Option 2 puts an internet-facing admin sign-in in front of every workspace ("one compromised admin session controls them all"), adds a second UI surface with its own flows, and still needs a server-side bootstrap for the first admin; option 3 turns a single leaked key into full remote control with no per-person attribution.
 
 The CLI (`pnpm admin <command>`, entry under `apps/api/src/cli/`) offers `workspace:create`, `workspace:reissue-owner-invitation` and `account:issue-reset-link`. It builds the same module dependencies as the HTTP app (a shared dependency builder used by both `buildApp()` and the CLI), calls the same app-layer use cases, prints the issued link exactly once to its own stdout, and writes one structured audit log line per action (`event: "admin.<action>"`, the operating-system user, target ids — never the link or its token).
 

@@ -51,6 +51,7 @@ target_surfaces: [backend-service, web-frontend, cli]
 - Env vars are parsed only in `apps/api/src/platform/config.ts` and documented in `.env.example`
 - Every tenant-owned table carries a non-null `workspace_id`; every repository method takes `workspaceId` and filters by it; every repository has an integration test proving cross-workspace isolation
 - UI composes shadcn/ui primitives from `apps/web/src/shared/ui`, Tailwind only
+- **Override — deliberate extensions of these conventions** (recorded in §11, `CLAUDE.md` and the architecture map are updated with this feature): a shared dependency builder used by `buildApp()` and the admin CLI ([ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md)); `UnauthenticatedError` (401) and `TooManyRequestsError` (429) next to the four existing error classes (§8); the `/api` route prefix and same-origin serving ([ADR-0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md)); three listed exceptions to the `workspaceId` repository rule (§5)
 
 **Regulatory / external.**
 - Data classification: confidential (spec §6.1) — account credentials and the membership graph control access to every business's customer data
@@ -123,6 +124,14 @@ The backend follows the repo's modular-monolith convention unchanged: each modul
 |---|---|---|
 | `auth` | accounts, sessions, sign-in failures, password-reset links | Platform-level — no `workspace_id`; repositories are scoped by account or by normalised email |
 | `workspaces` | workspaces, memberships, invitations | Tenant-owned — non-null `workspace_id` on memberships and invitations; every repository method takes `workspaceId`; each repository gets a cross-workspace isolation test |
+
+**Controlled exceptions to the tenancy rule.** Three `workspaces` repository reads cannot take a `workspaceId` because they are what *produce* it; they are the only ones allowed, each scoped by something the caller already proves, each with its own isolation test:
+
+- *memberships of an account* — scoped by the signed-in account id; returns only that account's memberships and the names of their workspaces (sign-in resolution AC-07, the picker and switcher);
+- *invitation by token hash* — scoped by possession of the secret link; returns one invitation and its workspace's name (AC-03–AC-06);
+- *membership for the guard* — scoped by (account id, workspace id from the URL); this is the lookup that grants a `workspaceId` to everything else (ADR-0003).
+
+Every other method in `workspaces` takes `workspaceId`; a new exception needs a change to this SAD. `auth` tables are platform-level and scoped by account or normalised email (above).
 
 A workspace has no status column in v1: "awaiting its first business owner" means it has no memberships yet, and a whole workspace cannot be suspended — members are deactivated instead (spec §8 default, closed here). The last-used workspace for the next sign-in is a `last_used_at` time on the membership.
 
@@ -247,13 +256,14 @@ sequenceDiagram
         Operator->>Web: submits name and password, or the existing password
         Web->>Http: accept the invitation
         Http->>Ws: accept invitation
+        opt account exists
+            Ws->>Auth: verify the existing password, outside any transaction
+            Auth->>Db: check lockout, compare the hash, record a failure if wrong
+        end
         Ws->>Db: begin and lock the invitation and its workspace
-        alt no account for the email
+        opt no account for the email
             Ws->>Auth: create account within the transaction
             Auth->>Db: insert account with the password hash
-        else account exists
-            Ws->>Auth: verify password within the transaction
-            Auth->>Db: check lockout and compare the hash
         end
         Ws->>Db: insert active membership and consume the invitation
         Ws->>Auth: open a session within the transaction
@@ -264,7 +274,7 @@ sequenceDiagram
     end
 ```
 
-A password shorter than 10 characters, a wrong existing password or a locked-out email ends the transaction without changes and returns the form with its error (AC-05; the generic credentials error for the existing-account path).
+For an existing account the password is verified by `auth` before the acceptance transaction opens, exactly as at sign-in — a wrong password is recorded as a failure and committed on its own, so it counts toward the AC-09 lockout, and a locked-out email is refused with the generic credentials error; nothing else changes. A password shorter than 10 characters is rejected before anything is written (AC-05). If the invitation is revoked or consumed between the password check and the transaction, the conditional consume fails and the person gets the «no longer valid» answer (AC-06).
 
 **Critical flow 3: A workspace-scoped request passes the access guard (AC-13, AC-15, AC-17)**
 
@@ -391,14 +401,14 @@ Each §1 quality goal expanded into testable scenarios; targets are quoted from 
 
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
-| Tenancy is enforced by convention: a later module that skips the workspace guard or a `workspace_id` filter leaks another business's data | High | Every workspace-scoped route sits under `/api/workspaces/:workspaceId/…` behind the guard of ADR-0003; isolation tests per repository and per route in CI (QG-1a); review checks both for every new module | Tech Lead |
+| Tenancy is enforced by convention: a later module that skips the workspace guard or a `workspace_id` filter leaks another business's data | High | Every workspace-scoped route sits under `/api/workspaces/:workspaceId/…` behind the guard of ADR-0003; isolation tests per repository and per route in CI (QG-1a); the only reads without `workspaceId` are the three listed in §5, each with its own isolation test; review checks all of this for every new module | Tech Lead |
 | Nobody proves they own the invited email — whoever holds an invitation link becomes that email's account (accepted risk, spec §6.1) | Medium | Links passed over a trusted channel, shown once, single use, 7-day expiry, revocable; the business owner sees who joined; revisit together with automatic emails | Dmytro Hopko |
 | Targeted lockout: anyone who knows an email — or holds an invitation link for it — can keep that email locked out by repeating wrong passwords | Medium | The lock lasts only 15 minutes; a platform admin's reset link clears it; alert on lockout spikes (§7); add a per-IP limit if abuse is seen | Tech Lead |
 | No per-IP rate limit — credential stuffing spread across many emails is only slowed per email | Low | Lockout-spike alert; add a per-IP limit in the API or at a reverse proxy once a deployment target exists | Tech Lead |
 | The inbox's live channel (roadmap step 4) could keep pushing a deactivated member's workspace data past the 5 s budget | Medium | Constraint for step 4's spec and design: every pushed message passes the same membership check, or open connections re-check at least every 5 s | Tech Lead |
 | The admin CLI needs a shell on the server or a tunnel to the database, but no deployment target is chosen | Medium | Choose a target that allows one of the two before onboarding pilot #1; until then the CLI runs against the database from a trusted machine | Dmytro Hopko |
 | The built-in `node:crypto` argon2 may still be experimental on Node 26 | Low | Use `@node-rs/argon2` with the same PHC string format; switching later needs no data migration | Tech Lead |
-| `CLAUDE.md` and `docs/architecture-map.md` still say only `buildApp()` builds dependencies and leave the route prefix, static serving and dev CORS open | Low | Update both as part of this feature's tasks (shared dependency builder, `/api` prefix, same origin, `auth` + `workspaces` modules, new error classes) | Tech Lead |
+| `CLAUDE.md` and `docs/architecture-map.md` still say only `buildApp()` builds dependencies and leave the route prefix, static serving and dev CORS open | Low | Update both as part of this feature's tasks (shared dependency builder, `/api` prefix, same origin, `auth` + `workspaces` modules, new error classes, the three tenancy-rule exceptions of §5) | Tech Lead |
 | No delivery date — TBD by PM | Low | Set a target before roadmap step 3 is scheduled | Dmytro Hopko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
