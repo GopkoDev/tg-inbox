@@ -4,6 +4,8 @@ import type { Config } from './config.js';
 // Bot tokens and webhook secrets are tenant secrets — never logged.
 const REDACT = [
   'req.headers.authorization',
+  'req.headers.cookie',
+  'res.headers["set-cookie"]',
   'req.headers["x-telegram-bot-api-secret-token"]',
   '*.token',
   '*.botToken',

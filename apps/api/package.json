@@ -14,6 +14,7 @@
     "db:codegen": "kysely-codegen --dialect postgres --env-file ../../.env --include-pattern 'public.*' --exclude-pattern 'public.kysely_*' --out-file src/platform/db.types.gen.ts"
   },
   "dependencies": {
+    "@fastify/cookie": "^11.1.3",
     "@fastify/websocket": "^11.3.4",
     "@tg/shared": "workspace:*",
     "fastify": "^5.12.5",
