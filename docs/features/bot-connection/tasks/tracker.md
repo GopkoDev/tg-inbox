@@ -17,7 +17,7 @@
 | T10 | [Build the bot repository, the AES-GCM token cipher and webhook secrets, with isolation tests incl. the two controlled exceptions](./t10-bots-infra.md) | infra | Dmytro Hopko | L | T1, T2, T5 | done |
 | T11 | [Build the Telegram gateway: getMe, getWebhookInfo, setWebhook, deleteWebhook with typed outcomes and timeouts](./t11-telegram-gateway.md) | infra | Dmytro Hopko | M | T2, T3 | done |
 | T12 | [Implement the bots use cases get-settings and paste-token (connect, rotate, connect again, refusals, takeover confirmation)](./t12-settings-and-paste.md) | app | Dmytro Hopko | L | T2, T7, T9, T10, T11 | done |
-| T13 | [Implement the bots use cases reconnect-with-stored-token and disconnect](./t13-reconnect-and-disconnect.md) | app | Dmytro Hopko | M | T12 | todo |
+| T13 | [Implement the bots use cases reconnect-with-stored-token and disconnect](./t13-reconnect-and-disconnect.md) | app | Dmytro Hopko | M | T12 | done |
 | T14 | [Implement the bots use case accept-webhook-update: secret check, inbound filter, capture epoch, hand-off to conversations](./t14-accept-update.md) | app | Dmytro Hopko | M | T5, T9, T10 | done |
 | T15 | [Implement the scheduled health check: run-health-check use case and the bots.schedule-health-checks / bots.check-health jobs](./t15-health-check.md) | app | Dmytro Hopko | M | T5, T10, T11 | done |
 | T16 | [Expose the owner-only bot routes and wire the bots, conversations and contacts modules into buildDeps / buildApp](./t16-owner-routes.md) | ports | Dmytro Hopko | M | T4, T12, T13 | todo |
@@ -29,7 +29,7 @@
 | T22 | [Write the load-test script for throughput, flood isolation, owner actions and settings load (runnable locally, run pre-pilot)](./t22-load-test-script.md) | tests | Dmytro Hopko | M | T17 | todo |
 | T23 | [Lay the web bot foundation: bot API client, store, /w/:workspaceId/bot route and the owner-only Bot entry in AppShell (SCR-01)](./t23-web-bot-foundation.md) | ui | Dmytro Hopko | M | T4 | done |
 | T24 | [Build SCR-02 Bot settings with every declared state](./t24-bot-settings-page.md) | ui | Dmytro Hopko | M | T23 | done |
-| T25 | [Build SCR-03 Paste token dialog with every declared state](./t25-paste-token-dialog.md) | ui | Dmytro Hopko | M | T24 | todo |
+| T25 | [Build SCR-03 Paste token dialog with every declared state](./t25-paste-token-dialog.md) | ui | Dmytro Hopko | M | T24 | done |
 | T26 | [Build SCR-04 Confirm takeover and SCR-05 Confirm disconnect](./t26-confirm-dialogs.md) | ui | Dmytro Hopko | M | T25 | todo |
 | T27 | [Add the seven browser end-to-end flows for bot settings against the fake Bot API](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T20, T26 | todo |
 
