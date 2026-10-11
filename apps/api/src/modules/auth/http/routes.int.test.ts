@@ -309,4 +309,13 @@ describe('auth routes (postgres)', () => {
       details: { field: 'password' },
     });
   });
+
+  it('AC-05b: an empty password is 400 on password with the shared message', async () => {
+    const res = await signIn('empty@x.com', '');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toMatchObject({
+      message: 'Enter your password',
+      details: { field: 'password' },
+    });
+  });
 });

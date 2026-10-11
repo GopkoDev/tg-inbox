@@ -6,7 +6,7 @@ import {
   InvitationAccept,
   InvitationPreview,
   LinkTokenBody,
-  PASSWORD_MAX_MESSAGE,
+  PasswordBound,
   WorkspaceSummary,
 } from '@tg/shared';
 import type { SessionUseCases } from '../../auth/app/sessions.js';
@@ -32,7 +32,7 @@ export interface InvitationRoutesDeps {
  * `details.field`); the body schema only bounds the size.
  */
 const AcceptBody = InvitationAccept.extend({
-  password: z.string().max(1024, PASSWORD_MAX_MESSAGE),
+  password: PasswordBound,
   display_name: z.string().max(1024, DISPLAY_NAME_MESSAGE).optional(),
 });
 

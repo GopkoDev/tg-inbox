@@ -56,8 +56,9 @@ Each command prints the link once, to stdout, and writes an audit event to stder
 | Area | Criteria |
 |---|---|
 | Workspace creation and owner invitation | AC-01, AC-01b, AC-02 |
-| Accepting invitations | AC-03, AC-04, AC-04b, AC-05, AC-05b, AC-06 |
+| Accepting invitations | AC-03, AC-04, AC-04b, AC-05, AC-06 |
 | Sign-in, lockout and sign-out | AC-07, AC-08, AC-09, AC-10, AC-11 |
 | Workspace switching and isolation | AC-12, AC-13 |
 | Team management | AC-14 to AC-20 |
+| Form validation, across every panel form | AC-05b |
 | Password reset | AC-21, AC-22 |

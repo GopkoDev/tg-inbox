@@ -3,6 +3,7 @@ import { z } from 'zod';
 export const EMAIL_MESSAGE = 'Enter a valid email address';
 export const PASSWORD_MESSAGE = 'The password must be at least 10 characters long';
 export const PASSWORD_MAX_MESSAGE = 'The password must be at most 1024 characters long';
+export const PASSWORD_REQUIRED_MESSAGE = 'Enter your password';
 export const DISPLAY_NAME_MESSAGE = 'Enter your name (up to 200 characters)';
 
 /** Email as typed by a person: trimmed and lower-cased first, then validated (spec §6.1). */
@@ -21,8 +22,15 @@ export type Email = z.infer<typeof Email>;
 export const Password = z.string().min(10, PASSWORD_MESSAGE).max(1024, PASSWORD_MAX_MESSAGE);
 export type Password = z.infer<typeof Password>;
 
-/** The password of an existing account: no policy minimum, only the upper bound. */
-export const CurrentPassword = z.string().min(1).max(1024, PASSWORD_MAX_MESSAGE);
+/** Only the upper bound: an existing account's password on accept is checked by verifying it. */
+export const PasswordBound = z.string().max(1024, PASSWORD_MAX_MESSAGE);
+export type PasswordBound = z.infer<typeof PasswordBound>;
+
+/** The password of an existing account at sign-in: required, no policy minimum. */
+export const CurrentPassword = z
+  .string()
+  .min(1, PASSWORD_REQUIRED_MESSAGE)
+  .max(1024, PASSWORD_MAX_MESSAGE);
 export type CurrentPassword = z.infer<typeof CurrentPassword>;
 
 export const DisplayName = z

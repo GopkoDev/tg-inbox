@@ -336,4 +336,15 @@ describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-
     ).toBeInTheDocument();
     expect(acceptInvitation).not.toHaveBeenCalled();
   });
+
+  it('AC-05b: an existing account with an empty password is not blocked client-side', async () => {
+    lookUpInvitation.mockResolvedValue(preview(true));
+    acceptInvitation.mockResolvedValue(WS);
+    renderPage();
+    await screen.findByLabelText('Password');
+    join();
+    await waitFor(() =>
+      expect(acceptInvitation).toHaveBeenCalledWith({ token: TOKEN, password: '' }),
+    );
+  });
 });
