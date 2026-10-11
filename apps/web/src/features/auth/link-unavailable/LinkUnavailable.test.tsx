@@ -70,3 +70,14 @@ describe('LinkUnavailable', () => {
     expect(signOut).toHaveBeenCalled();
   });
 });
+
+describe('LinkUnavailable reset-link-invalid', () => {
+  it('AC-22: explains the reset link is no longer valid', async () => {
+    renderIt(<LinkUnavailable reason="reset-link-invalid" />);
+    expect(
+      await screen.findByText(
+        /reset link is no longer valid.*ask the tg-inbox team for a new one/i,
+      ),
+    ).toBeInTheDocument();
+  });
+});

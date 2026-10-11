@@ -10,7 +10,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 
 export type LinkUnavailableProps =
   | { reason: 'invitation-invalid'; ask: 'business_owner' | 'tg_inbox_team'; reload?: () => void }
-  | { reason: 'invitation-for-another-email'; reload?: () => void };
+  | { reason: 'invitation-for-another-email'; reload?: () => void }
+  | { reason: 'reset-link-invalid'; reload?: () => void };
 
 const defaultReload = () => window.location.reload();
 
@@ -60,7 +61,9 @@ export function LinkUnavailable(props: LinkUnavailableProps) {
         <p>
           {anotherEmail
             ? 'This invitation belongs to another email — sign out and open the link again'
-            : `This invitation is no longer valid — ask ${who} for a new one`}
+            : props.reason === 'reset-link-invalid'
+              ? 'This reset link is no longer valid — ask the tg-inbox team for a new one'
+              : `This invitation is no longer valid — ask ${who} for a new one`}
         </p>
         {anotherEmail && (
           <Button className="w-full" disabled={busy} onClick={() => void onSignOut()}>

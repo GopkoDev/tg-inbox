@@ -3,6 +3,7 @@ import {
   Me,
   WorkspaceSummary,
   type InvitationAccept,
+  type PasswordResetRedeem,
   type SignIn,
 } from '@tg/shared';
 import { apiRequest } from '@/shared/api/client';
@@ -28,3 +29,15 @@ export const acceptInvitation = (body: InvitationAccept) =>
 
 export const enterWorkspace = (workspaceId: string) =>
   apiRequest(`/api/workspaces/${workspaceId}/enter`, WorkspaceSummary, { method: 'POST' });
+
+export const lookUpPasswordResetLink = (token: string) =>
+  apiRequest('/api/password-reset-links/lookup', undefined, {
+    method: 'POST',
+    body: JSON.stringify({ token }),
+  });
+
+export const redeemPasswordResetLink = (body: PasswordResetRedeem) =>
+  apiRequest('/api/password-reset-links/redeem', undefined, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
