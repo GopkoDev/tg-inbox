@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r4"
-status: "todo"
+status: "done"
 ---
 
 # T50 — Send router-level framework errors through the error envelope, pin the 5xx fallback, fix the stop() comment
@@ -38,12 +38,12 @@ None of the findings maps to a §5 AC. They enforce the error contract: CLAUDE.m
 
 ## Checklist
 
-- [ ] `buildApp`: pass `frameworkErrors` (a small helper exported from `platform/errors.ts`) so that router-level framework errors go through the same mapping. A malformed URL and an over-long path param then answer 400 `VALIDATION_ERROR` in the envelope.
-- [ ] Contract: confirm every operation with a path param declares 400 with the envelope. Where one does not, add it to openapi and note the change in api-sync-report.md.
-- [ ] Tests:
+- [x] `buildApp`: pass `frameworkErrors` (a small helper exported from `platform/errors.ts`) so that router-level framework errors go through the same mapping. A malformed URL and an over-long path param then answer 400 `VALIDATION_ERROR` in the envelope.
+- [x] Contract: confirm every operation with a path param declares 400 with the envelope. Where one does not, add it to openapi and note the change in api-sync-report.md.
+- [x] Tests:
   - an `app.inject` test checks that the malformed URL and the 120-character path param both answer 400 `VALIDATION_ERROR` in the envelope;
   - two cases go into `errors.test.ts`: a plain `throw new Error()` and an error with `statusCode: 503`. Both answer 500 `INTERNAL_ERROR`.
-- [ ] Reword the `stop()` doc comment: idempotent once it succeeded; a failed removal is retried; a failed wait is re-reported.
+- [x] Reword the `stop()` doc comment: idempotent once it succeeded; a failed removal is retried; a failed wait is re-reported.
 
 ## Edge cases
 
@@ -55,7 +55,7 @@ None of the findings maps to a §5 AC. They enforce the error contract: CLAUDE.m
 
 ## Definition of Done
 
-- [ ] No API response body outside the error envelope for any 4xx/5xx
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No API response body outside the error envelope for any 4xx/5xx
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

@@ -573,7 +573,9 @@ paths:
                   expires_at: "2026-10-17T12:00:00Z"
                 link: "https://panel.example.test/invite/Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
         "400":
-          description: The email is not a valid address or the role is unknown
+          description: |
+            The email is not a valid address or the role is unknown; also a malformed URL or an
+            over-long path param (router-level, before the handler runs)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -688,7 +690,8 @@ components:
     MalformedBody:
       description: |
         Cross-cutting on body-less POST operations: a client still sent an `application/json` body
-        that is malformed or empty, or another framework-level 4xx was raised. Refused before the
+        that is malformed or empty, or another framework-level 4xx was raised (including a malformed
+        percent-encoded URL or a path param over the router's length limit). Refused before the
         handler runs.
       content:
         application/json:
@@ -696,7 +699,9 @@ components:
           example:
             error: { code: VALIDATION_ERROR, message: "Body cannot be empty when content-type is set to 'application/json'" }
     ValidationFailed:
-      description: The request does not match the schema
+      description: |
+        The request does not match the schema. Also answered, before the handler runs, for a
+        malformed percent-encoded URL or a path param over the router's length limit (never 414).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }

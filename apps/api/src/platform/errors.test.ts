@@ -79,6 +79,32 @@ describe('error handler', () => {
     expect(res.json().error.code).toBe('VALIDATION_ERROR');
   });
 
+  it.each([
+    ['a plain Error', () => new Error('boom')],
+    ['an error with statusCode 503', () => Object.assign(new Error('down'), { statusCode: 503 })],
+  ])('answers %s with 500 INTERNAL_ERROR, logged at error level', async (_name, make) => {
+    const levels: number[] = [];
+    const stream = {
+      write: (line: string) => {
+        const entry = JSON.parse(line) as { level: number; msg?: string };
+        if (entry.msg === 'unhandled error' || entry.msg === 'client error') {
+          levels.push(entry.level);
+        }
+      },
+    };
+    const app = Fastify({ logger: { level: 'info', stream } });
+    registerErrorHandler(app);
+    app.get('/x', () => {
+      throw make();
+    });
+    const res = await app.inject('/x');
+    expect(res.statusCode).toBe(500);
+    expect(res.json()).toEqual({
+      error: { code: 'INTERNAL_ERROR', message: 'Internal server error' },
+    });
+    expect(levels).toEqual([50]);
+  });
+
   it('puts ask into details for InvitationInvalidError', async () => {
     const app = Fastify();
     registerErrorHandler(app);

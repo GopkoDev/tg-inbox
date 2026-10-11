@@ -99,6 +99,60 @@ function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnv
   return { error: details === undefined ? { code, message } : { code, message, details } };
 }
 
+/** The one mapping from any thrown error to the envelope + status. */
+function sendError(
+  error: FastifyError,
+  request: FastifyRequest,
+  reply: FastifyReply,
+): FastifyReply {
+  if (error instanceof AppError) {
+    return reply.status(error.statusCode).send(envelope(error.code, error.message, error.details));
+  }
+  if (error.validation) {
+    const first = error.validation[0];
+    const field = first?.instancePath.split('/').filter(Boolean).at(-1);
+    return reply
+      .status(400)
+      .send(
+        envelope(
+          ErrorCode.VALIDATION_ERROR,
+          first?.message ?? 'Invalid request',
+          field ? { field } : undefined,
+        ),
+      );
+  }
+  const status = error.statusCode;
+  if (status !== undefined && status >= 400 && status < 500) {
+    request.log.info({ err: error }, 'client error');
+    if (status === 415) {
+      return reply
+        .status(415)
+        .send(
+          envelope(
+            ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+            'Only application/json request bodies are accepted',
+          ),
+        );
+    }
+    if (status === 413) {
+      return reply
+        .status(413)
+        .send(envelope(ErrorCode.PAYLOAD_TOO_LARGE, 'Request body is too large'));
+    }
+    return reply
+      .status(400)
+      .send(envelope(ErrorCode.VALIDATION_ERROR, error.message || 'Invalid request'));
+  }
+  request.log.error({ err: error }, 'unhandled error');
+  return reply.status(500).send(envelope(ErrorCode.INTERNAL_ERROR, 'Internal server error'));
+}
+
+/**
+ * Fastify's `frameworkErrors` option: router-level errors (malformed URL, a path param over
+ * `maxParamLength`) skip the error handler, so this sends them through the same mapping.
+ */
+export const frameworkErrors = sendError;
+
 export interface ErrorHandlerOptions {
   /** Tried before the JSON 404; returns true when it already answered (SPA index.html). */
   spaFallback?: (request: FastifyRequest, reply: FastifyReply) => Promise<boolean> | boolean;
@@ -108,50 +162,7 @@ export function registerErrorHandler(
   app: FastifyInstance,
   options: ErrorHandlerOptions = {},
 ): void {
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    if (error instanceof AppError) {
-      return reply
-        .status(error.statusCode)
-        .send(envelope(error.code, error.message, error.details));
-    }
-    if (error.validation) {
-      const first = error.validation[0];
-      const field = first?.instancePath.split('/').filter(Boolean).at(-1);
-      return reply
-        .status(400)
-        .send(
-          envelope(
-            ErrorCode.VALIDATION_ERROR,
-            first?.message ?? 'Invalid request',
-            field ? { field } : undefined,
-          ),
-        );
-    }
-    const status = error.statusCode;
-    if (status !== undefined && status >= 400 && status < 500) {
-      request.log.info({ err: error }, 'client error');
-      if (status === 415) {
-        return reply
-          .status(415)
-          .send(
-            envelope(
-              ErrorCode.UNSUPPORTED_MEDIA_TYPE,
-              'Only application/json request bodies are accepted',
-            ),
-          );
-      }
-      if (status === 413) {
-        return reply
-          .status(413)
-          .send(envelope(ErrorCode.PAYLOAD_TOO_LARGE, 'Request body is too large'));
-      }
-      return reply
-        .status(400)
-        .send(envelope(ErrorCode.VALIDATION_ERROR, error.message || 'Invalid request'));
-    }
-    request.log.error({ err: error }, 'unhandled error');
-    return reply.status(500).send(envelope(ErrorCode.INTERNAL_ERROR, 'Internal server error'));
-  });
+  app.setErrorHandler(sendError);
 
   app.setNotFoundHandler(async (request, reply) => {
     if (options.spaFallback && (await options.spaFallback(request, reply))) return reply;

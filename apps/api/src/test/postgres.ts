@@ -11,7 +11,10 @@ const MIGRATION_FOLDER = resolve(import.meta.dirname, '../../migrations');
 export interface TestDatabase {
   url: string;
   containerId: string;
-  /** Stops and removes the container and its volumes; calling it again is a no-op. */
+  /**
+   * Stops and removes the container and its volumes. Idempotent once it succeeded; a failed
+   * removal is retried by the next call, and a failed wait for clients is re-reported by it.
+   */
   stop(): Promise<void>;
 }
 

@@ -8,7 +8,7 @@ import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import type { Config } from './platform/config.js';
 import { requireJsonBodies } from './platform/content-type.js';
-import { registerErrorHandler } from './platform/errors.js';
+import { frameworkErrors, registerErrorHandler } from './platform/errors.js';
 import { startJobs } from './platform/jobs.js';
 import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
@@ -19,7 +19,7 @@ export async function buildApp(
   config: Config,
   overrides: { clock?: Clock } = {},
 ): Promise<FastifyInstance> {
-  const app = Fastify({ logger: loggerOptions(config) });
+  const app = Fastify({ logger: loggerOptions(config), frameworkErrors });
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   registerErrorHandler(app, {

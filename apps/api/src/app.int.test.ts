@@ -48,6 +48,28 @@ describe('skeleton smoke test', () => {
     expect(malformed.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
   });
 
+  it('answers a malformed URL with 400 VALIDATION_ERROR in the envelope', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/workspaces/%E0%A4%A/memberships',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: { code: 'VALIDATION_ERROR', message: expect.any(String) },
+    });
+  });
+
+  it('answers a path param over the max length with 400 VALIDATION_ERROR (no 414)', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: `/api/workspaces/${'a'.repeat(120)}/memberships`,
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: { code: 'VALIDATION_ERROR', message: expect.any(String) },
+    });
+  });
+
   it('answers unknown routes with the error envelope', async () => {
     const response = await app.inject({ method: 'GET', url: '/nope' });
     expect(response.statusCode).toBe(404);
