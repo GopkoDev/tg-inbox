@@ -42,5 +42,12 @@
 | T35 | [Guard Team 'Show more', render SCR-10 in place without nested landmarks, link the invite form errors](./t35-team-list-and-invite-polish.md) | ui | Dmytro Hopko | S | T34 | done |
 | T36 | [Send malformed token links to SCR-03 and align screen copy with the manifest](./t36-token-link-errors-and-copy.md) | ui | Dmytro Hopko | S | T35 | done |
 | T37 | [Exercise last-used workspace and direct Team loads in the browser flows](./t37-e2e-last-used-and-direct-team-load.md) | ui | Dmytro Hopko | S | T34, T36 | done |
+| T38 | [Keep argon2 out of the sign-in lock transaction and bound the pg pool](./t38-sign-in-lock-without-holding-a-connection.md) | app | Dmytro Hopko | M | — | todo |
+| T39 | [Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract](./t39-fastify-4xx-and-415-contract.md) | infra | Dmytro Hopko | S | — | todo |
+| T40 | [Let the loser of a same-email acceptance race continue through the existing-account path](./t40-accept-race-falls-back-to-existing-account.md) | app | Dmytro Hopko | S | T38 | todo |
+| T41 | [End the previous session on reset-link redeem, pin the response schemas with a test, fix the auth map row](./t41-redeem-ends-previous-session-and-schema-pin.md) | ports | Dmytro Hopko | S | — | todo |
+| T42 | [Make Docker-backed tests remove their containers and data, even on failure](./t42-docker-tests-clean-up-after-themselves.md) | infra | Dmytro Hopko | S | T38 | todo |
+| T43 | [Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell](./t43-shell-renders-body-only-when-entered.md) | ui | Dmytro Hopko | S | — | todo |
+| T44 | [Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test](./t44-scr02-scr03-copy-and-accept-test.md) | ui | Dmytro Hopko | S | — | todo |
 
-**Total:** 37 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`), ~19.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.
+**Total:** 44 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`, T38–T44 from `_review/review-2026-10-11-r2.md`), ~19.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.

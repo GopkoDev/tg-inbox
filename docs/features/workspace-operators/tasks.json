@@ -835,6 +835,164 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t37-e2e-last-used-and-direct-team-load.md",
       "source": "review-2026-10-11"
+    },
+    {
+      "id": "T38",
+      "title": "Keep argon2 out of the sign-in lock transaction and bound the pg pool",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "No DB connection is held while argon2 runs Pool max + connection timeout configured and documented Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/credentials.ts",
+        "apps/api/src/modules/auth/app/credentials.test.ts",
+        "apps/api/src/modules/auth/app/ports.ts",
+        "apps/api/src/modules/auth/infra/",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/platform/db.ts",
+        "apps/api/src/platform/config.ts",
+        ".env.example",
+        "apps/api/src/deps.ts",
+        "apps/api/src/test/postgres.ts",
+        "apps/web/e2e/support/config.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t38-sign-in-lock-without-holding-a-connection.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T39",
+      "title": "Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-14",
+        "AC-21"
+      ],
+      "dod": "No client-triggerable 4xx answers 500 415 documented in openapi.yaml with its own code Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/content-type.ts",
+        "apps/api/src/platform/content-type.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "packages/shared/src/errors.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t39-fastify-4xx-and-415-contract.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T40",
+      "title": "Let the loser of a same-email acceptance race continue through the existing-account path",
+      "layer": "app",
+      "deps": [
+        "T38"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-06"
+      ],
+      "dod": "No 404 for a still-pending invitation No second-connection query inside an open transaction Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/accept-invitation.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.int.test.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t40-accept-race-falls-back-to-existing-account.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T41",
+      "title": "End the previous session on reset-link redeem, pin the response schemas with a test, fix the auth map row",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-21",
+        "AC-07",
+        "AC-12",
+        "AC-03"
+      ],
+      "dod": "Redeem, sign-in and accept all replace the device session the same way Removing any response schema turns a test red Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/http/routes.ts",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/invitation-routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/response-schemas.test.ts",
+        "docs/architecture-map.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t41-redeem-ends-previous-session-and-schema-pin.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T42",
+      "title": "Make Docker-backed tests remove their containers and data, even on failure",
+      "layer": "infra",
+      "deps": [
+        "T38"
+      ],
+      "acs": [],
+      "dod": "A full `pnpm test` run leaves zero `org.testcontainers` containers and no new anonymous volumes (check `docker ps -a` / `docker volume ls` before and after) Cleanup script removes only labelled test containers Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/test/postgres.ts",
+        "apps/api/src/test/postgres.int.test.ts",
+        "apps/web/e2e/global-setup.ts",
+        "package.json",
+        "scripts/clean-test-containers.sh"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t42-docker-tests-clean-up-after-themselves.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T43",
+      "title": "Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "No workspace data visible while not entered Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/pages/NotFoundPage.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "docs/design-system.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t43-shell-renders-body-only-when-entered.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T44",
+      "title": "Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-04b",
+        "AC-06"
+      ],
+      "dod": "SCR-02 and SCR-03 strings equal screens.md Accept test would fail if the form called enterWorkspace Web unit tests green; e2e typecheck clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/auth/accept-invitation/AcceptInvitationForm.tsx",
+        "apps/web/src/features/auth/link-unavailable/LinkUnavailable.tsx",
+        "apps/web/src/features/auth/link-unavailable/LinkUnavailable.test.tsx",
+        "apps/web/src/pages/AcceptInvitationPage.test.tsx",
+        "apps/web/src/pages/ResetPasswordPage.test.tsx",
+        "apps/web/src/shared/lib/roles.ts",
+        "apps/web/src/features/workspaces/invite/InviteDialog.tsx",
+        "apps/web/e2e/flows.spec.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t44-scr02-scr03-copy-and-accept-test.md",
+      "source": "review-2026-10-11-r2"
     }
   ]
 }
