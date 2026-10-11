@@ -129,7 +129,7 @@ Fix commits (`SDD-Fix: 2026-10-11-shared-form-validation`):
 
 ## Verification
 
-All checks ran on Node 26.11.1. The live run below was at `d36f22b`; tests and lint were re-run at `d11ac4c`.
+All checks ran on Node 26.11.1. The live run below was at `d36f22b`; tests and lint were re-run at `9093136`.
 
 - **Tests:** `pnpm test` passed: 70 files and 548/548 tests across api, shared and web, including the Testcontainers integration suites.
 - **Lint and types:** `pnpm lint` (eslint, prettier and tsc for api, web and e2e) is clean.
