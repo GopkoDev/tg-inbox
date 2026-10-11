@@ -19,8 +19,8 @@
 | T12 | [Implement the team use cases: invite, revoke, list, deactivate, reactivate](./t12-team-use-cases.md) | app | Dmytro Hopko | M | T6, T7 | done |
 | T13 | [Expose the auth routes with the session cookie and resolver](./t13-auth-routes.md) | ports | Dmytro Hopko | M | T2, T3, T7, T8 | done |
 | T14 | [Expose the workspace guard and the me / workspaces / enter routes](./t14-guard-and-access-routes.md) | ports | Dmytro Hopko | M | T11, T13 | done |
-| T15 | [Expose the invitation lookup and acceptance routes](./t15-invitation-routes.md) | ports | Dmytro Hopko | M | T10, T14 | todo |
-| T16 | [Expose the owner-only team routes](./t16-team-routes.md) | ports | Dmytro Hopko | M | T12, T14 | todo |
+| T15 | [Expose the invitation lookup and acceptance routes](./t15-invitation-routes.md) | ports | Dmytro Hopko | M | T10, T14 | done |
+| T16 | [Expose the owner-only team routes](./t16-team-routes.md) | ports | Dmytro Hopko | M | T12, T14 | done |
 | T17 | [Extract the shared dependency builder, serve the SPA from one origin, update the conventions docs](./t17-wiring-same-origin.md) | wiring | Dmytro Hopko | M | T14, T15, T16 | todo |
 | T18 | [Build the admin CLI with its three commands](./t18-admin-cli.md) | ports | Dmytro Hopko | M | T8, T9, T17 | todo |
 | T19 | [Lay the web foundation: shadcn primitives, API client, shared guard handling, stores](./t19-web-foundation.md) | ui | Dmytro Hopko | M | T2, T3 | done |
