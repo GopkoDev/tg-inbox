@@ -1167,6 +1167,40 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t52-link-tokens-out-of-request-logs.md",
       "source": "review-2026-10-11-r5"
+    },
+    {
+      "id": "T53",
+      "title": "Pin the shell's release of the address workspace when the person leaves for a page without a shell",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "A test fails when the shell stops releasing the address workspace on unmount; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t53-pin-shell-release-on-unmount.md",
+      "source": "review-2026-10-11-r6"
+    },
+    {
+      "id": "T54",
+      "title": "Harden link-token log masking (raw packets, non-canonical paths) and pin the URL-error message",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No log line at any level contains an invitation or reset token, whatever the path's case or slashes; both URL-error codes are pinned by a test that fails when either is dropped; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "apps/api/src/app.int.test.ts",
+        ".env.example",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t54-harden-link-token-log-masking.md",
+      "source": "review-2026-10-11-r6"
     }
   ]
 }
