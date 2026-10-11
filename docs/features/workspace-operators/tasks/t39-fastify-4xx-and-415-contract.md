@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T39 — Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract
@@ -46,10 +46,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Error handler: a non-`AppError` with a 4xx `statusCode` (Fastify `FST_ERR_CTP_*`, body-parser `SyntaxError`, `FST_ERR_CTP_EMPTY_JSON_BODY`, …) keeps its status and answers the standard envelope — 400 → `VALIDATION_ERROR`; 415 → a dedicated code (add e.g. `UNSUPPORTED_MEDIA_TYPE` to `packages/shared/src/errors.ts`); log at info/warn, not error. 5xx and unknown errors stay `INTERNAL_ERROR`.
-- [ ] `requireJsonBodies`: also refuse with 415 a request that carries a body (`content-length` > 0 or `transfer-encoding`) but no content-type; a body-less POST with no content-type still passes.
-- [ ] Contract: add a shared `UnsupportedMediaType` (415) response to openapi.yaml for the mutating operations (or document it once as a cross-cutting response) and the new code in the status table; note the change in api-sync-report.md.
-- [ ] Integration tests (app.inject): malformed JSON → 400 `VALIDATION_ERROR`; empty JSON body → 400; body without content-type → 415 with the new code; `text/plain` → 415 with the new code; no error-level log for any of them.
+- [x] Error handler: a non-`AppError` with a 4xx `statusCode` (Fastify `FST_ERR_CTP_*`, body-parser `SyntaxError`, `FST_ERR_CTP_EMPTY_JSON_BODY`, …) keeps its status and answers the standard envelope — 400 → `VALIDATION_ERROR`; 415 → a dedicated code (add e.g. `UNSUPPORTED_MEDIA_TYPE` to `packages/shared/src/errors.ts`); log at info/warn, not error. 5xx and unknown errors stay `INTERNAL_ERROR`.
+- [x] `requireJsonBodies`: also refuse with 415 a request that carries a body (`content-length` > 0 or `transfer-encoding`) but no content-type; a body-less POST with no content-type still passes.
+- [x] Contract: add a shared `UnsupportedMediaType` (415) response to openapi.yaml for the mutating operations (or document it once as a cross-cutting response) and the new code in the status table; note the change in api-sync-report.md.
+- [x] Integration tests (app.inject): malformed JSON → 400 `VALIDATION_ERROR`; empty JSON body → 400; body without content-type → 415 with the new code; `text/plain` → 415 with the new code; no error-level log for any of them.
 
 ## Edge cases
 
@@ -62,8 +62,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No client-triggerable 4xx answers 500
-- [ ] 415 documented in openapi.yaml with its own code
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No client-triggerable 4xx answers 500
+- [x] 415 documented in openapi.yaml with its own code
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

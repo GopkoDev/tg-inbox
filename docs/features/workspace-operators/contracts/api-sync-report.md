@@ -153,3 +153,8 @@ No `low` rows and no field without an origin.
 - `signIn` for an unknown email must still run one hash verification (sad.md §8) so timing stays identical. The same applies to the 429 answer.
 - Remove the two `<!-- TBD: … api fixes the limit -->` comments from data-model.md: the limit is 200 (section A).
 - Update `CLAUDE.md` / `docs/architecture-map.md` with the cookie auth, the `/api` prefix and the new error classes (sad.md §11 item).
+
+
+## Change log
+
+- 2026-10-11 (T39, review R2): added `UNSUPPORTED_MEDIA_TYPE` (415) to `ErrorCode`, a shared `UnsupportedMediaType` response referenced by every mutating (POST) operation, and the code in the status table. Fastify's own 4xx (malformed or empty JSON body → 400 `VALIDATION_ERROR`) now keep their status instead of 500; a body with no content-type is refused with 415.

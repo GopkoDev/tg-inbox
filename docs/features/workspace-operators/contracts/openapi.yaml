@@ -66,6 +66,7 @@ paths:
               email: "operator@example.test"
               password: "correct-horse-battery"
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed in; the session cookie is set
           headers:
@@ -99,6 +100,7 @@ paths:
         - SessionCookie: []
         - {}
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed out; the session cookie is cleared
           headers:
@@ -121,6 +123,7 @@ paths:
             example:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: The link is valid; show the new-password form (SCR-09)
         "400":
@@ -148,6 +151,7 @@ paths:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
               password: "a-new-long-password"
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Password changed; this device is signed in, every other session ended
           headers:
@@ -246,6 +250,7 @@ paths:
             example:
               token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The invitation is valid
           content:
@@ -296,6 +301,7 @@ paths:
                   token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
                   password: "the-existing-password"
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Joined; this device is signed in
           headers:
@@ -341,6 +347,7 @@ paths:
         opens this workspace (AC-12). Other devices stay where they are: the workspace lives in the URL.
       operationId: enterWorkspace
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Entered
           content:
@@ -417,6 +424,7 @@ paths:
         unchanged member.
       operationId: deactivateMembership
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now deactivated
           content:
@@ -458,6 +466,7 @@ paths:
         with the unchanged member.
       operationId: reactivateMembership
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now active
           content:
@@ -535,6 +544,7 @@ paths:
               email: "new.hire@example.test"
               role: operator
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "201":
           description: Invitation issued; show the link once to copy
           content:
@@ -587,6 +597,7 @@ paths:
         An invitation that is no longer pending, or belongs to another workspace, is not found.
       operationId: revokeInvitation
       responses:
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Revoked
         "401":
@@ -745,6 +756,16 @@ components:
           example:
             error: { code: RESET_LINK_INVALID, message: "This reset link is no longer valid" }
 
+    UnsupportedMediaType:
+      description: |
+        Cross-cutting on every mutating operation (POST): the request carries a body whose content-type
+        is not `application/json`, or a body with no content-type at all. Refused before the handler runs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNSUPPORTED_MEDIA_TYPE, message: "Only application/json request bodies are accepted" }
+
   schemas:
     # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
     ErrorCode:
@@ -755,9 +776,10 @@ components:
         FORBIDDEN 403 · ACCESS_REMOVED 403 · OWNER_ONLY 403 · INVITATION_FOR_ANOTHER_EMAIL 403 ·
         NOT_FOUND 404 · INVITATION_INVALID 404 · RESET_LINK_INVALID 404 · CONFLICT 409 ·
         ALREADY_A_MEMBER 409 · LAST_ACTIVE_OWNER 409 · OWNER_ALREADY_JOINED 409 (admin CLI only) ·
-        TOO_MANY_ATTEMPTS 429 · INTERNAL_ERROR 500.
+        TOO_MANY_ATTEMPTS 429 · UNSUPPORTED_MEDIA_TYPE 415 · INTERNAL_ERROR 500.
       enum:
         - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
         - NOT_FOUND
         - FORBIDDEN
         - CONFLICT

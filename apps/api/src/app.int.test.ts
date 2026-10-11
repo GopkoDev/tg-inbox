@@ -31,7 +31,21 @@ describe('skeleton smoke test', () => {
       payload: 'x',
     });
     expect(response.statusCode).toBe(415);
-    expect(response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+    expect(response.json()).toMatchObject({ error: { code: 'UNSUPPORTED_MEDIA_TYPE' } });
+  });
+
+  it('refuses a body without content-type and answers malformed JSON with 400', async () => {
+    const untyped = await app.inject({ method: 'POST', url: '/api/auth/sign-out', payload: 'x' });
+    expect(untyped.statusCode).toBe(415);
+    expect(untyped.json()).toMatchObject({ error: { code: 'UNSUPPORTED_MEDIA_TYPE' } });
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in',
+      headers: { 'content-type': 'application/json' },
+      payload: '{',
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
   });
 
   it('answers unknown routes with the error envelope', async () => {
