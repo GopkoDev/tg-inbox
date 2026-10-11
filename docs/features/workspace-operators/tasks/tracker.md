@@ -50,7 +50,7 @@
 | T43 | [Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell](./t43-shell-renders-body-only-when-entered.md) | ui | Dmytro Hopko | S | — | done |
 | T44 | [Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test](./t44-scr02-scr03-copy-and-accept-test.md) | ui | Dmytro Hopko | S | — | done |
 | T45 | [Show role labels, not raw role values, in the picker, switcher and Team; reconcile the manifest](./t45-role-labels-in-picker-and-team.md) | ui | Dmytro Hopko | S | — | done |
-| T46 | [Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments](./t46-shell-guard-failure-shows-retry.md) | ui | Dmytro Hopko | S | — | todo |
+| T46 | [Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments](./t46-shell-guard-failure-shows-retry.md) | ui | Dmytro Hopko | S | — | done |
 | T47 | [Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch](./t47-framework-4xx-codes-and-hook-pin.md) | infra | Dmytro Hopko | S | — | todo |
 | T48 | [Remove test containers on every failure path and drop the named-volume loop from the clean script](./t48-test-container-teardown-on-every-failure.md) | infra | Dmytro Hopko | S | — | todo |
 
