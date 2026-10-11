@@ -225,14 +225,20 @@ describe('PasteTokenDialog (SCR-03)', () => {
     expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled();
   });
 
-  it('takeover warning: hands { token, bot } to SCR-04 and closes; nothing in the store (AC-06)', async () => {
+  it('takeover warning: hands { token, bot, message } to SCR-04 and closes; nothing in the store (AC-06)', async () => {
     pasteBotToken.mockRejectedValue(
       err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', 'Connecting will stop…', { bot }),
     );
     setup();
     typeToken(TOKEN);
     submit();
-    await waitFor(() => expect(onTakeover).toHaveBeenCalledWith({ token: TOKEN, bot }));
+    await waitFor(() =>
+      expect(onTakeover).toHaveBeenCalledWith({
+        token: TOKEN,
+        bot,
+        message: 'Connecting will stop…',
+      }),
+    );
     expect(onClose).toHaveBeenCalled();
     expectTokenNotInStore();
   });

@@ -18,10 +18,10 @@ import { formatBotTime } from './format';
 export interface BotSettingsActions {
   /** Opens SCR-03; `notice` is a server message to show in it (reconnect → needs token). */
   onPasteToken?: (notice?: string) => void;
-  /** Opens SCR-05. */
-  onDisconnect?: () => void;
-  /** Opens SCR-04 for a reconnect that needs the takeover confirmation. */
-  onTakeoverWarning?: (bot: BotIdentity) => void;
+  /** Opens SCR-05 for the bot shown. */
+  onDisconnect?: (bot: BotIdentity) => void;
+  /** Opens SCR-04 for a reconnect that needs the takeover confirmation (the server message). */
+  onTakeoverWarning?: (bot: BotIdentity, message: string) => void;
 }
 
 type Connected = Exclude<Settings, { state: 'not_connected' }>;
@@ -79,7 +79,7 @@ export function BotSettings({
     } catch (error) {
       const refusal = botRefusal(error);
       if (refusal?.code === ErrorCode.TAKEOVER_CONFIRMATION_REQUIRED && refusal.bot) {
-        onTakeoverWarning?.(refusal.bot);
+        onTakeoverWarning?.(refusal.bot, refusal.message);
       } else if (refusal?.code === ErrorCode.BOT_NEEDS_NEW_TOKEN && refusal.settings) {
         replace(refusal.settings);
         onPasteToken?.(refusal.message);
@@ -152,7 +152,7 @@ export function BotSettings({
           reconnecting={reconnecting}
           onReconnect={() => void reconnect()}
           onPasteToken={() => onPasteToken?.(undefined)}
-          onDisconnect={() => onDisconnect?.()}
+          onDisconnect={() => onDisconnect?.(settings.bot)}
         />
       )}
     </div>

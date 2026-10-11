@@ -23,11 +23,13 @@ vi.mock('@/features/workspaces/resolve', () => ({
 const getBotSettings = vi.fn();
 const reconnectBot = vi.fn();
 const pasteBotToken = vi.fn();
+const disconnectBot = vi.fn();
 vi.mock('@/features/bot/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/bot/api')>()),
   getBotSettings: (w: string, o?: unknown) => getBotSettings(w, o),
   reconnectBot: (w: string, b: unknown) => reconnectBot(w, b),
   pasteBotToken: (w: string, b: unknown) => pasteBotToken(w, b),
+  disconnectBot: (w: string) => disconnectBot(w),
 }));
 
 import { BotSettingsPage } from './BotSettingsPage';
@@ -48,24 +50,14 @@ const notConnected: BotSettings = { state: 'not_connected' };
 const err = (status: number, code: string, message = code, details?: unknown) =>
   new ApiError(status, code as never, message, details);
 
-const onDisconnect = vi.fn();
-const onTakeoverWarning = vi.fn();
-const onPasteTakeover = vi.fn();
+const TAKEOVER = 'Connecting will stop this bot delivering messages to another service';
+const takeoverRefusal = () => err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', TAKEOVER, { bot });
 
 function renderPage() {
   return render(
     <MemoryRouter initialEntries={['/w/w1/bot']}>
       <Routes>
-        <Route
-          path="/w/:workspaceId/bot"
-          element={
-            <BotSettingsPage
-              onDisconnect={onDisconnect}
-              onTakeoverWarning={onTakeoverWarning}
-              onPasteTakeover={onPasteTakeover}
-            />
-          }
-        />
+        <Route path="/w/:workspaceId/bot" element={<BotSettingsPage />} />
         <Route path="/w/:workspaceId" element={<p>home screen</p>} />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
       </Routes>
@@ -132,9 +124,11 @@ describe('BotSettingsPage (SCR-02)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'New token' }));
     expect(screen.getByRole('dialog', { name: 'New token' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
-    expect(onDisconnect).toHaveBeenCalled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
+    expect(
+      screen.getByRole('alertdialog', { name: 'Disconnect @acme_flowers_bot?' }),
+    ).toBeInTheDocument();
     expectNoToken(container);
   });
 
@@ -196,14 +190,16 @@ describe('BotSettingsPage (SCR-02)', () => {
       expect(useBotStore.getState().settings).toEqual(settingsOf());
     });
 
-    it('takeover warning → SCR-04 with details.bot', async () => {
-      reconnectBot.mockRejectedValue(
-        err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', 'Connecting will stop…', { bot }),
-      );
+    it('takeover warning → SCR-04 with details.bot and the server message', async () => {
+      reconnectBot.mockRejectedValue(takeoverRefusal());
       renderPage();
       fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
-      await waitFor(() => expect(onTakeoverWarning).toHaveBeenCalledWith(bot));
-      expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
+      const dialog = await screen.findByRole('alertdialog', {
+        name: 'Take over @acme_flowers_bot?',
+      });
+      expect(dialog).toHaveTextContent(TAKEOVER);
+      // Behind the modal (aria-hidden), Reconnect is enabled again.
+      expect(screen.getByRole('button', { name: 'Reconnect', hidden: true })).toBeEnabled();
     });
 
     it('needs token → store ← details.settings, then SCR-03 with the server message', async () => {
@@ -293,17 +289,149 @@ describe('BotSettingsPage (SCR-02)', () => {
       expect(JSON.stringify(useBotStore.getState())).not.toContain(TOKEN);
     });
 
-    it('takeover warning: hands { token, bot } to SCR-04', async () => {
+    const pasteUntilTakeover = async () => {
       getBotSettings.mockResolvedValue(notConnected);
-      pasteBotToken.mockRejectedValue(
-        err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', 'Connecting will stop…', { bot }),
-      );
-      renderPage();
+      pasteBotToken.mockRejectedValueOnce(takeoverRefusal());
+      const view = renderPage();
       fireEvent.click(await screen.findByRole('button', { name: 'Connect bot' }));
       fireEvent.change(screen.getByLabelText('Bot token'), { target: { value: TOKEN } });
       fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
-      await waitFor(() => expect(onPasteTakeover).toHaveBeenCalledWith({ token: TOKEN, bot }));
-      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await screen.findByRole('alertdialog', { name: 'Take over @acme_flowers_bot?' });
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expectNoToken(view.container);
+      expectNoToken(document.body);
+      return view;
+    };
+    const confirmTakeover = () =>
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Connect' }),
+      );
+
+    it('takeover warning → SCR-04; Connect resubmits the same token confirmed → connected (AC-06)', async () => {
+      const { container } = await pasteUntilTakeover();
+      pasteBotToken.mockResolvedValue(settingsOf({ last_message_received_at: null }));
+      confirmTakeover();
+      expect(await screen.findByText('Connected')).toBeInTheDocument();
+      expect(pasteBotToken).toHaveBeenLastCalledWith('w1', {
+        token: TOKEN,
+        confirm_takeover: true,
+      });
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      expectNoToken(container);
+      expect(JSON.stringify(useBotStore.getState())).not.toContain(TOKEN);
+    });
+
+    it('takeover cancelled: no request, still not connected, the token is dropped', async () => {
+      await pasteUntilTakeover();
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(pasteBotToken).toHaveBeenCalledTimes(1);
+      expect(screen.getByText('No bot is connected')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Connect bot' }));
+      expect(screen.getByLabelText('Bot token')).toHaveValue('');
+    });
+
+    it.each([
+      [400, 'BOT_TOKEN_INVALID', 'The token is not valid — copy it again from BotFather'],
+      [409, 'BOT_BELONGS_TO_ANOTHER_WORKSPACE', 'This bot already belongs to another workspace'],
+      [
+        409,
+        'WORKSPACE_KEEPS_ONE_BOT',
+        'A workspace keeps one business bot — disconnect the current bot first',
+      ],
+    ])(
+      'takeover confirmed but refused on re-check (%s %s) → SCR-03 reopens in that error',
+      async (status, code, message) => {
+        await pasteUntilTakeover();
+        pasteBotToken.mockRejectedValue(err(status, code, message));
+        confirmTakeover();
+        const dialog = await screen.findByRole('dialog', { name: 'Connect bot' });
+        expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
+        expect(within(dialog).getByLabelText('Bot token')).toHaveValue('');
+        expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+      },
+    );
+  });
+
+  describe('reconnect → confirm takeover (SCR-04 from SCR-02)', () => {
+    beforeEach(() => getBotSettings.mockResolvedValue(settingsOf({ state: 'taken_over' })));
+    const untilWarning = async () => {
+      reconnectBot.mockRejectedValueOnce(takeoverRefusal());
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
+      return screen.findByRole('alertdialog', { name: 'Take over @acme_flowers_bot?' });
+    };
+
+    it('Connect → reconnectBot { confirm_takeover: true } → connected (AC-16b)', async () => {
+      const dialog = await untilWarning();
+      reconnectBot.mockResolvedValue(settingsOf());
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+      expect(await screen.findByText('Connected')).toBeInTheDocument();
+      expect(reconnectBot).toHaveBeenLastCalledWith('w1', { confirm_takeover: true });
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+
+    it('re-check: BOT_NEEDS_NEW_TOKEN → needs token and SCR-03 with the server message', async () => {
+      const message = "The bot's token no longer works — paste a new token from BotFather";
+      const dialog = await untilWarning();
+      reconnectBot.mockRejectedValue(
+        err(409, 'BOT_NEEDS_NEW_TOKEN', message, {
+          settings: settingsOf({ state: 'needs_token' }),
+        }),
+      );
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+      expect(await screen.findByText('Not working — needs a new token')).toBeInTheDocument();
+      const paste = screen.getByRole('dialog', { name: 'New token' });
+      expect(within(paste).getByRole('alert')).toHaveTextContent(message);
+    });
+
+    it('re-check: NOTHING_TO_RECONNECT → SCR-02 stale with the server message', async () => {
+      const message =
+        'The bot is not taken over by another service — there is nothing to reconnect';
+      const dialog = await untilWarning();
+      reconnectBot.mockRejectedValue(
+        err(409, 'NOTHING_TO_RECONNECT', message, { settings: settingsOf() }),
+      );
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Connect' }));
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.getByText('Connected')).toBeInTheDocument();
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+  });
+
+  describe('disconnect (SCR-05 over SCR-02)', () => {
+    beforeEach(() => getBotSettings.mockResolvedValue(settingsOf()));
+
+    it('confirm → not connected; contacts stay on the server (AC-18)', async () => {
+      disconnectBot.mockResolvedValue(notConnected);
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+      const dialog = screen.getByRole('alertdialog', { name: 'Disconnect @acme_flowers_bot?' });
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+      expect(await screen.findByText('No bot is connected')).toBeInTheDocument();
+      expect(disconnectBot).toHaveBeenCalledWith('w1');
+      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    });
+
+    it('cancel → no request, SCR-02 unchanged', async () => {
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument());
+      expect(disconnectBot).not.toHaveBeenCalled();
+      expect(screen.getByText('Connected')).toBeInTheDocument();
+    });
+
+    it('owners only on disconnect → SCR-02 «owners only»', async () => {
+      disconnectBot.mockRejectedValue(
+        err(403, 'OWNER_ONLY', 'Only business owners manage the bot'),
+      );
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Disconnect' }));
+      const dialog = screen.getByRole('alertdialog');
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
+      expect(await screen.findByText('Only business owners manage the bot')).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Back to home' })).toBeInTheDocument();
     });
   });
 });

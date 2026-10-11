@@ -19,10 +19,11 @@ import { Label } from '@/shared/ui/label';
 import { botRefusal, pasteBotToken } from '../api';
 import { useBotStore } from '../store';
 
-/** The pasted token and the bot it names, handed to SCR-04 in memory only. */
+/** The pasted token, the bot it names and the server message, handed to SCR-04 in memory only. */
 export interface TakeoverHandoff {
   token: string;
   bot: BotIdentity;
+  message: string;
 }
 
 const EMPTY_TOKEN = 'Paste the token from BotFather';
@@ -88,7 +89,7 @@ function PasteTokenBody({ workspaceId, mode, notice, onBusy, onClose, onTakeover
   const handleError = async (failure: unknown) => {
     const refusal = botRefusal(failure);
     if (refusal?.code === ErrorCode.TAKEOVER_CONFIRMATION_REQUIRED && refusal.bot) {
-      onTakeover({ token, bot: refusal.bot });
+      onTakeover({ token, bot: refusal.bot, message: refusal.message });
       return onClose();
     }
     if (refusal?.code === ErrorCode.VALIDATION_ERROR && (failure as ApiError).status === 400) {
