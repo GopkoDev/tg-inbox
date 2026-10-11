@@ -107,8 +107,14 @@ interface BotState extends BotScript {
 
 const PATH = /^\/bot([^/]+)\/([A-Za-z]+)$/;
 
+export interface FakeTelegramOptions {
+  /** Added before every answer, like a slow network to Telegram (the load test uses 300 ms). */
+  latencyMs?: number;
+}
+
 /** In-process fake Bot API on a random port — one per suite, `reset()` per test. */
-export async function startFakeTelegram(): Promise<FakeTelegram> {
+export async function startFakeTelegram(options: FakeTelegramOptions = {}): Promise<FakeTelegram> {
+  const latency = options.latencyMs ?? 0;
   const bots = new Map<string, BotState>();
   let recorded: RecordedCall[] = [];
   const hanging = new Set<ServerResponse>();
@@ -204,7 +210,8 @@ export async function startFakeTelegram(): Promise<FakeTelegram> {
     readParams(req).then(
       (params) => {
         recorded.push({ token, method, params });
-        answer(res, token, method, params);
+        if (latency > 0) setTimeout(() => answer(res, token, method, params), latency);
+        else answer(res, token, method, params);
       },
       () => send(res, 400, { ok: false, error_code: 400, description: 'Bad Request' }),
     );

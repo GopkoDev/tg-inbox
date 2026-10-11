@@ -319,4 +319,16 @@ describe('webhook update builders', () => {
       username: 'test_user_7',
     });
   });
+
+  it('adds the configured latency to every answer (load-test profile)', async () => {
+    const slow = await startFakeTelegram({ latencyMs: 150 });
+    try {
+      slow.bot(TOKEN).script({});
+      const started = performance.now();
+      await telegramApi(TOKEN, { apiRoot: slow.apiRoot }).getMe();
+      expect(performance.now() - started).toBeGreaterThanOrEqual(140);
+    } finally {
+      await slow.stop();
+    }
+  });
 });
