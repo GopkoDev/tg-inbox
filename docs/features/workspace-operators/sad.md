@@ -4,7 +4,7 @@ owner: "Dmytro Hopko"
 reviewers: ["Tech Lead", "Security Lead"]
 updated_at: "2026-10-11"
 feature_size: "M"
-target_surfaces: []  # filled in §4 — subset of: backend-service | web-frontend | mobile-app | desktop-app | cli | worker | library-sdk. Read (never re-derived) by api/sequences/tasks/plan-tests/review → _shared/surfaces.md
+target_surfaces: [backend-service, web-frontend, cli]
 ---
 
 # Software Architecture Document — workspace-operators
@@ -95,19 +95,23 @@ C4Context
 
 ## 4. Solution strategy
 
-<!-- 🎯 Why: the 3–4 STRATEGIC PILLARS every ADR grows from. Without §4 each ADR looks random —
-     there's no umbrella. ⭐ The densest section — the blast-radius gate fires almost always here
-     (decisions are irreversible + multi-module).
-     📋 Write: 3–4 choices; each a heading + 2–3 sentences of rationale.
-     📌 «Store content as a table of typed blocks» is a pillar — ADR-0001 grows from it. -->
+**Target surfaces:** `backend-service` (the API owning the HTTP contract), `web-frontend` (the operator web panel) and `cli` (the platform-admin commands) — [ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md). This also closes the spec §8 open question on the platform-admin channel: a command run on the server, with server access as the authority and an audit log line per action.
 
 **Top strategic choices (the seeds for ADRs):**
 
-1. **<e.g. Module isolation through events>** — <2–3 sentences citing quality goals + constraints>.
-2. **<e.g. Single-store persistence>** — <2–3 sentences>.
-3. **<e.g. Server-rendered read side>** — <2–3 sentences>.
+1. **Platform admins act through a server-side CLI, never over HTTP** — creating workspaces and issuing reset links reach every workspace, so they stay off the internet entirely; the CLI calls the same app-layer use cases as the API and prints each link exactly once. Serves quality goal 2 (security) and spec §6.1's "outside the web panel" — [ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md).
+2. **Opaque cookie sessions stored in Postgres** — a random token in an `HttpOnly` cookie points at a session row holding only the token's hash; sign-out and password reset delete rows, the 30-day idle rule reads `last_seen_at`, and only user-triggered requests refresh it. Revocation is immediate (quality goal 2) without any new datastore (§2) — [ADR-0002](adr/0002-use-opaque-cookie-sessions-stored-in-postgres.md).
+3. **The workspace is part of every address, and membership is checked on every request** — SPA paths `/w/<workspaceId>/…`, API paths `/api/workspaces/:workspaceId/…`, and one shared guard that turns "never a member" into not-found, "deactivated" into an access-removed refusal and "active" into `{ workspaceId, role }` for the repositories. This is the tenancy boundary every later module plugs into (quality goal 1); with no cache, a deactivation is effective on the next request — [ADR-0003](adr/0003-carry-the-active-workspace-in-the-url-and-check-membership-on-every-request.md).
+4. **One origin for the SPA and the API, API under `/api`** — the API serves the built SPA in production and Vite proxies `/api` in development, so the session cookie is first-party everywhere and `SameSite=Lax` blocks cross-site request forgery without extra tokens. Settles the route-prefix, static-serving and dev-CORS questions the architecture map left to this feature — [ADR-0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md).
 
-Each tactical decision in later sections should trace to one of these seeds. Tactical decisions that *contradict* a strategic choice are red flags — surface them in §11.
+**Supporting choices (inline, below the ADR gate):**
+
+- **UI architecture (web-frontend):** a client-side SPA — already fixed for the repo by repo [ADR-0001](../../adr/0001-use-a-typescript-pnpm-monorepo-on-node-26.md) (React + Vite, Zustand, React Router, shadcn/ui); no new ADR. Public routes (sign-in, accept invitation, set new password) live outside `/w/<workspaceId>/…`; workspace screens live inside it. The UI reuses the shadcn/ui foundation in `apps/web/src/shared/ui`.
+- **Persistence:** the single PostgreSQL 16 store; no cache tier — every check reads the database, which the latency targets of spec §6 allow.
+- **Module integration:** synchronous in-process calls to another module's app layer; this feature needs no pg-boss jobs or events.
+- **Concurrency:** commands that change a workspace's team (deactivate, reactivate, accept the first owner invitation) lock that workspace's row for the length of the transaction, which serialises the "at least one active business owner" check of AC-18; single-use links are consumed with a conditional update that only succeeds while the link is still pending and unexpired; a unique index on the normalised email settles two simultaneous account creations.
+
+Each tactical decision in later sections traces to one of these choices; a contradiction is surfaced in §11.
 
 ## 5. Building block view
 
