@@ -203,7 +203,32 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
     return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   }
 
+  /** The control API of `connectFakeTelegram` — not recorded as a Bot API call. */
+  function control(req: IncomingMessage, res: ServerResponse): boolean {
+    const url = new URL(req.url ?? '/', 'http://fake');
+    if (!url.pathname.startsWith(CONTROL)) return false;
+    readParams(req).then(
+      (body) => {
+        switch (`${req.method} ${url.pathname.slice(CONTROL.length)}`) {
+          case 'POST /script':
+            fake.bot(String(body.token)).script((body.script ?? {}) as BotScript);
+            return send(res, 200, { ok: true });
+          case 'GET /calls':
+            return send(res, 200, fake.calls(url.searchParams.get('token') ?? undefined));
+          case 'POST /reset':
+            fake.reset();
+            return send(res, 200, { ok: true });
+          default:
+            return send(res, 404, { ok: false });
+        }
+      },
+      () => send(res, 400, { ok: false }),
+    );
+    return true;
+  }
+
   const server = createServer((req, res) => {
+    if (control(req, res)) return;
     const match = PATH.exec(req.url ?? '');
     if (!match) return send(res, 404, { ok: false, error_code: 404, description: 'Not Found' });
     const [, token = '', method = ''] = match;
@@ -219,7 +244,7 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
 
-  return {
+  const fake: FakeTelegram = {
     apiRoot: `http://127.0.0.1:${port}`,
     bot(token) {
       return {
@@ -240,6 +265,39 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
       dropHanging();
       server.closeAllConnections();
       await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
+  };
+  return fake;
+}
+
+const CONTROL = '/__fake';
+
+/** The fake driven from another process (the browser e2e worker) over its control API. */
+export interface FakeTelegramClient {
+  script(token: string, script: BotScript): Promise<void>;
+  calls(token?: string): Promise<RecordedCall[]>;
+  reset(): Promise<void>;
+}
+
+export function connectFakeTelegram(apiRoot: string): FakeTelegramClient {
+  const call = async (method: 'GET' | 'POST', path: string, body?: object) => {
+    const res = await fetch(`${apiRoot}${CONTROL}${path}`, {
+      method,
+      ...(body && { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+    });
+    if (!res.ok) throw new Error(`fake Bot API control ${path} answered ${res.status}`);
+    return res.json() as Promise<unknown>;
+  };
+  return {
+    async script(token, script) {
+      await call('POST', '/script', { token, script });
+    },
+    async calls(token) {
+      const query = token === undefined ? '' : `?token=${encodeURIComponent(token)}`;
+      return (await call('GET', `/calls${query}`)) as RecordedCall[];
+    },
+    async reset() {
+      await call('POST', '/reset', {});
     },
   };
 }

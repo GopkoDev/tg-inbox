@@ -2,7 +2,12 @@ import { Api, GrammyError, HttpError } from 'grammy';
 import type { Message, Update } from 'grammy/types';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { telegramApi } from '../platform/telegram.js';
-import { RECORDED, startFakeTelegram, type FakeTelegram } from './fake-telegram.js';
+import {
+  connectFakeTelegram,
+  RECORDED,
+  startFakeTelegram,
+  type FakeTelegram,
+} from './fake-telegram.js';
 import {
   CAPTIONED_KINDS,
   MESSAGE_KIND_FIXTURES,
@@ -330,5 +335,23 @@ describe('webhook update builders', () => {
     } finally {
       await slow.stop();
     }
+  });
+
+  it('is scriptable over HTTP from another process (the browser e2e worker)', async () => {
+    const fake = await startFakeTelegram();
+    const api = () => telegramApi(TOKEN, { apiRoot: fake.apiRoot });
+    const remote = connectFakeTelegram(fake.apiRoot);
+    await remote.script(TOKEN, { me: { first_name: 'Remote', username: 'remote_bot' } });
+    const me = await api().getMe();
+    expect(me.username).toBe('remote_bot');
+    await api().setWebhook('https://example.test/hook', { secret_token: 'remote-secret' });
+    const calls = await remote.calls(TOKEN);
+    expect(calls.map((c) => c.method)).toEqual(['getMe', 'setWebhook']);
+    expect(calls[1]!.params).toMatchObject({ secret_token: 'remote-secret' });
+    expect(fake.calls().some((c) => c.method.startsWith('__'))).toBe(false);
+    await remote.reset();
+    expect(await remote.calls()).toEqual([]);
+    await expect(api().getMe()).rejects.toThrow();
+    await fake.stop();
   });
 });
