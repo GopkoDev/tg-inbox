@@ -3,7 +3,7 @@ slug: workspace-operators
 date: 2026-10-11
 triage: gap
 acs: [AC-05b, AC-05, AC-03, AC-08, AC-14, AC-21]
-commit: <filled after commit>
+commit: 61ec6be
 recurrence_of: none
 ---
 
