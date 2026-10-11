@@ -60,9 +60,20 @@ const ResolvedConfigSchema = ConfigSchema.transform((c, ctx) => {
     });
     return z.NEVER;
   }
+  // Telegram accepts only HTTPS webhooks: in production an http base would make every connect
+  // look like "Telegram is not responding".
+  const webhookBaseUrl = c.TELEGRAM_WEBHOOK_BASE_URL ?? c.PUBLIC_WEB_URL;
+  if (c.NODE_ENV === 'production' && new URL(webhookBaseUrl).protocol !== 'https:') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['TELEGRAM_WEBHOOK_BASE_URL'],
+      message: 'TELEGRAM_WEBHOOK_BASE_URL (default PUBLIC_WEB_URL) must be https in production',
+    });
+    return z.NEVER;
+  }
   return {
     ...c,
-    TELEGRAM_WEBHOOK_BASE_URL: c.TELEGRAM_WEBHOOK_BASE_URL ?? c.PUBLIC_WEB_URL,
+    TELEGRAM_WEBHOOK_BASE_URL: webhookBaseUrl,
     TELEGRAM_WEBHOOK_MAX_CONNECTIONS: maxConnections,
   };
 });

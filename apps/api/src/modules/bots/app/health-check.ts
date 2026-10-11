@@ -76,6 +76,7 @@ export function createHealthCheck({
           return write('needs_token');
         case 'ours':
           return write('connected', identity);
+        case 'stale':
         case 'foreign':
         case 'none':
           return write('taken_over', identity);

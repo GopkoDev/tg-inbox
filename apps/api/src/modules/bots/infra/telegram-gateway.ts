@@ -37,6 +37,18 @@ function sameUrl(a: string, b: string): boolean {
   }
 }
 
+/** A URL under the same webhook path as ours (same origin, path up to the bot row id). */
+function underOurWebhookPath(url: string, ourUrl: string): boolean {
+  try {
+    const x = new URL(url);
+    const y = new URL(ourUrl);
+    const prefix = y.pathname.slice(0, y.pathname.lastIndexOf('/') + 1);
+    return x.protocol === y.protocol && x.host === y.host && x.pathname.startsWith(prefix);
+  } catch {
+    return false;
+  }
+}
+
 export function createTelegramGateway({
   apiRoot,
   maxConnections,
@@ -62,7 +74,8 @@ export function createTelegramGateway({
       try {
         const info = await api(token).getWebhookInfo(timeout(timeoutMs));
         if (!info.url) return 'none';
-        return sameUrl(info.url, ourUrl) ? 'ours' : 'foreign';
+        if (sameUrl(info.url, ourUrl)) return 'ours';
+        return underOurWebhookPath(info.url, ourUrl) ? 'stale' : 'foreign';
       } catch (err) {
         return isUnauthorized(err) ? 'unauthorized' : 'transient';
       }

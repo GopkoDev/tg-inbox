@@ -120,8 +120,12 @@ export type GetMeResult =
   | 'unauthorized'
   | 'transient';
 
-/** Where the bot delivers: our webhook URL, another service's, or none (polling is invisible). */
-export type WebhookTarget = 'ours' | 'foreign' | 'none' | 'unauthorized' | 'transient';
+/**
+ * Where the bot delivers: our webhook URL, another service's, or none (polling is invisible).
+ * `stale`: tg-inbox's own webhook path for another bot row id — left by a first connect whose
+ * setWebhook reached Telegram after we gave up; not another service, so no takeover warning.
+ */
+export type WebhookTarget = 'ours' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
 
 export interface TelegramGateway {
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;

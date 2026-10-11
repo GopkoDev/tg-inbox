@@ -117,7 +117,15 @@ describe('bots health-check jobs (pg-boss)', () => {
     const w = await insertWorkspace(db);
     const { bot } = await insertBot(db, { workspaceId: w, state: 'disconnected' });
     const before = await db.selectFrom('bots').selectAll().where('id', '=', bot.id).execute();
-    await boss.send(CHECK_HEALTH_QUEUE, { bot_id: bot.id, workspace_id: w });
+    // Sent like the scheduler sends (singleton per bot): under the queue's `exclusive` policy a
+    // key-less send is dropped while an earlier key-less job is still active.
+    expect(
+      await boss.send(
+        CHECK_HEALTH_QUEUE,
+        { bot_id: bot.id, workspace_id: w },
+        { singletonKey: bot.id },
+      ),
+    ).not.toBeNull();
     await vi.waitFor(() => expect(outcomesOf(bot.id)).toHaveLength(1), { timeout: 10_000 });
     expect(outcomesOf(bot.id)[0]!.outcome).toBe('skipped');
     expect(await db.selectFrom('bots').selectAll().where('id', '=', bot.id).execute()).toEqual(
@@ -131,7 +139,15 @@ describe('bots health-check jobs (pg-boss)', () => {
     const { bot } = await insertBot(db, { workspaceId: w, lastCheckedAt: NOW });
     const before = await db.selectFrom('bots').selectAll().where('id', '=', bot.id).execute();
     const callsBefore = telegram.calls.length;
-    await boss.send(CHECK_HEALTH_QUEUE, { bot_id: bot.id, workspace_id: other });
+    // Sent like the scheduler sends (singleton per bot): under the queue's `exclusive` policy a
+    // key-less send is dropped while an earlier key-less job is still active.
+    expect(
+      await boss.send(
+        CHECK_HEALTH_QUEUE,
+        { bot_id: bot.id, workspace_id: other },
+        { singletonKey: bot.id },
+      ),
+    ).not.toBeNull();
     await vi.waitFor(() => expect(outcomesOf(bot.id)).toHaveLength(1), { timeout: 10_000 });
     expect(outcomesOf(bot.id)[0]!.outcome).toBe('skipped');
     expect(telegram.calls.length).toBe(callsBefore);

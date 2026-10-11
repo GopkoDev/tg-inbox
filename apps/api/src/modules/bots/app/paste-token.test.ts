@@ -104,6 +104,15 @@ describe('pasteToken — refusals in order', () => {
     expect(h.telegram.calls.map((c) => c.method)).toEqual(['getMe', 'getWebhook']);
   });
 
+  it('a stale webhook of tg-inbox itself → no takeover confirmation, connects (AC-06)', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'stale';
+    expect(await h.paste.pasteToken('ws-a', NEW_TOKEN, false)).toMatchObject({
+      state: 'connected',
+    });
+  });
+
   it('getWebhookInfo transient → TELEGRAM_UNAVAILABLE; unauthorized → BOT_TOKEN_INVALID', async () => {
     const h = createBotsHarness();
     h.telegram.webhook = 'transient';

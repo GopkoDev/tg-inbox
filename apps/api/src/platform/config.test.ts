@@ -94,6 +94,19 @@ describe('loadConfig — bot-connection keys', () => {
     expect(err.message).toContain('TELEGRAM_WEBHOOK_MAX_CONNECTIONS');
   });
 
+  it('in production the webhook base (or its PUBLIC_WEB_URL default) must be https', () => {
+    const prod = { ...base, NODE_ENV: 'production' };
+    expect(
+      errorOf({ ...prod, TELEGRAM_WEBHOOK_BASE_URL: 'http://hooks.example.test' }).message,
+    ).toContain('TELEGRAM_WEBHOOK_BASE_URL');
+    expect(errorOf({ ...prod, PUBLIC_WEB_URL: 'http://panel.example.test' }).message).toContain(
+      'TELEGRAM_WEBHOOK_BASE_URL',
+    );
+    expect(load(prod).TELEGRAM_WEBHOOK_BASE_URL).toBe('https://panel.example.test');
+    // Local development and tests may use plain http.
+    expect(load({ ...base, TELEGRAM_WEBHOOK_BASE_URL: 'http://localhost:3000' })).toBeTruthy();
+  });
+
   it.each(['TELEGRAM_WEBHOOK_BASE_URL', 'TELEGRAM_API_ROOT'])(
     'rejects a %s that is not a url',
     (key) => {

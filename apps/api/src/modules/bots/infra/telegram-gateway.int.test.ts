@@ -90,7 +90,10 @@ describe('Telegram gateway (against the fake Bot API)', () => {
       ['ours', OUR_URL, 'ours'],
       ['ours with a trailing slash', `${OUR_URL}/`, 'ours'],
       ['another service', 'https://other-service.example.test/hook', 'foreign'],
-      ['another bot id on our host', OUR_URL.replace(/1$/, '2'), 'foreign'],
+      // A stale URL of tg-inbox itself (a first connect whose setWebhook timed out on our side
+      // but reached Telegram): not another service, so no takeover warning (AC-06).
+      ['another bot id under our webhook path', OUR_URL.replace(/1$/, '2'), 'stale'],
+      ['our host but another path', OUR_URL.replace('/api/telegram/webhook/', '/x/'), 'foreign'],
     ])('reports %s', async (_name, webhookUrl, outcome) => {
       fake.bot(TOKEN).script({ webhookUrl });
       expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe(outcome);

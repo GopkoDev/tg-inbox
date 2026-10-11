@@ -470,8 +470,9 @@ components:
       in: header
       name: X-Telegram-Bot-Api-Secret-Token
       description: |
-        The per-bot secret: 32 random bytes in Telegram's allowed alphabet (`A-Z a-z 0-9 _ -`), set with
-        `setWebhook` `secret_token`. Only its SHA-256 is stored (`bots.webhook_secret_hash`). The header is
+        The per-bot secret: 32 unpredictable bytes, base64url (Telegram's allowed alphabet `A-Z a-z 0-9 _ -`),
+        derived as HMAC-SHA256(server key, bot row id ‖ capture epoch) (ADR-0002 amendment) and set with
+        `setWebhook` `secret_token`; it changes with each new capture epoch. Only its SHA-256 is stored (`bots.webhook_secret_hash`). The header is
         redacted from request logs (sad.md §8)
 
   parameters:

@@ -161,4 +161,10 @@ describe('checkOne — each outcome row of events.md', () => {
     expect(await health.checkOne('ws-a', row().id)).toBe('skipped');
     expect(bots.rows[0]).toMatchObject({ state: 'connected', lastCheckedAt: at(599) });
   });
+
+  it('a stale tg-inbox webhook of another row → taken_over: messages do not reach this bot', async () => {
+    const { telegram, health } = setup();
+    telegram.webhook = 'stale';
+    expect(await health.checkOne('ws-a', row().id)).toBe('taken_over');
+  });
 });
