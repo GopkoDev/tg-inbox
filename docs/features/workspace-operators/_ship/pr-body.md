@@ -43,7 +43,7 @@ See the [spec](docs/features/workspace-operators/spec.md) and the [changelog](do
 - Decisions: `docs/features/workspace-operators/adr/`, ADR-0001 to ADR-0005
 - Data model and migrations: `docs/features/workspace-operators/data-model.md` (migrations `1791681109972` to `1791681109978`)
 - API: `docs/features/workspace-operators/contracts/openapi.yaml`
-- Review: `docs/features/workspace-operators/_review/`. Round 11 passed. Round 12 reviewed the post-ship fix and requested changes, which were fixed in `74bbeab`; round 13 re-reviews them.
+- Review: `docs/features/workspace-operators/_review/`. Round 11 passed. Round 12 reviewed the post-ship fix and requested changes, fixed in `74bbeab`. Round 13 requested one more change, fixed in `e3e1510`; round 14 re-reviews it.
 - Fix: `docs/features/workspace-operators/_fixes/2026-10-11-shared-form-validation.md` (adds AC-05b).
 
 ## Tasks (SDD-Task trailers)
@@ -123,12 +123,13 @@ Fix commits (`SDD-Fix: 2026-10-11-shared-form-validation`):
 
 - `61ec6be` fix: workspace-operators web forms validate with the shared zod schemas
 - `74bbeab` fix: workspace-operators make AC-05b hold on every form and endpoint
+- `e3e1510` fix: workspace-operators existing-account password on accept is bound-only
 
 ## Verification
 
-All checks ran on Node 26.11.1. The live run below was at `d36f22b`; tests and lint were re-run at `74bbeab`.
+All checks ran on Node 26.11.1. The live run below was at `d36f22b`; tests and lint were re-run at `e3e1510`.
 
-- **Tests:** `pnpm test` passed: 70 files and 543/543 tests across api, shared and web, including the Testcontainers integration suites.
+- **Tests:** `pnpm test` passed: 70 files and 545/545 tests across api, shared and web, including the Testcontainers integration suites.
 - **Lint and types:** `pnpm lint` (eslint, prettier and tsc for api, web and e2e) is clean.
 - **Live run:** I ran the API (`src/main.ts`) against a throwaway Postgres 16 with all 8 migrations applied, and drove it with the admin CLI and curl. What I observed:
   - AC-01: `workspace:create` printed the invite link once. AC-02: a bad `--owner-email` gave exit 2 with `VALIDATION_ERROR` naming the field.
