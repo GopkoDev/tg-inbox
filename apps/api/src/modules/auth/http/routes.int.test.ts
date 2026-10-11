@@ -253,6 +253,35 @@ describe('auth routes (postgres)', () => {
     expect(again.json()).toMatchObject({ error: { code: 'RESET_LINK_INVALID' } });
   });
 
+  it('AC-21: redeeming ends the session the device cookie pointed at', async () => {
+    const a = await account('reset-device@example.test');
+    const other = await account('other-device@example.test');
+    const old = await insertSession(db, other.id);
+    const { token } = await insertResetLink(db, a.id, { createdAt: clock.now() });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/password-reset-links/redeem',
+      payload: { token, password: 'a brand new password' },
+      cookies: { session: old.token },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(await sessionCount(other.id)).toBe(0);
+    const stale = await app.inject({
+      method: 'GET',
+      url: '/api/_probe',
+      cookies: { session: old.token },
+    });
+    expect(stale.statusCode).toBe(401);
+    const fresh = await app.inject({
+      method: 'GET',
+      url: '/api/_probe',
+      cookies: { session: cookieOf(res).value },
+    });
+    expect(fresh.statusCode).toBe(200);
+    expect(fresh.json()).toEqual({ id: a.id });
+  });
+
   it('AC-22: expired and used links answer 404 RESET_LINK_INVALID', async () => {
     const a = await account('stale@example.test');
     const expired = await insertResetLink(db, a.id, {

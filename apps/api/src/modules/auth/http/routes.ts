@@ -53,7 +53,10 @@ export async function registerAuth(app: FastifyInstance, deps: AuthDeps): Promis
     { schema: { body: PasswordResetRedeem } },
     async (request, reply) => {
       const { token, password } = request.body;
-      setSessionCookie(reply, await resetLinkUseCases.redeemResetLink(token, password), cookie);
+      const session = await resetLinkUseCases.redeemResetLink(token, password);
+      const previous = request.cookies[SESSION_COOKIE];
+      if (previous) await sessionUseCases.signOut(previous);
+      setSessionCookie(reply, session, cookie);
       return reply.status(204).send();
     },
   );

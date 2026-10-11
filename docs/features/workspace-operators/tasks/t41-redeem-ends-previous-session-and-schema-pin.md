@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T41 — End the previous session on reset-link redeem, pin the response schemas with a test, fix the auth map row
@@ -64,10 +64,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Redeem: if a session cookie came with the request, end that session (`sessionUseCases.signOut(previous)`) after a successful redeem and before setting the new cookie — same pattern as sign-in (`routes.ts:27-29`).
-- [ ] Pin the response schemas: e.g. a test that builds the app, walks the registered routes (`app.printRoutes` / `onRoute` hook capture) and asserts each of the five routes has a `response[200]` schema equal to the shared one; or inject a stub use case that returns an extra field (e.g. `passwordHash`) and assert it never reaches the body. It must fail when a `response` entry is removed.
-- [ ] architecture-map auth row: routes under `/api/auth` and `/api/password-reset-links`.
-- [ ] Integration test: redeem with another account's live cookie → that old session is rejected afterwards (401 on `/api/me`), the new one works.
+- [x] Redeem: if a session cookie came with the request, end that session (`sessionUseCases.signOut(previous)`) after a successful redeem and before setting the new cookie — same pattern as sign-in (`routes.ts:27-29`).
+- [x] Pin the response schemas: e.g. a test that builds the app, walks the registered routes (`app.printRoutes` / `onRoute` hook capture) and asserts each of the five routes has a `response[200]` schema equal to the shared one; or inject a stub use case that returns an extra field (e.g. `passwordHash`) and assert it never reaches the body. It must fail when a `response` entry is removed.
+- [x] architecture-map auth row: routes under `/api/auth` and `/api/password-reset-links`.
+- [x] Integration test: redeem with another account's live cookie → that old session is rejected afterwards (401 on `/api/me`), the new one works.
 
 ## Edge cases
 
@@ -78,8 +78,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Redeem, sign-in and accept all replace the device session the same way
-- [ ] Removing any response schema turns a test red
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Redeem, sign-in and accept all replace the device session the same way
+- [x] Removing any response schema turns a test red
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
