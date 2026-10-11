@@ -34,7 +34,7 @@
 | T27 | [Add the six browser end-to-end flows and their CI step](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T25, T26 | done |
 | T28 | [Make concurrent invitation acceptance refuse cleanly instead of failing with 500](./t28-accept-invitation-concurrency.md) | app | Dmytro Hopko | M | T29 | todo |
 | T29 | [Make the sign-in lockout atomic per email and use the contract's credential message](./t29-atomic-sign-in-lockout.md) | app | Dmytro Hopko | M | — | todo |
-| T30 | [Shape route validation errors as the contract's field details and accept only JSON on mutating routes](./t30-validation-envelope-and-csrf.md) | infra | Dmytro Hopko | S | — | todo |
+| T30 | [Shape route validation errors as the contract's field details and accept only JSON on mutating routes](./t30-validation-envelope-and-csrf.md) | infra | Dmytro Hopko | S | — | done |
 | T31 | [Align team-route ids, statuses and error messages with the contract](./t31-team-routes-contract-fidelity.md) | ports | Dmytro Hopko | S | — | todo |
 | T32 | [Move the session cookie helpers out of auth's HTTP layer, add response schemas, end the previous session on sign-in](./t32-session-cookie-boundary-and-response-schemas.md) | ports | Dmytro Hopko | M | T29, T30 | todo |
 | T33 | [Route the CLI audit through the platform logger, fix the admin script, update the architecture map](./t33-cli-audit-logger-and-docs.md) | wiring | Dmytro Hopko | S | — | todo |
