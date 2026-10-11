@@ -8,14 +8,14 @@
 | T1 | [Promote the four staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | S | — | done |
 | T2 | [Add platform primitives: bot error codes incl. the first 5xx, owner-guard message, config keys, Bot API root, secret-header redaction](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | done |
 | T3 | [Build the scriptable fake Telegram Bot API and the webhook update builder for tests](./t03-fake-telegram.md) | tests | Dmytro Hopko | M | — | done |
-| T4 | [Define the bots zod contracts in packages/shared](./t04-shared-contracts.md) | ports | Dmytro Hopko | S | T2 | todo |
+| T4 | [Define the bots zod contracts in packages/shared](./t04-shared-contracts.md) | ports | Dmytro Hopko | S | T2 | done |
 | T5 | [Implement the bots domain: token check, connection states, inbound filter, update normalisation, due rule](./t05-bots-domain.md) | domain | Dmytro Hopko | M | — | done |
 | T6 | [Implement the conversations and contacts domain rules: message kinds, edit rule, profile refresh](./t06-conversation-contact-domain.md) | domain | Dmytro Hopko | S | — | done |
-| T7 | [Build the contacts module: repository with isolation tests, upsert-from-profile and count use cases](./t07-contacts-module.md) | infra | Dmytro Hopko | M | T1, T6 | todo |
-| T8 | [Build the conversation and message repositories with cross-workspace isolation tests](./t08-conversations-infra.md) | infra | Dmytro Hopko | M | T1, T6 | todo |
+| T7 | [Build the contacts module: repository with isolation tests, upsert-from-profile and count use cases](./t07-contacts-module.md) | infra | Dmytro Hopko | M | T1, T6 | done |
+| T8 | [Build the conversation and message repositories with cross-workspace isolation tests](./t08-conversations-infra.md) | infra | Dmytro Hopko | M | T1, T6 | done |
 | T9 | [Implement the conversations app layer: capture inbound message, apply edit, last message time, has conversations](./t09-capture-use-cases.md) | app | Dmytro Hopko | M | T7, T8 | todo |
-| T10 | [Build the bot repository, the AES-GCM token cipher and webhook secrets, with isolation tests incl. the two controlled exceptions](./t10-bots-infra.md) | infra | Dmytro Hopko | L | T1, T2, T5 | todo |
-| T11 | [Build the Telegram gateway: getMe, getWebhookInfo, setWebhook, deleteWebhook with typed outcomes and timeouts](./t11-telegram-gateway.md) | infra | Dmytro Hopko | M | T2, T3 | todo |
+| T10 | [Build the bot repository, the AES-GCM token cipher and webhook secrets, with isolation tests incl. the two controlled exceptions](./t10-bots-infra.md) | infra | Dmytro Hopko | L | T1, T2, T5 | done |
+| T11 | [Build the Telegram gateway: getMe, getWebhookInfo, setWebhook, deleteWebhook with typed outcomes and timeouts](./t11-telegram-gateway.md) | infra | Dmytro Hopko | M | T2, T3 | done |
 | T12 | [Implement the bots use cases get-settings and paste-token (connect, rotate, connect again, refusals, takeover confirmation)](./t12-settings-and-paste.md) | app | Dmytro Hopko | L | T2, T7, T9, T10, T11 | todo |
 | T13 | [Implement the bots use cases reconnect-with-stored-token and disconnect](./t13-reconnect-and-disconnect.md) | app | Dmytro Hopko | M | T12 | todo |
 | T14 | [Implement the bots use case accept-webhook-update: secret check, inbound filter, capture epoch, hand-off to conversations](./t14-accept-update.md) | app | Dmytro Hopko | M | T5, T9, T10 | todo |
