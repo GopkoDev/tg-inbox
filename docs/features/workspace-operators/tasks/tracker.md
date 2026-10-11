@@ -53,7 +53,7 @@
 | T46 | [Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments](./t46-shell-guard-failure-shows-retry.md) | ui | Dmytro Hopko | S | — | done |
 | T47 | [Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch](./t47-framework-4xx-codes-and-hook-pin.md) | infra | Dmytro Hopko | S | — | done |
 | T48 | [Remove test containers on every failure path and drop the named-volume loop from the clean script](./t48-test-container-teardown-on-every-failure.md) | infra | Dmytro Hopko | S | — | done |
-| T49 | [Key the access-removed notice by workspace and ignore guard refusals from a page the person has left](./t49-notice-per-workspace-and-guard-scoped-to-url.md) | ui | Dmytro Hopko | S | — | todo |
+| T49 | [Key the access-removed notice by workspace and ignore guard refusals from a page the person has left](./t49-notice-per-workspace-and-guard-scoped-to-url.md) | ui | Dmytro Hopko | S | — | done |
 | T50 | [Send router-level framework errors through the error envelope, pin the 5xx fallback, fix the stop() comment](./t50-router-errors-envelope-and-5xx-pin.md) | infra | Dmytro Hopko | S | — | todo |
 
 **Total:** 50 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`, T38–T44 from `_review/review-2026-10-11-r2.md`, T45–T48 from `_review/review-2026-10-11-r3.md`, T49–T50 from `_review/review-2026-10-11-r4.md`), ~22.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.
