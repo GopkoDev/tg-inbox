@@ -45,7 +45,10 @@ export async function startTestDatabase(
   };
 }
 
-/** Memoised stop: waits for clients, then removes the container. */
+/**
+ * Memoised stop: waits for clients, then always removes the container. A failed removal is not
+ * memoised, so a later stop() retries it; when both steps fail, both errors are kept.
+ */
 export function createStop(
   waitForClients: () => Promise<void>,
   remove: () => Promise<unknown>,
@@ -53,11 +56,21 @@ export function createStop(
   let stopped: Promise<void> | undefined;
   return () =>
     (stopped ??= (async () => {
+      let waitError: unknown;
       try {
         await waitForClients();
-      } finally {
-        await remove();
+      } catch (err) {
+        waitError = err ?? new Error('waiting for clients failed');
       }
+      try {
+        await remove();
+      } catch (removeError) {
+        stopped = undefined;
+        throw waitError === undefined
+          ? removeError
+          : new AggregateError([waitError, removeError], 'stopping the test database failed');
+      }
+      if (waitError !== undefined) throw waitError;
     })());
 }
 
