@@ -1079,6 +1079,52 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t48-test-container-teardown-on-every-failure.md",
       "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T49",
+      "title": "Key the access-removed notice by workspace and ignore guard refusals from a page the person has left",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "The notice always names the workspace whose refusal produced it; a refusal from a page the person has left has no visible effect; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/shared/api/guard.test.ts",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/features/workspaces/picker/WorkspacePicker.tsx",
+        "apps/web/src/pages/NoAccessPage.tsx",
+        "apps/web/src/pages/NoAccessPage.test.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspacesPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t49-notice-per-workspace-and-guard-scoped-to-url.md",
+      "source": "review-2026-10-11-r4"
+    },
+    {
+      "id": "T50",
+      "title": "Send router-level framework errors through the error envelope, pin the 5xx fallback, fix the stop() comment",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No API response body outside the error envelope for any 4xx/5xx; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/app.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "apps/api/src/test/postgres.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t50-router-errors-envelope-and-5xx-pin.md",
+      "source": "review-2026-10-11-r4"
     }
   ]
 }
