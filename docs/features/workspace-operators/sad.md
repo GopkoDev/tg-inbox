@@ -60,37 +60,37 @@ target_surfaces: []  # filled in §4 — subset of: backend-service | web-fronte
 
 ## 3. Context and scope
 
-<!-- 🎯 Why: draws the SYSTEM BOUNDARY — who talks to it from outside, where the trust zone ends.
-     Without §3, §5 and §8 (authorization) blur — unclear what's «inside» vs «outside».
-     📋 Write: 2–3 sentences of business context + an external-systems table + a C4Context block.
-     📌 «External: none (deliberate, no third-party in v1)» is itself a decision worth stating.
-     Trust boundary — the line past which you don't trust data without checking it.
-     Never N/A — greenfield still draws the planned actors + external systems. -->
+tg-inbox is a shared Telegram inbox for small businesses; this feature introduces the business itself (the workspace), the people who work in it (accounts holding memberships with a role) and the way they get in (invitations, sign-in, password-reset links). Platform admins on the tg-inbox team onboard each pilot business by hand; business owners and operators use the web panel. Links are not mailed — whoever issues one copies it and passes it on through a channel they trust.
 
-<Business context in 2–3 sentences. What the system does for whom.>
-
-<!-- brownfield: <one-line scan summary> (or «N/A — greenfield repo» if no source existed) -->
+<!-- brownfield: freshly scaffolded skeleton (commit afd2bbb) — `platform/` + `modules/health` only, a baseline migration that pins UTC and no tables yet, a web app shell; docs/architecture-map.md (greenfield-bootstrap) still describes it accurately -->
 
 **External systems (in / out):**
 
 | Actor or system | Type | Interaction |
 |---|---|---|
-| <author role> | Person | <what they do> |
-| <external service> | System (internal/external) | <interaction> |
-| <identity provider> | System (external) | <provides auth tokens> |
+| Platform admin | Person | Creates a workspace with its first business owner invitation, re-issues that invitation, issues password-reset links — outside the web panel (channel decided in §4) |
+| Business owner | Person | Invites, deactivates and reactivates members, reviews the team and revokes invitations in the web panel |
+| Operator | Person | Joins by invitation, signs in and out, switches between workspaces in the web panel |
+| Trusted messenger | Out-of-band channel (not integrated) | Carries invitation and reset links from whoever issued them to the person they are for |
+| External systems | — | None, deliberately: no mail delivery in v1 (spec §3), and the Telegram Bot API is not touched by this feature (roadmap step 3) |
 
-**C4 Context (L1):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. -->
+**C4 Context (L1):**
 
 ```mermaid
 C4Context
-    title <feature> — System Context
+    title workspace-operators — System Context
 
-    Person(actor, "<Actor role>", "<intent>")
-    System(app, "<Our system>", "<one-sentence description>")
-    System_Ext(ext, "<External system>", "<one-sentence description>")
+    Person(admin, "Platform admin", "tg-inbox team member who onboards pilot businesses by hand")
+    Person(owner, "Business owner", "Runs the team of one workspace")
+    Person(operator, "Operator", "Works in one or more workspaces")
 
-    Rel(actor, app, "<interaction>", "<protocol>")
-    Rel(app, ext, "<interaction>", "<protocol>")
+    System(tginbox, "tg-inbox", "Shared Telegram inbox: workspaces, accounts, memberships, invitations, sessions")
+
+    Rel(admin, tginbox, "Creates workspaces with a first-owner invitation, issues reset links", "outside the web panel, see section 4")
+    Rel(owner, tginbox, "Invites, deactivates, reactivates members, reviews the team", "HTTPS, web panel")
+    Rel(operator, tginbox, "Accepts invitations, signs in and out, switches workspaces", "HTTPS, web panel")
+    Rel(admin, owner, "Passes on the first-owner invitation link", "trusted messenger")
+    Rel(owner, operator, "Passes on invitation links", "trusted messenger")
 ```
 
 ## 4. Solution strategy
