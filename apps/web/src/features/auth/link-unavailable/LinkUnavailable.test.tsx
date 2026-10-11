@@ -64,6 +64,9 @@ describe('LinkUnavailable', () => {
     signOut.mockResolvedValue(undefined);
     const reload = vi.fn();
     renderIt(<LinkUnavailable reason="invitation-for-another-email" reload={reload} />);
+    expect(
+      await screen.findByRole('heading', { name: 'This invitation is for another email' }),
+    ).toBeInTheDocument();
     expect(await screen.findByText(/belongs to another email/i)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /sign out/i }));
     await waitFor(() => expect(reload).toHaveBeenCalled());

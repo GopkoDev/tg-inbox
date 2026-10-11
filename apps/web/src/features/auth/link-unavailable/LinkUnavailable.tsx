@@ -54,7 +54,9 @@ export function LinkUnavailable(props: LinkUnavailableProps) {
       <CardHeader>
         <Link2Off className="text-muted-foreground size-6" aria-hidden="true" />
         <CardTitle>
-          <h1>{anotherEmail ? 'Wrong account' : 'Link unavailable'}</h1>
+          <h1>
+            {anotherEmail ? 'This invitation is for another email' : "This link can't be used"}
+          </h1>
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">

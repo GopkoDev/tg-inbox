@@ -16,9 +16,12 @@ const getMe = vi.fn<() => Promise<Me>>();
 vi.mock('@/features/auth/api', () => ({
   lookUpInvitation: (t: string) => lookUpInvitation(t),
   acceptInvitation: (b: AcceptBody) => acceptInvitation(b),
-  enterWorkspace: (id: string) => enterWorkspace(id),
   getMe: () => getMe(),
   signOut: vi.fn(),
+}));
+
+vi.mock('@/features/workspaces/api', () => ({
+  enterWorkspace: (id: string) => enterWorkspace(id),
 }));
 
 import { AcceptInvitationPage } from './AcceptInvitationPage';
@@ -64,7 +67,9 @@ describe('malformed invitation tokens (review #16)', () => {
     ['bad paste with %', `${'A'.repeat(40)}%20x`],
   ])('AC-06 %s: SCR-03 without a lookup', async (_name, bad) => {
     renderPage(bad);
-    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: "This link can't be used" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/ask a business owner for a new one/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(lookUpInvitation).not.toHaveBeenCalled();
@@ -73,7 +78,9 @@ describe('malformed invitation tokens (review #16)', () => {
   it('AC-06 lookup 400 VALIDATION_ERROR maps to SCR-03, not Retry', async () => {
     lookUpInvitation.mockRejectedValue(new ApiError(400, ErrorCode.VALIDATION_ERROR, 'bad'));
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: "This link can't be used" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 
@@ -82,6 +89,7 @@ describe('malformed invitation tokens (review #16)', () => {
     renderPage();
     expect(await screen.findByRole('heading', { name: 'Join Acme' })).toBeInTheDocument();
     expect(screen.getByText('You are invited as')).toBeInTheDocument();
+    expect(screen.getByText('Operator')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create account and join' })).toBeInTheDocument();
   });
 
@@ -106,8 +114,8 @@ describe('AcceptInvitationPage', () => {
     expect(await screen.findByRole('heading', { name: 'Join Acme' })).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveValue('new@x.io');
     expect(screen.getByLabelText('Email')).toHaveAttribute('readonly');
-    expect(screen.getByText('operator')).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toBeInTheDocument();
+    expect(screen.getByText('Operator')).toBeInTheDocument();
+    expect(screen.getByLabelText('Your name')).toBeInTheDocument();
     expect(screen.getByText(/at least 10 characters/i)).toBeInTheDocument();
   });
 
@@ -115,15 +123,18 @@ describe('AcceptInvitationPage', () => {
     lookUpInvitation.mockResolvedValue(preview(true));
     renderPage();
     expect(await screen.findByLabelText('Password')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Name')).not.toBeInTheDocument();
+    expect(
+      screen.getByText('new@x.io already has a tg-inbox account. Enter its password to join.'),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText('Your name')).not.toBeInTheDocument();
   });
 
-  it('AC-03 success: accepts with name and password, enters the workspace and navigates', async () => {
+  it('AC-03 success: accepts with name and password and navigates; the shell enters', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     acceptInvitation.mockResolvedValue(WS);
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', 'longenough1');
     join();
     expect(await screen.findByText('workspace home')).toBeInTheDocument();
@@ -150,8 +161,8 @@ describe('AcceptInvitationPage', () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     acceptInvitation.mockReturnValue(new Promise(() => undefined));
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', 'longenough1');
     join();
     await waitFor(() => expect(screen.getByLabelText('Password')).toBeDisabled());
@@ -161,8 +172,8 @@ describe('AcceptInvitationPage', () => {
   it('AC-05 validation: a 9-character password is blocked client-side', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', '123456789');
     join();
     expect(
@@ -177,11 +188,11 @@ describe('AcceptInvitationPage', () => {
   it('validation: blank name is blocked client-side', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     renderPage();
-    await screen.findByLabelText('Name');
+    await screen.findByLabelText('Your name');
     change('Password', 'longenough1');
     join();
     await waitFor(() =>
-      expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true'),
+      expect(screen.getByLabelText('Your name')).toHaveAttribute('aria-invalid', 'true'),
     );
     expect(acceptInvitation).not.toHaveBeenCalled();
   });
@@ -192,12 +203,12 @@ describe('AcceptInvitationPage', () => {
       new ApiError(400, ErrorCode.VALIDATION_ERROR, 'Name is too long', { field: 'display_name' }),
     );
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', 'longenough1');
     join();
     expect(await screen.findByText('Name is too long')).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText('Your name')).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('invalid credentials: alert, password cleared', async () => {
@@ -227,8 +238,8 @@ describe('AcceptInvitationPage', () => {
       new ApiError(404, ErrorCode.INVITATION_INVALID, 'invalid', { ask: 'tg_inbox_team' }),
     );
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', 'longenough1');
     join();
     expect(await screen.findByText(/ask the tg-inbox team for a new one/i)).toBeInTheDocument();
@@ -248,19 +259,19 @@ describe('AcceptInvitationPage', () => {
     renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     fireEvent.click(screen.getByRole('button', { name: /retry/i }));
-    expect(await screen.findByLabelText('Name')).toBeInTheDocument();
+    expect(await screen.findByLabelText('Your name')).toBeInTheDocument();
   });
 
   it('unexpected on submit: alert, form stays filled', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
     acceptInvitation.mockRejectedValue(new TypeError('network'));
     renderPage();
-    await screen.findByLabelText('Name');
-    change('Name', 'Nina');
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
     change('Password', 'longenough1');
     join();
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
-    expect(screen.getByLabelText('Name')).toHaveValue('Nina');
+    expect(screen.getByLabelText('Your name')).toHaveValue('Nina');
     expect(screen.getByLabelText('Password')).toHaveValue('longenough1');
   });
 });

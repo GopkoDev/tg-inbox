@@ -31,7 +31,7 @@ test('join as a new person lands on the workspace home (AC-03)', async ({ page, 
 
   await page.goto(link);
   await expect(page.getByLabel('Email')).toHaveValue('ana@example.test');
-  await page.getByLabel('Name').fill('Ana');
+  await page.getByLabel('Your name').fill('Ana');
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account and join' }).click();
 
@@ -50,7 +50,9 @@ test('join with an existing account keeps the other workspace in the switcher (A
   const second = await world.invite('chief@example.test', bolt, 'both@example.test');
 
   await page.goto(second);
-  await expect(page.getByText('You already have an account')).toBeVisible();
+  await expect(
+    page.getByText('both@example.test already has a tg-inbox account. Enter its password to join.'),
+  ).toBeVisible();
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Join workspace' }).click();
 

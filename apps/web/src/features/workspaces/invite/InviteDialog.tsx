@@ -17,14 +17,13 @@ import {
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
+import { ROLE_LABEL, type Role } from '@/shared/lib/roles';
 import { createInvitation } from '../api';
 
-type Role = 'owner' | 'operator';
 export type InviteFailure = 'owner-only' | 'not-found';
 
 const ALREADY_MEMBER =
   'This person is already a member — reactivate them instead if they are deactivated';
-const ROLE_LABEL: Record<Role, string> = { operator: 'Operator', owner: 'Business owner' };
 
 const formatDate = (iso: string) =>
   new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });

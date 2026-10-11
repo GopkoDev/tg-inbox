@@ -8,6 +8,7 @@ import {
   type LinkUnavailableProps,
 } from '@/features/auth/link-unavailable/LinkUnavailable';
 import { ApiError } from '@/shared/api/client';
+import { ROLE_LABEL } from '@/shared/lib/roles';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -133,7 +134,7 @@ export function AcceptInvitationForm() {
         <CardDescription>
           {preview ? (
             <>
-              You are invited as <Badge variant="secondary">{preview.role}</Badge>
+              You are invited as <Badge variant="secondary">{ROLE_LABEL[preview.role]}</Badge>
             </>
           ) : (
             'Checking your invitation…'
@@ -169,7 +170,7 @@ export function AcceptInvitationForm() {
             </div>
             {!preview.account_exists && (
               <div className="space-y-2">
-                <Label htmlFor="name">Name</Label>
+                <Label htmlFor="name">Your name</Label>
                 <Input
                   id="name"
                   autoComplete="name"
@@ -203,7 +204,7 @@ export function AcceptInvitationForm() {
               )}
               {preview.account_exists && (
                 <p className="text-muted-foreground text-sm">
-                  You already have an account — enter its password.
+                  {preview.email} already has a tg-inbox account. Enter its password to join.
                 </p>
               )}
               {passwordError && (

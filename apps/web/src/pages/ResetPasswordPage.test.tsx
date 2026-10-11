@@ -31,7 +31,9 @@ describe('malformed reset tokens (review #16)', () => {
     ['bad paste with %', `${'A'.repeat(40)}%20x`],
   ])('AC-22 %s: SCR-03 without a lookup', async (_name, bad) => {
     renderPage(bad);
-    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: "This link can't be used" }),
+    ).toBeInTheDocument();
     expect(screen.getByText(/ask the tg-inbox team for a new one/i)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(lookUpPasswordResetLink).not.toHaveBeenCalled();
@@ -40,7 +42,9 @@ describe('malformed reset tokens (review #16)', () => {
   it('AC-22 lookup 400 VALIDATION_ERROR maps to SCR-03, not Retry', async () => {
     lookUpPasswordResetLink.mockRejectedValue(new ApiError(400, ErrorCode.VALIDATION_ERROR, 'bad'));
     renderPage();
-    expect(await screen.findByRole('heading', { name: 'Link unavailable' })).toBeInTheDocument();
+    expect(
+      await screen.findByRole('heading', { name: "This link can't be used" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
   });
 });

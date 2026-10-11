@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T44 — Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test
@@ -63,10 +63,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Map roles to their labels through one shared helper (move `ROLE_LABEL` from `InviteDialog.tsx:27` to e.g. `shared/lib/roles.ts` and use it in both places).
-- [ ] Apply the exact screens.md strings for SCR-02 (badge label, "Your name", existing-account hint with the email) and SCR-03 (both headings). Re-read screens.md SCR-02/SCR-03 in full and fix any other remaining difference.
-- [ ] AcceptInvitationPage test: mock `@/features/workspaces/api`'s `enterWorkspace`, assert it is not called by the form, drop the stale auth mock key, rename the test to "…navigates; the shell enters".
-- [ ] Update selectors in AcceptInvitationPage / ResetPasswordPage / LinkUnavailable tests and `e2e/flows.spec.ts` that depend on the changed strings.
+- [x] Map roles to their labels through one shared helper (move `ROLE_LABEL` from `InviteDialog.tsx:27` to e.g. `shared/lib/roles.ts` and use it in both places).
+- [x] Apply the exact screens.md strings for SCR-02 (badge label, "Your name", existing-account hint with the email) and SCR-03 (both headings). Re-read screens.md SCR-02/SCR-03 in full and fix any other remaining difference.
+- [x] AcceptInvitationPage test: mock `@/features/workspaces/api`'s `enterWorkspace`, assert it is not called by the form, drop the stale auth mock key, rename the test to "…navigates; the shell enters".
+- [x] Update selectors in AcceptInvitationPage / ResetPasswordPage / LinkUnavailable tests and `e2e/flows.spec.ts` that depend on the changed strings.
 
 ## Edge cases
 
@@ -77,8 +77,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] SCR-02 and SCR-03 strings equal screens.md
-- [ ] Accept test would fail if the form called enterWorkspace
-- [ ] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] SCR-02 and SCR-03 strings equal screens.md
+- [x] Accept test would fail if the form called enterWorkspace
+- [x] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
