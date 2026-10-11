@@ -311,6 +311,385 @@ sequenceDiagram
     end
 ```
 
+The flows below were added by the `sequences` stage. They use the generic participant vocabulary (`<user>`, `<ui>`, `<client>`, `<service>`, `<data-store>`), each labelled with the §5 container it stands for; "the guard" always means the check drawn in critical flow 3.
+
+### Flow 4: Create a workspace with its first-owner invitation (US-01 — AC-01, AC-02)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Platform admin
+    participant C as <client> Admin CLI
+    participant Ws as <service> workspaces
+    participant D as <data-store> Database
+    Note over U,C: Precondition: the admin has a shell on the server or a tunnel to the database
+    U->>C: create workspace with a name and the owner email
+    C->>Ws: create workspace with first-owner invitation
+    alt name empty or owner email not a valid email
+        Ws-->>C: validation error naming the field and the reason
+        C-->>U: nothing created, which field is wrong and why
+    else valid input
+        Ws->>D: begin, insert the workspace
+        Note over Ws,D: persists workspace (no memberships yet = awaiting its first business owner)
+        Ws->>D: insert invitation with the business owner role, normalised email, token hash, 7-day expiry, commit
+        Note over Ws,D: persists invitation (lookup by token hash, pending by workspace + email)
+        Ws-->>C: workspace id and the invitation link
+        C->>C: write one audit line without the link token
+        C-->>U: print the invitation link once
+    end
+    Note over U,D: Postcondition: the workspace has no members, so the guard answers not found to everyone until the invitation is accepted
+```
+
+### Flow 5: Re-issue the first-owner invitation (US-01 — AC-01b)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Platform admin
+    participant C as <client> Admin CLI
+    participant Ws as <service> workspaces
+    participant D as <data-store> Database
+    Note over U,C: Precondition: the first-owner invitation expired or its link was lost
+    U->>C: re-issue the first-owner invitation for a workspace
+    C->>Ws: re-issue first-owner invitation
+    Ws->>D: begin, lock the workspace row
+    Ws->>D: read the workspace memberships and its owner invitation
+    alt no such workspace
+        Ws-->>C: workspace not found
+        C-->>U: no workspace with that id
+    else the workspace already has members
+        Ws-->>C: first business owner already joined
+        C-->>U: refused, business owners invite from the web panel
+    else awaiting its first business owner
+        Ws->>D: mark the earlier pending invitation superseded
+        Ws->>D: insert a new owner invitation for the same email with a 7-day expiry, commit
+        Note over Ws,D: persists invitation (supersedes the earlier one)
+        Ws-->>C: new invitation link
+        C->>C: write one audit line without the link token
+        C-->>U: print the new invitation link once
+    end
+    Note over U,D: Postcondition: only the newest owner invitation of the workspace works
+```
+
+### Flow 6: Sign out (US-03 — AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Operator
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant A as <service> auth
+    participant D as <data-store> Database
+    Note over U,W: Precondition: signed in on this device
+    U->>W: sign out
+    W->>H: sign out with the session cookie
+    H->>A: end the session
+    A->>D: delete the session by token hash
+    Note over A,D: persists session removal (lookup by token hash)
+    alt no session or already expired
+        A-->>H: nothing to end
+    else session found
+        A-->>H: session ended
+    end
+    H-->>W: signed out, cookie cleared
+    W->>W: clear the account and workspace stores
+    W-->>U: sign-in screen (SCR-01)
+    Note over U,D: Postcondition: this device needs a new sign-in, other devices keep their sessions
+```
+
+### Flow 7: Switch to another workspace (US-04 — AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Operator
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant Ws as <service> workspaces
+    participant D as <data-store> Database
+    Note over U,W: Precondition: signed in, working in Acme Flowers, active in Bolt Bikes too
+    U->>W: open the workspace switcher
+    W->>H: list my workspaces
+    H->>Ws: active memberships of the signed-in account
+    Ws->>D: read active memberships with workspace names
+    Ws-->>H: active workspaces
+    H-->>W: workspace list
+    W-->>U: picker with active workspaces only (SCR-04)
+    U->>W: pick Bolt Bikes
+    W->>H: enter Bolt Bikes
+    H->>Ws: guard Bolt Bikes for this account
+    alt no longer an active member
+        Ws-->>H: not found or access removed
+        H-->>W: refused, handled as in flow 3
+    else active member
+        Ws->>D: set the last-used time on this membership
+        Note over Ws,D: persists membership last_used_at (read ordered by last use at sign-in)
+        Ws-->>H: workspace id and role
+        H-->>W: Bolt Bikes entered
+        W->>W: drop Acme Flowers data, route to the Bolt Bikes address
+        W-->>U: Bolt Bikes home (SCR-06)
+    end
+    Note over U,D: Postcondition: the workspace lives in the URL, not the session, so other devices stay where they were, the next sign-in opens Bolt Bikes
+```
+
+### Flow 8: Invite a teammate (US-05 — AC-14, AC-15, AC-16)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant Ws as <service> workspaces
+    participant A as <service> auth
+    participant D as <data-store> Database
+    Note over U,W: Precondition: signed in, on the invite step (SCR-08) of Acme Flowers
+    U->>W: enter an email and a role, confirm
+    W->>H: invite to the workspace with email and role
+    H->>Ws: guard the workspace, owner only
+    alt caller is an operator
+        Ws-->>H: role is not business owner
+        H-->>W: refused, only business owners manage the team
+    else email invalid or role unknown
+        H-->>W: validation error naming the field
+    else business owner with valid input
+        H->>Ws: invite member
+        Ws->>D: begin, lock the workspace row
+        Ws->>A: find the account for the normalised email
+        A->>D: read account by normalised email
+        A-->>Ws: account id or none
+        Ws->>D: read a membership of that account in this workspace
+        alt already a member, active or deactivated
+            Ws-->>H: already a member
+            H-->>W: refused, already a member, reactivate them if deactivated
+        else not a member
+            Ws->>D: mark any pending invitation for this email in this workspace superseded
+            Ws->>D: insert invitation with role, token hash, 7-day expiry, commit
+            Note over Ws,D: persists invitation (pending by workspace + email, lookup by token hash)
+            Ws-->>H: invitation and its link
+            H-->>W: invitation with its link, the only time it is returned
+            W-->>U: link shown once to copy
+        end
+    end
+    Note over U,D: Postcondition: one pending 7-day invitation per email in the workspace, visible in the team list without its link
+```
+
+### Flow 9: Deactivate and reactivate a member (US-06 — AC-17, AC-18, AC-19)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant Ws as <service> workspaces
+    participant D as <data-store> Database
+    Note over U,W: Precondition: signed in as a business owner on the team screen (SCR-07)
+    U->>W: deactivate a member and confirm
+    W->>H: deactivate the membership in the workspace
+    H->>Ws: guard the workspace, owner only (operator refused as in flow 8)
+    H->>Ws: deactivate membership
+    Ws->>D: begin, lock the workspace row
+    Note over Ws,D: concurrent team changes queue on this lock, so two deactivations are judged one after the other
+    Ws->>D: read the membership in this workspace and count active business owners
+    alt membership not in this workspace
+        Ws-->>H: not found
+        H-->>W: member not found, refresh the list
+    else it would leave no active business owner
+        Ws-->>H: last active business owner
+        H-->>W: refused, a workspace must keep at least one active business owner
+    else allowed
+        Ws->>D: set the membership deactivated, commit
+        Note over Ws,D: persists membership state (guard reads by account + workspace)
+        Ws-->>H: updated member
+        H-->>W: member deactivated
+        W-->>U: member shown as deactivated
+    end
+    Note over Ws,D: AC-17 - the member's next request in this workspace fails the guard of flow 3 with access removed, other memberships untouched
+    U->>W: reactivate a deactivated member
+    W->>H: reactivate the membership in the workspace
+    H->>Ws: guard the workspace, owner only, then reactivate membership
+    Ws->>D: begin, lock the workspace row, read the membership
+    alt membership not in this workspace
+        Ws-->>H: not found
+        H-->>W: member not found, refresh the list
+    else deactivated member
+        Ws->>D: set the membership active keeping its role, commit
+        Note over Ws,D: persists membership state
+        Ws-->>H: updated member
+        H-->>W: member reactivated
+        W-->>U: member shown as active with the previous role
+    end
+    Note over U,D: Postcondition: the workspace always has an active business owner, a reactivated member passes the guard again
+```
+
+### Flow 10: Review the team and revoke an invitation (US-07 — AC-20)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant Ws as <service> workspaces
+    participant A as <service> auth
+    participant D as <data-store> Database
+    Note over U,W: Precondition: signed in as a business owner of Acme Flowers
+    U->>W: open the team screen
+    W->>H: list the team of the workspace
+    H->>Ws: guard the workspace, owner only (operator refused as in flow 8)
+    H->>Ws: list team
+    Ws->>D: read memberships of the workspace with role and state
+    Ws->>A: names and emails of these accounts
+    A->>D: read accounts by id
+    A-->>Ws: names and emails
+    Ws->>D: read pending unexpired invitations of the workspace
+    Ws-->>H: members and pending invitations, never a token or link
+    H-->>W: team
+    W-->>U: members with name, email, role, state and invitations with email, role, expiry (SCR-07)
+    U->>W: revoke a pending invitation
+    W->>H: revoke the invitation in the workspace
+    H->>Ws: guard the workspace, owner only, then revoke invitation
+    Ws->>D: mark revoked only while pending and in this workspace
+    Note over Ws,D: persists invitation state (conditional update by id + workspace)
+    alt not pending any more or not in this workspace
+        Ws-->>H: invitation not found
+        H-->>W: invitation is no longer pending, refresh the list
+    else revoked
+        Ws-->>H: revoked
+        H-->>W: invitation revoked
+        W-->>U: invitation removed from the pending list
+    end
+    Note over U,D: Postcondition: the revoked link is refused as no longer valid (flow 2, AC-06)
+```
+
+### Flow 11: Issue a password-reset link (US-08 — AC-21)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Platform admin
+    participant C as <client> Admin CLI
+    participant A as <service> auth
+    participant D as <data-store> Database
+    Note over U,C: Precondition: a person asked the tg-inbox team to restore access
+    U->>C: issue a reset link for an email
+    C->>A: issue password-reset link
+    A->>D: read account by normalised email
+    alt no account for that email
+        A-->>C: account not found
+        C-->>U: no account with that email
+    else account found
+        A->>D: begin, mark the account's unused reset links superseded
+        A->>D: insert a reset link with token hash and 24-hour expiry, commit
+        Note over A,D: persists password-reset link (lookup by token hash, unused by account)
+        A-->>C: reset link
+        C->>C: write one audit line without the link token
+        C-->>U: print the reset link once
+    end
+    Note over U,D: Postcondition: only the newest reset link of the account works
+```
+
+### Flow 12: Set a new password through a reset link (US-08 — AC-21, AC-22)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Operator
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant A as <service> auth
+    participant D as <data-store> Database
+    Note over U,W: Precondition: the person received a reset link from a platform admin
+    U->>W: open the reset link
+    W->>H: look up the reset link
+    H->>A: check reset link
+    A->>D: read the reset link by token hash
+    alt unknown, older than 24 hours, used or superseded
+        A-->>H: link no longer valid
+        H-->>W: reset link unavailable
+        W-->>U: the reset link is no longer valid (SCR-03)
+    else valid
+        A-->>H: link valid
+        H-->>W: show the new-password form
+        W-->>U: set new password (SCR-09)
+        U->>W: enter a new password and confirm
+        W->>H: redeem the reset link with the new password
+        H->>A: redeem reset link
+        alt password shorter than 10 characters
+            A-->>H: validation error
+            H-->>W: the password must be at least 10 characters long
+        else valid password
+            A->>D: begin, consume the link only while unused and unexpired
+            alt consumed or expired in the meantime
+                A-->>H: link no longer valid
+                H-->>W: reset link unavailable (SCR-03)
+            else consumed
+                A->>D: store the new password hash
+                A->>D: delete every session of the account
+                A->>D: clear the sign-in failures of the email
+                A->>D: insert a session for this device, commit
+                Note over A,D: persists account password hash, sessions, sign-in failures, reset link
+                A-->>H: session token
+                H-->>W: signed in, session cookie set
+                W->>H: who am I and where can I work (as in flow 1)
+                W-->>U: workspace per the AC-07 resolution (SCR-06, SCR-04 or SCR-05)
+            end
+        end
+    end
+    Note over U,D: Postcondition: every other device is signed out, the lockout count is cleared, the link cannot be used again
+```
+
+### Coverage: user stories and acceptance criteria
+
+| User story | Flows |
+|---|---|
+| US-01 Create a workspace by hand | 4, 5 |
+| US-02 Join a workspace by invitation | 2 |
+| US-03 Sign in and sign out | 1, 6 (+ 3 for an expired session) |
+| US-04 Switch between workspaces | 7 (+ 3 for a link into a foreign workspace) |
+| US-05 Invite a teammate | 8 |
+| US-06 Deactivate and reactivate a member | 9 (+ 3 for the effect on the member) |
+| US-07 Review the team | 10 |
+| US-08 Restore access after a forgotten password | 11, 12 |
+
+| AC | Shown in |
+|---|---|
+| AC-01 | Flow 4, happy path |
+| AC-01b | Flow 5, "awaiting its first business owner" branch |
+| AC-02 | Flow 4, validation branch |
+| AC-03 | Flow 2, "no account for the email" path |
+| AC-04 | Flow 2, "account exists" path |
+| AC-04b | Flow 2, "signed in with a different email" branch |
+| AC-05 | Flow 2, prose under the diagram (rejected before anything is written) |
+| AC-06 | Flow 2, "expired, used, revoked or replaced" branch |
+| AC-07 | Flow 1, "credentials correct" branch |
+| AC-08 | Flow 1, "unknown email or wrong password" branch |
+| AC-09 | Flow 1, "email locked out" branch; cleared in flow 12 |
+| AC-10 | Flow 1, last step (no-access screen for no active membership) |
+| AC-11 | Flow 6 |
+| AC-12 | Flow 7, "active member" branch |
+| AC-13 | Flow 3, "never a member or no such workspace" branch |
+| AC-14 | Flow 8, "not a member" branch |
+| AC-15 | Flow 8, "caller is an operator" branch (flows 9 and 10 reuse it) |
+| AC-16 | Flow 8, "already a member" branch |
+| AC-17 | Flow 9, deactivation + note, and flow 3, "membership deactivated" branch |
+| AC-18 | Flow 9, "would leave no active business owner" branch + the workspace-row lock note |
+| AC-19 | Flow 9, reactivation part |
+| AC-20 | Flow 10 |
+| AC-21 | Flow 11 (issue, supersede) + flow 12, "consumed" branch |
+| AC-22 | Flow 12, "unknown, older than 24 hours, used or superseded" branch |
+
+Every user story maps to at least one flow and every acceptance criterion to a flow or branch; none is non-runtime.
+
+**Flagged for later stages (not decided here):**
+
+- *Flow 5, "the workspace already has members" branch* — the spec only describes re-issuing for a workspace still awaiting its owner; refusing once someone joined is the drawn behaviour. Confirm with `clarify` if it should differ.
+- *Flow 7, the "enter workspace" request* — `last_used_at` is written by one explicit request when a workspace is entered, not on every guarded request, so ordinary reads stay write-free. `api` names this endpoint.
+- *Persist hints for `data-model`:* invitations by token hash (unique) and pending by (workspace, normalised email); memberships by (account, workspace) (unique, the guard lookup) and by account ordered by `last_used_at`; accounts by normalised email (unique); sessions by token hash (unique) and by account (reset ends all); sign-in failures by (normalised email, time); reset links by token hash (unique) and unused by account.
+- No new participants beyond the §5 containers; no async flows (§8 — no events or jobs), so no idempotency/retry/dead-letter steps apply.
+
 ## 7. Deployment view
 
 No production target is chosen yet (architecture map: deferred until the first pilot goes live); this feature changes the deployable unit, not the hosting. One Node 26 process runs the Fastify API, serves the built web panel from the same origin ([ADR-0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md)) and talks to one PostgreSQL 16 database; the admin CLI is run on demand on the same host (or from a trusted machine with a tunnel to the database) with the same configuration ([ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md)). One replica is enough for 5–10 pilots; nothing in this feature keeps state in process memory, so a second replica behind the same origin needs no code change.
