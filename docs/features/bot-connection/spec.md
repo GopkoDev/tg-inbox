@@ -30,11 +30,14 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 ## 3. Non-goals
 
 - Replying to end customers and the inbox screens — roadmap step 4; this step only captures.
-- Viewing the content of photos, voice notes, files and other media — this step records a non-text message's kind and caption and keeps what is needed to show its content later; how media is shown is decided with the inbox (step 4).
+- Viewing the content of photos, voice notes, files and other media — this step records a non-text message's kind and caption and keeps Telegram's reference to its content (usable only while the same bot is connected); whether media is downloaded and kept by tg-inbox, and how it is shown, is decided with the inbox (step 4).
 - Messages in groups or channels the bot belongs to — v1 support is one-to-one private chats; group and channel work arrives with group posts (step 10).
 - Tracking which end customers blocked or unblocked the bot — needed for broadcasts, so it arrives with step 8.
 - Several bots per workspace, or creating the bot for the business — one BotFather bot per business is enough for pilots, and the business keeps ownership of its bot.
 - Editing contacts, tagging them or merging duplicates — roadmap step 7.
+- Moving a workspace to a different bot once customers have written to the old one (e.g. a rebrand) — AC-05; the old conversations would become unreachable for replies.
+- Tooling to recover a bot that another workspace connected first (AC-04) — for pilots the tg-inbox team handles it by hand on a verified request: the owner revokes the token in BotFather (the other connection stops working), the team disconnects the bot from the workspace that holds it and, on request, removes what was captured there.
+- Capturing messages sent while the bot is not connected to the workspace (before it is first connected, or after it is disconnected) — capture starts at connection.
 
 ## 4. User stories
 
@@ -108,39 +111,39 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 
 ### AC-06 (US-01) — cross-context
 
-**Given** a business owner of "Acme Flowers" pasting a valid token of a bot that currently delivers its messages to some other service
+**Given** a business owner of "Acme Flowers" pasting a valid token of a bot that, according to Telegram, currently delivers its messages to another address (another service); a service that instead fetches the bot's messages itself is not visible to tg-inbox and gets no warning
 **When** the system checks the token
 **Then** before connecting, it warns the owner that connecting will stop that bot delivering messages to the other service, and connects only after the owner confirms
 
 ### AC-07 (US-02) — happy path
 
 **Given** "Acme Flowers" has a connected bot and an end customer who has never written to it
-**When** the end customer starts the bot or sends it a first message in a private chat
+**When** the end customer starts the bot or sends it a first message in a private chat (starting the bot is captured as a message like any other text)
 **Then** within the capture-latency target of §6 (2 seconds at p95) "Acme Flowers" holds a new contact built from the customer's Telegram profile (name, username, language) and a new conversation with that contact containing the message, and the bot settings show the time of that message as the last message received
 
 ### AC-08 (US-03) — happy path
 
 **Given** an end customer who already has a contact and a conversation in "Acme Flowers" and has since changed their Telegram name or username
 **When** they send the bot another message
-**Then** the message is added to their existing conversation, no second contact is created, and the contact now holds the new name and username
+**Then** the message is added to their existing conversation, no second contact is created, and the contact now holds the customer's current name, username and language
 
 ### AC-09 (US-04) — happy path
 
 **Given** a connected bot and an end customer with a conversation in "Acme Flowers"
-**When** the customer sends a photo with a caption, a voice note, a sticker, a file or a location
-**Then** each one appears in their conversation in the order sent (each item of an album as its own message), marked with its kind and carrying its caption when it has one, so the workspace holds a record that something arrived; viewing its content arrives with the inbox step
+**When** the customer sends a photo with a caption, a voice note, a sticker, a file, a location, or any other kind of message
+**Then** each one appears in their conversation in the order sent (each item of an album as its own message), marked with its kind — a kind tg-inbox does not recognise is marked "other" — and carrying its caption when it has one, so the workspace holds a record that something arrived; viewing its content arrives with the inbox step; later updates of a shared live location do not change the captured location
 
 ### AC-10 (US-04) — happy path
 
 **Given** a captured message in an end customer's conversation — text, or a non-text message with a caption
 **When** the customer edits its text or caption in Telegram
-**Then** the conversation holds the edited text in place of the old one, marked as edited, and no new message is added; an edit of a message that was never captured adds nothing
+**Then** the conversation holds the edited text in place of the old one, marked as edited, and no new message is added; when edits arrive out of order, the one the customer made last (by Telegram's edit time) wins; an edit of a message that has not been captured adds nothing and is not kept for later
 
 ### AC-11 (US-04) — domain invariant
 
 **Given** a message from an end customer that has already been captured
 **When** Telegram delivers the same message again (for example after a delivery retry)
-**Then** the conversation still holds it exactly once, and messages keep the order in which the customer sent them
+**Then** the conversation still holds it exactly once, and messages keep the order in which the customer sent them (Telegram's order for that chat), not the order in which they reached tg-inbox — a late redelivered message takes its original place
 
 ### AC-12 (US-02) — domain invariant
 
@@ -164,19 +167,19 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 
 **Given** a business owner of "Acme Flowers" with a connected bot that has captured messages from 12 end customers
 **When** they open the bot settings
-**Then** they see the bot's name and username, its state "connected", the time the last message was received and the number of contacts captured — but never the token
+**Then** they see the bot's name and username, its state "connected", the time the last message was received and the number of contacts captured — but never the token; the state, name and username are checked with Telegram in the background and are never more than 5 minutes old, and a failed exchange with Telegram changes the state at once
 
 ### AC-16 (US-05) — error
 
 **Given** a connected bot whose token was revoked in BotFather, or which was deleted there
 **When** a business owner of "Acme Flowers" opens the bot settings
-**Then** the system shows the state "not working — needs a new token", explains that messages are not arriving until the owner pastes a new token of the same bot, and keeps every contact and conversation already captured
+**Then** the system shows the state "not working — needs a new token", explains that messages are not arriving until the owner pastes a new token of the same bot, and keeps every contact and conversation already captured; once a new token is pasted (AC-17), messages customers sent meanwhile that Telegram still holds (up to 24 h) are captured in order
 
 ### AC-16b (US-05) — cross-context
 
 **Given** a connected bot of "Acme Flowers" whose messages another service has since taken over
-**When** a business owner opens the bot settings and then chooses to reconnect the bot
-**Then** the settings show the state "not receiving messages — another service took them over"; on reconnecting, the system gives the warning of AC-06, and after the owner confirms the bot is connected again and new messages are captured into their existing conversations
+**When** a business owner opens the bot settings and then chooses to reconnect the bot (with the token already stored — no paste needed; pasting that same token again does the same)
+**Then** the settings show the state "not receiving messages — another service took them over"; on reconnecting, the system gives the warning of AC-06, and after the owner confirms the bot is connected again and new messages are captured into their existing conversations; messages the other service received meanwhile are not recovered
 
 ### AC-17 (US-06) — happy path
 
@@ -188,12 +191,12 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 
 **Given** a business owner of "Acme Flowers" with a connected bot
 **When** they disconnect it and confirm
-**Then** the bot settings show "not connected", messages sent to the bot afterwards are not captured, and every contact and conversation captured so far stays in the workspace
+**Then** the bot settings show "not connected", the bot stops delivering its messages to tg-inbox, its token is no longer kept by tg-inbox, messages sent to the bot afterwards are never captured (not even if the bot is connected again later), and every contact and conversation captured so far stays in the workspace
 
 ### AC-19 (US-06) — cross-context
 
 **Given** "Acme Flowers" disconnected its bot earlier and its contacts and conversations remain
-**When** a business owner connects the same bot again and an existing end customer writes to it
+**When** a business owner connects the same bot again by pasting its token and an existing end customer writes to it
 **Then** the message continues that customer's existing conversation and no duplicate contact is created
 
 ## 6. Non-functional requirements
@@ -206,6 +209,7 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 | Bot settings load p95 | ≤ 300 ms | server request-duration logs, weekly p95 |
 | Throughput | ≥ 50 inbound messages/s per instance across all bots | load test before the first pilot |
 | Capture completeness | 0 messages lost and 0 duplicated among messages Telegram delivered; messages sent during an outage shorter than Telegram's redelivery window (24 h) are captured after recovery | integration test (redelivery + duplicate) + monthly spot-check against the bot chat of one pilot |
+| Flood isolation | while one bot receives 20 messages/s for 5 minutes, capture latency of other workspaces' bots stays ≤ 2 s p95 | load test before the first pilot |
 | Availability | 99.5% monthly | uptime check on the health endpoint, monthly window |
 | Cross-workspace isolation | 0 reads or writes of contacts, conversations or bots across workspaces | an isolation test for every data-access path, run in CI |
 | Token secrecy | 0 occurrences of a bot token in logs, error messages or anything the web panel receives | automated test over logs and responses + security review |
@@ -213,15 +217,15 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 ## 6.1 Security / privacy
 
 - **Data classification:** confidential — bot tokens give full control of a business's bot, and captured messages are private customer correspondence.
-- **Personal data touched:** end customer Telegram user id (identifier, confidential), first and last name, username, language (low–confidential), message text and captions (confidential, may contain anything the customer writes); bot token (secret — never shown back, never logged).
+- **Personal data touched:** end customer Telegram user id (identifier, confidential), first and last name, username, language (low–confidential), message text and captions (confidential, may contain anything the customer writes); Telegram's references to media content (confidential — the content itself is not stored in this step); bot token (secret — never shown back, never logged).
 - **AuthZ/AuthN impact:** adds a business-owner-only capability to connect, rotate and disconnect the workspace's bot and to view its settings; operators have no access to bot settings. Inbound deliveries are accepted only when they prove they come from Telegram for that specific connected bot. Every contact, conversation and message belongs to exactly one workspace and is read and written only within it.
 - **Abuse cases:**
   - Cross-tenant bot hijack (pasting a token of a bot connected elsewhere): refused without naming the other workspace (AC-04).
   - Forged inbound deliveries (someone posting fake customer messages into a workspace): ignored unless they prove they come from Telegram for that bot (AC-14).
   - Token leak (from logs, the panel or an error message): the token is never shown back or logged; a leaked token is rotated in BotFather and pasted again (AC-17).
   - Former owner keeps the token: they can still control the bot in Telegram outside tg-inbox — out of our reach; the remaining owner rotates the token in BotFather and pastes the new one (AC-17).
-  - Bot hijack (a former employee or agency with a copy of the token connects the bot to their own workspace first): the real owner is refused by AC-04 and cannot see where the bot is; recovery path, including what happens to the conversations captured in the other workspace, is an open question (§8).
-  - Inbound flood (a customer or script spamming the bot): every message is still captured once, and a flood on one workspace's bot must not push other workspaces' capture past the §6 latency target; rate limiting of a single sender is deferred until a pilot shows the need.
+  - Bot hijack (a former employee or agency with a copy of the token connects the bot to their own workspace first): the real owner is refused by AC-04 and cannot see where the bot is; recovery is handled by hand by the tg-inbox team for pilots (§3).
+  - Inbound flood (a customer or script spamming the bot): every message is still captured once, and a flood on one workspace's bot must not push other workspaces' capture past the §6 latency target (§6 Flood isolation); rate limiting of a single sender is deferred until a pilot shows the need.
 - **Security review:** Required — a new tenant secret (bot tokens), a new unauthenticated inbound entry point and new personal data of end customers.
 
 ## 7. Metrics / KPIs
@@ -234,8 +238,5 @@ Traceability: the architecture map fixes the workspace as the tenancy boundary a
 
 ## 8. Open questions
 
-- [ ] Should a workspace ever be allowed to move to a different bot once customers have written to the old one (e.g. a rebrand)? Default now: no — AC-05; the old conversations would become unreachable for replies. — owner: Dmytro Hopko, due: before `sdd:design bot-connection`
-- [ ] Messages Telegram still holds when a bot is connected or reconnected (sent up to 24 h earlier, while nothing was capturing them): capture them or drop them? Default now: capture them in order. — owner: Dmytro Hopko, due: during `sdd:clarify bot-connection`
 - [ ] Should the owner be alerted proactively when the bot stops working (revoked token, deleted bot), instead of seeing it only on opening the bot settings (AC-16)? Default now: only in the bot settings; proactive alerts with operator notifications. — owner: Dmytro Hopko, due: before roadmap step 6 (notifications) is specified
-- [ ] How does a business recover its bot when someone else connected it to their workspace first (AC-04)? Default now: the owner revokes the token in BotFather (the other workspace's connection stops working) and asks the tg-inbox team; a platform admin disconnects the bot from the workspace that holds it and, on a verified request, removes the contacts and conversations captured there. — owner: Dmytro Hopko, due: before `sdd:design bot-connection`
 - [ ] Should operators see whether the bot is connected and working (read-only), e.g. to explain an empty inbox? Default now: no — bot settings are business-owner only (AC-03). — owner: Dmytro Hopko, due: before roadmap step 4 (inbox) is specified
