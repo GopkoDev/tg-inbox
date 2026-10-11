@@ -107,7 +107,12 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.getByText('(you)')).toBeInTheDocument();
     const pending = screen.getByTestId('pending-invitations');
     expect(within(pending).getByText('new@x.test')).toBeInTheDocument();
-    expect(within(pending).getAllByText('Operator').length).toBeGreaterThan(0);
+    expect(within(pending).getAllByText('Operator')).toHaveLength(2); // badge + phone line
+    expect(within(rowOf('Olga')).getByText('Business owner')).toBeInTheDocument();
+    expect(within(rowOf('Olga')).getByText('o@x.io · Business owner')).toBeInTheDocument();
+    expect(within(rowOf('Bob')).getByText('bob@x.test · Operator')).toBeInTheDocument();
+    expect(screen.queryByText(/^(owner|operator)$/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/· (owner|operator)$/)).not.toBeInTheDocument();
     expect(within(pending).getByText(/expires/i)).toBeInTheDocument();
     expect(within(pending).queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Invite' })).toBeInTheDocument();

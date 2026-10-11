@@ -181,17 +181,17 @@ invitation invalid                  another email
 Sources: AC-07, AC-12, AC-17, AC-19 (reactivated workspace listed again); sad.md §6 critical flow 1, flow 7; `listMyWorkspaces` 200/401, `enterWorkspace` 200/401/403/404.
 
 ```text
-page (phone; desktop = same card, max-w-md)   switcher (desktop header menu)
-+--------------------------------+            +--------------------------+
-|  Choose a workspace            |            | Acme Flowers        ▾    |
-|                                |            +--------------------------+
-|  [ Acme Flowers   Business owner ] |        | ✓ Acme Flowers  Business owner |
-|  [ Bolt Bikes     Operator      ] |        |   Bolt Bikes    Operator       |
-|  [ Cozy Cafe      Operator      ] |        +--------------------------+
-|                                |
-|  Signed in as ana@acme.test    |
-|  [ Sign out ]                  |
-+--------------------------------+
+page (phone; desktop = same card, max-w-md) switcher (desktop header menu)
++------------------------------------+      +--------------------------------+
+|  Choose a workspace                |      | Acme Flowers                ▾  |
+|                                    |      +--------------------------------+
+|  [ Acme Flowers   Business owner ] |      | ✓ Acme Flowers  Business owner |
+|  [ Bolt Bikes     Operator       ] |      |   Bolt Bikes    Operator       |
+|  [ Cozy Cafe      Operator       ] |      +--------------------------------+
+|                                    |
+|  Signed in as ana@acme.test        |
+|  [ Sign out ]                      |
++------------------------------------+
 ```
 
 ### SCR-05 — No access
@@ -276,20 +276,20 @@ Sources: AC-14 (pending row appears), AC-15, AC-17, AC-18, AC-19, AC-20; sad.md 
 
 ```text
 default — desktop
-+---------------------------------------------------------------------+
-| tg-inbox | Acme Flowers ▾ | Team                         ana@… ▾      |
-+---------------------------------------------------------------------+
-|  Team                                                   [ + Invite ]|
-|  Members                                                            |
-|  Name        Email             Role       State                     |
-|  Ana (you)     ana@acme.test   [Business owner] [Active] [Deactivate]|
-|  Bob Petrenko  bob@acme.test   [Operator] [Active]    [Deactivate]  |
-|  Ira Melnyk    ira@acme.test   [Operator] [Deactivated][Reactivate] |
-|                                                                     |
-|  Pending invitations                                                |
-|  Email             Role        Expires                              |
-|  max@acme.test     [Operator]  18 Oct 2026            [Revoke]      |
-+---------------------------------------------------------------------+
++----------------------------------------------------------------------------+
+| tg-inbox | Acme Flowers ▾ | Team                         ana@… ▾           |
++----------------------------------------------------------------------------+
+|  Team                                                          [ + Invite ]|
+|  Members                                                                   |
+|  Name          Email           Role             State                      |
+|  Ana (you)     ana@acme.test   [Business owner] [Active]      [Deactivate] |
+|  Bob Petrenko  bob@acme.test   [Operator]       [Active]      [Deactivate] |
+|  Ira Melnyk    ira@acme.test   [Operator]       [Deactivated] [Reactivate] |
+|                                                                            |
+|  Pending invitations                                                       |
+|  Email             Role        Expires                                     |
+|  max@acme.test     [Operator]  18 Oct 2026            [Revoke]             |
++----------------------------------------------------------------------------+
 
 default — phone (email + role move under the name: `hidden md:table-cell`)
 +--------------------------------+

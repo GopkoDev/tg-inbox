@@ -17,7 +17,6 @@ import {
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
-
 import { ROLE_LABEL } from '@/shared/lib/roles';
 import { createInvitation } from '../api';
 
