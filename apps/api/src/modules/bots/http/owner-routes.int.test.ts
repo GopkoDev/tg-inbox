@@ -139,6 +139,19 @@ describe('owner-only bot routes (postgres + fake Bot API)', () => {
     expect(await botRow(ws)).toBeUndefined();
   });
 
+  it('AC-04: a bot another workspace disconnected after capturing is still 409, unnamed', async () => {
+    const other = await insertWorkspace(db, 'Secret History Shop');
+    const theirs = await insertBot(db, { workspaceId: other, state: 'disconnected' });
+    fake.bot(theirs.token).script({});
+    const { ws, owner } = await ownerOf();
+    const res = await call(owner, 'POST', `${bot(ws)}/token`, { token: theirs.token });
+    expect(res.statusCode).toBe(409);
+    expect(errorOf(res).code).toBe('BOT_BELONGS_TO_ANOTHER_WORKSPACE');
+    expect(res.body).not.toContain('Secret History Shop');
+    expect(res.body).not.toContain(other);
+    expect(await botRow(ws)).toBeUndefined();
+  });
+
   it('AC-05: a different bot while one is connected is 409 WORKSPACE_KEEPS_ONE_BOT {reason}', async () => {
     const { ws, owner } = await ownerOf();
     await insertBot(db, { workspaceId: ws });

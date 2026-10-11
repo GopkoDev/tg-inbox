@@ -4,6 +4,7 @@ import type { Bots } from '../../../platform/db.types.gen.js';
 import type { BotState } from '../domain/connection.js';
 import { DUE_AFTER_MS } from '../domain/health.js';
 import type { BotRecord, BotRepo, TokenCipher } from '../app/ports.js';
+import { TokenDecryptError } from './token-cipher.js';
 import { hashSecret, secretMatches } from './webhook-secret.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -37,9 +38,22 @@ function toRecord(row: PublicRow): BotRecord {
   };
 }
 
-function isBoundElsewhere(err: unknown): boolean {
+function uniqueViolation(err: unknown): 'bound_elsewhere' | 'workspace_has_bot' | null {
   const e = err as { code?: string; constraint?: string };
-  return e.code === '23505' && e.constraint === 'bots_telegram_bot_id_key';
+  if (e.code !== '23505') return null;
+  if (e.constraint === 'bots_telegram_bot_id_key') return 'bound_elsewhere';
+  if (e.constraint === 'bots_workspace_id_key') return 'workspace_has_bot';
+  return null;
+}
+
+/** A token the current key cannot decrypt is an outcome (needs a new token), not a crash. */
+function decryptOrNull(cipher: TokenCipher, blob: Buffer): string | null {
+  try {
+    return cipher.decrypt(blob);
+  } catch (err) {
+    if (err instanceof TokenDecryptError) return null;
+    throw err;
+  }
 }
 
 export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
@@ -73,7 +87,8 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
           .execute();
         return { ok: true };
       } catch (err) {
-        if (isBoundElsewhere(err)) return { ok: false, reason: 'bound_elsewhere' };
+        const reason = uniqueViolation(err);
+        if (reason) return { ok: false, reason };
         throw err;
       }
     },
@@ -98,12 +113,15 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
           .executeTakeFirst();
         return result.numUpdatedRows > 0n ? { ok: true } : { ok: false, reason: 'not_found' };
       } catch (err) {
-        if (isBoundElsewhere(err)) return { ok: false, reason: 'bound_elsewhere' };
+        const reason = uniqueViolation(err);
+        if (reason) return { ok: false, reason };
         throw err;
       }
     },
 
-    async setState(workspaceId, botId, state, checkedAt, identity, tx) {
+    async setState(workspaceId, botId, state, checkedAt, options, tx) {
+      const identity = options?.identity;
+      const read = options?.ifLastCheckedAt;
       const result = await (tx ?? db)
         .updateTable('bots')
         .set({
@@ -114,6 +132,11 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', botId)
         .where('state', '<>', 'disconnected')
+        .$if(read !== undefined, (qb) =>
+          read === null || read === undefined
+            ? qb.where('last_checked_at', 'is', null)
+            : qb.where('last_checked_at', '=', read),
+        )
         .executeTakeFirst();
       return result.numUpdatedRows > 0n;
     },
@@ -152,7 +175,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         .executeTakeFirst();
       if (!row?.token_encrypted) return null;
       const { token_encrypted, ...rest } = row;
-      return { bot: toRecord(rest), token: cipher.decrypt(token_encrypted) };
+      return { bot: toRecord(rest), token: decryptOrNull(cipher, token_encrypted) };
     },
 
     async findByWebhookId(botId, secret) {

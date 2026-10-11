@@ -94,4 +94,33 @@ describe('disconnect (flow 7, AC-18)', () => {
     expect(h.bots.rows).toHaveLength(1);
     expect(h.telegram.calls).toHaveLength(0);
   });
+
+  it('a stored token that cannot be decrypted → disconnects without a Telegram call (ADR-0006)', async () => {
+    const h = createBotsHarness([botRow({ undecryptable: true })]);
+    h.conversations.withConversations.add('ws-a');
+    expect(await h.disconnect.disconnect('ws-a')).toEqual({ state: 'not_connected' });
+    expect(h.telegram.calls).toHaveLength(0);
+    expect(h.bots.rows[0]).toMatchObject({ state: 'disconnected', token: null });
+  });
+
+  it('a first conversation committed during the disconnect keeps the row bound (ADR-0007)', async () => {
+    const h = createBotsHarness([botRow()]);
+    // A delivery that authenticated before deleteWebhook commits its conversation meanwhile.
+    const deleteWebhook = h.telegram.deleteWebhook.bind(h.telegram);
+    h.telegram.deleteWebhook = async (token, timeoutMs) => {
+      const result = await deleteWebhook(token, timeoutMs);
+      h.conversations.withConversations.add('ws-a');
+      return result;
+    };
+    const hasConversations = h.conversations.hasConversations;
+    let checkedAfterClear = false;
+    h.conversations.hasConversations = async (w) => {
+      checkedAfterClear = h.bots.rows[0]?.state === 'disconnected';
+      return hasConversations(w);
+    };
+    await h.disconnect.disconnect('ws-a');
+    expect(checkedAfterClear).toBe(true);
+    expect(h.bots.rows).toHaveLength(1);
+    expect(h.bots.rows[0]).toMatchObject({ state: 'disconnected', webhookSecret: null });
+  });
 });

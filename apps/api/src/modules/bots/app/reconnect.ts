@@ -53,6 +53,8 @@ export function createReconnect(deps: ReconnectDeps): Reconnect {
         return new BotNeedsNewTokenError(await settings.getSettings(workspaceId));
       };
 
+      // A stored token the current key cannot decrypt is as good as a revoked one (ADR-0006).
+      if (token === null) throw await needsToken();
       const me = await telegram.getMe(token, OWNER_ACTION_TIMEOUT);
       if (me === 'unauthorized') throw await needsToken();
       if (me === 'transient') throw new TelegramUnavailableError();
@@ -73,7 +75,7 @@ export function createReconnect(deps: ReconnectDeps): Reconnect {
       );
       if (set === 'failed') throw new TelegramUnavailableError();
 
-      await bots.setState(workspaceId, bot.id, 'connected', clock.now(), identity);
+      await bots.setState(workspaceId, bot.id, 'connected', clock.now(), { identity });
       return settings.getSettings(workspaceId);
     },
   };

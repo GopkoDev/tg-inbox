@@ -16,6 +16,8 @@ import type {
 export interface FakeBotRow extends BotRecord {
   token: string | null;
   webhookSecret: string | null;
+  /** The stored token cannot be decrypted (the encryption key was lost or changed). */
+  undecryptable?: boolean;
 }
 
 /** In-memory BotRepo for unit tests; mirrors the SQL's constraints and tenancy filters. */
@@ -28,6 +30,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
     const copy: Partial<FakeBotRow> = { ...r };
     delete copy.token;
     delete copy.webhookSecret;
+    delete copy.undecryptable;
     return copy as BotRecord;
   };
 
@@ -41,9 +44,10 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       if (boundElsewhere(workspaceId, bot.telegramBotId)) {
         return { ok: false, reason: 'bound_elsewhere' };
       }
-      if (
-        rows.some((r) => r.workspaceId === workspaceId || r.telegramBotId === bot.telegramBotId)
-      ) {
+      if (rows.some((r) => r.workspaceId === workspaceId)) {
+        return { ok: false, reason: 'workspace_has_bot' };
+      }
+      if (rows.some((r) => r.telegramBotId === bot.telegramBotId)) {
         throw new Error('unique violation');
       }
       rows.push({ ...bot, workspaceId });
@@ -53,12 +57,15 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       const row = find(workspaceId, botId);
       if (!row) return { ok: false, reason: 'not_found' };
       Object.assign(row, patch);
+      if (patch.token !== undefined) delete row.undecryptable;
       return { ok: true };
     },
-    async setState(workspaceId, botId, state, checkedAt, identity) {
+    async setState(workspaceId, botId, state, checkedAt, options) {
       const row = find(workspaceId, botId);
       if (!row || row.state === 'disconnected') return false;
-      Object.assign(row, { state, lastCheckedAt: checkedAt }, identity ?? {});
+      const read = options?.ifLastCheckedAt;
+      if (read !== undefined && row.lastCheckedAt?.getTime() !== read?.getTime()) return false;
+      Object.assign(row, { state, lastCheckedAt: checkedAt }, options?.identity ?? {});
       return true;
     },
     async clearOnDisconnect(workspaceId, botId) {
@@ -81,7 +88,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
     async findForCheck(workspaceId, botId) {
       const row = find(workspaceId, botId);
       if (!row || row.state === 'disconnected' || row.token === null) return null;
-      return { bot: record(row), token: row.token };
+      return { bot: record(row), token: row.undecryptable ? null : row.token };
     },
     async findByWebhookId(botId, secret) {
       const row = rows.find((r) => r.id === botId);

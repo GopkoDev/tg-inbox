@@ -279,4 +279,28 @@ describe('pasteToken — rotate (AC-17, AC-16, AC-16b)', () => {
     );
     expect(h.bots.rows).toEqual([before]);
   });
+
+  it('a stored token that cannot be decrypted → the new token is stored and the secret re-derived (ADR-0006)', async () => {
+    const h = createBotsHarness([botRow({ state: 'needs_token', undecryptable: true })]);
+    h.telegram.me = ME;
+    const settings = await h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    expect(settings).toMatchObject({ state: 'connected' });
+    expect(h.bots.rows[0]).toMatchObject({
+      state: 'connected',
+      token: NEW_TOKEN,
+      connectedAt: at(0),
+      webhookSecret: h.secrets.secretFor(botRow().id, at(0)),
+    });
+    expect(h.bots.rows[0]?.undecryptable).toBeUndefined();
+  });
+
+  it('undecryptable old token and setWebhook fails → needs_token, TELEGRAM_UNAVAILABLE', async () => {
+    const h = createBotsHarness([botRow({ state: 'connected', undecryptable: true })]);
+    h.telegram.me = ME;
+    h.telegram.setResult = 'failed';
+    expect(await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false))).toBeInstanceOf(
+      TelegramUnavailableError,
+    );
+    expect(h.bots.rows[0]).toMatchObject({ state: 'needs_token', name: 'Old Name' });
+  });
 });

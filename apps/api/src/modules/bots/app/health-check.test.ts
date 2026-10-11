@@ -143,4 +143,22 @@ describe('checkOne — each outcome row of events.md', () => {
     expect(await health.checkOne('ws-a', row().id)).toBe('skipped');
     expect(bots.rows[0]!.state).toBe('disconnected');
   });
+
+  it('a stored token that cannot be decrypted → needs_token, no Telegram call (ADR-0006)', async () => {
+    const { bots, telegram, health } = setup([row({ undecryptable: true })]);
+    expect(await health.checkOne('ws-a', row().id)).toBe('needs_token');
+    expect(bots.rows[0]).toMatchObject({ state: 'needs_token', lastCheckedAt: at(600) });
+    expect(telegram.calls).toHaveLength(0);
+  });
+
+  it('a check that read the row before an owner action never overwrites what the action wrote', async () => {
+    const { bots, telegram, health } = setup();
+    // While the old token is checked, the owner pastes a new one (AC-17): connected, checked now.
+    telegram.getMe = async () => {
+      Object.assign(bots.rows[0]!, { state: 'connected', lastCheckedAt: at(599), token: 'new' });
+      return 'unauthorized';
+    };
+    expect(await health.checkOne('ws-a', row().id)).toBe('skipped');
+    expect(bots.rows[0]).toMatchObject({ state: 'connected', lastCheckedAt: at(599) });
+  });
 });

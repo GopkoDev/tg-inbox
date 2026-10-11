@@ -134,4 +134,13 @@ describe('reconnect (flow 6, AC-16b)', () => {
     );
     expect(h.telegram.calls).toHaveLength(0);
   });
+
+  it('a stored token that cannot be decrypted → needs_token at once, BOT_NEEDS_NEW_TOKEN (ADR-0006)', async () => {
+    const h = createBotsHarness([{ ...takenOver, undecryptable: true }]);
+    expect(await refusal(h.reconnect.reconnect('ws-a', true))).toBeInstanceOf(
+      BotNeedsNewTokenError,
+    );
+    expect(h.bots.rows[0]).toMatchObject({ state: 'needs_token', lastCheckedAt: at(600) });
+    expect(h.telegram.calls).toHaveLength(0);
+  });
 });

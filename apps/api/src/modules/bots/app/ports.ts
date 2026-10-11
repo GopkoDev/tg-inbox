@@ -48,6 +48,8 @@ export type BotWriteResult =
   | { ok: true }
   /** `bots_telegram_bot_id_key`: the bot belongs to another workspace (AC-04). */
   | { ok: false; reason: 'bound_elsewhere' }
+  /** `bots_workspace_id_key`: a concurrent paste inserted this workspace's bot first. */
+  | { ok: false; reason: 'workspace_has_bot' }
   | { ok: false; reason: 'not_found' };
 
 export interface BotRepo {
@@ -60,24 +62,32 @@ export interface BotRepo {
     patch: BotPatch,
     tx?: Executor,
   ): Promise<BotWriteResult>;
-  /** Records the outcome of a Bot API exchange on a live bot; false when no live row matched. */
+  /**
+   * Records the outcome of a Bot API exchange on a live bot; false when no live row matched.
+   * `ifLastCheckedAt`: write only when the row is unchanged since it was read (the health check
+   * never overwrites an owner action that wrote in between).
+   */
   setState(
     workspaceId: string,
     botId: string,
     state: LiveBotState,
     checkedAt: Date,
-    identity?: { name: string; username: string },
+    options?: { identity?: { name: string; username: string }; ifLastCheckedAt?: Date | null },
     tx?: Executor,
   ): Promise<boolean>;
   /** Keeps the row (and so the binding) without token, secret hash and capture epoch (AC-18). */
   clearOnDisconnect(workspaceId: string, botId: string, tx?: Executor): Promise<boolean>;
   delete(workspaceId: string, botId: string, tx?: Executor): Promise<boolean>;
-  /** A live bot with its decrypted token, for a Bot API call right after. */
+  /**
+   * A live bot with its decrypted token, for a Bot API call right after. `token` is null when the
+   * stored token cannot be decrypted (the key was lost or changed, ADR-0006): the bot then needs
+   * a new token.
+   */
   findForCheck(
     workspaceId: string,
     botId: string,
     tx?: Executor,
-  ): Promise<{ bot: BotRecord; token: string } | null>;
+  ): Promise<{ bot: BotRecord; token: string | null } | null>;
 
   // Controlled exceptions to the tenancy rule (sad.md §5): they produce the workspace id.
   /** Scoped by possession of the webhook secret: the bot only when its hash matches. */

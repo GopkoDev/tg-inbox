@@ -1,7 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
-import { BotBelongsToAnotherWorkspaceError } from '../../../platform/errors.js';
+import {
+  BotBelongsToAnotherWorkspaceError,
+  WorkspaceKeepsOneBotError,
+} from '../../../platform/errors.js';
 import { startFakeTelegram, type FakeTelegram } from '../../../test/fake-telegram.js';
 import { fakeBotToken, testBotKey } from '../../../test/fixtures/bots.js';
 import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
@@ -72,6 +75,45 @@ describe('pasteToken (Postgres + fake Bot API)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]!.state).toBe('connected');
     expect(fake.calls(token).filter((c) => c.method === 'setWebhook')).toHaveLength(1);
+  });
+
+  it('a double-submitted paste of the same bot into one workspace: both connect, one row, no 500', async () => {
+    const w = await insertWorkspace(db);
+    const token = fakeBotToken(410003n);
+    fake.bot(token).script({});
+    const results = await Promise.allSettled([
+      paste.pasteToken(w, token, false),
+      paste.pasteToken(w, token, false),
+    ]);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
+    const rows = await db
+      .selectFrom('bots')
+      .select('state')
+      .where('workspace_id', '=', w)
+      .execute();
+    expect(rows).toEqual([{ state: 'connected' }]);
+  });
+
+  it('two different bots pasted into one workspace at once: one connects, the other is refused 409', async () => {
+    const w = await insertWorkspace(db);
+    const first = fakeBotToken(410004n);
+    const second = fakeBotToken(410005n);
+    fake.bot(first).script({});
+    fake.bot(second).script({});
+    const results = await Promise.allSettled([
+      paste.pasteToken(w, first, false),
+      paste.pasteToken(w, second, false),
+    ]);
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(WorkspaceKeepsOneBotError);
+    const rows = await db
+      .selectFrom('bots')
+      .select('state')
+      .where('workspace_id', '=', w)
+      .execute();
+    expect(rows).toEqual([{ state: 'connected' }]);
   });
 
   it('connect stores the token encrypted and only the secret hash; the answer has no token', async () => {

@@ -42,12 +42,22 @@ export function createHealthCheck({
       if (!found) return 'skipped';
       const { token } = found;
 
-      // setState only matches a live row, so a bot disconnected meanwhile is not resurrected.
+      // setState only matches a live row unchanged since it was read: a bot disconnected
+      // meanwhile is not resurrected, and an owner action written meanwhile (a new token, a
+      // reconnect) is not overwritten by the outcome of the old one.
       const write = async (
         state: 'connected' | 'needs_token' | 'taken_over',
         identity?: { name: string; username: string },
       ): Promise<CheckOutcome> =>
-        (await bots.setState(workspaceId, botId, state, clock.now(), identity)) ? state : 'skipped';
+        (await bots.setState(workspaceId, botId, state, clock.now(), {
+          ...(identity && { identity }),
+          ifLastCheckedAt: found.bot.lastCheckedAt,
+        }))
+          ? state
+          : 'skipped';
+
+      // The key that encrypted the token is gone (ADR-0006): the owner pastes the token again.
+      if (token === null) return write('needs_token');
 
       const me = await telegram.getMe(token, HEALTH_CHECK_TIMEOUT);
       if (me === 'transient') return 'transient';

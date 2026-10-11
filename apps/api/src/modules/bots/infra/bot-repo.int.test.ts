@@ -97,10 +97,11 @@ describe('bot repository', () => {
     );
   });
 
-  it('a second bot for one workspace is a unique violation (AC-05 backstop)', async () => {
+  it('a second bot for one workspace is refused by the unique constraint (AC-05 backstop)', async () => {
     const w = await insertWorkspace(db);
     await repo.insert(w, newBot());
-    await expect(repo.insert(w, newBot())).rejects.toMatchObject({ code: '23505' });
+    expect(await repo.insert(w, newBot())).toEqual({ ok: false, reason: 'workspace_has_bot' });
+    expect(await db.selectFrom('bots').where('workspace_id', '=', w).execute()).toHaveLength(1);
   });
 
   it('isolation: findByWorkspace, update, setState, findForCheck, clearOnDisconnect and delete never touch the other workspace (AC-13)', async () => {
@@ -170,8 +171,7 @@ describe('bot repository', () => {
     });
     expect(
       await repo.setState(w, bot.id, 'connected', at(5), {
-        name: 'New Name',
-        username: 'new_name_bot',
+        identity: { name: 'New Name', username: 'new_name_bot' },
       }),
     ).toBe(true);
     expect(await repo.findByWorkspace(w)).toMatchObject({
@@ -179,6 +179,41 @@ describe('bot repository', () => {
       lastCheckedAt: at(5),
       name: 'New Name',
       username: 'new_name_bot',
+    });
+  });
+
+  it('setState with ifLastCheckedAt writes only when the row is unchanged since it was read', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w, lastCheckedAt: at(1) });
+    // An owner action wrote in between: the stale outcome is not written.
+    await db
+      .updateTable('bots')
+      .set({ last_checked_at: at(3) })
+      .where('id', '=', bot.id)
+      .execute();
+    expect(await repo.setState(w, bot.id, 'needs_token', at(4), { ifLastCheckedAt: at(1) })).toBe(
+      false,
+    );
+    expect(await repo.findByWorkspace(w)).toMatchObject({
+      state: 'connected',
+      lastCheckedAt: at(3),
+    });
+    expect(await repo.setState(w, bot.id, 'needs_token', at(4), { ifLastCheckedAt: at(3) })).toBe(
+      true,
+    );
+    expect(await repo.findByWorkspace(w)).toMatchObject({ state: 'needs_token' });
+  });
+
+  it('findForCheck gives a null token when the stored one cannot be decrypted (ADR-0006)', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    const otherKey = createBotRepo(
+      db,
+      createTokenCipher({ id: 'ffffffff', key: Buffer.alloc(32, 7) }),
+    );
+    expect(await otherKey.findForCheck(w, bot.id)).toMatchObject({
+      bot: { id: bot.id },
+      token: null,
     });
   });
 

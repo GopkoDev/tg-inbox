@@ -38,21 +38,28 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
       if (!found) throw new NoBotConnectedError(await settings.getSettings(workspaceId));
       const { bot, token } = found;
 
-      const target = await telegram.getWebhook(
-        token,
-        webhookUrl(webhookBaseUrl, bot.id),
-        OWNER_ACTION_TIMEOUT,
-      );
-      if (target === 'transient') throw new TelegramUnavailableError();
-      // `unauthorized`: the token is dead, nothing to remove; foreign / none: not ours to remove.
-      if (target === 'ours') {
-        const deleted = await telegram.deleteWebhook(token, OWNER_ACTION_TIMEOUT);
-        if (deleted === 'failed') throw new TelegramUnavailableError();
+      // A token the current key cannot decrypt (ADR-0006) is treated like a dead one: no Telegram
+      // call; its webhook no longer authenticates anyway (the derived secret changed with the key).
+      if (token !== null) {
+        const target = await telegram.getWebhook(
+          token,
+          webhookUrl(webhookBaseUrl, bot.id),
+          OWNER_ACTION_TIMEOUT,
+        );
+        if (target === 'transient') throw new TelegramUnavailableError();
+        // `unauthorized`: the token is dead, nothing to remove; foreign / none: not ours.
+        if (target === 'ours') {
+          const deleted = await telegram.deleteWebhook(token, OWNER_ACTION_TIMEOUT);
+          if (deleted === 'failed') throw new TelegramUnavailableError();
+        }
       }
 
-      if (await conversations.hasConversations(workspaceId)) {
-        await bots.clearOnDisconnect(workspaceId, bot.id);
-      } else {
+      // Clear first: from here no delivery authenticates, so no new first conversation can
+      // appear after the check below. A delivery that authenticated earlier and commits between
+      // the clear and the check is seen by it; only one still in flight past the check remains
+      // (a sub-millisecond window, accepted).
+      await bots.clearOnDisconnect(workspaceId, bot.id);
+      if (!(await conversations.hasConversations(workspaceId))) {
         await bots.delete(workspaceId, bot.id);
       }
       return settings.getSettings(workspaceId);
