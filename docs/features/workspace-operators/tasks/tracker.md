@@ -37,7 +37,7 @@
 | T30 | [Shape route validation errors as the contract's field details and accept only JSON on mutating routes](./t30-validation-envelope-and-csrf.md) | infra | Dmytro Hopko | S | — | done |
 | T31 | [Align team-route ids, statuses and error messages with the contract](./t31-team-routes-contract-fidelity.md) | ports | Dmytro Hopko | S | — | todo |
 | T32 | [Move the session cookie helpers out of auth's HTTP layer, add response schemas, end the previous session on sign-in](./t32-session-cookie-boundary-and-response-schemas.md) | ports | Dmytro Hopko | M | T29, T30 | todo |
-| T33 | [Route the CLI audit through the platform logger, fix the admin script, update the architecture map](./t33-cli-audit-logger-and-docs.md) | wiring | Dmytro Hopko | S | — | todo |
+| T33 | [Route the CLI audit through the platform logger, fix the admin script, update the architecture map](./t33-cli-audit-logger-and-docs.md) | wiring | Dmytro Hopko | S | — | done |
 | T34 | [Make the app shell enter the workspace in the URL, guard late responses, keep the access-removed notice](./t34-shell-enters-workspace-from-url.md) | ui | Dmytro Hopko | M | — | done |
 | T35 | [Guard Team 'Show more', render SCR-10 in place without nested landmarks, link the invite form errors](./t35-team-list-and-invite-polish.md) | ui | Dmytro Hopko | S | T34 | todo |
 | T36 | [Send malformed token links to SCR-03 and align screen copy with the manifest](./t36-token-link-errors-and-copy.md) | ui | Dmytro Hopko | S | T35 | todo |
