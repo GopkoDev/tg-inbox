@@ -59,6 +59,6 @@
 | T52 | [Keep link tokens out of request logs; document the transport-level error exceptions](./t52-link-tokens-out-of-request-logs.md) | infra | Dmytro Hopko | S | — | done |
 | T53 | [Pin the shell's release of the address workspace when the person leaves for a page without a shell](./t53-pin-shell-release-on-unmount.md) | ui | Dmytro Hopko | S | — | done |
 | T54 | [Harden link-token log masking (raw packets, non-canonical paths) and pin the URL-error message](./t54-harden-link-token-log-masking.md) | infra | Dmytro Hopko | S | — | done |
-| T55 | [Mask link tokens by a normalised path, not a pattern](./t55-mask-link-tokens-by-normalised-path.md) | infra | Dmytro Hopko | S | — | todo |
+| T55 | [Mask link tokens by a normalised path, not a pattern](./t55-mask-link-tokens-by-normalised-path.md) | infra | Dmytro Hopko | S | — | done |
 
 **Total:** 55 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`, T38–T44 from `_review/review-2026-10-11-r2.md`, T45–T48 from `_review/review-2026-10-11-r3.md`, T49–T50 from `_review/review-2026-10-11-r4.md`, T51–T52 from `_review/review-2026-10-11-r5.md`, T53–T54 from `_review/review-2026-10-11-r6.md`, T55 from `_review/review-2026-10-11-r7.md`), ~25 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.

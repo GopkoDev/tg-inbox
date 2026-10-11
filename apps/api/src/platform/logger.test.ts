@@ -11,23 +11,48 @@ describe('maskLinkTokens', () => {
     ['/reset-password/tok123', '/reset-password/[redacted]'],
     ['/invite/tok123?x=1', '/invite/[redacted]?x=1'],
     ['/reset-password/tok%E0%A4%A', '/reset-password/[redacted]'],
-    ['/invite/tok123/', '/invite/[redacted]/'],
-    ['/Invite/tok123', '/Invite/[redacted]'],
-    ['/INVITE/tok123?x=1', '/INVITE/[redacted]?x=1'],
-    ['//invite/tok123', '//invite/[redacted]'],
-    ['/invite%2Ftok123', '/invite%2F[redacted]'],
-    ['/invite%2ftok123', '/invite%2f[redacted]'],
-    ['/Reset-Password/tok123', '/Reset-Password/[redacted]'],
-  ])('masks %s', (url, masked) => {
+  ])('masks the canonical %s exactly', (url, masked) => {
     expect(maskLinkTokens(url)).toBe(masked);
+  });
+
+  // Non-canonical forms the SPA router still resolves to /invite/:token or /reset-password/:token
+  // (case, extra slashes, encoded segments, dot segments): the token must not be logged; the
+  // normalised prefix that is logged instead is free-form.
+  it.each([
+    '/invite/tok123/',
+    '/Invite/tok123',
+    '/INVITE/tok123?x=1',
+    '//invite/tok123',
+    '/invite%2Ftok123',
+    '/invite%2ftok123',
+    '/Reset-Password/tok123',
+    '/invite//tok123',
+    '/%69nvite/tok123',
+    '/%49NVITE/tok123',
+    '/./invite/tok123',
+    '/x/../invite/tok123',
+    '/reset-password//tok123',
+  ])('hides the token in %s', (url) => {
+    const masked = maskLinkTokens(url);
+    expect(masked).not.toContain('tok123');
+    expect(masked).toContain('[redacted]');
+  });
+
+  it('keeps the query of a non-canonical link', () => {
+    expect(maskLinkTokens('/invite//tok123?x=1')).toContain('?x=1');
   });
 
   it.each([
     '/api/workspaces/0190a1b2-0000-7000-8000-000000000000',
     '/api/invitations/accept',
     '/invite',
+    '/invite/',
+    '/invitex/tok123',
+    '/',
+    '/api/health',
     '/health?x=1',
     '/assets/invite/x.js',
+    '/%E0%A4%A',
   ])('leaves %s unchanged', (url) => {
     expect(maskLinkTokens(url)).toBe(url);
   });

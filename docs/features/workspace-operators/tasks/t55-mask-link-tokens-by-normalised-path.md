@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r7"
-status: "todo"
+status: "done"
 ---
 
 # T55 — Mask link tokens by a normalised path, not a pattern
@@ -32,11 +32,11 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: rewrite `maskLinkTokens` to work on a normalised path instead of a regex over the raw url. Split off the query; split the path on `/` (and on a decoded `%2F`); percent-decode each segment in a try/catch (an undecodable segment stays raw); drop empty and `.` segments and resolve `..`. When the first resulting segment equals `invite` or `reset-password` ignoring case and a further segment exists, log `/<prefix as sent>/[redacted]` plus the original query. Any other url is returned unchanged.
-- [ ] The canonical form keeps its current output (`/invite/tok?x=1` → `/invite/[redacted]?x=1`). Non-canonical forms may log a normalised prefix; update the existing T54 unit expectations accordingly.
-- [ ] Add an api-sync-report line for this change (no operation, status or code changes).
-- [ ] Tests (unit, `logger.test.ts`): `/invite//<t>`, `/%69nvite/<t>`, `/%49NVITE/<t>`, `/./invite/<t>`, `/x/../invite/<t>`, `/reset-password//<t>`, plus every existing case. Unchanged: `/assets/invite/x.js`, `/invite`, `/invite/`, `/invitex/<t>`, `/`, `/api/health`, an undecodable `/%E0%A4%A`.
-- [ ] RED proof: the new cases fail against the current regex.
+- [x] `platform/logger.ts`: rewrite `maskLinkTokens` to work on a normalised path instead of a regex over the raw url. Split off the query; split the path on `/` (and on a decoded `%2F`); percent-decode each segment in a try/catch (an undecodable segment stays raw); drop empty and `.` segments and resolve `..`. When the first resulting segment equals `invite` or `reset-password` ignoring case and a further segment exists, log `/<prefix as sent>/[redacted]` plus the original query. Any other url is returned unchanged.
+- [x] The canonical form keeps its current output (`/invite/tok?x=1` → `/invite/[redacted]?x=1`). Non-canonical forms may log a normalised prefix; update the existing T54 unit expectations accordingly.
+- [x] Add an api-sync-report line for this change (no operation, status or code changes).
+- [x] Tests (unit, `logger.test.ts`): `/invite//<t>`, `/%69nvite/<t>`, `/%49NVITE/<t>`, `/./invite/<t>`, `/x/../invite/<t>`, `/reset-password//<t>`, plus every existing case. Unchanged: `/assets/invite/x.js`, `/invite`, `/invite/`, `/invitex/<t>`, `/`, `/api/health`, an undecodable `/%E0%A4%A`.
+- [x] RED proof: the new cases fail against the current regex.
 
 ## Edge cases
 
@@ -49,7 +49,7 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Definition of Done
 
-- [ ] No `incoming request` line contains an invitation or reset token for any path the SPA router would resolve to `/invite/:token` or `/reset-password/:token`, nor for dot-segment variants
-- [ ] The serializer never throws on a malformed url
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] No `incoming request` line contains an invitation or reset token for any path the SPA router would resolve to `/invite/:token` or `/reset-password/:token`, nor for dot-segment variants
+- [x] The serializer never throws on a malformed url
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds
