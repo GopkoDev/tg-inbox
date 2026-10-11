@@ -1,6 +1,6 @@
 import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { PageQuery } from '@tg/shared';
+import { Me, PageQuery, WorkspaceSummary, WorkspaceSummaryPage } from '@tg/shared';
 import type { createWorkspaceAccess } from '../app/access.js';
 import { createWorkspaceGuard } from './guard.js';
 import { registerInvitationRoutes, type InvitationRoutesDeps } from './invitation-routes.js';
@@ -28,7 +28,7 @@ export async function registerWorkspaces(
 
   await registerInvitationRoutes(app, invitationRoutes);
 
-  r.get('/me', { preHandler: authenticate }, async (request) => {
+  r.get('/me', { preHandler: authenticate, schema: { response: { 200: Me } } }, async (request) => {
     const me = await access.getMe(request.account.id);
     return {
       account: {
@@ -42,7 +42,10 @@ export async function registerWorkspaces(
 
   r.get(
     '/me/workspaces',
-    { preHandler: authenticate, schema: { querystring: PageQuery } },
+    {
+      preHandler: authenticate,
+      schema: { querystring: PageQuery, response: { 200: WorkspaceSummaryPage } },
+    },
     async (request) => {
       const { after, before, limit } = request.query;
       const page = await access.listMyWorkspaces(request.account.id, { after, before, limit });
@@ -57,7 +60,9 @@ export async function registerWorkspaces(
 
   await registerTeamRoutes(app, { team: deps.team, access, authenticate });
 
-  r.post('/workspaces/:workspaceId/enter', { preHandler: [authenticate, guard] }, async (request) =>
-    access.enterWorkspace(request.account.id, request.workspace.workspaceId),
+  r.post(
+    '/workspaces/:workspaceId/enter',
+    { preHandler: [authenticate, guard], schema: { response: { 200: WorkspaceSummary } } },
+    async (request) => access.enterWorkspace(request.account.id, request.workspace.workspaceId),
   );
 }

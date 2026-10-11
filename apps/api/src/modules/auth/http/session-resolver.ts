@@ -1,9 +1,9 @@
-import type { preHandlerAsyncHookHandler } from 'fastify';
+import type { FastifyRequest, preHandlerAsyncHookHandler } from 'fastify';
 import { UnauthenticatedError } from '../../../platform/errors.js';
 import type { AccountUseCases } from '../app/accounts.js';
 import type { Account } from '../app/ports.js';
 import type { SessionUseCases } from '../app/sessions.js';
-import { SESSION_COOKIE } from './cookie.js';
+import { SESSION_COOKIE } from '../../../platform/session-cookie.js';
 
 /** The signed-in account as exposed to routes; never carries the password hash. */
 export type AuthenticatedAccount = Omit<Account, 'passwordHash'>;
@@ -50,5 +50,28 @@ export function createSessionResolver({
       createdAt: found.createdAt,
     };
     request.sessionId = session.id;
+  };
+}
+
+/** Resolves the request's session if there is a valid one; any failure to resolve means anonymous. */
+export type OptionalAccountResolver = (
+  request: FastifyRequest,
+) => Promise<{ id: string; email: string } | undefined>;
+
+/** Background resolution (never extends the idle window), for public routes. */
+export function createOptionalAccountResolver({
+  sessionUseCases,
+  accountUseCases,
+}: SessionResolverDeps): OptionalAccountResolver {
+  return async (request) => {
+    const token = request.cookies[SESSION_COOKIE];
+    if (!token) return undefined;
+    try {
+      const session = await sessionUseCases.resolveSession(token, { background: true });
+      const account = await accountUseCases.getAccount(session.accountId);
+      return account ? { id: account.id, email: account.email } : undefined;
+    } catch {
+      return undefined;
+    }
   };
 }

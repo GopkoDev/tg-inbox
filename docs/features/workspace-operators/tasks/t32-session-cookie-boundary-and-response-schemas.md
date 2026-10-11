@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T32 — Move the session cookie helpers out of auth's HTTP layer, add response schemas, end the previous session on sign-in
@@ -64,10 +64,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Move the cookie name + set/clear helpers to `platform/` (e.g. `platform/session-cookie.ts`) and import them from both modules; have auth expose an optional-session resolver that the composition root injects into the workspaces routes instead of the hand-rolled one.
-- [ ] Add `response: { 200: … }` with the shared zod schemas (`Me`, `WorkspaceSummaryPage`, `WorkspaceSummary`, `InvitationPreview`, the accept response) — import them from `@tg/shared`.
-- [ ] On a successful sign-in, if a session cookie came with the request, end that session (`sessionUseCases.signOut(previous)`) before setting the new cookie.
-- [ ] Tests: after sign-in with an old cookie the old token is rejected (401 on `/api/me`); response bodies carry no extra fields; `workspaces` no longer imports anything under `modules/auth/http`.
+- [x] Move the cookie name + set/clear helpers to `platform/` (e.g. `platform/session-cookie.ts`) and import them from both modules; have auth expose an optional-session resolver that the composition root injects into the workspaces routes instead of the hand-rolled one.
+- [x] Add `response: { 200: … }` with the shared zod schemas (`Me`, `WorkspaceSummaryPage`, `WorkspaceSummary`, `InvitationPreview`, the accept response) — import them from `@tg/shared`.
+- [x] On a successful sign-in, if a session cookie came with the request, end that session (`sessionUseCases.signOut(previous)`) before setting the new cookie.
+- [x] Tests: after sign-in with an old cookie the old token is rejected (401 on `/api/me`); response bodies carry no extra fields; `workspaces` no longer imports anything under `modules/auth/http`.
 
 ## Edge cases
 
@@ -78,8 +78,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] `grep -r "auth/http" apps/api/src/modules/workspaces` is empty
-- [ ] All five routes have response schemas
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] `grep -r "auth/http" apps/api/src/modules/workspaces` is empty
+- [x] All five routes have response schemas
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

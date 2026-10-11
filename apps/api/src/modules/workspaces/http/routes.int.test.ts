@@ -1,17 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { buildApp } from '../../../app.js';
+import { buildDeps, type Deps } from '../../../deps.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
 import { insertMembership, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../../../test/postgres.js';
-import { createAccountUseCases } from '../../auth/app/accounts.js';
-import { createSessionUseCases } from '../../auth/app/sessions.js';
-import { createAccountRepo } from '../../auth/infra/account-repo.js';
-import { createPasswordHasher } from '../../auth/infra/password-hasher.js';
-import { createSessionRepo } from '../../auth/infra/session-repo.js';
-import { createSessionResolver } from '../../auth/http/session-resolver.js';
 import { createWorkspaceAccess } from '../app/access.js';
 import { KyselyUnitOfWork } from '../infra/unit-of-work.js';
 import { createWorkspaceGuard, ownerOnly } from './guard.js';
@@ -20,6 +15,7 @@ describe('workspace access routes (postgres)', () => {
   let database: TestDatabase;
   let app: FastifyInstance;
   let db: Db;
+  let deps: Deps;
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -28,14 +24,8 @@ describe('workspace access routes (postgres)', () => {
     db = createDb(database.url);
 
     // Probe routes behind the exported guard, to observe it the way a later module would use it.
-    const resolver = createSessionResolver({
-      sessionUseCases: createSessionUseCases({ sessions: createSessionRepo(db), clock }),
-      accountUseCases: createAccountUseCases({
-        accounts: createAccountRepo(db),
-        hasher: createPasswordHasher(),
-        clock,
-      }),
-    });
+    deps = buildDeps(testConfig(database.url), { clock });
+    const resolver = deps.authenticate;
     const access = createWorkspaceAccess({
       uow: new KyselyUnitOfWork(db),
       clock,
@@ -58,6 +48,7 @@ describe('workspace access routes (postgres)', () => {
   afterAll(async () => {
     await app?.close();
     await db?.destroy();
+    await deps?.destroy();
     await database?.stop();
   });
 
@@ -103,6 +94,8 @@ describe('workspace access routes (postgres)', () => {
     expect(before.statusCode).toBe(200);
     expect(before.json().last_used_workspace_id).toBeNull();
     expect(before.json().account.id).toBe(op.accountId);
+    expect(Object.keys(before.json()).sort()).toEqual(['account', 'last_used_workspace_id']);
+    expect(Object.keys(before.json().account).sort()).toEqual(['display_name', 'email', 'id']);
 
     const list = await call(op, 'GET', '/api/me/workspaces');
     expect(

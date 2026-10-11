@@ -138,6 +138,32 @@ describe('auth routes (postgres)', () => {
     expect((await signIn('burst@example.test', PASSWORD)).statusCode).toBe(429);
   });
 
+  it('AC-07: signing in again with a live cookie ends the previous session', async () => {
+    const a = await account('again@example.test');
+    const old = cookieOf(await signIn('again@example.test', PASSWORD));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/sign-in',
+      payload: { email: 'again@example.test', password: PASSWORD },
+      cookies: { session: old.value },
+    });
+    expect(res.statusCode).toBe(204);
+    const fresh = cookieOf(res);
+    expect(await sessionCount(a.id)).toBe(1);
+    const stale = await app.inject({
+      method: 'GET',
+      url: '/api/_probe',
+      cookies: { session: old.value },
+    });
+    expect(stale.statusCode).toBe(401);
+    const ok = await app.inject({
+      method: 'GET',
+      url: '/api/_probe',
+      cookies: { session: fresh.value },
+    });
+    expect(ok.statusCode).toBe(200);
+  });
+
   it('AC-11: sign-out ends only this session and clears the cookie; tolerates no cookie', async () => {
     const a = await account('out@example.test');
     const one = cookieOf(await signIn('out@example.test', PASSWORD));

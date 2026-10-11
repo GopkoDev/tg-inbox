@@ -51,7 +51,7 @@ export async function buildApp(
     workspaceAccess,
     acceptInvitation,
     team,
-    accountUseCases,
+    optionalAccount,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
   app.addHook('onClose', async () => {
@@ -79,7 +79,7 @@ export async function buildApp(
         invitationRoutes: {
           invitations: acceptInvitation,
           sessionUseCases,
-          accountUseCases,
+          optionalAccount,
           cookie: { secure: config.NODE_ENV !== 'development' },
         },
       }),

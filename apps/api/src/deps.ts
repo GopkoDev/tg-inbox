@@ -2,7 +2,10 @@ import { createAccountUseCases } from './modules/auth/app/accounts.js';
 import { createCredentialUseCases } from './modules/auth/app/credentials.js';
 import { createResetLinkUseCases } from './modules/auth/app/reset-links.js';
 import { createSessionUseCases } from './modules/auth/app/sessions.js';
-import { createSessionResolver } from './modules/auth/http/session-resolver.js';
+import {
+  createOptionalAccountResolver,
+  createSessionResolver,
+} from './modules/auth/http/session-resolver.js';
 import { createAccountRepo } from './modules/auth/infra/account-repo.js';
 import { createEmailLock } from './modules/auth/infra/email-lock.js';
 import { createPasswordHasher } from './modules/auth/infra/password-hasher.js';
@@ -53,6 +56,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   });
   const accountUseCases = createAccountUseCases({ accounts: accountRepo, hasher, clock });
   const authenticate = createSessionResolver({ sessionUseCases, accountUseCases });
+  const optionalAccount = createOptionalAccountResolver({ sessionUseCases, accountUseCases });
   // --- end auth dependencies ---
 
   // --- workspaces dependencies (T17 extracts this block into a shared dependency builder) ---
@@ -94,6 +98,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     resetLinkUseCases,
     accountUseCases,
     authenticate,
+    optionalAccount,
     workspaceAccess,
     acceptInvitation,
     team,

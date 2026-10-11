@@ -2,7 +2,7 @@ import type { FastifyInstance, InjectOptions } from 'fastify';
 import { sql } from 'kysely';
 import type { Deps } from '../deps.js';
 import { runAdmin } from '../cli/run.js';
-import { SESSION_COOKIE } from '../modules/auth/http/cookie.js';
+import { SESSION_COOKIE } from '../platform/session-cookie.js';
 
 export const PASSWORD = 'correct horse battery';
 

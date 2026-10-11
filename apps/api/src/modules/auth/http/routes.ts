@@ -9,7 +9,7 @@ import {
   SESSION_COOKIE,
   setSessionCookie,
   type CookieOptions,
-} from './cookie.js';
+} from '../../../platform/session-cookie.js';
 
 export interface AuthDeps {
   credentialUseCases: Pick<CredentialUseCases, 'signIn'>;
@@ -26,6 +26,8 @@ export async function registerAuth(app: FastifyInstance, deps: AuthDeps): Promis
   r.post('/auth/sign-in', { schema: { body: SignIn } }, async (request, reply) => {
     const { email, password } = request.body;
     const token = await credentialUseCases.signIn(email, password);
+    const previous = request.cookies[SESSION_COOKIE];
+    if (previous) await sessionUseCases.signOut(previous);
     setSessionCookie(reply, token, cookie);
     return reply.status(204).send();
   });
