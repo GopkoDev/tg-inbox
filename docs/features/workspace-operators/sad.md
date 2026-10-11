@@ -186,31 +186,120 @@ C4Container
 
 ## 6. Runtime view
 
-<!-- 🎯 Why: the RUNTIME FLOW of 1–2 critical scenarios — who talks to whom, when, in what order.
-     Without §6, §5 is just boxes with no life.
-     📋 Write: a Mermaid sequenceDiagram. Participants are names from §5 (don't invent new ones).
-     Messages are semantic («saves a draft»), NO HTTP verbs / paths / status codes — endpoint-level
-     sequences arrive at the `api` stage.
-     📌 e.g. «author → web: composes draft → web → content API: save». Seed the primary flow(s) here;
-     the `sequences` stage then covers every §5 AC (no cap). Never N/A for M+; XS/S keeps ≥1 happy-path flow. -->
+Seeded critical flows; the `sequences` stage extends this section until every spec §5 acceptance criterion maps to a flow or a branch. Participants are the §5 containers.
 
-**Critical flow 1: <flow name>**
+**Critical flow 1: Sign in and resolve the workspace (US-03 — AC-07, AC-08, AC-09, AC-10)**
 
 ```mermaid
 sequenceDiagram
-    actor Actor
-    participant Web
-    participant Service
-    participant Store
-    Actor->>Web: <action>
-    Web->>Service: <call>
-    Service->>Store: <write>
-    Store-->>Service: ok
-    Service-->>Web: result
-    Web-->>Actor: confirmation
+    actor Operator
+    participant Web as Web panel
+    participant Http as API server
+    participant Auth as auth module
+    participant Ws as workspaces module
+    participant Db as Database
+    Operator->>Web: enters email and password
+    Web->>Http: sign in with email and password
+    Http->>Auth: sign in
+    Auth->>Db: count recent failures for the normalised email
+    alt email locked out
+        Auth-->>Http: too many failed attempts
+        Http-->>Web: refused, try again later
+    else unknown email or wrong password
+        Auth->>Db: record a failure for the normalised email
+        Auth-->>Http: invalid credentials
+        Http-->>Web: one generic error for both cases
+    else credentials correct
+        Auth->>Db: clear failures and create a session
+        Auth-->>Http: session token
+        Http-->>Web: signed in, session cookie set
+        Web->>Http: who am I and where can I work
+        Http->>Ws: current account with active memberships
+        Ws->>Db: read active memberships ordered by last use
+        Ws-->>Http: account, active workspaces, last-used workspace
+        Http-->>Web: workspace list
+        Web-->>Operator: last-used or only workspace, picker for several, no-access screen for none
+    end
 ```
 
-**Critical flow 2: <e.g. async event propagation>** — <if applicable, otherwise N/A>.
+**Critical flow 2: Accept an invitation (US-02 — AC-03, AC-04, AC-04b, AC-05, AC-06)**
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Web as Web panel
+    participant Http as API server
+    participant Ws as workspaces module
+    participant Auth as auth module
+    participant Db as Database
+    Operator->>Web: opens the invitation link
+    Web->>Http: look up the invitation
+    Http->>Ws: check invitation and the signed-in account
+    alt expired, used, revoked or replaced
+        Ws-->>Http: invitation no longer valid
+        Http-->>Web: link unavailable, ask a business owner or the tg-inbox team
+    else signed in with a different email
+        Ws-->>Http: invitation belongs to another email
+        Http-->>Web: link unavailable, sign out and reopen
+    else valid
+        Ws-->>Http: invited email, role, whether an account exists
+        Http-->>Web: create-account form or confirm-password form
+        Operator->>Web: submits name and password, or the existing password
+        Web->>Http: accept the invitation
+        Http->>Ws: accept invitation
+        Ws->>Db: begin and lock the invitation and its workspace
+        alt no account for the email
+            Ws->>Auth: create account within the transaction
+            Auth->>Db: insert account with the password hash
+        else account exists
+            Ws->>Auth: verify password within the transaction
+            Auth->>Db: check lockout and compare the hash
+        end
+        Ws->>Db: insert active membership and consume the invitation
+        Ws->>Auth: open a session within the transaction
+        Auth->>Db: insert session and commit
+        Ws-->>Http: joined workspace and session token
+        Http-->>Web: signed in, session cookie set
+        Web-->>Operator: home of the joined workspace
+    end
+```
+
+A password shorter than 10 characters, a wrong existing password or a locked-out email ends the transaction without changes and returns the form with its error (AC-05; the generic credentials error for the existing-account path).
+
+**Critical flow 3: A workspace-scoped request passes the access guard (AC-13, AC-15, AC-17)**
+
+```mermaid
+sequenceDiagram
+    actor Operator
+    participant Web as Web panel
+    participant Http as API server
+    participant Auth as auth module
+    participant Ws as workspaces module
+    participant Db as Database
+    Operator->>Web: acts in a workspace screen
+    Web->>Http: request for a workspace with the session cookie
+    Http->>Auth: resolve the session from the cookie
+    Auth->>Db: find the session by token hash
+    alt no session or idle for more than 30 days
+        Auth-->>Http: unauthenticated
+        Http-->>Web: refused, sign in again
+    else session valid
+        Auth-->>Http: account
+        Http->>Ws: guard the workspace for this account
+        Ws->>Db: read the membership of this account in this workspace
+        alt never a member or no such workspace
+            Ws-->>Http: not found
+            Http-->>Web: neutral not-found
+        else membership deactivated
+            Ws-->>Http: access to this workspace was removed
+            Http-->>Web: refused, clear the workspace data and move on
+        else active member
+            Ws-->>Http: workspace id and role
+            Http->>Http: run the route with the workspace id, owner-only routes check the role
+            Http-->>Web: result
+        end
+    end
+```
 
 ## 7. Deployment view
 
