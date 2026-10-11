@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r9"
-status: "todo"
+status: "done"
 ---
 
 # T57 — Mask backslash link forms; state which forms no router resolves
@@ -33,11 +33,11 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: split the path on `\` as well as `/` and `%2f` (any case).
-- [ ] Reword the comments at `logger.ts:20-21` and `logger.test.ts:19-20`: the superset is every form the SPA router or Fastify resolves to a link route, plus forms no router resolves but a client may still send (`//`, `%2F`, `\`, `.` / `..` segments).
-- [ ] Add an api-sync-report line for this change (no operation, status or code changes).
-- [ ] Tests (unit, `logger.test.ts`): `/invite\<t>`, `\invite\<t>`, `/reset-password\<t>`, plus every existing case.
-- [ ] RED proof: the new masked cases fail against the current `maskLinkTokens`.
+- [x] `platform/logger.ts`: split the path on `\` as well as `/` and `%2f` (any case).
+- [x] Reword the comments at `logger.ts:20-21` and `logger.test.ts:19-20`: the superset is every form the SPA router or Fastify resolves to a link route, plus forms no router resolves but a client may still send (`//`, `%2F`, `\`, `.` / `..` segments).
+- [x] Add an api-sync-report line for this change (no operation, status or code changes).
+- [x] Tests (unit, `logger.test.ts`): `/invite\<t>`, `\invite\<t>`, `/reset-password\<t>`, plus every existing case.
+- [x] RED proof: the new masked cases fail against the current `maskLinkTokens`.
 
 ## Edge cases
 
@@ -49,8 +49,8 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Definition of Done
 
-- [ ] No `incoming request` line contains an invitation or reset token for a backslash-separated link form
-- [ ] The mask's comments state which forms a router resolves and which only a client may send
-- [ ] The serializer never throws on a malformed url
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] No `incoming request` line contains an invitation or reset token for a backslash-separated link form
+- [x] The mask's comments state which forms a router resolves and which only a client may send
+- [x] The serializer never throws on a malformed url
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds
