@@ -8,6 +8,8 @@ const ConfigSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   DATABASE_URL: z.url(),
+  PUBLIC_WEB_URL: z.url(),
+  WEB_DIST_DIR: z.string().min(1).optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

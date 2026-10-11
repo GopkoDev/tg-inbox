@@ -46,5 +46,6 @@ export function testConfig(databaseUrl: string): Config {
     PORT: 0,
     LOG_LEVEL: 'silent',
     DATABASE_URL: databaseUrl,
+    PUBLIC_WEB_URL: 'http://localhost:5173',
   };
 }

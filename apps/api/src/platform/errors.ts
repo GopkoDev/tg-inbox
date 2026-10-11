@@ -35,6 +35,66 @@ export class ConflictError extends AppError {
   readonly statusCode = 409;
 }
 
+export class UnauthenticatedError extends AppError {
+  readonly code = ErrorCode.UNAUTHENTICATED;
+  readonly statusCode = 401;
+}
+
+export class InvalidCredentialsError extends AppError {
+  readonly code = ErrorCode.INVALID_CREDENTIALS;
+  readonly statusCode = 401;
+}
+
+export class AccessRemovedError extends AppError {
+  readonly code = ErrorCode.ACCESS_REMOVED;
+  readonly statusCode = 403;
+}
+
+export class OwnerOnlyError extends AppError {
+  readonly code = ErrorCode.OWNER_ONLY;
+  readonly statusCode = 403;
+}
+
+export class InvitationForAnotherEmailError extends AppError {
+  readonly code = ErrorCode.INVITATION_FOR_ANOTHER_EMAIL;
+  readonly statusCode = 403;
+}
+
+/** `ask` tells the panel whom the invitee should contact for a fresh link. */
+export class InvitationInvalidError extends AppError {
+  readonly code = ErrorCode.INVITATION_INVALID;
+  readonly statusCode = 404;
+
+  constructor(message: string, ask: 'business_owner' | 'tg_inbox_team') {
+    super(message, { ask });
+  }
+}
+
+export class ResetLinkInvalidError extends AppError {
+  readonly code = ErrorCode.RESET_LINK_INVALID;
+  readonly statusCode = 404;
+}
+
+export class AlreadyAMemberError extends AppError {
+  readonly code = ErrorCode.ALREADY_A_MEMBER;
+  readonly statusCode = 409;
+}
+
+export class LastActiveOwnerError extends AppError {
+  readonly code = ErrorCode.LAST_ACTIVE_OWNER;
+  readonly statusCode = 409;
+}
+
+export class OwnerAlreadyJoinedError extends AppError {
+  readonly code = ErrorCode.OWNER_ALREADY_JOINED;
+  readonly statusCode = 409;
+}
+
+export class TooManyRequestsError extends AppError {
+  readonly code = ErrorCode.TOO_MANY_ATTEMPTS;
+  readonly statusCode = 429;
+}
+
 function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnvelope {
   return { error: details === undefined ? { code, message } : { code, message, details } };
 }
