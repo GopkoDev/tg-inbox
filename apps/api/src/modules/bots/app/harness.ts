@@ -8,7 +8,9 @@ import {
   type FakeBotRow,
 } from './fakes.js';
 import { createBotSettings } from './settings.js';
+import { createDisconnect } from './disconnect.js';
 import { createPasteToken } from './paste-token.js';
+import { createReconnect } from './reconnect.js';
 import type { WebhookSecrets } from './ports.js';
 
 /** Test wiring of the bots owner use cases over in-memory fakes. */
@@ -37,7 +39,7 @@ export function botRow(o: Partial<FakeBotRow> = {}): FakeBotRow {
 
 export function createBotsHarness(rows: FakeBotRow[] = []) {
   const bots = fakeBotRepo();
-  bots.rows.push(...rows);
+  bots.rows.push(...rows.map((r) => ({ ...r })));
   const telegram = fakeGateway();
   const clock = fixedClock(at(600));
   const conversations = fakeConversationsApi();
@@ -57,5 +59,20 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     settings,
     webhookBaseUrl: BASE_URL,
   });
-  return { bots, telegram, clock, conversations, contacts, secrets, transaction, settings, paste };
+  const ownerDeps = { bots, telegram, secrets, clock, settings, webhookBaseUrl: BASE_URL };
+  const reconnect = createReconnect(ownerDeps);
+  const disconnect = createDisconnect({ ...ownerDeps, conversations });
+  return {
+    bots,
+    telegram,
+    clock,
+    conversations,
+    contacts,
+    secrets,
+    transaction,
+    settings,
+    paste,
+    reconnect,
+    disconnect,
+  };
 }
