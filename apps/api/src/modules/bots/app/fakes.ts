@@ -2,9 +2,12 @@ import { DUE_AFTER_MS } from '../domain/health.js';
 import type {
   BotRecord,
   BotRepo,
+  ContactsApi,
+  ConversationsApi,
   GetMeResult,
   NewBot,
   TelegramGateway,
+  Transaction,
   WebhookTarget,
 } from './ports.js';
 
@@ -146,4 +149,40 @@ export function fakeGateway(): TelegramGateway & {
     },
   };
   return fake;
+}
+
+/**
+ * A fake transaction over a fake BotRepo: runs `fn` and, when it throws, restores the rows it
+ * started from — the rollback the real transaction gives.
+ */
+export function fakeBotTransaction(repo: { rows: FakeBotRow[] }): Transaction {
+  return async (fn) => {
+    const snapshot = repo.rows.map((r) => ({ ...r }));
+    try {
+      return await fn(undefined as never);
+    } catch (err) {
+      repo.rows.splice(0, repo.rows.length, ...snapshot);
+      throw err;
+    }
+  };
+}
+
+/** Scriptable conversations / contacts app layers as `bots` sees them. */
+export function fakeConversationsApi(): ConversationsApi & {
+  last: Map<string, Date>;
+  withConversations: Set<string>;
+} {
+  const last = new Map<string, Date>();
+  const withConversations = new Set<string>();
+  return {
+    last,
+    withConversations,
+    lastMessageReceivedAt: async (w) => last.get(w) ?? null,
+    hasConversations: async (w) => withConversations.has(w),
+  };
+}
+
+export function fakeContactsApi(): ContactsApi & { counts: Map<string, number> } {
+  const counts = new Map<string, number>();
+  return { counts, countContacts: async (w) => counts.get(w) ?? 0 };
 }

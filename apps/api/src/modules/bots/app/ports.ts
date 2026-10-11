@@ -124,3 +124,17 @@ export interface TelegramGateway {
   /** Always drops pending updates. */
   deleteWebhook(token: string, timeoutMs: number): Promise<'ok' | 'failed'>;
 }
+
+/** Runs `fn` in one database transaction; a throw rolls it back. No Telegram call runs inside. */
+export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
+
+/** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
+export interface ConversationsApi {
+  lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
+  hasConversations(workspaceId: string): Promise<boolean>;
+}
+
+/** What `bots` calls on the contacts app layer. */
+export interface ContactsApi {
+  countContacts(workspaceId: string): Promise<number>;
+}
