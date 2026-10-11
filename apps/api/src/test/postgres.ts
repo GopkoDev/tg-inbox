@@ -38,16 +38,27 @@ export async function startTestDatabase(
     await remove().catch(() => undefined);
     throw err;
   }
-  let stopped: Promise<void> | undefined;
   return {
     url,
     containerId: container.getId(),
-    stop: () =>
-      (stopped ??= (async () => {
-        await waitForClientsToDisconnect(url);
-        await remove();
-      })()),
+    stop: createStop(() => waitForClientsToDisconnect(url), remove),
   };
+}
+
+/** Memoised stop: waits for clients, then removes the container. */
+export function createStop(
+  waitForClients: () => Promise<void>,
+  remove: () => Promise<unknown>,
+): () => Promise<void> {
+  let stopped: Promise<void> | undefined;
+  return () =>
+    (stopped ??= (async () => {
+      try {
+        await waitForClients();
+      } finally {
+        await remove();
+      }
+    })());
 }
 
 /**

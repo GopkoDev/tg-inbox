@@ -35,7 +35,10 @@ export default async function globalSetup(config: FullConfig) {
   const started = app;
 
   return async () => {
-    await started.close();
-    await database.stop();
+    try {
+      await started.close();
+    } finally {
+      await database.stop();
+    }
   };
 }
