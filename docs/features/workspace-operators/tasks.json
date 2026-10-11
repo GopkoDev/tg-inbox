@@ -537,6 +537,730 @@
         "apps/web/src/pages/TeamPage.tsx"
       ],
       "file": "docs/features/workspace-operators/tasks/t25-invite-dialog.md"
+    },
+    {
+      "id": "T26",
+      "title": "Add API-level end-to-end flows for every user story",
+      "layer": "ports",
+      "deps": [
+        "T18"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-01b",
+        "AC-03",
+        "AC-04",
+        "AC-07",
+        "AC-12",
+        "AC-14",
+        "AC-17",
+        "AC-20",
+        "AC-21"
+      ],
+      "dod": "Seven multi-step flows run against ephemeral Postgres through the CLI command functions and HTTP only, never reading links or tokens from the database.",
+      "files_hint": [
+        "apps/api/src/e2e/"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t26-api-e2e.md"
+    },
+    {
+      "id": "T27",
+      "title": "Add the six browser end-to-end flows and their CI step",
+      "layer": "ui",
+      "deps": [
+        "T25",
+        "T26"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-07",
+        "AC-11",
+        "AC-12",
+        "AC-14",
+        "AC-17"
+      ],
+      "dod": "The six Playwright flows pass against the built SPA served same-origin with an ephemeral Postgres, run in a dedicated CI step, and stay out of pnpm test.",
+      "files_hint": [
+        "apps/web/e2e/",
+        "apps/web/playwright.config.ts",
+        "apps/web/package.json",
+        "package.json",
+        ".github/workflows/ci.yml",
+        "pnpm-lock.yaml"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t27-ui-e2e.md"
+    },
+    {
+      "id": "T28",
+      "title": "Make concurrent invitation acceptance refuse cleanly instead of failing with 500",
+      "layer": "app",
+      "deps": [
+        "T29"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-06"
+      ],
+      "dod": "`accept-invitation.int.test.ts` asserts the loser's error class for both races No argon2 hashing inside `uow.run` Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/accept-invitation.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.int.test.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.test.ts",
+        "apps/api/src/modules/auth/app/accounts.ts",
+        "apps/api/src/modules/auth/app/accounts.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t28-accept-invitation-concurrency.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T29",
+      "title": "Make the sign-in lockout atomic per email and use the contract's credential message",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-04"
+      ],
+      "dod": "Parallel-attempt integration test passes against real Postgres Both sign-in and accept 401 carry \"Email or password is incorrect\" Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/credentials.ts",
+        "apps/api/src/modules/auth/app/credentials.test.ts",
+        "apps/api/src/modules/auth/app/ports.ts",
+        "apps/api/src/modules/auth/infra/",
+        "apps/api/src/modules/auth/http/routes.ts",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t29-atomic-sign-in-lockout.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T30",
+      "title": "Shape route validation errors as the contract's field details and accept only JSON on mutating routes",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-14",
+        "AC-21"
+      ],
+      "dod": "Every route-schema 400 matches the contract error shape CSRF content-type rule enforced and tested Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/content-type.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/app.int.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t30-validation-envelope-and-csrf.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T31",
+      "title": "Align team-route ids, statuses and error messages with the contract",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-13",
+        "AC-15",
+        "AC-16",
+        "AC-17"
+      ],
+      "dod": "No route answers a status absent from openapi.yaml Messages match the contract Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/http/team-routes.ts",
+        "apps/api/src/modules/workspaces/http/team-routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/guard.ts",
+        "apps/api/src/modules/workspaces/domain/errors.ts",
+        "apps/api/src/modules/workspaces/app/team.ts",
+        "apps/api/src/modules/workspaces/app/team.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t31-team-routes-contract-fidelity.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T32",
+      "title": "Move the session cookie helpers out of auth's HTTP layer, add response schemas, end the previous session on sign-in",
+      "layer": "ports",
+      "deps": [
+        "T29",
+        "T30"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-07",
+        "AC-12",
+        "AC-03"
+      ],
+      "dod": "`grep -r \"auth/http\" apps/api/src/modules/workspaces` is empty All five routes have response schemas Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/http/cookie.ts",
+        "apps/api/src/modules/auth/http/routes.ts",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/modules/auth/http/session-resolver.ts",
+        "apps/api/src/platform/session-cookie.ts",
+        "apps/api/src/modules/workspaces/http/invitation-routes.ts",
+        "apps/api/src/modules/workspaces/http/invitation-routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/routes.ts",
+        "apps/api/src/modules/workspaces/http/routes.int.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t32-session-cookie-boundary-and-response-schemas.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T33",
+      "title": "Route the CLI audit through the platform logger, fix the admin script, update the architecture map",
+      "layer": "wiring",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-01b",
+        "AC-21"
+      ],
+      "dod": "CLI audit uses the platform logger `pnpm admin --help` works with fresh shared sources architecture-map reflects the two modules Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/cli/io.ts",
+        "apps/api/src/cli/io.test.ts",
+        "apps/api/src/cli/admin.ts",
+        "apps/api/src/cli/admin.int.test.ts",
+        "apps/api/package.json",
+        "docs/architecture-map.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t33-cli-audit-logger-and-docs.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T34",
+      "title": "Make the app shell enter the workspace in the URL, guard late responses, keep the access-removed notice",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-12",
+        "AC-13",
+        "AC-17"
+      ],
+      "dod": "No `/w/:id/*` page can render with a header for another workspace AC-17 notice shown regardless of store state Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/pages/TeamPage.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "apps/web/src/features/workspaces/home/WorkspaceHome.tsx",
+        "apps/web/src/features/workspaces/picker/useEnterWorkspace.ts",
+        "apps/web/src/features/workspaces/api.ts",
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/src/features/auth/api.ts",
+        "apps/web/src/features/auth/accept-invitation/AcceptInvitationForm.tsx",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/shared/api/guard.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t34-shell-enters-workspace-from-url.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T35",
+      "title": "Guard Team 'Show more', render SCR-10 in place without nested landmarks, link the invite form errors",
+      "layer": "ui",
+      "deps": [
+        "T34"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-14",
+        "AC-20"
+      ],
+      "dod": "Screens match screens.md structure Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/workspaces/team/Team.tsx",
+        "apps/web/src/features/workspaces/team/useTeam.ts",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/NotFoundPage.tsx",
+        "apps/web/src/pages/NotFoundPage.test.tsx",
+        "apps/web/src/features/workspaces/home/WorkspaceHome.tsx",
+        "apps/web/src/features/workspaces/invite/InviteDialog.tsx",
+        "apps/web/src/features/workspaces/invite/InviteDialog.test.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t35-team-list-and-invite-polish.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T36",
+      "title": "Send malformed token links to SCR-03 and align screen copy with the manifest",
+      "layer": "ui",
+      "deps": [
+        "T35"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-22",
+        "AC-04"
+      ],
+      "dod": "Every token page reaches SCR-03 on any unusable link Copy equals screens.md Web unit tests green; e2e typecheck clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/auth/accept-invitation/AcceptInvitationForm.tsx",
+        "apps/web/src/pages/AcceptInvitationPage.test.tsx",
+        "apps/web/src/features/auth/reset-password/ResetPasswordForm.tsx",
+        "apps/web/src/pages/ResetPasswordPage.test.tsx",
+        "apps/web/src/features/auth/sign-in/SignInForm.tsx",
+        "apps/web/src/pages/SignInPage.test.tsx",
+        "apps/web/src/pages/NotFoundPage.tsx",
+        "apps/web/src/pages/NotFoundPage.test.tsx",
+        "apps/web/e2e/flows.spec.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t36-token-link-errors-and-copy.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T37",
+      "title": "Exercise last-used workspace and direct Team loads in the browser flows",
+      "layer": "ui",
+      "deps": [
+        "T34",
+        "T36"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-12",
+        "AC-17"
+      ],
+      "dod": "Playwright flows green locally `tsc -p e2e` clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/e2e/flows.spec.ts",
+        "apps/web/e2e/support/"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t37-e2e-last-used-and-direct-team-load.md",
+      "source": "review-2026-10-11"
+    },
+    {
+      "id": "T38",
+      "title": "Keep argon2 out of the sign-in lock transaction and bound the pg pool",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "No DB connection is held while argon2 runs Pool max + connection timeout configured and documented Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/credentials.ts",
+        "apps/api/src/modules/auth/app/credentials.test.ts",
+        "apps/api/src/modules/auth/app/ports.ts",
+        "apps/api/src/modules/auth/infra/",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/platform/db.ts",
+        "apps/api/src/platform/config.ts",
+        ".env.example",
+        "apps/api/src/deps.ts",
+        "apps/api/src/test/postgres.ts",
+        "apps/web/e2e/support/config.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t38-sign-in-lock-without-holding-a-connection.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T39",
+      "title": "Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-14",
+        "AC-21"
+      ],
+      "dod": "No client-triggerable 4xx answers 500 415 documented in openapi.yaml with its own code Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/content-type.ts",
+        "apps/api/src/platform/content-type.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "packages/shared/src/errors.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t39-fastify-4xx-and-415-contract.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T40",
+      "title": "Let the loser of a same-email acceptance race continue through the existing-account path",
+      "layer": "app",
+      "deps": [
+        "T38"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-06"
+      ],
+      "dod": "No 404 for a still-pending invitation No second-connection query inside an open transaction Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/accept-invitation.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.int.test.ts",
+        "apps/api/src/modules/workspaces/app/accept-invitation.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t40-accept-race-falls-back-to-existing-account.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T41",
+      "title": "End the previous session on reset-link redeem, pin the response schemas with a test, fix the auth map row",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-21",
+        "AC-07",
+        "AC-12",
+        "AC-03"
+      ],
+      "dod": "Redeem, sign-in and accept all replace the device session the same way Removing any response schema turns a test red Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/modules/auth/http/routes.ts",
+        "apps/api/src/modules/auth/http/routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/invitation-routes.int.test.ts",
+        "apps/api/src/modules/workspaces/http/response-schemas.test.ts",
+        "docs/architecture-map.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t41-redeem-ends-previous-session-and-schema-pin.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T42",
+      "title": "Make Docker-backed tests remove their containers and data, even on failure",
+      "layer": "infra",
+      "deps": [
+        "T38"
+      ],
+      "acs": [],
+      "dod": "A full `pnpm test` run leaves zero `org.testcontainers` containers and no new anonymous volumes (check `docker ps -a` / `docker volume ls` before and after) Cleanup script removes only labelled test containers Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/test/postgres.ts",
+        "apps/api/src/test/postgres.int.test.ts",
+        "apps/web/e2e/global-setup.ts",
+        "package.json",
+        "scripts/clean-test-containers.sh"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t42-docker-tests-clean-up-after-themselves.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T43",
+      "title": "Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "No workspace data visible while not entered Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/pages/NotFoundPage.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "docs/design-system.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t43-shell-renders-body-only-when-entered.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T44",
+      "title": "Bring SCR-02 and SCR-03 copy to the manifest and fix the AC-03 accept test",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-04b",
+        "AC-06"
+      ],
+      "dod": "SCR-02 and SCR-03 strings equal screens.md Accept test would fail if the form called enterWorkspace Web unit tests green; e2e typecheck clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/auth/accept-invitation/AcceptInvitationForm.tsx",
+        "apps/web/src/features/auth/link-unavailable/LinkUnavailable.tsx",
+        "apps/web/src/features/auth/link-unavailable/LinkUnavailable.test.tsx",
+        "apps/web/src/pages/AcceptInvitationPage.test.tsx",
+        "apps/web/src/pages/ResetPasswordPage.test.tsx",
+        "apps/web/src/shared/lib/roles.ts",
+        "apps/web/src/features/workspaces/invite/InviteDialog.tsx",
+        "apps/web/e2e/flows.spec.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t44-scr02-scr03-copy-and-accept-test.md",
+      "source": "review-2026-10-11-r2"
+    },
+    {
+      "id": "T45",
+      "title": "Show role labels, not raw role values, in the picker, switcher and Team; reconcile the manifest",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-12",
+        "AC-14"
+      ],
+      "dod": "No raw role value rendered anywhere in the web UI screens.md has one label per role Web unit tests green; e2e typecheck clean; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/workspaces/picker/WorkspacePicker.tsx",
+        "apps/web/src/features/workspaces/picker/WorkspaceSwitcher.tsx",
+        "apps/web/src/features/workspaces/team/Team.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "apps/web/src/shared/lib/roles.ts",
+        "apps/web/src/features/workspaces/invite/InviteDialog.tsx",
+        "apps/web/e2e/flows.spec.ts",
+        "docs/features/workspace-operators/screens.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t45-role-labels-in-picker-and-team.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T46",
+      "title": "Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "No reachable state leaves the shell on an endless skeleton Web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/features/workspaces/team/useTeam.ts",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/NotFoundPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t46-shell-guard-failure-shows-retry.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T47",
+      "title": "Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-14",
+        "AC-21"
+      ],
+      "dod": "Every status/code pair the error handler can produce is in openapi.yaml Unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/content-type.ts",
+        "apps/api/src/platform/content-type.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/errors.test.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t47-framework-4xx-codes-and-hook-pin.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T48",
+      "title": "Remove test containers on every failure path and drop the named-volume loop from the clean script",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No failure path in test setup/teardown leaves a container or volume Unit + integration green; `pnpm lint` clean; `docker ps -a --filter label=org.testcontainers=true` empty after the run",
+      "files_hint": [
+        "apps/api/src/test/postgres.ts",
+        "apps/api/src/test/postgres.int.test.ts",
+        "apps/web/e2e/global-setup.ts",
+        "scripts/clean-test-containers.sh"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t48-test-container-teardown-on-every-failure.md",
+      "source": "review-2026-10-11-r3"
+    },
+    {
+      "id": "T49",
+      "title": "Key the access-removed notice by workspace and ignore guard refusals from a page the person has left",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "The notice always names the workspace whose refusal produced it; a refusal from a page the person has left has no visible effect; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/shared/api/guard.test.ts",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/features/workspaces/picker/WorkspacePicker.tsx",
+        "apps/web/src/pages/NoAccessPage.tsx",
+        "apps/web/src/pages/NoAccessPage.test.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspacesPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t49-notice-per-workspace-and-guard-scoped-to-url.md",
+      "source": "review-2026-10-11-r4"
+    },
+    {
+      "id": "T50",
+      "title": "Send router-level framework errors through the error envelope, pin the 5xx fallback, fix the stop() comment",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No API response body outside the error envelope for any 4xx/5xx on the router and handler paths (transport-level exceptions documented in contracts/api-sync-report.md); unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/app.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "apps/api/src/test/postgres.ts",
+        "docs/features/workspace-operators/contracts/openapi.yaml",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t50-router-errors-envelope-and-5xx-pin.md",
+      "source": "review-2026-10-11-r4"
+    },
+    {
+      "id": "T51",
+      "title": "Scope the shell guard to the URL workspace across routes and sign-out",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "A refusal for a workspace that is no longer in the address has no visible effect, whatever route the person moved to; a refusal for the workspace in the address still runs AC-17 on every route of that workspace; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t51-guard-scoped-to-url-across-routes-and-sign-out.md",
+      "source": "review-2026-10-11-r5"
+    },
+    {
+      "id": "T52",
+      "title": "Keep link tokens out of request logs; document the transport-level error exceptions",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No log line written by the API contains an invitation or reset token; the transport-level exceptions are documented and the T50 DoD no longer claims more than the code does; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md",
+        "docs/features/workspace-operators/tasks/t50-router-errors-envelope-and-5xx-pin.md",
+        "docs/features/workspace-operators/tasks.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t52-link-tokens-out-of-request-logs.md",
+      "source": "review-2026-10-11-r5"
+    },
+    {
+      "id": "T53",
+      "title": "Pin the shell's release of the address workspace when the person leaves for a page without a shell",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "A test fails when the shell stops releasing the address workspace on unmount; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t53-pin-shell-release-on-unmount.md",
+      "source": "review-2026-10-11-r6"
+    },
+    {
+      "id": "T54",
+      "title": "Harden link-token log masking (raw packets, non-canonical paths) and pin the URL-error message",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No log line at any level contains an invitation or reset token, whatever the path's case or slashes; both URL-error codes are pinned by a test that fails when either is dropped; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "apps/api/src/app.int.test.ts",
+        ".env.example",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t54-harden-link-token-log-masking.md",
+      "source": "review-2026-10-11-r6"
+    },
+    {
+      "id": "T55",
+      "title": "Mask link tokens by a normalised path, not a pattern",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for any path the SPA router would resolve to `/invite/:token` or `/reset-password/:token`, nor for dot-segment variants; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t55-mask-link-tokens-by-normalised-path.md",
+      "source": "review-2026-10-11-r7"
+    },
+    {
+      "id": "T56",
+      "title": "Mask link tokens in absolute-form and trailing-dot-segment urls; fix the mask's comments",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for any path the SPA router or Fastify would resolve to a link route (including absolute-form targets), nor for any url whose normalisation reaches `[linkPrefix]` before a further segment; the mask's comments state its real scope; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t56-mask-absolute-form-and-trailing-dot-segments.md",
+      "source": "review-2026-10-11-r8"
+    },
+    {
+      "id": "T57",
+      "title": "Mask backslash link forms; state which forms no router resolves",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for a backslash-separated link form; the mask's comments state which forms a router resolves and which only a client may send; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t57-mask-backslash-link-forms-and-fix-comments.md",
+      "source": "review-2026-10-11-r9"
+    },
+    {
+      "id": "T58",
+      "title": "Mask encoded-backslash (`%5C`) link forms",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for a link form separated by `\\` or `%5C`; the mask's comments list `%5C` among the forms no router resolves; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t58-mask-encoded-backslash-link-forms.md",
+      "source": "review-2026-10-11-r10"
     }
   ]
 }

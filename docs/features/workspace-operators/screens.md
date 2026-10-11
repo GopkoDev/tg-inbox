@@ -57,7 +57,7 @@ row pointing here.
 | loading | App boot: `getMe` in flight to find out whether a session already exists | Card, shadcn:skeleton | wireframe «loading» |
 | default | No session (`getMe` → 401) or after sign-out | Card, shadcn:input, shadcn:label, Button | wireframe «default» |
 | submitting | `signIn` in flight — fields and button disabled, button shows a spinner | Button (disabled + lucide `Loader2`) | same as default |
-| validation | `400 VALIDATION_ERROR` (email not a valid address after trimming) — message under the email field; empty fields are blocked client-side by `required` | shadcn:input (`aria-invalid`), shadcn:label | wireframe «default» + field error line |
+| validation | `400 VALIDATION_ERROR` (email not a valid address after trimming) — message under the email field; also checked client-side before submit with the shared `EmailInput` rule (AC-05b); a password over 1024 chars is blocked client-side with the shared `CurrentPassword` rule and a server 400 on `details.field: password` shows under the password; an empty email or password gets the shared message under its field (the form is `noValidate`; empty password → «Enter your password») | shadcn:input (`aria-invalid`), shadcn:label | wireframe «default» + field error line |
 | error: invalid credentials | `401 INVALID_CREDENTIALS` — «Email or password is incorrect», same for an unknown email and a wrong password; password field cleared | shadcn:alert (destructive) | wireframe «error» |
 | error: locked out | `429 TOO_MANY_ATTEMPTS` — «Too many failed attempts, try again later»; also for emails without an account | shadcn:alert (destructive) | wireframe «error» (other text) |
 | session-ended | Arrived through the shared `401` handler from a workspace screen — neutral notice «Sign in to continue» above the form; after sign-in the panel continues to the remembered address | shadcn:alert (default) | wireframe «session-ended» |
@@ -106,7 +106,7 @@ platform admin (spec §3 non-goals, US-08).
 | default: new account | `200` with `account_exists: false` — shows workspace name, invited email (read-only) and role; fields: name, password (hint «at least 10 characters») | Card, shadcn:input, shadcn:label, shadcn:badge (role), Button | wireframe «new account» |
 | default: existing account | `200` with `account_exists: true` — workspace name, email, role; one field: the account's existing password | Card, shadcn:input, shadcn:label, shadcn:badge, Button | wireframe «existing account» |
 | submitting | `acceptInvitation` in flight — form disabled, button spinner | Button (disabled + `Loader2`) | same as default |
-| validation | `400 VALIDATION_ERROR` with `details.field` — password < 10 chars «The password must be at least 10 characters long» (AC-05), name blank or > 200 chars; the length rule is also checked client-side before submit | shadcn:input (`aria-invalid`), shadcn:label | field error line under the field |
+| validation | `400 VALIDATION_ERROR` with `details.field` — password < 10 chars «The password must be at least 10 characters long» (AC-05), password > 1024 chars, name blank or > 200 chars; the same rules and messages are also checked client-side before submit with the shared `Password` / `DisplayName` schemas for a new account, and only the shared `PasswordBound` (≤ 1024, no minimum) for an existing account (AC-05b) | shadcn:input (`aria-invalid`), shadcn:label | field error line under the field |
 | error: invalid credentials | `401 INVALID_CREDENTIALS` on the existing-account form — wrong password **or** locked-out email, one message «Email or password is incorrect»; password cleared | shadcn:alert (destructive) | as SCR-01 «error» |
 | error: link unavailable | `404 INVITATION_INVALID` (on lookup, or on submit when the invitation was revoked/used in between) or `403 INVITATION_FOR_ANOTHER_EMAIL` → render SCR-03 in place | — (→ SCR-03) | SCR-03 |
 | error: unexpected | network failure / `500` on lookup or submit — «Something went wrong» + Retry (lookup) / keep the form filled (submit) | shadcn:alert (destructive), Button | — |
@@ -181,17 +181,17 @@ invitation invalid                  another email
 Sources: AC-07, AC-12, AC-17, AC-19 (reactivated workspace listed again); sad.md §6 critical flow 1, flow 7; `listMyWorkspaces` 200/401, `enterWorkspace` 200/401/403/404.
 
 ```text
-page (phone; desktop = same card, max-w-md)   switcher (desktop header menu)
-+--------------------------------+            +--------------------------+
-|  Choose a workspace            |            | Acme Flowers        ▾    |
-|                                |            +--------------------------+
-|  [ Acme Flowers      Owner   ] |            | ✓ Acme Flowers   Owner   |
-|  [ Bolt Bikes        Operator] |            |   Bolt Bikes     Operator|
-|  [ Cozy Cafe         Operator] |            +--------------------------+
-|                                |
-|  Signed in as ana@acme.test    |
-|  [ Sign out ]                  |
-+--------------------------------+
+page (phone; desktop = same card, max-w-md) switcher (desktop header menu)
++------------------------------------+      +--------------------------------+
+|  Choose a workspace                |      | Acme Flowers                ▾  |
+|                                    |      +--------------------------------+
+|  [ Acme Flowers   Business owner ] |      | ✓ Acme Flowers  Business owner |
+|  [ Bolt Bikes     Operator       ] |      |   Bolt Bikes    Operator       |
+|  [ Cozy Cafe      Operator       ] |      +--------------------------------+
+|                                    |
+|  Signed in as ana@acme.test        |
+|  [ Sign out ]                      |
++------------------------------------+
 ```
 
 ### SCR-05 — No access
@@ -276,20 +276,20 @@ Sources: AC-14 (pending row appears), AC-15, AC-17, AC-18, AC-19, AC-20; sad.md 
 
 ```text
 default — desktop
-+---------------------------------------------------------------------+
-| tg-inbox | Acme Flowers ▾ | Team                         ana@… ▾      |
-+---------------------------------------------------------------------+
-|  Team                                                   [ + Invite ]|
-|  Members                                                            |
-|  Name        Email             Role       State                     |
-|  Ana (you)     ana@acme.test   [Owner]    [Active]    [Deactivate]  |
-|  Bob Petrenko  bob@acme.test   [Operator] [Active]    [Deactivate]  |
-|  Ira Melnyk    ira@acme.test   [Operator] [Deactivated][Reactivate] |
-|                                                                     |
-|  Pending invitations                                                |
-|  Email             Role        Expires                              |
-|  max@acme.test     [Operator]  18 Oct 2026            [Revoke]      |
-+---------------------------------------------------------------------+
++----------------------------------------------------------------------------+
+| tg-inbox | Acme Flowers ▾ | Team                         ana@… ▾           |
++----------------------------------------------------------------------------+
+|  Team                                                          [ + Invite ]|
+|  Members                                                                   |
+|  Name          Email           Role             State                      |
+|  Ana (you)     ana@acme.test   [Business owner] [Active]      [Deactivate] |
+|  Bob Petrenko  bob@acme.test   [Operator]       [Active]      [Deactivate] |
+|  Ira Melnyk    ira@acme.test   [Operator]       [Deactivated] [Reactivate] |
+|                                                                            |
+|  Pending invitations                                                       |
+|  Email             Role        Expires                                     |
+|  max@acme.test     [Operator]  18 Oct 2026            [Revoke]             |
++----------------------------------------------------------------------------+
 
 default — phone (email + role move under the name: `hidden md:table-cell`)
 +--------------------------------+
@@ -326,7 +326,7 @@ remains, and answers `409 LAST_ACTIVE_OWNER` otherwise).
 |---|---|---|---|
 | default | **Invite** on SCR-07 — a dialog over SCR-07: email field, role choice (Operator — preselected / Business owner), **Create invitation** | shadcn:dialog, shadcn:input, shadcn:label, shadcn:radio-group, Button | wireframe «form» |
 | submitting | `createInvitation` in flight — form disabled, button spinner | Button (disabled + `Loader2`) | — |
-| validation | `400 VALIDATION_ERROR` — email not a valid address after trimming → message under the email field | shadcn:input (`aria-invalid`), shadcn:label | field error line |
+| validation | `400 VALIDATION_ERROR` — email not a valid address after trimming → message under the email field; also checked client-side before submit with the shared `EmailInput` rule (AC-05b) | shadcn:input (`aria-invalid`), shadcn:label | field error line |
 | error: already a member | `409 ALREADY_A_MEMBER` — alert in the dialog «This person is already a member — reactivate them instead if they are deactivated»; the form stays | shadcn:alert (destructive) | — |
 | success: link shown once | `201 IssuedInvitation` — the form is replaced by: «Invitation created for max@acme.test (Operator), valid until 18 Oct 2026», the link in a read-only field with **Copy** (label turns «Copied» for 2 s), a warning «You won't see this link again — copy it now», **Done**; any earlier pending invitation for the email was replaced (said in the text) | shadcn:dialog, shadcn:input (`readOnly`, select-all on focus), Button, shadcn:alert (default) | wireframe «link» |
 | closed | **Done** / ✕ / Esc → back to SCR-07, the pending list refetched and showing the new row; the link is gone for good | — (→ SCR-07) | SCR-07 «default» |
@@ -361,7 +361,7 @@ form (dialog; phone = full-width sheet-like dialog)   link (same dialog, after 2
 | loading | `lookUpPasswordResetLink` in flight after opening `/reset-password/<token>` | Card, shadcn:skeleton | as SCR-01 «loading» |
 | default | `204` — «Set a new password»: new password field (hint «at least 10 characters»), **Set password** | Card, shadcn:input, shadcn:label, Button | wireframe «default» |
 | submitting | `redeemPasswordResetLink` in flight — form disabled, button spinner | Button (disabled + `Loader2`) | — |
-| validation | `400 VALIDATION_ERROR` `field: password` — «The password must be at least 10 characters long»; also checked client-side before submit | shadcn:input (`aria-invalid`), shadcn:label | field error line |
+| validation | `400 VALIDATION_ERROR` `field: password` — «The password must be at least 10 characters long» (or «…at most 1024 characters long»); also checked client-side before submit with the shared `Password` schema (AC-05b) | shadcn:input (`aria-invalid`), shadcn:label | field error line |
 | error: link unavailable | `404 RESET_LINK_INVALID` on lookup, or on submit when the link was used / superseded / expired in between → render SCR-03 in place | — (→ SCR-03) | SCR-03 |
 | error: unexpected | network failure / `500` — «Something went wrong» + Retry (lookup) / form kept (submit) | shadcn:alert (destructive), Button | — |
 | success | `204` → signed in on this device → AC-07 resolution → SCR-06 / SCR-04 / SCR-05 | — (navigation) | — |

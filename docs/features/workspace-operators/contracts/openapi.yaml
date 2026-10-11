@@ -66,6 +66,8 @@ paths:
               email: "operator@example.test"
               password: "correct-horse-battery"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed in; the session cookie is set
           headers:
@@ -99,6 +101,9 @@ paths:
         - SessionCookie: []
         - {}
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed out; the session cookie is cleared
           headers:
@@ -121,6 +126,8 @@ paths:
             example:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: The link is valid; show the new-password form (SCR-09)
         "400":
@@ -148,6 +155,8 @@ paths:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
               password: "a-new-long-password"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Password changed; this device is signed in, every other session ended
           headers:
@@ -246,6 +255,8 @@ paths:
             example:
               token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The invitation is valid
           content:
@@ -296,6 +307,8 @@ paths:
                   token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
                   password: "the-existing-password"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Joined; this device is signed in
           headers:
@@ -341,6 +354,9 @@ paths:
         opens this workspace (AC-12). Other devices stay where they are: the workspace lives in the URL.
       operationId: enterWorkspace
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Entered
           content:
@@ -417,6 +433,9 @@ paths:
         unchanged member.
       operationId: deactivateMembership
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now deactivated
           content:
@@ -458,6 +477,9 @@ paths:
         with the unchanged member.
       operationId: reactivateMembership
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now active
           content:
@@ -535,6 +557,8 @@ paths:
               email: "new.hire@example.test"
               role: operator
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "201":
           description: Invitation issued; show the link once to copy
           content:
@@ -549,7 +573,9 @@ paths:
                   expires_at: "2026-10-17T12:00:00Z"
                 link: "https://panel.example.test/invite/Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
         "400":
-          description: The email is not a valid address or the role is unknown
+          description: |
+            The email is not a valid address or the role is unknown; also a malformed URL or an
+            over-long path param (router-level, before the handler runs)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -587,6 +613,9 @@ paths:
         An invitation that is no longer pending, or belongs to another workspace, is not found.
       operationId: revokeInvitation
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Revoked
         "401":
@@ -658,8 +687,21 @@ components:
       schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
 
   responses:
+    MalformedBody:
+      description: |
+        Cross-cutting on body-less POST operations: a client still sent an `application/json` body
+        that is malformed or empty, or another framework-level 4xx was raised (including a malformed
+        percent-encoded URL or a path param over the router's length limit). Refused before the
+        handler runs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: VALIDATION_ERROR, message: "Body cannot be empty when content-type is set to 'application/json'" }
     ValidationFailed:
-      description: The request does not match the schema
+      description: |
+        The request does not match the schema. Also answered, before the handler runs, for a
+        malformed percent-encoded URL or a path param over the router's length limit (never 414).
       content:
         application/json:
           schema: { $ref: "#/components/schemas/ErrorEnvelope" }
@@ -745,6 +787,26 @@ components:
           example:
             error: { code: RESET_LINK_INVALID, message: "This reset link is no longer valid" }
 
+    UnsupportedMediaType:
+      description: |
+        Cross-cutting on every mutating operation (POST): the request carries a body whose content-type
+        is not `application/json`, or a body with no content-type at all. Refused before the handler runs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNSUPPORTED_MEDIA_TYPE, message: "Only application/json request bodies are accepted" }
+
+    PayloadTooLarge:
+      description: |
+        Cross-cutting on every operation that takes a body (POST): the body is larger than the server's
+        body limit. Refused before the handler runs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: PAYLOAD_TOO_LARGE, message: "Request body is too large" }
+
   schemas:
     # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
     ErrorCode:
@@ -755,9 +817,11 @@ components:
         FORBIDDEN 403 · ACCESS_REMOVED 403 · OWNER_ONLY 403 · INVITATION_FOR_ANOTHER_EMAIL 403 ·
         NOT_FOUND 404 · INVITATION_INVALID 404 · RESET_LINK_INVALID 404 · CONFLICT 409 ·
         ALREADY_A_MEMBER 409 · LAST_ACTIVE_OWNER 409 · OWNER_ALREADY_JOINED 409 (admin CLI only) ·
-        TOO_MANY_ATTEMPTS 429 · INTERNAL_ERROR 500.
+        PAYLOAD_TOO_LARGE 413 · TOO_MANY_ATTEMPTS 429 · UNSUPPORTED_MEDIA_TYPE 415 · INTERNAL_ERROR 500.
       enum:
         - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
         - NOT_FOUND
         - FORBIDDEN
         - CONFLICT
@@ -948,7 +1012,13 @@ components:
       additionalProperties: false
       properties:
         token: { $ref: "#/components/schemas/LinkToken" }
-        password: { $ref: "#/components/schemas/Password" }
+        password:
+          type: string
+          maxLength: 1024
+          description: >-
+            Bound-only at the body level. When account_exists is false the 10–1024 policy applies
+            (400 VALIDATION_ERROR on field password); otherwise the existing account's password is
+            verified (a wrong one is 401 INVALID_CREDENTIALS, whatever its length)
         display_name:
           $ref: "#/components/schemas/DisplayName"
           description: Required when no account exists for the invited email; ignored otherwise

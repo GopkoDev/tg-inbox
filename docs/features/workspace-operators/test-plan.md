@@ -40,6 +40,7 @@ A platform admin creates a workspace with a single-use first-owner invitation; p
 | AC-04 error | `wrong existing password during acceptance counts toward lockout` | integration | Acceptance refused with the generic credentials message; the failure is counted for that email |
 | AC-04b authorization | `invitation opened by a different signed-in account is refused` | integration + component | No membership added to the signed-in account; SCR-03 explains the invitation belongs to another email and offers sign-out |
 | AC-05 error | `password shorter than 10 characters is rejected` | unit + integration + component | No account created; the person is told the password must be at least 10 characters (also checked before submit) |
+| AC-05b error | `form fields are checked with the shared schemas before submit` | component + integration | Component: a too-long password (accept as new or existing account, reset, sign-in), a blank / whitespace-only / over-200-character name, an invalid email (sign-in, invite), or an empty sign-in email or password shows the shared message under the field and sends no request; an existing account's short password is not blocked (AC-04). Integration: accept and sign-in answer a password over 1024 characters, sign-in answers an empty password, and accept answers a blank name, with the same shared message on `details.field` |
 | AC-06 domain invariant | `expired invitation is refused` | unit + integration | Refused as no longer valid; the person is told to ask a business owner |
 | AC-06 domain invariant | `used invitation is refused` | unit + integration | Second acceptance refused; no second membership |
 | AC-06 domain invariant | `revoked or replaced invitation is refused` | unit + integration | Refused as no longer valid |
@@ -84,7 +85,7 @@ A platform admin creates a workspace with a single-use first-owner invitation; p
 - Malformed or unknown workspace id in a workspace-scoped address → expected: the same neutral not-found as a foreign workspace.
 - Invitation revoked between lookup and submit → expected: acceptance refused as no longer valid; no account or membership created.
 - Two acceptances of the same invitation at the same moment → expected: exactly one membership; the other refused as no longer valid.
-- Two account creations for the same email at the same moment (two invitations to different workspaces) → expected: one account, both memberships attached to it, or the second refused cleanly — never two accounts.
+- Two account creations for the same email at the same moment (two invitations to different workspaces) → expected: one account; the second acceptance is refused cleanly by the unique email and nothing is half-written (the person retries and joins with the existing password).
 - Session idle 30 days with only background requests → expected: session ended, next action asks to sign in; a user action on day 29 keeps it alive.
 - Missing or expired session on any authenticated route → expected: refused as not signed in; the panel goes to sign-in and returns to the opened address afterwards.
 - Mutating request with a non-JSON body → expected: refused, nothing changed (CSRF guard, ADR-0004).

@@ -3,4 +3,77 @@
  * Please do not edit it manually.
  */
 
-export interface DB {}
+import type { ColumnType } from "kysely";
+
+export type Timestamp = ColumnType<Date, Date | string, Date | string>;
+
+export interface Accounts {
+  created_at: Timestamp;
+  display_name: string;
+  email: string;
+  id: string;
+  password_hash: string;
+}
+
+export interface Invitations {
+  closed_at: Timestamp | null;
+  created_at: Timestamp;
+  email: string;
+  expires_at: Timestamp;
+  id: string;
+  role: string;
+  state: string;
+  token_hash: Buffer;
+  workspace_id: string;
+}
+
+export interface Memberships {
+  account_id: string;
+  created_at: Timestamp;
+  deactivated_at: Timestamp | null;
+  id: string;
+  last_used_at: Timestamp | null;
+  role: string;
+  state: string;
+  workspace_id: string;
+}
+
+export interface PasswordResetLinks {
+  account_id: string;
+  closed_at: Timestamp | null;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+  id: string;
+  state: string;
+  token_hash: Buffer;
+}
+
+export interface Sessions {
+  account_id: string;
+  created_at: Timestamp;
+  id: string;
+  last_seen_at: Timestamp;
+  token_hash: Buffer;
+}
+
+export interface SignInFailures {
+  email: string;
+  failed_at: Timestamp;
+  id: string;
+}
+
+export interface Workspaces {
+  created_at: Timestamp;
+  id: string;
+  name: string;
+}
+
+export interface DB {
+  accounts: Accounts;
+  invitations: Invitations;
+  memberships: Memberships;
+  password_reset_links: PasswordResetLinks;
+  sessions: Sessions;
+  sign_in_failures: SignInFailures;
+  workspaces: Workspaces;
+}

@@ -10,27 +10,103 @@ const MIGRATION_FOLDER = resolve(import.meta.dirname, '../../migrations');
 
 export interface TestDatabase {
   url: string;
+  containerId: string;
+  /**
+   * Stops and removes the container and its volumes. Idempotent once it succeeded; a failed
+   * removal is retried by the next call, and a failed wait for clients is re-reported by it.
+   */
   stop(): Promise<void>;
 }
 
-/** Ephemeral Postgres 16 with every migration applied — one per integration suite. */
-export async function startTestDatabase(): Promise<TestDatabase> {
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer(
-    'postgres:16-alpine',
-  ).start();
-  const url = container.getConnectionUri();
-  await migrateToLatest(url);
-  return { url, stop: async () => void (await container.stop()) };
+export interface StartTestDatabaseOptions {
+  migrationFolder?: string;
+  /** Extra container labels (lets a test find its own container). */
+  labels?: Record<string, string>;
 }
 
-async function migrateToLatest(connectionString: string): Promise<void> {
+/** Ephemeral Postgres 16 with every migration applied — one per integration suite. */
+export async function startTestDatabase(
+  options: StartTestDatabaseOptions = {},
+): Promise<TestDatabase> {
+  // The data dir lives on tmpfs so the image's VOLUME never creates an anonymous volume.
+  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer('postgres:16-alpine')
+    .withTmpFs({ '/var/lib/postgresql/data': 'rw' })
+    .withLabels(options.labels ?? {})
+    .start();
+  const remove = () => container.stop({ remove: true, removeVolumes: true });
+  const url = container.getConnectionUri();
+  try {
+    await migrateToLatest(url, options.migrationFolder ?? MIGRATION_FOLDER);
+  } catch (err) {
+    await remove().catch(() => undefined);
+    throw err;
+  }
+  return {
+    url,
+    containerId: container.getId(),
+    stop: createStop(() => waitForClientsToDisconnect(url), remove),
+  };
+}
+
+/**
+ * Memoised stop: waits for clients, then always removes the container. A failed removal is not
+ * memoised, so a later stop() retries it; when both steps fail, both errors are kept.
+ */
+export function createStop(
+  waitForClients: () => Promise<void>,
+  remove: () => Promise<unknown>,
+): () => Promise<void> {
+  let stopped: Promise<void> | undefined;
+  return () =>
+    (stopped ??= (async () => {
+      let waitError: unknown;
+      try {
+        await waitForClients();
+      } catch (err) {
+        waitError = err ?? new Error('waiting for clients failed');
+      }
+      try {
+        await remove();
+      } catch (removeError) {
+        stopped = undefined;
+        throw waitError === undefined
+          ? removeError
+          : new AggregateError([waitError, removeError], 'stopping the test database failed');
+      }
+      if (waitError !== undefined) throw waitError;
+    })());
+}
+
+/**
+ * `pool.end()` resolves before its sockets are closed, so a container stop right after it can
+ * terminate backends that are still ending (FATAL 57P01, surfacing as an uncaught error). Wait
+ * until no other client backend is left before stopping.
+ */
+async function waitForClientsToDisconnect(connectionString: string): Promise<void> {
+  const client = new pg.Client({ connectionString });
+  await client.connect();
+  try {
+    for (let i = 0; i < 100; i++) {
+      const { rows } = await client.query<{ n: number }>(
+        `select count(*)::int as n from pg_stat_activity
+          where backend_type = 'client backend' and pid <> pg_backend_pid()`,
+      );
+      if (rows[0]?.n === 0) return;
+      await new Promise((r) => setTimeout(r, 50));
+    }
+  } finally {
+    await client.end();
+  }
+}
+
+async function migrateToLatest(connectionString: string, migrationFolder: string): Promise<void> {
   const db = new Kysely<unknown>({
     dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString }) }),
   });
   try {
     const migrator = new Migrator({
       db,
-      provider: new TSFileMigrationProvider({ migrationFolder: MIGRATION_FOLDER }),
+      provider: new TSFileMigrationProvider({ migrationFolder }),
     });
     const { error } = await migrator.migrateToLatest();
     if (error) throw error;
@@ -46,5 +122,8 @@ export function testConfig(databaseUrl: string): Config {
     PORT: 0,
     LOG_LEVEL: 'silent',
     DATABASE_URL: databaseUrl,
+    DATABASE_POOL_MAX: 10,
+    DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
+    PUBLIC_WEB_URL: 'http://localhost:5173',
   };
 }
