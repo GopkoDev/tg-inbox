@@ -40,11 +40,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       try {
         return await guard(error, id);
       } catch (cause) {
-        if (!useWorkspaceStore.getState().current) markError();
+        if (!useWorkspaceStore.getState().current) markError(id ?? workspaceId);
         throw cause;
       }
     },
-    [guard, markError],
+    [guard, markError, workspaceId],
   );
   const current = useWorkspaceStore((s) => s.current);
   const notice = useWorkspaceStore((s) => s.accessRemovedNotice);

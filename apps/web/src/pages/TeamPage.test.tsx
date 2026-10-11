@@ -255,11 +255,38 @@ describe('TeamPage (SCR-07)', () => {
       expect(screen.queryByText('Bob')).not.toBeInTheDocument();
       expect(screen.queryByTestId('shell-body-skeleton')).not.toBeInTheDocument();
       enterWorkspace.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
-      resolveWorkspace.mockResolvedValue(undefined);
+      resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w2'));
       fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-      await waitFor(() => expect(resolveWorkspace).toHaveBeenCalledTimes(2));
+      expect(await screen.findByText('home screen')).toBeInTheDocument();
+      expect(resolveWorkspace).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
+      expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('Acme Flowers');
     },
   );
+
+  it('a late failure from a page the operator has left does not replace the new workspace state (AC-17)', async () => {
+    let failLate: (e: unknown) => void = () => undefined;
+    deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
+    enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
+    render(
+      <MemoryRouter initialEntries={['/w/w1/team']}>
+        <Routes>
+          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+        </Routes>
+        <Jump to="/w/w2/team" />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Bob');
+    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    fireEvent.click(await lastButton('Deactivate'));
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    resolveWorkspace.mockRejectedValue(new TypeError('Failed to fetch'));
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByText('Page not found')).toBeInTheDocument();
+    expect(screen.queryByTestId('shell-body-skeleton')).not.toBeInTheDocument();
+  });
 
   it('401: guard goes to sign-in', async () => {
     listMemberships.mockRejectedValue(err(401, 'UNAUTHENTICATED'));

@@ -15,9 +15,11 @@ export function useWorkspaceFromUrl(workspaceId: string, guard: GuardFn) {
   const [failure, setFailure] = useState<{ id: string; kind: 'error' | 'not-found' } | null>(null);
   const [attempt, setAttempt] = useState(0);
   const guardRef = useRef(guard);
+  const urlRef = useRef(workspaceId);
 
   useLayoutEffect(() => {
     guardRef.current = guard;
+    urlRef.current = workspaceId;
   });
 
   useLayoutEffect(() => {
@@ -58,10 +60,14 @@ export function useWorkspaceFromUrl(workspaceId: string, guard: GuardFn) {
     setFailure(null);
     setAttempt((n) => n + 1);
   };
-  /** A page call's guard rejected after the workspace was dropped: show the error row. */
-  const markError = useCallback(
-    () => setFailure({ id: workspaceId, kind: 'error' }),
-    [workspaceId],
-  );
+  /**
+   * A page call's guard for workspace `id` rejected after the workspace was dropped: show the
+   * error row. A late failure from a page the person has already left is ignored, and an
+   * existing failure for the same address is kept.
+   */
+  const markError = useCallback((id: string) => {
+    if (id !== urlRef.current) return;
+    setFailure((f) => (f?.id === id ? f : { id, kind: 'error' }));
+  }, []);
   return { status, retry, markError };
 }
