@@ -164,4 +164,22 @@ describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-
     ).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).not.toHaveAttribute('aria-invalid');
   });
+
+  it('AC-05b: an empty email shows the shared email message under the email', async () => {
+    renderPage();
+    await fill('', 'secret-pass');
+    expect(
+      await screen.findByText('Enter a valid email address', { selector: 'p#email-error' }),
+    ).toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
+  });
+
+  it('AC-05b: an empty password shows the shared required message under the password', async () => {
+    renderPage();
+    await fill('o@x.io', '');
+    expect(
+      await screen.findByText('Enter your password', { selector: 'p#password-error' }),
+    ).toBeInTheDocument();
+    expect(signIn).not.toHaveBeenCalled();
+  });
 });

@@ -1012,7 +1012,13 @@ components:
       additionalProperties: false
       properties:
         token: { $ref: "#/components/schemas/LinkToken" }
-        password: { $ref: "#/components/schemas/Password" }
+        password:
+          type: string
+          maxLength: 1024
+          description: >-
+            Bound-only at the body level. When account_exists is false the 10–1024 policy applies
+            (400 VALIDATION_ERROR on field password); otherwise the existing account's password is
+            verified (a wrong one is 401 INVALID_CREDENTIALS, whatever its length)
         display_name:
           $ref: "#/components/schemas/DisplayName"
           description: Required when no account exists for the invited email; ignored otherwise

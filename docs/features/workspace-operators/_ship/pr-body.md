@@ -43,7 +43,7 @@ See the [spec](docs/features/workspace-operators/spec.md) and the [changelog](do
 - Decisions: `docs/features/workspace-operators/adr/`, ADR-0001 to ADR-0005
 - Data model and migrations: `docs/features/workspace-operators/data-model.md` (migrations `1791681109972` to `1791681109978`)
 - API: `docs/features/workspace-operators/contracts/openapi.yaml`
-- Review: `docs/features/workspace-operators/_review/`. Round 11 passed. Round 12 reviewed the post-ship fix and requested changes, fixed in `74bbeab`. Round 13 requested one more change, fixed in `e3e1510`; round 14 re-reviews it.
+- Review: `docs/features/workspace-operators/_review/`. Round 11 passed. Round 12 reviewed the post-ship fix and requested changes, fixed in `74bbeab`. Round 13 requested G1–G4, fixed in `e3e1510`; round 14 re-reviews it.
 - Fix: `docs/features/workspace-operators/_fixes/2026-10-11-shared-form-validation.md` (adds AC-05b).
 
 ## Tasks (SDD-Task trailers)

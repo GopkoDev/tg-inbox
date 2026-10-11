@@ -87,7 +87,7 @@ export function SignInForm() {
             <Skeleton className="h-9 w-full" />
           </div>
         ) : (
-          <form onSubmit={(e) => void onSubmit(e)} className="space-y-4">
+          <form onSubmit={(e) => void onSubmit(e)} className="space-y-4" noValidate>
             {sessionEnded && (
               <Alert>
                 <AlertDescription>Sign in to continue</AlertDescription>
