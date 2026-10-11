@@ -84,7 +84,7 @@ A platform admin creates a workspace with a single-use first-owner invitation; p
 - Malformed or unknown workspace id in a workspace-scoped address → expected: the same neutral not-found as a foreign workspace.
 - Invitation revoked between lookup and submit → expected: acceptance refused as no longer valid; no account or membership created.
 - Two acceptances of the same invitation at the same moment → expected: exactly one membership; the other refused as no longer valid.
-- Two account creations for the same email at the same moment (two invitations to different workspaces) → expected: one account, both memberships attached to it, or the second refused cleanly — never two accounts.
+- Two account creations for the same email at the same moment (two invitations to different workspaces) → expected: one account; the second acceptance is refused cleanly by the unique email and nothing is half-written (the person retries and joins with the existing password).
 - Session idle 30 days with only background requests → expected: session ended, next action asks to sign in; a user action on day 29 keeps it alive.
 - Missing or expired session on any authenticated route → expected: refused as not signed in; the panel goes to sign-in and returns to the opened address afterwards.
 - Mutating request with a non-JSON body → expected: refused, nothing changed (CSRF guard, ADR-0004).
