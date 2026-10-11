@@ -1,7 +1,7 @@
 import { Menu, UserRound, X } from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
-import { NotFoundPage } from '@/pages/NotFoundPage';
+import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
 import { useSignOut } from '@/features/auth/useSignOut';
@@ -11,6 +11,7 @@ import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
+import { Skeleton } from '@/shared/ui/skeleton';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,7 +26,8 @@ import { ShellGuardContext } from './app-shell-context';
  * The workspace area frame (SCR-06/07/08): switcher, owner-only Team link, account menu with
  * sign-out (collapsed into a menu at phone width) and the dismissible `access-removed` notice.
  * It enters the workspace of the URL (`useWorkspaceFromUrl`) and shows SCR-10 / a retry row when
- * that fails. It also wires the shared guard handler and hands it to the screens inside via `useShellGuard`.
+ * that fails, and renders the page body only once that entry is `ready` (a skeleton before, so no
+ * workspace data outlives a refusal). It also wires the shared guard handler and hands it to the screens inside via `useShellGuard`.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const guard = useGuard();
@@ -113,7 +115,9 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         )}
         {entry.status === 'not-found' ? (
-          <NotFoundPage />
+          <main className="p-4">
+            <NotFoundCard headingLevel={1} />
+          </main>
         ) : entry.status === 'error' ? (
           <main className="p-4">
             <Alert variant="destructive">
@@ -124,6 +128,11 @@ export function AppShell({ children }: { children: ReactNode }) {
                 </Button>
               </AlertDescription>
             </Alert>
+          </main>
+        ) : entry.status === 'entering' ? (
+          <main className="space-y-3 p-4" data-testid="shell-body-skeleton">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-24 w-full" />
           </main>
         ) : (
           <main className="p-4">{children}</main>

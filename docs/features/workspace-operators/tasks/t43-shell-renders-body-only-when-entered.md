@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T43 — Render page bodies only after the shell entered the workspace; fit SCR-10 inside the shell
@@ -48,10 +48,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Render `children` only when the entry status is `ready`; show the body skeleton while entering. One guard call per entry on a direct load.
-- [ ] Shell-level SCR-10: `<main className="p-4"><NotFoundCard headingLevel={1} /></main>` (or equivalent) — one `main`, one `h1`, no `min-h-svh` inside the shell.
-- [ ] Update the AppShell row in docs/design-system.md (entry responsibility, not-found and error/Retry slots).
-- [ ] Tests: a 403 `ACCESS_REMOVED` on a Team action removes the member rows before `resolveWorkspaces` resolves; a direct Team load with a 403 calls the guard once; the shell-level 404 has one `main`, one `h1` and no `min-h-svh` class.
+- [x] Render `children` only when the entry status is `ready`; show the body skeleton while entering. One guard call per entry on a direct load.
+- [x] Shell-level SCR-10: `<main className="p-4"><NotFoundCard headingLevel={1} /></main>` (or equivalent) — one `main`, one `h1`, no `min-h-svh` inside the shell.
+- [x] Update the AppShell row in docs/design-system.md (entry responsibility, not-found and error/Retry slots).
+- [x] Tests: a 403 `ACCESS_REMOVED` on a Team action removes the member rows before `resolveWorkspaces` resolves; a direct Team load with a 403 calls the guard once; the shell-level 404 has one `main`, one `h1` and no `min-h-svh` class.
 
 ## Edge cases
 
@@ -62,7 +62,7 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No workspace data visible while not entered
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No workspace data visible while not entered
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

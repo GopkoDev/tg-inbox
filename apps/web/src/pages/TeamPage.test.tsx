@@ -227,6 +227,18 @@ describe('TeamPage (SCR-07)', () => {
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('Acme Flowers');
   });
 
+  it('403 ACCESS_REMOVED on an action: member rows are gone before resolution finishes (AC-17)', async () => {
+    deactivateMembership.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+    resolveWorkspace.mockReturnValue(new Promise(() => undefined));
+    renderPage();
+    await screen.findByText('Bob');
+    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    fireEvent.click(await lastButton('Deactivate'));
+    await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByText('Bob')).not.toBeInTheDocument());
+    expect(screen.queryByText('Olga')).not.toBeInTheDocument();
+  });
+
   it('401: guard goes to sign-in', async () => {
     listMemberships.mockRejectedValue(err(401, 'UNAUTHENTICATED'));
     listPendingInvitations.mockRejectedValue(err(401, 'UNAUTHENTICATED'));
@@ -315,6 +327,19 @@ describe('TeamPage enters its workspace from the URL (AC-12, AC-13, AC-17)', () 
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /Bolt Bikes/ })).toBeInTheDocument();
+  });
+
+  it('direct load with a 403 ACCESS_REMOVED entry: one guard call, lists never requested (AC-17)', async () => {
+    useWorkspaceStore.getState().clear();
+    enterWorkspace.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+    listMemberships.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+    listPendingInvitations.mockRejectedValue(err(403, 'ACCESS_REMOVED'));
+    resolveWorkspace.mockResolvedValue(undefined);
+    renderPage();
+    await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 30));
+    expect(resolveWorkspace).toHaveBeenCalledTimes(1);
+    expect(listMemberships).not.toHaveBeenCalled();
   });
 
   it('direct load for a workspace that does not exist: not-found, no name shown (AC-13)', async () => {

@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ApiError } from '@/shared/api/client';
 import { openMenu, stubRadixDom } from '@/test/radix';
 
 const signOut = vi.fn();
@@ -59,7 +60,19 @@ describe('AppShell', () => {
     enterWorkspace.mockReturnValue(new Promise(() => undefined));
     renderShell();
     expect(screen.getByTestId('shell-name-skeleton')).toBeInTheDocument();
-    expect(screen.getByText('shell body')).toBeInTheDocument();
+    expect(screen.getByTestId('shell-body-skeleton')).toBeInTheDocument();
+    expect(screen.queryByText('shell body')).not.toBeInTheDocument();
+  });
+
+  it('shell-level not-found: one main, one h1, no full-page height (AC-13)', async () => {
+    enterWorkspace.mockRejectedValue(new ApiError(404, 'NOT_FOUND' as never, 'x'));
+    const { container } = renderShell();
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+    expect(container.querySelector('main')!.className).not.toContain('min-h-svh');
+    expect(container.querySelector('main .min-h-svh')).toBeNull();
+    expect(screen.queryByText('shell body')).not.toBeInTheDocument();
   });
 
   it('owner sees the Team link (AC-15 UI half)', () => {
