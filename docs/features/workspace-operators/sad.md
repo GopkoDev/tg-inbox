@@ -303,25 +303,22 @@ sequenceDiagram
 
 ## 7. Deployment view
 
-<!-- 🎯 Why: the TOPOLOGY DevOps must know without reading the deploy charts — how many replicas,
-     where the background worker lives, AT WHAT NUMBERS we scale.
-     📋 Write: 2–3 sentences on topology + monitoring + concrete threshold numbers.
-     📌 e.g. «500 authors → partition by quarter» (not «we'll think about scale later»).
-     🎯 N/A allowed for XS/S that reuses an existing deployment unit with no change.
-     Deployment-diagram scaffold → templates/deployment.md. -->
+No production target is chosen yet (architecture map: deferred until the first pilot goes live); this feature changes the deployable unit, not the hosting. One Node 26 process runs the Fastify API, serves the built web panel from the same origin ([ADR-0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md)) and talks to one PostgreSQL 16 database; the admin CLI is run on demand on the same host (or from a trusted machine with a tunnel to the database) with the same configuration ([ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md)). One replica is enough for 5–10 pilots; nothing in this feature keeps state in process memory, so a second replica behind the same origin needs no code change.
 
-<Topology in 2–3 sentences. Where it runs, replicas, scaling thresholds.>
+**Configuration added** (parsed in `apps/api/src/platform/config.ts`, documented in `.env.example`):
+- `PUBLIC_WEB_URL` — the panel's public base URL, used to build invitation and password-reset links in the API and the CLI
+- `WEB_DIST_DIR` — optional path to the built web panel; when unset (local development) the API serves no static files and Vite's dev server proxies `/api`
+- The session cookie's `Secure` flag follows `NODE_ENV` (off only in development); `VITE_API_URL` defaults to empty so the web client calls relative `/api` paths
 
 **Monitoring:**
-- <Metrics — e.g. `<metric_name>`>
-- <Alerts — e.g. «worker lag > 10 min → page on-call»>
-- <Tracing — e.g. spans on the request boundary>
+- Metrics: per-route request duration from the Fastify request logs — weekly p95 for sign-in and for team / switch / invite routes (spec §6 measurement); count of sign-in refusals by reason (invalid credentials, locked out)
+- Alerts: the uptime check on `GET /health` (spec §6 availability); a sudden rise in lockouts across many emails (credential stuffing)
+- Audit: one structured log line per admin CLI action (`event: "admin.<action>"`, operating-system user, target ids — never the link or its token)
+- Tracing: none in v1 beyond Fastify's per-request id in every log line
 
 **Scaling thresholds:**
-- <e.g. comfortable in one table up to N rows/year>
-- <e.g. partition by quarter above N rows/year>
-
-<!-- For XS/S with no deployment change: <!-- N/A: reuses existing deployment unit, no infra change --> -->
+- Password hashing is the CPU-heavy step: when sign-in p95 approaches the 500 ms target under real load, move hashing off the event loop to worker threads before adding replicas
+- Session, failure and link tables stay small at pilot scale (tens of accounts); purge expired rows with a scheduled job once any of them passes ~100k rows (§11)
 
 ## 8. Crosscutting concepts
 
