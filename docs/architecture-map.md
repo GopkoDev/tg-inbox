@@ -125,6 +125,12 @@ roadmap steps are specified.
 - **Multi-tenancy by convention** (`workspace_id` filter in every repository, no Postgres RLS in v1) — a missed filter is a data leak; every repository needs an integration test that proves cross-workspace isolation.
 - **One process** runs HTTP + webhooks + job workers in v1 — fine for 5–10 pilots; split workers out if broadcast load interferes with webhook latency.
 - No deployment target decided yet — deferred until the first pilot goes live.
+- **TypeScript is pinned to `~6.0`** — TypeScript 7 (the native port) is outside typescript-eslint's supported range (`<6.1`); bump together once typescript-eslint supports it.
+- **Kysely 0.29 import paths:** `Migrator` / `FileMigrationProvider` come from `kysely/migration`, not `kysely`; tests migrate with kysely-ctl's `TSFileMigrationProvider` (`apps/api/src/test/postgres.ts`).
+- **Vitest 5 has no workspace file** — the root `vitest.config.ts` lists `test.projects`; each workspace has its own `vitest.config.ts`.
+- **`@tg/shared` resolution:** its `exports` has a `development` condition pointing at `src/` (used by Vite, Vitest and `tsx --conditions=development`); `tsc` for the api reads the built `dist/` — so `pnpm typecheck` builds shared first.
+- **Not yet decided (first UI feature that calls the API must settle it):** the API route prefix, how the SPA is served alongside the API, and CORS for `pnpm dev` (web on Vite's port → api on :3000). The web client reads `VITE_API_URL`.
+- The baseline migration only pins the database timezone to UTC — no tables exist until the first feature module.
 
 ## Reconciliation with the authored architecture doc
 

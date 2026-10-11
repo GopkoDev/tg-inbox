@@ -1,0 +1,33 @@
+{
+  "name": "tg-inbox",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.6",
+  "engines": {
+    "node": ">=26"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel dev",
+    "build": "pnpm -r build",
+    "test": "vitest run",
+    "lint": "eslint . && prettier --check . && pnpm typecheck",
+    "typecheck": "pnpm --filter @tg/shared build && pnpm -r typecheck",
+    "format": "prettier --write .",
+    "db:new": "pnpm --filter @tg/api db:new",
+    "db:migrate": "pnpm --filter @tg/api db:migrate",
+    "db:rollback": "pnpm --filter @tg/api db:rollback",
+    "db:codegen": "pnpm --filter @tg/api db:codegen"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.12.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.1",
+    "vitest": "^5.0.3"
+  }
+}

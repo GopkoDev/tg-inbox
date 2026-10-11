@@ -22,7 +22,8 @@
         "apps/api/src/modules/health/",
         "apps/web/",
         "packages/shared/src/"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "S2",
@@ -41,7 +42,8 @@
         "apps/api/src/platform/db.types.gen.ts",
         "apps/api/src/platform/jobs.ts",
         "apps/api/src/platform/telegram.ts"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "S3",
@@ -58,7 +60,9 @@
         "apps/api/src/test/",
         "apps/api/src/app.int.test.ts",
         "apps/web/src/pages/HomePage.test.tsx"
-      ]
+      ],
+      "status": "done",
+      "note": "vitest.workspace.ts replaced by test.projects in the root vitest.config.ts (Vitest 5 removed workspace files)"
     },
     {
       "id": "S4",
@@ -73,7 +77,8 @@
         "eslint.config.js",
         ".prettierrc",
         ".github/workflows/ci.yml"
-      ]
+      ],
+      "status": "done"
     },
     {
       "id": "S5",
@@ -87,7 +92,8 @@
       "files_hint": [
         "CLAUDE.md",
         "README.md"
-      ]
+      ],
+      "status": "done"
     }
   ]
 }
