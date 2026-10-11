@@ -28,7 +28,7 @@ export interface InboundMessage {
 export interface InboundEdit {
   chatId: bigint;
   messageId: bigint;
-  body: string;
+  body: string | null;
   /** Telegram's `edit_date`. */
   editedAt: Date;
   /** The update's `update_id` — the tie-break for equal edit times. */

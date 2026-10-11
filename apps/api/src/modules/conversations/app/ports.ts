@@ -34,7 +34,8 @@ export interface NewMessage {
 export interface MessageEdit {
   conversationId: string;
   telegramMessageId: bigint;
-  body: string;
+  /** The new text or caption; null when an edit removed a caption (never applied to a text). */
+  body: string | null;
   telegramMessage: Record<string, unknown>;
   editedAt: Date;
   editUpdateId: bigint;

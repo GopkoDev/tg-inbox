@@ -83,6 +83,8 @@ export function createMessageRepo(db: Db): MessageRepo {
         .where('workspace_id', '=', workspaceId)
         .where('conversation_id', '=', e.conversationId)
         .where('telegram_message_id', '=', String(e.telegramMessageId))
+        // A null body only clears a caption: a text message keeps its text.
+        .$if(e.body === null, (qb) => qb.where('kind', '<>', 'text'))
         .where((eb) =>
           eb.or([
             eb('edited_at', 'is', null),

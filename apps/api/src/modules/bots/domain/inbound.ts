@@ -68,7 +68,8 @@ export interface NormalisedMessage {
 export interface NormalisedEdit {
   chatId: bigint;
   messageId: bigint;
-  body: string;
+  /** The new text or caption; null when the edit removed a caption. */
+  body: string | null;
   editedAt: Date;
   updateId: bigint;
   /** Telegram's edited message object, stored in place of the old one. */
@@ -104,9 +105,19 @@ function bodyOf(message: Obj): string | null {
   return optionalString(message.text) ?? optionalString(message.caption);
 }
 
-/** Checks the fields every captured or edited message needs, then the filter: a reason, or the parts. */
-function filter(message: unknown, connectedAt: Date): IgnoreReason | { message: Obj; from: Obj } {
+/**
+ * Checks the fields every captured or edited message needs, then the filter: a reason, or the
+ * parts. The epoch is compared with the time the customer acted: `date` for a message,
+ * `edit_date` for an edit — so an edit made after connecting again still reaches a message
+ * captured in an earlier epoch (AC-10 with AC-19).
+ */
+function filter(
+  message: unknown,
+  connectedAt: Date,
+  actedAt: 'date' | 'edit_date',
+): IgnoreReason | { message: Obj; from: Obj } {
   if (!isObject(message) || !isInt(message.message_id) || !isInt(message.date)) return 'malformed';
+  if (!isInt(message[actedAt])) return 'malformed';
   const chat = message.chat;
   if (!isObject(chat) || !isInt(chat.id) || typeof chat.type !== 'string') return 'malformed';
   if (message.business_connection_id !== undefined) return 'business';
@@ -117,7 +128,9 @@ function filter(message: unknown, connectedAt: Date): IgnoreReason | { message: 
   }
   if (from.is_bot === true) return 'bot_sender';
   // Telegram dates are whole seconds; "before" means a strictly earlier second.
-  if (message.date < Math.floor(connectedAt.getTime() / 1000)) return 'before_epoch';
+  if ((message[actedAt] as number) < Math.floor(connectedAt.getTime() / 1000)) {
+    return 'before_epoch';
+  }
   return { message, from };
 }
 
@@ -128,7 +141,7 @@ export function classifyUpdate(
   if (!isObject(update) || !isInt(update.update_id)) return ignore('malformed');
 
   if (update.message !== undefined) {
-    const passed = filter(update.message, connectedAt);
+    const passed = filter(update.message, connectedAt, 'date');
     if (typeof passed === 'string') return ignore(passed);
     const { message, from } = passed;
     return {
@@ -152,20 +165,21 @@ export function classifyUpdate(
   }
 
   if (update.edited_message !== undefined) {
-    const passed = filter(update.edited_message, connectedAt);
+    const passed = filter(update.edited_message, connectedAt, 'edit_date');
     if (typeof passed === 'string') return ignore(passed);
     const { message } = passed;
-    if (!isInt(message.edit_date)) return ignore('malformed');
     const body = bodyOf(message);
-    // A shared live location arrives as edits without text: nothing to change (AC-09).
-    if (body === null) return ignore('no_text');
+    // A shared live location arrives as edits without text: nothing to change (AC-09). Any other
+    // edit without text or caption removed the caption (the repository never empties a text).
+    const kind = detectKind(message);
+    if (body === null && (kind === 'location' || kind === 'venue')) return ignore('no_text');
     return {
       type: 'edit',
       edit: {
         chatId: BigInt((message.chat as Obj).id as number),
         messageId: BigInt(message.message_id as number),
         body,
-        editedAt: new Date(message.edit_date * 1000),
+        editedAt: new Date((message.edit_date as number) * 1000),
         updateId: BigInt(update.update_id),
         raw: message,
       },

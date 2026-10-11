@@ -144,6 +144,26 @@ describe('message repository', () => {
     expect((await rowsOf(conversationId))[0]?.body).toBe('tie wins');
   });
 
+  it('an edit that removes a caption clears the body of a media message (AC-10)', async () => {
+    const { w, conversationId } = await conversation();
+    await repo.insertOnce(
+      w,
+      { ...message(conversationId, 5n, 'Old caption'), kind: 'photo', telegramMessage: {} },
+      at(100),
+    );
+    const removed = { ...edit(conversationId, 5n, 'x', at(40), 3n), body: null };
+    expect(await repo.applyEdit(w, removed)).toBe('applied');
+    expect(await rowsOf(conversationId)).toMatchObject([{ kind: 'photo', body: null }]);
+  });
+
+  it('an edit without text never empties a text message', async () => {
+    const { w, conversationId } = await conversation();
+    await repo.insertOnce(w, message(conversationId, 6n), at(100));
+    const empty = { ...edit(conversationId, 6n, 'x', at(40), 3n), body: null };
+    expect(await repo.applyEdit(w, empty)).toBe('not_later');
+    expect(await rowsOf(conversationId)).toMatchObject([{ kind: 'text', body: 'Hello' }]);
+  });
+
   it('an edit of a message never captured is not_found and writes nothing (AC-10)', async () => {
     const { w, conversationId } = await conversation();
     expect(await repo.applyEdit(w, edit(conversationId, 99n, 'x', at(1), 1n))).toBe('not_found');

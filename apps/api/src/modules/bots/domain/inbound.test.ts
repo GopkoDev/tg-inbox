@@ -230,6 +230,45 @@ describe('classifyUpdate — edits (AC-10, AC-09 live location)', () => {
     expect(classifyUpdate(business, opts)).toEqual({ type: 'ignore', reason: 'business' });
   });
 
+  it('applies an edit that removes a caption: the body becomes null (AC-10)', () => {
+    const edit = telegramEdit({
+      updateId: 12,
+      messageId: 48,
+      date: DATE,
+      editDate: DATE + 5,
+      kind: 'photo',
+    });
+    expect(classifyUpdate(edit, opts)).toMatchObject({
+      type: 'edit',
+      edit: { messageId: 48n, body: null },
+    });
+  });
+
+  it('an edit made after connecting again applies to a message captured before (AC-10, AC-19)', () => {
+    const edit = telegramEdit({
+      updateId: 14,
+      messageId: 50,
+      date: DATE - 86_400,
+      editDate: DATE + 10,
+      text: 'Edited after reconnect',
+    });
+    expect(classifyUpdate(edit, opts)).toMatchObject({
+      type: 'edit',
+      edit: { body: 'Edited after reconnect' },
+    });
+  });
+
+  it('an edit made before the capture epoch is ignored', () => {
+    const edit = telegramEdit({
+      updateId: 15,
+      messageId: 51,
+      date: DATE - 86_400,
+      editDate: DATE - 1,
+      text: 'Edited while disconnected',
+    });
+    expect(classifyUpdate(edit, opts)).toEqual({ type: 'ignore', reason: 'before_epoch' });
+  });
+
   it('treats an edit without edit_date as malformed', () => {
     const edit = telegramEdit({
       updateId: 11,
