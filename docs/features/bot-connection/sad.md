@@ -260,13 +260,14 @@ sequenceDiagram
                 Bots->>Tg: getWebhookInfo
                 Tg-->>Bots: registered webhook URL
                 Bots->>Db: begin, insert or update the row with the encrypted token and state connected
+                Note over Bots,Db: the write applies only to the row the decision was taken on; a concurrent paste or disconnect makes it roll back and the paste decides once more
                 alt unique Telegram bot id violated
                     Db-->>Bots: bot bound to another workspace, rolled back
                     Bots-->>Http: bot already belongs to another workspace
                 else registered URL is another service's and no confirmation sent
                     Bots->>Db: roll back
                     Bots-->>Http: confirmation required with bot name and username
-                else no foreign webhook or the owner confirmed
+                else no foreign webhook (none, ours, or tg-inbox's own stale URL) or the owner confirmed
                     Bots->>Db: commit
                     Bots->>Tg: setWebhook with our URL, secret, allowed updates, drop pending only on a new connection
                     alt setWebhook fails
@@ -337,19 +338,24 @@ sequenceDiagram
     Bots->>Cron: enqueue one check per due bot, singleton per bot
     Cron->>Bots: check one bot of a workspace
     Bots->>Db: read the bot and decrypt its token
-    Bots->>Tg: getMe
-    alt unauthorized
-        Bots->>Db: state needs a new token, checked now
-    else network error, server error or rate limit
-        Bots->>Bots: keep the state, retry on the next tick
-    else bot info
-        Bots->>Tg: getWebhookInfo
-        alt registered URL is not ours
-            Bots->>Db: state taken over, refresh name and username, checked now
-        else ours
-            Bots->>Db: state connected, refresh name and username, checked now
+    alt stored token cannot be decrypted (key lost or changed, ADR-0006)
+        Bots->>Db: state needs a new token, checked now (no Telegram call)
+    else token decrypted
+        Bots->>Tg: getMe
+        alt unauthorized
+            Bots->>Db: state needs a new token, checked now
+        else network error, server error or rate limit
+            Bots->>Bots: keep the state, retry on the next tick
+        else bot info
+            Bots->>Tg: getWebhookInfo
+            alt registered URL is not this bot's (another service's, tg-inbox's stale one, or none)
+                Bots->>Db: state taken over, refresh name and username, checked now
+            else ours
+                Bots->>Db: state connected, refresh name and username, checked now
+            end
         end
     end
+    Note over Bots,Db: every write applies only if the row is unchanged since it was read, so an owner action committed meanwhile is never overwritten
 ```
 
 The Bot settings page reads the stored state, name, username and last-checked time, plus the last message time from `conversations` and the contacts count from `contacts` — no Telegram call on load.
@@ -437,7 +443,7 @@ sequenceDiagram
             B-->>H: confirmation required with the bot name and username
             H-->>W: confirmation required
             W-->>U: takeover warning (SCR-04), resubmits with confirmation as in flow 1
-        else ours, empty, or the owner confirmed
+        else ours, empty, tg-inbox's own stale URL, or the owner confirmed
             B->>D: update the row with the newly encrypted token, state connected
             Note over B,D: persists bot (token replaced, webhook secret and capture epoch kept)
             B->>T: setWebhook with our URL, the stored secret, allowed updates, keeping pending updates
@@ -480,7 +486,7 @@ sequenceDiagram
         H-->>W: refusal with the current settings
     else taken over
         B->>T: getMe with the stored token
-        alt Telegram rejects the token
+        alt Telegram rejects the token, or the stored token cannot be decrypted (ADR-0006, no Telegram call)
             B->>D: state needs a new token, checked now
             Note over B,D: persists bot state
             B-->>H: token not valid, paste a new one
@@ -498,7 +504,7 @@ sequenceDiagram
                 U->>W: confirm
                 W->>H: reconnect the workspace's bot with confirmation
                 Note over W,B: the confirming request repeats this flow from the guard, re-checking with Telegram
-            else already ours, or the owner confirmed
+            else already ours, none, tg-inbox's own stale URL, or the owner confirmed
                 B->>T: setWebhook with our URL, the stored secret, allowed updates, keeping pending updates
                 alt setWebhook fails
                     B-->>H: Telegram unavailable, try again
@@ -540,6 +546,9 @@ sequenceDiagram
         B-->>H: no bot connected
         H-->>W: refusal with the current settings
     else bot present
+        opt stored token cannot be decrypted (ADR-0006)
+            Note over B,T: no Telegram call is possible, disconnect proceeds
+        end
         B->>T: getWebhookInfo with the stored token
         alt transient failure
             B-->>H: Telegram unavailable, try again
@@ -552,14 +561,15 @@ sequenceDiagram
         else registered URL is another service's or empty
             Note over B,T: never remove another service's webhook, disconnect proceeds
         end
+        B->>D: clear the token, the secret hash and the capture epoch, state not connected
+        Note over B,D: from here no delivery authenticates, so no first conversation can appear after the check below
         B->>Cv: has conversations for the workspace
         Cv->>D: check whether any conversation exists
         alt conversations exist
-            B->>D: clear the token and the secret hash, state not connected
             Note over B,D: persists bot (row kept so the bot stays bound to this workspace)
         else nothing captured
             B->>D: delete the bot row
-            Note over B,D: removes bot (the bot is free for any workspace)
+            Note over B,D: removes bot (the bot is free for any workspace); a disconnected row with no conversation left by a failure here is deleted by the next paste
         end
         B-->>H: settings with state not connected
         H-->>W: settings

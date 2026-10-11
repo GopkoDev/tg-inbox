@@ -47,20 +47,21 @@ A cron job, every minute (`* * * * *`). It has no payload.
 - **Required fields:** `bot_id`, `workspace_id`. The payload is validated with a zod schema in `modules/bots/infra/jobs.ts` (`BotHealthCheckJob`), because it never crosses the HTTP boundary. It carries no token and no secret.
 - **Origin:** sad.md §6 flow 3 → "enqueue one check per due bot, singleton per bot" → "check one bot of a workspace".
 - **Options:** `singletonKey = bot_id`. `expireInSeconds = 30` covers two Bot API calls of at most 10 s each (sad.md §8 freshness budget).
-- **Work:** the job reads the bot by `(id, workspace_id)`. A bot that is gone or `disconnected` is a no-op. The job decrypts the token and calls `getMe`, then `getWebhookInfo`, and writes the outcome at once:
+- **Work:** the job reads the bot by `(id, workspace_id)`. A bot that is gone or `disconnected` is a no-op. The job decrypts the token and calls `getMe`, then `getWebhookInfo`, and writes the outcome at once — only if `last_checked_at` is unchanged since the read, so an owner action committed meanwhile (a new token, a reconnect) is never overwritten:
 
 | Telegram outcome | Write |
 |---|---|
+| the stored token cannot be decrypted (key lost or changed, ADR-0006) — no Telegram call | `state = needs_token`, `last_checked_at = now` (AC-16) |
 | `getMe` unauthorized (token revoked, bot deleted) | `state = needs_token`, `last_checked_at = now` (AC-16) |
 | network error, Telegram 5xx or 429 | nothing. The state is kept, and the next tick retries (ADR-0008) |
-| registered webhook URL is not ours | `state = taken_over`, refresh `name` and `username`, `last_checked_at = now` (AC-16b) |
+| registered webhook URL is not ours (another service's, tg-inbox's own stale URL for another row id, or none) | `state = taken_over`, refresh `name` and `username`, `last_checked_at = now` (AC-16b) |
 | registered webhook URL is ours | `state = connected`, refresh `name` and `username`, `last_checked_at = now` (AC-15) |
 
 - **Backwards-compat policy:** additive only. A new optional field is fine. Removing or renaming a field needs a new queue name (`bots.check-health.v2`). Workers ignore unknown fields.
 
 ## Idempotency & retry
 
-- **Idempotency:** a check is a read of Telegram plus an absolute state write, so running it twice gives the same row. `singletonKey = bot_id` keeps it to one check per bot at a time.
+- **Idempotency:** a check is a read of Telegram plus a state write conditional on the row being unchanged since the read, so running it twice gives the same row. `singletonKey = bot_id` keeps it to one check per bot at a time.
 - **Retry:** `retryLimit = 0`. A failed check stays due, because `last_checked_at` is unchanged, so the next cron tick (≤ 1 min) re-enqueues it. The 5-minute freshness budget of AC-15 already includes that tick.
 - **Dead-letter:** none. A bot whose checks keep failing transiently keeps its last stored state and its old `last_checked_at`, which the settings page shows (sad.md §1 ¶4 override). The webhook server-error alert and the job-failure logs (sad.md §7) are the operational signal.
 
