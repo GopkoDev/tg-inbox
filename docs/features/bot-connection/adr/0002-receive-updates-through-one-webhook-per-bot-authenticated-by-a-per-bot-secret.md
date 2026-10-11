@@ -51,6 +51,10 @@ Responses: unknown bot id or a missing / mismatched secret → `401` with an emp
 **Neutral**
 - The secret is generated on connect and kept across token rotation and reconnect after takeover; it changes only when a disconnected bot is connected again.
 
+## Amendment (2026-10-12)
+
+Status stays **Accepted**; the decision is unchanged, only how the secret is produced. Option 1 says a *random* per-bot secret, but only its hash is stored, and rotation / reconnect after a takeover must register the *same* secret with `setWebhook` again. Implementation (T10) therefore **derives** it: `HMAC-SHA256(BOT_TOKEN_ENCRYPTION_KEY, bot row id ‖ capture epoch)`, base64url (32 bytes, Telegram's `[A-Za-z0-9_-]` alphabet). It is unpredictable without the server key, stable across rotation and reconnect (same capture epoch), and changes when a disconnected bot is connected again (new capture epoch). Only its SHA-256 hash is stored and compared in constant time, as before. A rotation of the encryption key changes the derived secrets, so the webhook is re-registered on the next owner action. See sad.md §8.
+
 ## Links
 
 - Spec: [[../spec.md]] AC-01, AC-06, AC-14, AC-16b, AC-18; §6.1
