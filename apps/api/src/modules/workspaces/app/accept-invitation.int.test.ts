@@ -9,6 +9,7 @@ import { createSessionUseCases } from '../../auth/app/sessions.js';
 import { createAccountRepo } from '../../auth/infra/account-repo.js';
 import { createPasswordHasher } from '../../auth/infra/password-hasher.js';
 import { createSessionRepo } from '../../auth/infra/session-repo.js';
+import { createEmailLock } from '../../auth/infra/email-lock.js';
 import { createSignInFailureRepo } from '../../auth/infra/sign-in-failure-repo.js';
 import { KyselyUnitOfWork, workspaceRepos } from '../infra/unit-of-work.js';
 import { createAcceptInvitation } from './accept-invitation.js';
@@ -36,6 +37,7 @@ describe('accept invitation (Postgres)', () => {
       hasher,
       clock: systemClock,
       sessionUseCases: sessions,
+      emailLock: createEmailLock(db),
     });
     const repos = workspaceRepos(db);
     uc = createAcceptInvitation({

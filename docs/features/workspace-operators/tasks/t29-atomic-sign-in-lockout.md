@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T29 — Make the sign-in lockout atomic per email and use the contract's credential message
@@ -55,10 +55,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Serialise check → verify → record per normalised email: e.g. run it inside a transaction holding `pg_advisory_xact_lock(hashtext(email))` (through an auth-infra port, no raw SQL in the app layer), or insert the attempt first and count including it. No triggers or stored procedures.
-- [ ] Throw `InvalidCredentialsError` with the contract message "Email or password is incorrect" from `credentials.ts` itself, and drop the now-redundant remap in `auth/http/routes.ts` (keep behaviour identical for sign-in).
-- [ ] Integration test: 20 parallel wrong-password sign-ins for one email → at most 10 reach the hash check / are recorded as failures; the rest get `429 TOO_MANY_ATTEMPTS`. The same holds for an email without an account.
-- [ ] Unit test: the credential error message equals the contract text on both the sign-in and the invitation-accept path.
+- [x] Serialise check → verify → record per normalised email: e.g. run it inside a transaction holding `pg_advisory_xact_lock(hashtext(email))` (through an auth-infra port, no raw SQL in the app layer), or insert the attempt first and count including it. No triggers or stored procedures.
+- [x] Throw `InvalidCredentialsError` with the contract message "Email or password is incorrect" from `credentials.ts` itself, and drop the now-redundant remap in `auth/http/routes.ts` (keep behaviour identical for sign-in).
+- [x] Integration test: 20 parallel wrong-password sign-ins for one email → at most 10 reach the hash check / are recorded as failures; the rest get `429 TOO_MANY_ATTEMPTS`. The same holds for an email without an account.
+- [x] Unit test: the credential error message equals the contract text on both the sign-in and the invitation-accept path.
 
 ## Edge cases
 
@@ -70,8 +70,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Parallel-attempt integration test passes against real Postgres
-- [ ] Both sign-in and accept 401 carry "Email or password is incorrect"
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Parallel-attempt integration test passes against real Postgres
+- [x] Both sign-in and accept 401 carry "Email or password is incorrect"
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

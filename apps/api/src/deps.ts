@@ -4,6 +4,7 @@ import { createResetLinkUseCases } from './modules/auth/app/reset-links.js';
 import { createSessionUseCases } from './modules/auth/app/sessions.js';
 import { createSessionResolver } from './modules/auth/http/session-resolver.js';
 import { createAccountRepo } from './modules/auth/infra/account-repo.js';
+import { createEmailLock } from './modules/auth/infra/email-lock.js';
 import { createPasswordHasher } from './modules/auth/infra/password-hasher.js';
 import { createResetLinkRepo } from './modules/auth/infra/reset-link-repo.js';
 import { createSessionRepo } from './modules/auth/infra/session-repo.js';
@@ -37,6 +38,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     hasher,
     clock,
     sessionUseCases,
+    emailLock: createEmailLock(db),
   });
   const resetLinkUseCases = createResetLinkUseCases({
     accounts: accountRepo,

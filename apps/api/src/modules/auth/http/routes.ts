@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { LinkTokenBody, PasswordResetRedeem, SignIn } from '@tg/shared';
-import { InvalidCredentialsError } from '../../../platform/errors.js';
 import type { CredentialUseCases } from '../app/credentials.js';
 import type { ResetLinkUseCases } from '../app/reset-links.js';
 import type { SessionUseCases } from '../app/sessions.js';
@@ -26,11 +25,7 @@ export async function registerAuth(app: FastifyInstance, deps: AuthDeps): Promis
 
   r.post('/auth/sign-in', { schema: { body: SignIn } }, async (request, reply) => {
     const { email, password } = request.body;
-    const token = await credentialUseCases.signIn(email, password).catch((err: unknown) => {
-      throw err instanceof InvalidCredentialsError
-        ? new InvalidCredentialsError('Email or password is incorrect')
-        : err;
-    });
+    const token = await credentialUseCases.signIn(email, password);
     setSessionCookie(reply, token, cookie);
     return reply.status(204).send();
   });

@@ -120,6 +120,24 @@ describe('auth routes (postgres)', () => {
     expect((await signIn('lock@example.test', PASSWORD)).statusCode).toBe(204);
   });
 
+  it('AC-09: 20 parallel wrong passwords record at most 10 failures; the rest get 429 (known and unknown email)', async () => {
+    await account('burst@example.test');
+    for (const email of ['burst@example.test', 'void@example.test']) {
+      const res = await Promise.all(
+        Array.from({ length: 20 }, () => signIn(email, 'bad-password')),
+      );
+      expect(res.filter((r) => r.statusCode === 401)).toHaveLength(10);
+      expect(res.filter((r) => r.statusCode === 429)).toHaveLength(10);
+      const n = await db
+        .selectFrom('sign_in_failures')
+        .select(db.fn.countAll().as('n'))
+        .where('email', '=', email)
+        .executeTakeFirstOrThrow();
+      expect(Number(n.n)).toBe(10);
+    }
+    expect((await signIn('burst@example.test', PASSWORD)).statusCode).toBe(429);
+  });
+
   it('AC-11: sign-out ends only this session and clears the cookie; tolerates no cookie', async () => {
     const a = await account('out@example.test');
     const one = cookieOf(await signIn('out@example.test', PASSWORD));

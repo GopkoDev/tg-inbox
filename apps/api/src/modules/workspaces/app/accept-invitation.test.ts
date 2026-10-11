@@ -12,6 +12,7 @@ import { createAccountUseCases } from '../../auth/app/accounts.js';
 import { createCredentialUseCases } from '../../auth/app/credentials.js';
 import {
   fakeAccountRepo,
+  fakeEmailLock,
   fakeFailureRepo,
   fakeHasher,
   fakeSessionRepo,
@@ -45,6 +46,7 @@ async function setup() {
     hasher,
     clock,
     sessionUseCases,
+    emailLock: fakeEmailLock(),
   });
 
   const invitations: InvitationRecord[] = [];

@@ -2,7 +2,7 @@ import type { Clock } from '../../../platform/clock.js';
 import { InvalidCredentialsError, TooManyRequestsError } from '../../../platform/errors.js';
 import { normaliseEmail } from '../domain/email.js';
 import { lockoutState } from '../domain/lockout.js';
-import type { AccountRepo, PasswordHasher, SignInFailureRepo } from './ports.js';
+import type { AccountRepo, EmailLock, PasswordHasher, SignInFailureRepo } from './ports.js';
 import type { SessionUseCases } from './sessions.js';
 
 export interface CredentialDeps {
@@ -11,7 +11,11 @@ export interface CredentialDeps {
   hasher: PasswordHasher;
   clock: Clock;
   sessionUseCases: Pick<SessionUseCases, 'openSession'>;
+  emailLock: EmailLock;
 }
+
+/** The credential refusal text from the API contract (SCR-01 / SCR-02). */
+const CREDENTIALS_MESSAGE = 'Email or password is incorrect';
 
 export interface CredentialUseCases {
   /** Returns the raw session token. */
@@ -25,24 +29,34 @@ export interface CredentialUseCases {
 }
 
 export function createCredentialUseCases(deps: CredentialDeps): CredentialUseCases {
-  const { accounts, failures, hasher, clock, sessionUseCases } = deps;
+  const { accounts, failures, hasher, clock, sessionUseCases, emailLock } = deps;
 
-  /** Lockout check, then hash verification; records/clears failures. Returns the account id or throws. */
+  /**
+   * Lockout check, hash verification and failure bookkeeping, serialised per email so parallel
+   * attempts cannot slip past the limit. Returns the account id or throws.
+   */
   async function check(rawEmail: string, password: string, lockedError: () => Error) {
     const email = normaliseEmail(rawEmail);
-    const state = lockoutState(await failures.listRecent(email, clock.now()), clock.now());
-    if (state.locked) throw lockedError();
-
-    const account = await accounts.findByEmail(email);
-    const ok = account
-      ? await hasher.verify(account.passwordHash, password)
-      : await hasher.verifyDummy(password);
-    if (!account || !ok) {
-      await failures.record(email, clock.now());
-      throw new InvalidCredentialsError('Invalid email or password');
-    }
-    await failures.clear(email);
-    return account.id;
+    // The outcome is returned, not thrown, so the failure written inside the lock is committed.
+    const outcome = await emailLock(email, async (tx) => {
+      const now = clock.now();
+      if (lockoutState(await failures.listRecent(email, now, tx), now).locked) {
+        return { kind: 'locked' } as const;
+      }
+      const account = await accounts.findByEmail(email, tx);
+      const ok = account
+        ? await hasher.verify(account.passwordHash, password)
+        : await hasher.verifyDummy(password);
+      if (!account || !ok) {
+        await failures.record(email, clock.now(), tx);
+        return { kind: 'invalid' } as const;
+      }
+      await failures.clear(email, tx);
+      return { kind: 'ok', accountId: account.id } as const;
+    });
+    if (outcome.kind === 'locked') throw lockedError();
+    if (outcome.kind === 'invalid') throw new InvalidCredentialsError(CREDENTIALS_MESSAGE);
+    return outcome.accountId;
   }
 
   return {
@@ -55,6 +69,6 @@ export function createCredentialUseCases(deps: CredentialDeps): CredentialUseCas
       return sessionUseCases.openSession(accountId);
     },
     verifyPassword: (email, password) =>
-      check(email, password, () => new InvalidCredentialsError('Invalid email or password')),
+      check(email, password, () => new InvalidCredentialsError(CREDENTIALS_MESSAGE)),
   };
 }

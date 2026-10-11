@@ -65,6 +65,16 @@ export interface SignInFailureRepo {
   clear(email: string, tx?: Executor): Promise<void>;
 }
 
+/**
+ * Serialises work per normalised email: runs `fn` while holding an exclusive lock on the email,
+ * handing it the executor (a transaction) to pass to every repo call. `fn` must return its outcome
+ * rather than throw, so the writes it made are committed.
+ */
+export type EmailLock = <T>(
+  email: string,
+  fn: (tx: Executor | undefined) => Promise<T>,
+) => Promise<T>;
+
 export interface ResetLinkRepo {
   insert(
     input: { accountId: string; tokenHash: Buffer; expiresAt: Date; now: Date },

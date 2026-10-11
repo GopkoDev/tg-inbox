@@ -3,7 +3,13 @@ import { fixedClock } from '../../../platform/clock.js';
 import { InvalidCredentialsError, TooManyRequestsError } from '../../../platform/errors.js';
 import { createAccountUseCases } from './accounts.js';
 import { createCredentialUseCases } from './credentials.js';
-import { fakeAccountRepo, fakeFailureRepo, fakeHasher, fakeSessionRepo } from './fakes.js';
+import {
+  fakeAccountRepo,
+  fakeEmailLock,
+  fakeFailureRepo,
+  fakeHasher,
+  fakeSessionRepo,
+} from './fakes.js';
 import { createSessionUseCases } from './sessions.js';
 
 async function setup() {
@@ -13,7 +19,14 @@ async function setup() {
   const sessions = fakeSessionRepo();
   const hasher = fakeHasher();
   const sessionUseCases = createSessionUseCases({ sessions, clock });
-  const creds = createCredentialUseCases({ accounts, failures, hasher, clock, sessionUseCases });
+  const creds = createCredentialUseCases({
+    accounts,
+    failures,
+    hasher,
+    clock,
+    sessionUseCases,
+    emailLock: fakeEmailLock(),
+  });
   await createAccountUseCases({ accounts, hasher, clock }).createAccount({
     email: 'Bob@x.com',
     displayName: 'Bob',
@@ -105,5 +118,43 @@ describe('verifyPassword', () => {
     expect(err).toBeInstanceOf(InvalidCredentialsError);
     expect(err).not.toBeInstanceOf(TooManyRequestsError);
     expect(failures.rows).toHaveLength(10);
+  });
+});
+
+describe('contract message and atomic lockout', () => {
+  const MESSAGE = 'Email or password is incorrect';
+
+  it('AC-08: sign-in and verifyPassword both fail with the contract message', async () => {
+    const { creds } = await setup();
+    const a = await creds.signIn('bob@x.com', 'nope-nope-nope').catch((e) => e);
+    const b = await creds.verifyPassword('ghost@x.com', 'nope-nope-nope').catch((e) => e);
+    expect(a).toBeInstanceOf(InvalidCredentialsError);
+    expect(a.message).toBe(MESSAGE);
+    expect(b.message).toBe(MESSAGE);
+  });
+
+  it('AC-09: 20 parallel wrong passwords record at most 10 failures, the rest are locked out', async () => {
+    const { creds, failures } = await setup();
+    const results = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        creds.signIn('bob@x.com', 'wrong-password-1').catch((e: unknown) => e),
+      ),
+    );
+    expect(failures.rows).toHaveLength(10);
+    expect(results.filter((e) => e instanceof TooManyRequestsError)).toHaveLength(10);
+    await expect(creds.signIn('bob@x.com', 'correct-horse-1')).rejects.toBeInstanceOf(
+      TooManyRequestsError,
+    );
+  });
+
+  it('AC-09: the same holds for an email without an account', async () => {
+    const { creds, failures, hasher } = await setup();
+    await Promise.all(
+      Array.from({ length: 20 }, () =>
+        creds.signIn('ghost@x.com', 'wrong-password-1').catch(() => 0),
+      ),
+    );
+    expect(failures.rows).toHaveLength(10);
+    expect(hasher.dummyCalls).toBe(10);
   });
 });

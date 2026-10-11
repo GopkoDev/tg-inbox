@@ -2,6 +2,7 @@ import { newId } from '../../../platform/ids.js';
 import type {
   Account,
   AccountRepo,
+  EmailLock,
   PasswordHasher,
   ResetLinkRecord,
   ResetLinkRepo,
@@ -159,3 +160,17 @@ export function fakeResetLinkRepo(): ResetLinkRepo & { rows: ResetLinkRecord[] }
 
 /** Runs the unit of work without a real transaction. */
 export const fakeTransaction: Transaction = (fn) => fn(undefined);
+
+/** Per-email mutex: queued callers run one at a time, in order. */
+export function fakeEmailLock(): EmailLock {
+  const tails = new Map<string, Promise<unknown>>();
+  return async (email, fn) => {
+    const prev = tails.get(email) ?? Promise.resolve();
+    const run = prev.then(() => fn(undefined));
+    tails.set(
+      email,
+      run.catch(() => undefined),
+    );
+    return run;
+  };
+}
