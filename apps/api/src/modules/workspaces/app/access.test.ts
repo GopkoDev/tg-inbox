@@ -63,7 +63,7 @@ function setup() {
         names.has(id) ? { id, name: names.get(id)!, createdAt: T0 } : null,
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos) };
+  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
   const access = createWorkspaceAccess({
     uow,
     clock,

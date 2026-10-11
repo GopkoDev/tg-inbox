@@ -88,7 +88,7 @@ function setup() {
       },
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos) };
+  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
   const team = createTeam({
     uow,
     clock: fixedClock(T0),
