@@ -15,7 +15,7 @@ export class AlreadyAMemberError extends Error {
     readonly membershipId: string,
     readonly state: MembershipState,
   ) {
-    super('This person is already a member of the workspace');
+    super('This person is already a member — reactivate them if they are deactivated');
     this.name = 'AlreadyAMemberError';
   }
 }

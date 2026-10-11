@@ -27,8 +27,8 @@ export interface TeamRoutesDeps {
 }
 
 const WorkspaceParams = z.object({ workspaceId: z.string() });
-const MembershipParams = WorkspaceParams.extend({ membershipId: z.uuid() });
-const InvitationParams = WorkspaceParams.extend({ invitationId: z.uuid() });
+const MembershipParams = WorkspaceParams.extend({ membershipId: z.string() });
+const InvitationParams = WorkspaceParams.extend({ invitationId: z.string() });
 
 const pending = (i: PendingInvitationView) => ({
   id: i.id,

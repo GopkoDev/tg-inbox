@@ -5,6 +5,7 @@ import {
   LastActiveOwnerError,
   NotFoundError,
 } from '../../../platform/errors.js';
+import { newId } from '../../../platform/ids.js';
 import { hashToken } from '../../../platform/tokens.js';
 import type { MembershipState, Role } from '../domain/membership.js';
 import type { InvitationRecord, MembershipRecord, UnitOfWork, WorkspaceRepos } from './ports.js';
@@ -29,7 +30,7 @@ function setup() {
     const accountId = `acc-${n}`;
     accounts.set(accountId, { id: accountId, email: `${n}@x.test`, displayName: n });
     const m: MembershipRecord = {
-      id: `mem-${n}`,
+      id: newId(),
       workspaceId,
       accountId,
       role,
@@ -190,6 +191,17 @@ describe('deactivate / reactivate', () => {
 });
 
 describe('listing and revoking', () => {
+  it('a non-UUID id is not found, never a database error', async () => {
+    const s = setup();
+    await expect(s.team.deactivateMembership(WS, 'not-a-uuid')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    await expect(s.team.reactivateMembership(WS, 'not-a-uuid')).rejects.toBeInstanceOf(
+      NotFoundError,
+    );
+    await expect(s.team.revokeInvitation(WS, 'not-a-uuid')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
   it('AC-20: lists members and pending invitations without a link; revoke removes it', async () => {
     const s = setup();
     s.addMember('ana', 'owner');

@@ -116,6 +116,34 @@ describe('owner-only team routes (postgres)', () => {
     }
   });
 
+  it('AC-15: OWNER_ONLY carries the contract message', async () => {
+    const ws = await insertWorkspace(db);
+    const op = await member(ws, 'operator');
+    const res = await call(op, 'GET', `${base(ws)}/memberships`);
+    expect(res.json().error.message).toBe('Only business owners manage the team');
+  });
+
+  it('AC-13/AC-15: a malformed id is 401 without a session, 403 for an operator, 404 for an owner', async () => {
+    const ws = await insertWorkspace(db);
+    const op = await member(ws, 'operator');
+    const owner = await member(ws, 'owner');
+    const urls = [
+      `${base(ws)}/memberships/not-a-uuid/deactivate`,
+      `${base(ws)}/memberships/not-a-uuid/reactivate`,
+      `${base(ws)}/invitations/not-a-uuid/revoke`,
+    ];
+    for (const url of urls) {
+      const anon = await app.inject({ method: 'POST', url });
+      expect(anon.statusCode, url).toBe(401);
+      const asOp = await call(op, 'POST', url);
+      expect(asOp.statusCode, url).toBe(403);
+      expect(asOp.json().error.code).toBe('OWNER_ONLY');
+      const asOwner = await call(owner, 'POST', url);
+      expect(asOwner.statusCode, url).toBe(404);
+      expect(asOwner.json().error.code).toBe('NOT_FOUND');
+    }
+  });
+
   it('a deactivated owner gets ACCESS_REMOVED', async () => {
     const ws = await insertWorkspace(db);
     const gone = await member(ws, 'owner', 'deactivated');
@@ -137,6 +165,9 @@ describe('owner-only team routes (postgres)', () => {
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('ALREADY_A_MEMBER');
       expect(res.json().error.details).toEqual({ membership_id: m.id, state });
+      expect(res.json().error.message).toBe(
+        'This person is already a member — reactivate them if they are deactivated',
+      );
     }
   });
 

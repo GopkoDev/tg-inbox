@@ -86,6 +86,8 @@ async function paged<T, R extends { id: string }>(
   return { items, hasNext, hasPrev, nextCursor: hasNext && last ? last.id : null };
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export function createTeam(deps: TeamDeps) {
   const { uow, clock, accounts } = deps;
   const base = deps.publicWebUrl.replace(/\/+$/, '');
@@ -98,6 +100,7 @@ export function createTeam(deps: TeamDeps) {
     if (!(await repos.workspaces.lockForUpdate(workspaceId))) {
       throw new NotFoundError('Workspace not found');
     }
+    if (!UUID.test(membershipId)) throw new NotFoundError('Member not found');
     const m = await repos.memberships.findById(workspaceId, membershipId);
     if (!m) throw new NotFoundError('Member not found');
     return m;
@@ -198,6 +201,7 @@ export function createTeam(deps: TeamDeps) {
     },
 
     async revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
+      if (!UUID.test(invitationId)) throw new NotFoundError('Invitation not found');
       await uow.run(async (repos) => {
         if (!(await repos.invitations.revoke(workspaceId, invitationId, clock.now()))) {
           throw new NotFoundError('Invitation not found');

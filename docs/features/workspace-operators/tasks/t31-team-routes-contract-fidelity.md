@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T31 — Align team-route ids, statuses and error messages with the contract
@@ -63,9 +63,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Accept the ids as `z.string()` in the route schemas; in the use cases treat a non-UUID id as `NotFoundError` (same as the guard does for `workspaceId`, `access.ts:51`).
-- [ ] Use the contract's exact messages for `OWNER_ONLY` and `ALREADY_A_MEMBER` (copy them from openapi.yaml).
-- [ ] Tests: malformed id with no session → 401; malformed id as operator → 403; malformed id as owner → 404; messages equal the contract text.
+- [x] Accept the ids as `z.string()` in the route schemas; in the use cases treat a non-UUID id as `NotFoundError` (same as the guard does for `workspaceId`, `access.ts:51`).
+- [x] Use the contract's exact messages for `OWNER_ONLY` and `ALREADY_A_MEMBER` (copy them from openapi.yaml).
+- [x] Tests: malformed id with no session → 401; malformed id as operator → 403; malformed id as owner → 404; messages equal the contract text.
 
 ## Edge cases
 
@@ -77,8 +77,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No route answers a status absent from openapi.yaml
-- [ ] Messages match the contract
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No route answers a status absent from openapi.yaml
+- [x] Messages match the contract
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
