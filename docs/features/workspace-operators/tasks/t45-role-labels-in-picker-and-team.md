@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r3"
-status: "todo"
+status: "done"
 ---
 
 # T45 — Show role labels, not raw role values, in the picker, switcher and Team; reconcile the manifest
@@ -47,10 +47,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Resolve the manifest conflict to the glossary term (CONTEXT.md: «Business owner»): in screens.md SCR-07 wireframes change `[Owner]` → `[Business owner]`; SCR-04 rows keep «Operator» / «Business owner» labels. Note the change in the SCR-07 source column if the file has a change log.
-- [ ] Render every role through `ROLE_LABEL` in WorkspacePicker, WorkspaceSwitcher and Team (member badge, member phone line, invitation badge, invitation phone line). No raw role value reaches the DOM.
-- [ ] `roles.ts`: `import type { Role } from '@tg/shared'` instead of the local union; same in InviteDialog if it declares one.
-- [ ] Tests: update the two TeamPage assertions to the label; add a picker/switcher assertion (`Business owner` / `Operator`) that fails on the raw value; check `flows.spec.ts` selectors that read a role badge.
+- [x] Resolve the manifest conflict to the glossary term (CONTEXT.md: «Business owner»): in screens.md SCR-07 wireframes change `[Owner]` → `[Business owner]`; SCR-04 rows keep «Operator» / «Business owner» labels. Note the change in the SCR-07 source column if the file has a change log.
+- [x] Render every role through `ROLE_LABEL` in WorkspacePicker, WorkspaceSwitcher and Team (member badge, member phone line, invitation badge, invitation phone line). No raw role value reaches the DOM.
+- [x] `roles.ts`: `import type { Role } from '@tg/shared'` instead of the local union; same in InviteDialog if it declares one.
+- [x] Tests: update the two TeamPage assertions to the label; add a picker/switcher assertion (`Business owner` / `Operator`) that fails on the raw value; check `flows.spec.ts` selectors that read a role badge.
 
 ## Edge cases
 
@@ -61,8 +61,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No raw role value rendered anywhere in the web UI
-- [ ] screens.md has one label per role
-- [ ] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No raw role value rendered anywhere in the web UI
+- [x] screens.md has one label per role
+- [x] Web unit tests green; e2e typecheck clean; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

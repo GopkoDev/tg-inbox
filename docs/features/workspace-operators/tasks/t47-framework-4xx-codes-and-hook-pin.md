@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r3"
-status: "todo"
+status: "done"
 ---
 
 # T47 — Give every framework 4xx a contract code (413 included) and pin the untyped-body hook branch
@@ -47,9 +47,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Error handler: map framework 4xx explicitly — 400 → `VALIDATION_ERROR`, 413 → a new `PAYLOAD_TOO_LARGE` code (add to `packages/shared/src/errors.ts`), 415 → `UNSUPPORTED_MEDIA_TYPE`; any other framework 4xx → 400 `VALIDATION_ERROR`, so every status/code pair the API can emit is in the contract. 5xx unchanged.
-- [ ] Contract: add a cross-cutting `PayloadTooLarge` (413) response to the operations that take a body and the code to the status table; note it in api-sync-report.md.
-- [ ] Tests: an over-`bodyLimit` body → 413 `PAYLOAD_TOO_LARGE`; a test of `requireJsonBodies` registered without `registerErrorHandler` that asserts `UNSUPPORTED_MEDIA_TYPE` for a body with no content-type (only the hook produces that code).
+- [x] Error handler: map framework 4xx explicitly — 400 → `VALIDATION_ERROR`, 413 → a new `PAYLOAD_TOO_LARGE` code (add to `packages/shared/src/errors.ts`), 415 → `UNSUPPORTED_MEDIA_TYPE`; any other framework 4xx → 400 `VALIDATION_ERROR`, so every status/code pair the API can emit is in the contract. 5xx unchanged.
+- [x] Contract: add a cross-cutting `PayloadTooLarge` (413) response to the operations that take a body and the code to the status table; note it in api-sync-report.md.
+- [x] Tests: an over-`bodyLimit` body → 413 `PAYLOAD_TOO_LARGE`; a test of `requireJsonBodies` registered without `registerErrorHandler` that asserts `UNSUPPORTED_MEDIA_TYPE` for a body with no content-type (only the hook produces that code).
 
 ## Edge cases
 
@@ -60,7 +60,7 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Every status/code pair the error handler can produce is in openapi.yaml
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Every status/code pair the error handler can produce is in openapi.yaml
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r3"
-status: "todo"
+status: "done"
 ---
 
 # T46 — Show the shell's error row with Retry when the access-removed resolution fails; fix stale SCR-10 comments
@@ -47,10 +47,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] The shell wraps the guard it provides through `ShellGuardContext`: if the wrapped guard rejects after the current workspace was cleared (the resolution failed), set the shell's `failure = { id: workspaceId, kind: 'error' }` so the error row with **Retry** shows; Retry re-runs the entry.
-- [ ] Keep R8 intact: no workspace data visible while not entered; one guard call per direct load.
-- [ ] Reword the two SCR-10 comments in NotFoundPage.tsx to match the code.
-- [ ] Test: a 403 `ACCESS_REMOVED` on a Team action plus a rejecting `resolveWorkspace` (network error, and 500) shows «Something went wrong» and Retry; Retry with a resolving resolution lands on the next workspace.
+- [x] The shell wraps the guard it provides through `ShellGuardContext`: if the wrapped guard rejects after the current workspace was cleared (the resolution failed), set the shell's `failure = { id: workspaceId, kind: 'error' }` so the error row with **Retry** shows; Retry re-runs the entry.
+- [x] Keep R8 intact: no workspace data visible while not entered; one guard call per direct load.
+- [x] Reword the two SCR-10 comments in NotFoundPage.tsx to match the code.
+- [x] Test: a 403 `ACCESS_REMOVED` on a Team action plus a rejecting `resolveWorkspace` (network error, and 500) shows «Something went wrong» and Retry; Retry with a resolving resolution lands on the next workspace.
 
 ## Edge cases
 
@@ -61,7 +61,7 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No reachable state leaves the shell on an endless skeleton
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No reachable state leaves the shell on an endless skeleton
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

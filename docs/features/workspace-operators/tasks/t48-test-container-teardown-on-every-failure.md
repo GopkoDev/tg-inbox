@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r3"
-status: "todo"
+status: "done"
 ---
 
 # T48 — Remove test containers on every failure path and drop the named-volume loop from the clean script
@@ -34,10 +34,10 @@ None — test infrastructure (CLAUDE.md §Tests: Docker-backed suites remove the
 
 ## Checklist
 
-- [ ] `stop()`: `try { await waitForClientsToDisconnect } finally { await remove() }`; the memoised promise still removes on a failed wait.
-- [ ] `postgres.int.test.ts` and the e2e teardown: `try/finally` so the container is stopped even when an assertion or `close()` throws.
-- [ ] Clean script: drop the volume loop (anonymous volumes go with `rm -v`); keep the label filter.
-- [ ] Test: a `stop()` whose disconnect wait rejects still removes the container (unit test with a fake container, or integration).
+- [x] `stop()`: `try { await waitForClientsToDisconnect } finally { await remove() }`; the memoised promise still removes on a failed wait.
+- [x] `postgres.int.test.ts` and the e2e teardown: `try/finally` so the container is stopped even when an assertion or `close()` throws.
+- [x] Clean script: drop the volume loop (anonymous volumes go with `rm -v`); keep the label filter.
+- [x] Test: a `stop()` whose disconnect wait rejects still removes the container (unit test with a fake container, or integration).
 
 ## Edge cases
 
@@ -48,7 +48,7 @@ None — test infrastructure (CLAUDE.md §Tests: Docker-backed suites remove the
 
 ## Definition of Done
 
-- [ ] No failure path in test setup/teardown leaves a container or volume
-- [ ] Unit + integration green; `pnpm lint` clean; `docker ps -a --filter label=org.testcontainers=true` empty after the run
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No failure path in test setup/teardown leaves a container or volume
+- [x] Unit + integration green; `pnpm lint` clean; `docker ps -a --filter label=org.testcontainers=true` empty after the run
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
