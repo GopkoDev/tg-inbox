@@ -355,29 +355,37 @@ ADR files live under `docs/features/workspace-operators/adr/NNNN-<title>.md`. Re
 
 ## 10. Quality requirements
 
-<!-- 🎯 Why: the QUALITY TREE — take a goal from §1 and break it into concrete leaves: tests,
-     metrics, configs, drills. ⭐ Without §10, §1 is a manifesto. With §10 each declaration maps
-     to something PROVABLE.
-     📋 Write: per §1 goal — When / Then / How-verify. Numbers from spec §6 NFR VERBATIM (don't
-     round ≤250ms to ≤300ms — that's a critic F6 hit).
-     📌 e.g. «p95 ≤ 500 ms on a block update, verified by a 100 req/s load test». -->
+Each §1 quality goal expanded into testable scenarios; targets are quoted from spec §6.
 
-Each top-3 goal from §1 expanded into a full scenario:
+**QG-1a. Cross-workspace isolation**
+- **When:** an account that is not an active member of a workspace reads or writes anything through a workspace-scoped route or repository of that workspace — by link, by guessed identifier, or by a crafted request.
+- **Then:** "0 data reads or writes across workspaces"; a person who was never a member gets a neutral not-found that reveals neither the workspace nor the item (AC-13).
+- **How verify:** "an isolation test for every data-access path, run in CI" — every `workspaces` repository method gets a Testcontainers test with two workspaces proving it never returns or changes the other workspace's rows, and every route under `/api/workspaces/:workspaceId/…` gets an `app.inject()` test calling it with a session that belongs to the other workspace.
 
-**QG-1. <quality attribute>**
-- **When:** <trigger condition>
-- **Then:** <expected behaviour with numbers from spec §6 NFR>
-- **How verify:** <test / chaos drill / load test / metric>
+**QG-1b. Deactivation takes effect**
+- **When:** a business owner deactivates a member who has the workspace open on one or more devices.
+- **Then:** "≤ 5 s from deactivation until every action or data load of the member in that workspace is refused, on every open session (no proactive push to idle screens in v1)"; the member's other memberships stay intact (AC-17).
+- **How verify:** "integration test + manual check per release" — an integration test opens two sessions for the member, deactivates the membership and asserts the next request from each session is refused with the access-removed code while a request to the member's other workspace still succeeds; the release checklist repeats it by hand in two browsers.
 
-**QG-2. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+**QG-2a. Brute-force protection**
+- **When:** someone submits wrong passwords for one email, whether or not that email has an account.
+- **Then:** "≤ 10 failed sign-in attempts per email per 15 min, then a 15-min lockout"; the locked-out response is identical for emails with and without an account, and a correct password is refused while locked (AC-09).
+- **How verify:** "integration test" — with a controllable clock, 10 failures lock the email, an 11th attempt with the correct password is refused, the lock lifts 15 minutes after the 10th failure, and the same sequence on an unknown email produces byte-identical responses; a further test shows that a password reset clears the count.
 
-**QG-3. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+**QG-2b. Session lifetime and revocation**
+- **When:** a session goes unused, its owner signs out, or a platform admin's reset link is redeemed for the account.
+- **Then:** the session "ends after 30 days without activity (activity = an authenticated request triggered by a user action; automatic background checks do not extend the session); ends at once on sign-out (that device) or password reset (all devices)".
+- **How verify:** "integration test" — with a controllable clock, a session refreshed only by requests marked as background expires after 30 days while one with a user action on day 29 survives; sign-out ends only that session; redeeming a reset link ends every other session of the account and signs in the redeeming device.
+
+**QG-3. Responsiveness**
+- **When:** operators and business owners use the panel in normal pilot load.
+- **Then:** "Latency p95 sign-in ≤ 500 ms (deliberately slow password check included)"; "Latency p95 team / switch / invite actions ≤ 300 ms".
+- **How verify:** "server request-duration logs, weekly p95" per route; before each release a benchmark of one argon2id verification with the production parameters on the target host must leave headroom within the 500 ms sign-in budget.
+
+**QG-4. Availability**
+- **When:** the service runs through a calendar month.
+- **Then:** "99.5% monthly".
+- **How verify:** "uptime check on the health endpoint, monthly window" — `GET /health`, which pings the database.
 
 ## 11. Risks and technical debt
 
