@@ -52,7 +52,7 @@ describe('InviteDialog (SCR-08)', () => {
   it('email error is the input accessible description; Role group has a visible label', async () => {
     createInvitation.mockRejectedValue(err(400, 'VALIDATION_ERROR', 'Enter a valid email'));
     setup();
-    typeEmail('nope');
+    typeEmail('max@acme.test');
     submit();
     await screen.findByText('Enter a valid email');
     expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter a valid email');
@@ -97,7 +97,7 @@ describe('InviteDialog (SCR-08)', () => {
   it('validation: 400 message under the email field, form kept (AC-14)', async () => {
     createInvitation.mockRejectedValue(err(400, 'VALIDATION_ERROR', 'Enter a valid email address'));
     setup();
-    typeEmail('nope');
+    typeEmail('max@acme.test');
     submit();
     expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
@@ -215,5 +215,16 @@ describe('InviteDialog (SCR-08)', () => {
     submit();
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(screen.getByLabelText('Email')).toBeEnabled();
+  });
+});
+
+describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
+  it('an invalid email is blocked client-side with the server message', async () => {
+    setup();
+    typeEmail('nope');
+    submit();
+    expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
+    expect(createInvitation).not.toHaveBeenCalled();
   });
 });

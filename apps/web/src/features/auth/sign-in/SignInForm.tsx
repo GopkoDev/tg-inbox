@@ -1,10 +1,11 @@
-import { ErrorCode } from '@tg/shared';
+import { EmailInput, ErrorCode } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { getMe, signIn } from '@/features/auth/api';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { ApiError } from '@/shared/api/client';
+import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -41,9 +42,11 @@ export function SignInForm() {
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
-    setSubmitting(true);
-    setEmailError(null);
     setAlert(null);
+    const nextEmailError = firstIssue(EmailInput, email);
+    setEmailError(nextEmailError);
+    if (nextEmailError) return;
+    setSubmitting(true);
     try {
       await signIn({ email, password });
       await resolveWorkspace((to) => void navigate(to));

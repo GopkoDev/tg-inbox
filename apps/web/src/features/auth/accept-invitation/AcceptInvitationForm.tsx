@@ -1,4 +1,4 @@
-import { ErrorCode, LinkToken, PASSWORD_MESSAGE, type InvitationPreview } from '@tg/shared';
+import { DisplayName, ErrorCode, LinkToken, Password, type InvitationPreview } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -9,6 +9,7 @@ import {
 } from '@/features/auth/link-unavailable/LinkUnavailable';
 import { ApiError } from '@/shared/api/client';
 import { ROLE_LABEL } from '@/shared/lib/roles';
+import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
@@ -18,7 +19,6 @@ import { Label } from '@/shared/ui/label';
 import { Skeleton } from '@/shared/ui/skeleton';
 
 const GENERIC = 'Something went wrong';
-const NAME_MESSAGE = 'Enter your name (up to 200 characters)';
 
 type Fatal = LinkUnavailableProps | null;
 
@@ -91,10 +91,10 @@ export function AcceptInvitationForm() {
     if (!preview) return;
     const newAccount = !preview.account_exists;
     const trimmed = name.trim();
-    const nextNameError = newAccount && (trimmed.length < 1 || trimmed.length > 200);
-    const nextPasswordError = newAccount && password.length < 10;
-    setNameError(nextNameError ? NAME_MESSAGE : null);
-    setPasswordError(nextPasswordError ? PASSWORD_MESSAGE : null);
+    const nextNameError = newAccount ? firstIssue(DisplayName, name) : null;
+    const nextPasswordError = newAccount ? firstIssue(Password, password) : null;
+    setNameError(nextNameError);
+    setPasswordError(nextPasswordError);
     setAlert(null);
     if (nextNameError || nextPasswordError) return;
 

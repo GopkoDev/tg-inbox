@@ -168,3 +168,16 @@ describe('ResetPasswordPage', () => {
     });
   });
 });
+
+describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
+  it('a password over 1024 characters is blocked client-side with the server message', async () => {
+    renderPage();
+    await screen.findByLabelText('New password');
+    typePassword('x'.repeat(1025));
+    submit();
+    expect(
+      await screen.findByText('The password must be at most 1024 characters long'),
+    ).toBeInTheDocument();
+    expect(redeemPasswordResetLink).not.toHaveBeenCalled();
+  });
+});

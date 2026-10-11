@@ -1,4 +1,4 @@
-import { ErrorCode, LinkToken, PASSWORD_MESSAGE } from '@tg/shared';
+import { ErrorCode, LinkToken, Password } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
@@ -6,6 +6,7 @@ import { lookUpPasswordResetLink, redeemPasswordResetLink } from '@/features/aut
 import { LinkUnavailable } from '@/features/auth/link-unavailable/LinkUnavailable';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { ApiError } from '@/shared/api/client';
+import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
@@ -64,8 +65,9 @@ export function ResetPasswordForm() {
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
     setAlert(null);
-    if (password.length < 10) {
-      setPasswordError(PASSWORD_MESSAGE);
+    const nextPasswordError = firstIssue(Password, password);
+    if (nextPasswordError) {
+      setPasswordError(nextPasswordError);
       return;
     }
     setPasswordError(null);

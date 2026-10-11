@@ -275,3 +275,20 @@ describe('AcceptInvitationPage', () => {
     expect(screen.getByLabelText('Password')).toHaveValue('longenough1');
   });
 });
+
+describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
+  it('AC-05: a password over 1024 characters is blocked client-side with the server message', async () => {
+    lookUpInvitation.mockResolvedValue(preview(false));
+    renderPage();
+    await screen.findByLabelText('Your name');
+    change('Your name', 'Nina');
+    change('Password', 'x'.repeat(1025));
+    join();
+    expect(
+      await screen.findByText('The password must be at most 1024 characters long', {
+        selector: 'p#password-error',
+      }),
+    ).toBeInTheDocument();
+    expect(acceptInvitation).not.toHaveBeenCalled();
+  });
+});

@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const EMAIL_MESSAGE = 'Enter a valid email address';
 export const PASSWORD_MESSAGE = 'The password must be at least 10 characters long';
+export const PASSWORD_MAX_MESSAGE = 'The password must be at most 1024 characters long';
+export const DISPLAY_NAME_MESSAGE = 'Enter your name (up to 200 characters)';
 
 /** Email as typed by a person: trimmed and lower-cased first, then validated (spec §6.1). */
 export const EmailInput = z
@@ -16,10 +18,14 @@ export type EmailInput = z.infer<typeof EmailInput>;
 export const Email = z.string().min(3).max(254);
 export type Email = z.infer<typeof Email>;
 
-export const Password = z.string().min(10, PASSWORD_MESSAGE).max(1024);
+export const Password = z.string().min(10, PASSWORD_MESSAGE).max(1024, PASSWORD_MAX_MESSAGE);
 export type Password = z.infer<typeof Password>;
 
-export const DisplayName = z.string().trim().min(1).max(200);
+export const DisplayName = z
+  .string()
+  .trim()
+  .min(1, DISPLAY_NAME_MESSAGE)
+  .max(200, DISPLAY_NAME_MESSAGE);
 export type DisplayName = z.infer<typeof DisplayName>;
 
 export const WorkspaceName = z.string().trim().min(1).max(200);

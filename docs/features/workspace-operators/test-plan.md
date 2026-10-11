@@ -40,6 +40,7 @@ A platform admin creates a workspace with a single-use first-owner invitation; p
 | AC-04 error | `wrong existing password during acceptance counts toward lockout` | integration | Acceptance refused with the generic credentials message; the failure is counted for that email |
 | AC-04b authorization | `invitation opened by a different signed-in account is refused` | integration + component | No membership added to the signed-in account; SCR-03 explains the invitation belongs to another email and offers sign-out |
 | AC-05 error | `password shorter than 10 characters is rejected` | unit + integration + component | No account created; the person is told the password must be at least 10 characters (also checked before submit) |
+| AC-05b error | `form fields are checked with the shared schemas before submit` | component | A too-long password (accept, reset) or an invalid email (sign-in, invite) shows the server's message under the field and sends no request |
 | AC-06 domain invariant | `expired invitation is refused` | unit + integration | Refused as no longer valid; the person is told to ask a business owner |
 | AC-06 domain invariant | `used invitation is refused` | unit + integration | Second acceptance refused; no second membership |
 | AC-06 domain invariant | `revoked or replaced invitation is refused` | unit + integration | Refused as no longer valid |

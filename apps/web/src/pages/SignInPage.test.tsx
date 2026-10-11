@@ -83,7 +83,7 @@ describe('SignInPage', () => {
       new ApiError(400, ErrorCode.VALIDATION_ERROR, 'Enter a valid email address'),
     );
     renderPage();
-    await fill('not-an-email');
+    await fill();
     expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
     expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
   });
@@ -129,5 +129,15 @@ describe('SignInPage', () => {
     await fill();
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalledTimes(1));
     expect(signIn).toHaveBeenCalledWith({ email: 'o@x.io', password: 'secret-pass' });
+  });
+});
+
+describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-validation)', () => {
+  it('an invalid email is blocked client-side with the server message', async () => {
+    renderPage();
+    await fill('not-an-email');
+    expect(await screen.findByText('Enter a valid email address')).toBeInTheDocument();
+    expect(screen.getByLabelText('Email')).toHaveAttribute('aria-invalid', 'true');
+    expect(signIn).not.toHaveBeenCalled();
   });
 });
