@@ -1231,6 +1231,21 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t56-mask-absolute-form-and-trailing-dot-segments.md",
       "source": "review-2026-10-11-r8"
+    },
+    {
+      "id": "T57",
+      "title": "Mask backslash link forms; state which forms no router resolves",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No `incoming request` line contains an invitation or reset token for a backslash-separated link form; the mask's comments state which forms a router resolves and which only a client may send; the serializer never throws on a malformed url; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t57-mask-backslash-link-forms-and-fix-comments.md",
+      "source": "review-2026-10-11-r9"
     }
   ]
 }
