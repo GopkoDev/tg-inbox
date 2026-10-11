@@ -1125,6 +1125,48 @@
       ],
       "file": "docs/features/workspace-operators/tasks/t50-router-errors-envelope-and-5xx-pin.md",
       "source": "review-2026-10-11-r4"
+    },
+    {
+      "id": "T51",
+      "title": "Scope the shell guard to the URL workspace across routes and sign-out",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17",
+        "AC-13"
+      ],
+      "dod": "A refusal for a workspace that is no longer in the address has no visible effect, whatever route the person moved to; a refusal for the workspace in the address still runs AC-17 on every route of that workspace; web unit tests green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/src/features/workspaces/useWorkspaceFromUrl.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.test.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t51-guard-scoped-to-url-across-routes-and-sign-out.md",
+      "source": "review-2026-10-11-r5"
+    },
+    {
+      "id": "T52",
+      "title": "Keep link tokens out of request logs; document the transport-level error exceptions",
+      "layer": "infra",
+      "deps": [],
+      "acs": [],
+      "dod": "No log line written by the API contains an invitation or reset token; the transport-level exceptions are documented and the T50 DoD no longer claims more than the code does; unit + integration green; `pnpm lint` clean",
+      "files_hint": [
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/platform/logger.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/app.int.test.ts",
+        "docs/features/workspace-operators/contracts/api-sync-report.md",
+        "docs/features/workspace-operators/tasks/t50-router-errors-envelope-and-5xx-pin.md",
+        "docs/features/workspace-operators/tasks.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t52-link-tokens-out-of-request-logs.md",
+      "source": "review-2026-10-11-r5"
     }
   ]
 }
