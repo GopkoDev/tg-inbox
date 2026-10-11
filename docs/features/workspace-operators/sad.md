@@ -409,13 +409,21 @@ Each §1 quality goal expanded into testable scenarios; targets are quoted from 
 
 ## 12. Glossary
 
-<!-- 🎯 Why: ⭐ the DOMAIN GLOSSARY that ends arguments a year later («checkpoint — weekly or
-     biweekly? quarter — calendar or fiscal?»).
-     📋 Write: a term / meaning table. Business + technical terms mixed.
-     📌 e.g. «Lesson | a unit inside a course made of blocks (text, video)». -->
+Terms marked † are not yet in [CONTEXT.md](../../../CONTEXT.md) — candidates for `/sdd:glossary`.
 
 | Term | Meaning |
 |---|---|
-| <e.g. domain object A> | <its meaning in this domain> |
-| <e.g. domain object B> | <its meaning> |
-| <e.g. domain invariant name> | <the rule, in plain language> |
+| Account | A person's single sign-in identity on the platform (email + password), shared across every workspace they belong to. NOT Operator. |
+| Business owner | A workspace member with the owner role: manages the workspace's team and can do everything an operator can. NOT Platform admin. |
+| Invitation | A single-use, expiring link for one email and one role through which that person joins a workspace. NOT Membership. |
+| Membership | The link between an account and a workspace, carrying a role (owner / operator) and a state (active / deactivated). NOT Account. |
+| Operator | A workspace member who answers end customers from the shared web inbox. NOT Business owner. |
+| Platform admin | A tg-inbox team member who creates workspaces with their first business owner invitation and issues password-reset links — through the admin CLI. NOT Business owner. |
+| Workspace | One business on the platform and the boundary of all its data. NOT Account. |
+| Session † | One signed-in device of an account: a server-side record pointed at by the session cookie; ends on sign-out, on a password reset, or after 30 days without user activity. |
+| Workspace-access guard † | The shared check every workspace-scoped request passes: never a member → not found, deactivated → access removed, active → the request runs with the workspace id and role. |
+| Password-reset link † | A single-use link issued by a platform admin for one account, valid 24 hours, through which the person sets a new password. |
+| Lockout † | The 15-minute refusal of every sign-in for an email after 10 failed attempts within 15 minutes. |
+| Normalised email † | An email trimmed of surrounding spaces and lower-cased — the form used in every comparison. |
+| Last-used workspace † | The workspace an account most recently opened, recorded on its membership and opened at the next sign-in when still active. |
+| Admin CLI † | The server-side commands through which platform admins act; there is no admin HTTP surface. |
