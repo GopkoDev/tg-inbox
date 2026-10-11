@@ -4,11 +4,13 @@ import { PageQuery } from '@tg/shared';
 import type { createWorkspaceAccess } from '../app/access.js';
 import { createWorkspaceGuard } from './guard.js';
 import { registerInvitationRoutes, type InvitationRoutesDeps } from './invitation-routes.js';
+import { registerTeamRoutes } from './team-routes.js';
 
 type WorkspaceAccess = ReturnType<typeof createWorkspaceAccess>;
 
 export interface WorkspacesDeps {
   access: Pick<WorkspaceAccess, 'guardWorkspace' | 'getMe' | 'listMyWorkspaces' | 'enterWorkspace'>;
+  team: Parameters<typeof registerTeamRoutes>[1]['team'];
   /** The auth module's session resolver (preHandler setting `request.account`). */
   authenticate: preHandlerAsyncHookHandler;
   /** Public invitation lookup / acceptance. */
@@ -52,6 +54,8 @@ export async function registerWorkspaces(
       };
     },
   );
+
+  await registerTeamRoutes(app, { team: deps.team, access, authenticate });
 
   r.post('/workspaces/:workspaceId/enter', { preHandler: [authenticate, guard] }, async (request) =>
     access.enterWorkspace(request.account.id, request.workspace.workspaceId),
