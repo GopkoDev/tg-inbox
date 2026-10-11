@@ -1,5 +1,5 @@
 ---
-status: Accepted
+status: Superseded by 0004
 owner: "Dmytro Hopko"
 reviewers: []
 updated_at: "2026-10-11"
@@ -9,7 +9,7 @@ ticket: ""
 
 # 0003 — Use PostgreSQL with Drizzle ORM, forward-only drizzle-kit migrations and workspace-scoped tenancy
 
-- **Status:** Accepted
+- **Status:** Superseded by [[0004-use-postgres-with-kysely-reversible-migrations-and-workspace-scoped-tenancy]] (2026-10-11, before scaffolding — data access reverted to Kysely)
 - **Date:** 2026-10-11
 - **Deciders:** Dmytro Hopko + Claude (survey greenfield foundation session)
 
