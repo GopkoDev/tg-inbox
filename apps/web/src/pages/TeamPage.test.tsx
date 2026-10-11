@@ -245,6 +245,30 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.getByText('Olga')).toBeInTheDocument();
   });
 
+  it('has-more: a double click on Show more fires one request and appends once', async () => {
+    listMemberships.mockResolvedValueOnce(page([owner], true));
+    let resolveNext: (v: unknown) => void = () => undefined;
+    listMemberships.mockReturnValueOnce(new Promise((r) => (resolveNext = r)));
+    renderPage();
+    await screen.findByText('Olga');
+    const button = screen.getByRole('button', { name: 'Show more' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(listMemberships).toHaveBeenCalledTimes(2); // initial load + one page
+    resolveNext(page([bob]));
+    expect(await screen.findByText('Bob')).toBeInTheDocument();
+    expect(screen.getAllByText('Bob')).toHaveLength(1);
+  });
+
+  it('not-found in place: one main and one h1 inside the shell (AC-13)', async () => {
+    listMemberships.mockRejectedValue(err(404, 'NOT_FOUND'));
+    listPendingInvitations.mockRejectedValue(err(404, 'NOT_FOUND'));
+    renderPage();
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(screen.getAllByRole('main')).toHaveLength(1);
+    expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
+  });
+
   it('error: unexpected list failure shows Something went wrong and Retry', async () => {
     listMemberships.mockRejectedValueOnce(new Error('net'));
     renderPage();

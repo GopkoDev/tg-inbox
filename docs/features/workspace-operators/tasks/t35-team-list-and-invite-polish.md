@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T35 — Guard Team 'Show more', render SCR-10 in place without nested landmarks, link the invite form errors
@@ -56,10 +56,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Track `loadingMore` per list in `useTeam`; disable "Show more" while a page is loading and ignore re-entry.
-- [ ] Split a `NotFoundCard` body out of `NotFoundPage`; use the card in place inside the shell, keep the `<main>` wrapper only for the `*` route.
-- [ ] InviteDialog: `id="invite-email-error"` + `aria-describedby` on the input; a visible `<Label>` for the Role group (shadcn `Label`).
-- [ ] Tests: double click on "Show more" fires one request and no duplicate rows; in-place 404 inside the shell has exactly one `main` and one `h1`; the email error is the input's accessible description.
+- [x] Track `loadingMore` per list in `useTeam`; disable "Show more" while a page is loading and ignore re-entry.
+- [x] Split a `NotFoundCard` body out of `NotFoundPage`; use the card in place inside the shell, keep the `<main>` wrapper only for the `*` route.
+- [x] InviteDialog: `id="invite-email-error"` + `aria-describedby` on the input; a visible `<Label>` for the Role group (shadcn `Label`).
+- [x] Tests: double click on "Show more" fires one request and no duplicate rows; in-place 404 inside the shell has exactly one `main` and one `h1`; the email error is the input's accessible description.
 
 ## Edge cases
 
@@ -69,7 +69,7 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] Screens match screens.md structure
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] Screens match screens.md structure
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

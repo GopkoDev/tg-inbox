@@ -1,6 +1,6 @@
 import type { Membership, PendingInvitation } from '@tg/shared';
 import { ErrorCode } from '@tg/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError } from '@/shared/api/client';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
 import {
@@ -37,6 +37,21 @@ export function useTeam(workspaceId: string) {
   const [notice, setNotice] = useState<TeamNotice>(null);
   const [busy, setBusy] = useState<BusyAction | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [loadingMore, setLoadingMore] = useState({ members: false, invitations: false });
+  const pagingRef = useRef({ members: false, invitations: false });
+
+  /** Runs one page load per list at a time; a re-entrant call is ignored. */
+  const paged = async (list: 'members' | 'invitations', load: () => Promise<void>) => {
+    if (pagingRef.current[list]) return;
+    pagingRef.current[list] = true;
+    setLoadingMore((p) => ({ ...p, [list]: true }));
+    try {
+      await load();
+    } finally {
+      pagingRef.current[list] = false;
+      setLoadingMore((p) => ({ ...p, [list]: false }));
+    }
+  };
 
   /** Routes a failure: owners-only, shared guard, or the given fallback. */
   const fail = useCallback(
@@ -90,31 +105,33 @@ export function useTeam(workspaceId: string) {
   /** The invite dialog was refused: show the matching screen state. */
   const setRefused = (reason: 'owner-only' | 'not-found') => setStatus(reason);
 
-  const showMoreMembers = async () => {
-    if (!members.next) return;
-    try {
-      const page = await listMemberships(workspaceId, members.next);
-      setMembers((p) => ({
-        items: [...p.items, ...page.items],
-        next: page.has_next ? page.next_cursor : null,
-      }));
-    } catch (error) {
-      await fail(error, () => setNotice('error'));
-    }
-  };
+  const showMoreMembers = () =>
+    paged('members', async () => {
+      if (!members.next) return;
+      try {
+        const page = await listMemberships(workspaceId, members.next);
+        setMembers((p) => ({
+          items: [...p.items, ...page.items],
+          next: page.has_next ? page.next_cursor : null,
+        }));
+      } catch (error) {
+        await fail(error, () => setNotice('error'));
+      }
+    });
 
-  const showMoreInvitations = async () => {
-    if (!invitations.next) return;
-    try {
-      const page = await listPendingInvitations(workspaceId, invitations.next);
-      setInvitations((p) => ({
-        items: [...p.items, ...page.items],
-        next: page.has_next ? page.next_cursor : null,
-      }));
-    } catch (error) {
-      await fail(error, () => setNotice('error'));
-    }
-  };
+  const showMoreInvitations = () =>
+    paged('invitations', async () => {
+      if (!invitations.next) return;
+      try {
+        const page = await listPendingInvitations(workspaceId, invitations.next);
+        setInvitations((p) => ({
+          items: [...p.items, ...page.items],
+          next: page.has_next ? page.next_cursor : null,
+        }));
+      } catch (error) {
+        await fail(error, () => setNotice('error'));
+      }
+    });
 
   const run = async (action: BusyAction, call: () => Promise<void>) => {
     setBusy(action);
@@ -155,6 +172,7 @@ export function useTeam(workspaceId: string) {
     invitations,
     notice,
     busy,
+    loadingMore,
     retry,
     refreshInvitations,
     setRefused,

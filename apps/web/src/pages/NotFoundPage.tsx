@@ -5,8 +5,8 @@ import { ApiError } from '@/shared/api/client';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 
-/** SCR-10. Deliberately shows no workspace name or id, and no hint that anything exists. */
-export function NotFoundPage() {
+/** SCR-10 body, rendered in place inside the shell (no landmark, `h2` under the page's `h1`). */
+export function NotFoundCard({ headingLevel = 2 }: { headingLevel?: 1 | 2 }) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
 
@@ -22,19 +22,26 @@ export function NotFoundPage() {
   }
 
   return (
+    <Card className="w-full max-w-md">
+      <CardHeader>
+        <CardTitle>
+          {headingLevel === 1 ? <h1>Page not found</h1> : <h2>Page not found</h2>}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <Button className="w-full" disabled={busy} onClick={() => void onGo()}>
+          Go to my workspace
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** SCR-10 as a whole page (the `*` route, or the shell when the workspace is unknown). */
+export function NotFoundPage() {
+  return (
     <main className="flex min-h-svh items-center justify-center px-4 py-6">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle>
-            <h1>Page not found</h1>
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <Button className="w-full" disabled={busy} onClick={() => void onGo()}>
-            Go to my workspace
-          </Button>
-        </CardContent>
-      </Card>
+      <NotFoundCard headingLevel={1} />
     </main>
   );
 }

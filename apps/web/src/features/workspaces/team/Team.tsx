@@ -3,7 +3,7 @@ import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
 import { useAuthStore } from '@/features/auth/store';
-import { NotFoundPage } from '@/pages/NotFoundPage';
+import { NotFoundCard } from '@/pages/NotFoundPage';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import {
   AlertDialog,
@@ -43,9 +43,9 @@ function SkeletonRows() {
   );
 }
 
-function ShowMore({ onClick }: { onClick: () => void }) {
+function ShowMore({ onClick, disabled }: { onClick: () => void; disabled: boolean }) {
   return (
-    <Button variant="outline" onClick={onClick}>
+    <Button variant="outline" disabled={disabled} onClick={onClick}>
       Show more
     </Button>
   );
@@ -80,7 +80,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
   const [inviteOpen, setInviteOpen] = useState(false);
   const { busy } = team;
 
-  if (team.status === 'not-found') return <NotFoundPage />;
+  if (team.status === 'not-found') return <NotFoundCard />;
   if (team.status === 'owner-only') {
     return (
       <Card>
@@ -183,7 +183,12 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                 ))}
               </TableBody>
             </Table>
-            {team.members.next && <ShowMore onClick={() => void team.showMoreMembers()} />}
+            {team.members.next && (
+              <ShowMore
+                disabled={team.loadingMore.members}
+                onClick={() => void team.showMoreMembers()}
+              />
+            )}
           </>
         )}
       </section>
@@ -225,7 +230,12 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                 ))}
               </TableBody>
             </Table>
-            {team.invitations.next && <ShowMore onClick={() => void team.showMoreInvitations()} />}
+            {team.invitations.next && (
+              <ShowMore
+                disabled={team.loadingMore.invitations}
+                onClick={() => void team.showMoreInvitations()}
+              />
+            )}
           </>
         )}
       </section>

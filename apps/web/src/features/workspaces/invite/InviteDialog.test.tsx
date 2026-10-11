@@ -49,6 +49,17 @@ beforeEach(() => {
 });
 
 describe('InviteDialog (SCR-08)', () => {
+  it('email error is the input accessible description; Role group has a visible label', async () => {
+    createInvitation.mockRejectedValue(err(400, 'VALIDATION_ERROR', 'Enter a valid email'));
+    setup();
+    typeEmail('nope');
+    submit();
+    await screen.findByText('Enter a valid email');
+    expect(screen.getByLabelText('Email')).toHaveAccessibleDescription('Enter a valid email');
+    expect(screen.getByRole('radiogroup', { name: 'Role' })).toBeInTheDocument();
+    expect(screen.getByText('Role', { selector: 'label' })).toBeInTheDocument();
+  });
+
   it('default: email field, Operator preselected, Create invitation', () => {
     setup();
     expect(screen.getByLabelText('Email')).toBeInTheDocument();

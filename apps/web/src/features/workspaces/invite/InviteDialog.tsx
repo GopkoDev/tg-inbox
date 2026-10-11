@@ -150,23 +150,31 @@ function InviteBody({ workspaceId, onCreated, onDone, onFail }: BodyProps) {
           value={email}
           disabled={submitting}
           aria-invalid={fieldError ? true : undefined}
+          aria-describedby={fieldError ? 'invite-email-error' : undefined}
           onChange={(e) => setEmail(e.target.value)}
         />
-        {fieldError && <p className="text-sm text-destructive">{fieldError}</p>}
+        {fieldError && (
+          <p id="invite-email-error" className="text-sm text-destructive">
+            {fieldError}
+          </p>
+        )}
       </div>
-      <RadioGroup
-        value={role}
-        onValueChange={(v) => setRole(v as Role)}
-        disabled={submitting}
-        aria-label="Role"
-      >
-        {(['operator', 'owner'] as const).map((r) => (
-          <div key={r} className="flex items-center gap-2">
-            <RadioGroupItem id={`invite-role-${r}`} value={r} />
-            <Label htmlFor={`invite-role-${r}`}>{ROLE_LABEL[r]}</Label>
-          </div>
-        ))}
-      </RadioGroup>
+      <div className="space-y-2">
+        <Label id="invite-role-label">Role</Label>
+        <RadioGroup
+          value={role}
+          onValueChange={(v) => setRole(v as Role)}
+          disabled={submitting}
+          aria-labelledby="invite-role-label"
+        >
+          {(['operator', 'owner'] as const).map((r) => (
+            <div key={r} className="flex items-center gap-2">
+              <RadioGroupItem id={`invite-role-${r}`} value={r} />
+              <Label htmlFor={`invite-role-${r}`}>{ROLE_LABEL[r]}</Label>
+            </div>
+          ))}
+        </RadioGroup>
+      </div>
       <DialogFooter>
         <Button type="submit" disabled={submitting}>
           {submitting && <Loader2 className="animate-spin" />}
