@@ -35,9 +35,12 @@ export async function handleGuardError(
   if (error.status === 403 && error.code === ErrorCode.ACCESS_REMOVED) {
     const ws = useWorkspaceStore.getState();
     const id = workspaceId ?? ws.current?.id;
-    if (id !== undefined && ws.current?.id === id) {
+    if (ws.current && id === ws.current.id) {
       ws.setAccessRemovedNotice(ws.current.name);
       ws.clearWorkspace(id);
+    } else if (!ws.current) {
+      // The name is unknown (nothing entered yet): still tell the person (AC-17).
+      ws.setAccessRemovedNotice('this workspace');
     }
     await ctx.resolveWorkspaces();
     return 'handled';

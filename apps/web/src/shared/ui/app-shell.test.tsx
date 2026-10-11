@@ -56,6 +56,7 @@ beforeEach(() => {
 
 describe('AppShell', () => {
   it('loading: shows a skeleton instead of the workspace name', () => {
+    enterWorkspace.mockReturnValue(new Promise(() => undefined));
     renderShell();
     expect(screen.getByTestId('shell-name-skeleton')).toBeInTheDocument();
     expect(screen.getByText('shell body')).toBeInTheDocument();

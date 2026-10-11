@@ -8,7 +8,7 @@ export function WorkspaceHomePage() {
   return (
     <AppShell>
       <h1 className="sr-only">Workspace home</h1>
-      <WorkspaceHome key={workspaceId} workspaceId={workspaceId} />
+      <WorkspaceHome key={workspaceId} />
     </AppShell>
   );
 }

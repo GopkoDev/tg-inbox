@@ -1,12 +1,14 @@
 import { Menu, UserRound, X } from 'lucide-react';
 import { useEffect, type ReactNode } from 'react';
-import { Link } from 'react-router';
+import { Link, useParams } from 'react-router';
+import { NotFoundPage } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
 import { useSignOut } from '@/features/auth/useSignOut';
 import { useGuard } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import {
@@ -22,10 +24,13 @@ import { ShellGuardContext } from './app-shell-context';
 /**
  * The workspace area frame (SCR-06/07/08): switcher, owner-only Team link, account menu with
  * sign-out (collapsed into a menu at phone width) and the dismissible `access-removed` notice.
- * It also wires the shared guard handler and hands it to the screens inside via `useShellGuard`.
+ * It enters the workspace of the URL (`useWorkspaceFromUrl`) and shows SCR-10 / a retry row when
+ * that fails. It also wires the shared guard handler and hands it to the screens inside via `useShellGuard`.
  */
 export function AppShell({ children }: { children: ReactNode }) {
   const guard = useGuard();
+  const { workspaceId = '' } = useParams();
+  const entry = useWorkspaceFromUrl(workspaceId, guard);
   const current = useWorkspaceStore((s) => s.current);
   const notice = useWorkspaceStore((s) => s.accessRemovedNotice);
   const account = useAuthStore((s) => s.account);
@@ -107,7 +112,22 @@ export function AppShell({ children }: { children: ReactNode }) {
             </Alert>
           </div>
         )}
-        <main className="p-4">{children}</main>
+        {entry.status === 'not-found' ? (
+          <NotFoundPage />
+        ) : entry.status === 'error' ? (
+          <main className="p-4">
+            <Alert variant="destructive">
+              <AlertDescription className="flex items-center justify-between gap-2">
+                Something went wrong
+                <Button size="sm" variant="outline" onClick={entry.retry}>
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          </main>
+        ) : (
+          <main className="p-4">{children}</main>
+        )}
       </div>
     </ShellGuardContext.Provider>
   );

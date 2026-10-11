@@ -8,6 +8,16 @@ vi.mock('@/features/workspaces/resolve', () => ({
   resolveWorkspace: (...a: unknown[]) => resolveWorkspace(...a),
 }));
 
+vi.mock('@/features/workspaces/api', () => ({
+  enterWorkspace: (id: string) => Promise.resolve({ id, name: 'Acme Flowers', role: 'owner' }),
+  listMyWorkspaces: () =>
+    Promise.resolve({ items: [], has_next: false, has_prev: false, next_cursor: null }),
+  listMemberships: () =>
+    Promise.resolve({ items: [], has_next: false, has_prev: false, next_cursor: null }),
+  listPendingInvitations: () =>
+    Promise.resolve({ items: [], has_next: false, has_prev: false, next_cursor: null }),
+}));
+
 import { createMemoryRouter, RouterProvider } from 'react-router';
 import { useAuthStore } from '@/features/auth/store';
 import { NotFoundPage } from './NotFoundPage';

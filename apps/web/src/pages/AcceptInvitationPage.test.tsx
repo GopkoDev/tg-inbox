@@ -96,7 +96,7 @@ describe('AcceptInvitationPage', () => {
       password: 'longenough1',
       display_name: 'Nina',
     });
-    expect(enterWorkspace).toHaveBeenCalledWith(WS.id);
+    expect(enterWorkspace).not.toHaveBeenCalled();
   });
 
   it('AC-04 success: existing account sends no display_name', async () => {

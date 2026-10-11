@@ -56,6 +56,15 @@ describe('handleGuardError', () => {
     expect(useWorkspaceStore.getState().current).toEqual(acme);
   });
 
+  it('403 ACCESS_REMOVED with no current workspace still sets a notice (AC-17)', async () => {
+    useWorkspaceStore.getState().clear();
+    const c = ctx();
+    const r = await handleGuardError(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'), c, 'w-acme');
+    expect(r).toBe('handled');
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('this workspace');
+    expect(c.resolveWorkspaces).toHaveBeenCalledOnce();
+  });
+
   it('404: signals render-in-place', async () => {
     const r = await handleGuardError(new ApiError(404, ErrorCode.NOT_FOUND, 'x'), ctx());
     expect(r).toBe('not-found');

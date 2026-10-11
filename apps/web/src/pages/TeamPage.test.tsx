@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -14,9 +14,10 @@ const deactivateMembership = vi.fn();
 const reactivateMembership = vi.fn();
 const revokeInvitation = vi.fn();
 const createInvitation = vi.fn();
+const enterWorkspace = vi.fn();
 vi.mock('@/features/workspaces/api', () => ({
   listMyWorkspaces: (a?: string) => listMyWorkspaces(a),
-  enterWorkspace: vi.fn(),
+  enterWorkspace: (id: string) => enterWorkspace(id),
   listMemberships: (w: string, a?: string) => listMemberships(w, a),
   listPendingInvitations: (w: string, a?: string) => listPendingInvitations(w, a),
   deactivateMembership: (w: string, id: string) => deactivateMembership(w, id),
@@ -58,9 +59,9 @@ const inv = (id: string, email: string) => ({
 const owner = mem('m1', 'Olga', { role: 'owner', email: 'o@x.io' });
 const bob = mem('m2', 'Bob');
 
-function renderPage() {
+function renderPage(path = '/w/w1/team') {
   return render(
-    <MemoryRouter initialEntries={['/w/w1/team']}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/w/:workspaceId/team" element={<TeamPage />} />
         <Route path="/w/:workspaceId" element={<p>home screen</p>} />
@@ -69,6 +70,10 @@ function renderPage() {
       </Routes>
     </MemoryRouter>,
   );
+}
+function Jump({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button onClick={() => void navigate(to)}>jump</button>;
 }
 const err = (status: number, code: string) => new ApiError(status, code as never, code);
 const rowOf = (name: string) => screen.getByText(name).closest('tr')!;
@@ -256,6 +261,44 @@ describe('TeamPage (SCR-07)', () => {
     fireEvent.click(await lastButton('Deactivate'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+  });
+});
+
+describe('TeamPage enters its workspace from the URL (AC-12, AC-13, AC-17)', () => {
+  const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'owner' as const };
+
+  it('direct load with an empty store: enters and shows the name in the header', async () => {
+    useWorkspaceStore.getState().clear();
+    enterWorkspace.mockResolvedValue(acme);
+    renderPage();
+    expect(await screen.findByRole('button', { name: /Acme Flowers/ })).toBeInTheDocument();
+    expect(enterWorkspace).toHaveBeenCalledWith('w1');
+    expect(useWorkspaceStore.getState().current).toEqual(acme);
+  });
+
+  it('address change A -> B: the header never shows A, then shows B', async () => {
+    enterWorkspace.mockResolvedValue(bolt);
+    render(
+      <MemoryRouter initialEntries={['/w/w1/team']}>
+        <Routes>
+          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+        </Routes>
+        <Jump to="/w/w2/team" />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Bob');
+    expect(screen.getByRole('button', { name: /Acme Flowers/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /Bolt Bikes/ })).toBeInTheDocument();
+  });
+
+  it('direct load for a workspace that does not exist: not-found, no name shown (AC-13)', async () => {
+    useWorkspaceStore.getState().clear();
+    enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
+    renderPage();
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
   });
 });
 

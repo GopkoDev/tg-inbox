@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T34 — Make the app shell enter the workspace in the URL, guard late responses, keep the access-removed notice
@@ -58,11 +58,11 @@ status: "todo"
 
 ## Checklist
 
-- [ ] One place enters the workspace: the shell (or one shared hook used by every `/w/:workspaceId/*` page) calls `enterWorkspace(workspaceId)` whenever `current?.id !== workspaceId`, clearing the previous `current` first so the header never shows another workspace.
-- [ ] Ignore late results: skip `setCurrent` and the guard call when the effect was cleaned up or the response id differs from the URL's `workspaceId` (cancellation flag or `AbortSignal`).
-- [ ] `shared/api/guard.ts`: on 403 `ACCESS_REMOVED` with an unknown name, still set a notice — fall back to the server `message` (screens.md §Copy: show server messages) or a cached name from `listMyWorkspaces`.
-- [ ] Delete the auth copy of `enterWorkspace`; after accept, navigate to `/w/<id>` and let the shell enter (no second call).
-- [ ] Tests: TeamPage with an empty store renders the header name after entering; switching `/w/A/team` → `/w/B/team` shows B in the header; a late A response after moving to B changes nothing; 403 `ACCESS_REMOVED` with `current` null shows the notice; the SCR-06 404 test asserts `findByText('Page not found')` and the "Go to my workspace" button and that no workspace name is shown.
+- [x] One place enters the workspace: the shell (or one shared hook used by every `/w/:workspaceId/*` page) calls `enterWorkspace(workspaceId)` whenever `current?.id !== workspaceId`, clearing the previous `current` first so the header never shows another workspace.
+- [x] Ignore late results: skip `setCurrent` and the guard call when the effect was cleaned up or the response id differs from the URL's `workspaceId` (cancellation flag or `AbortSignal`).
+- [x] `shared/api/guard.ts`: on 403 `ACCESS_REMOVED` with an unknown name, still set a notice — fall back to the server `message` (screens.md §Copy: show server messages) or a cached name from `listMyWorkspaces`.
+- [x] Delete the auth copy of `enterWorkspace`; after accept, navigate to `/w/<id>` and let the shell enter (no second call).
+- [x] Tests: TeamPage with an empty store renders the header name after entering; switching `/w/A/team` → `/w/B/team` shows B in the header; a late A response after moving to B changes nothing; 403 `ACCESS_REMOVED` with `current` null shows the notice; the SCR-06 404 test asserts `findByText('Page not found')` and the "Go to my workspace" button and that no workspace name is shown.
 
 ## Edge cases
 
@@ -75,8 +75,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No `/w/:id/*` page can render with a header for another workspace
-- [ ] AC-17 notice shown regardless of store state
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No `/w/:id/*` page can render with a header for another workspace
+- [x] AC-17 notice shown regardless of store state
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

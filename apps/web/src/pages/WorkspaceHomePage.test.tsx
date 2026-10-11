@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -22,6 +22,11 @@ import { WorkspaceHomePage } from './WorkspaceHomePage';
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
 const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'operator' as const };
+
+function Jump({ to }: { to: string }) {
+  const navigate = useNavigate();
+  return <button onClick={() => void navigate(to)}>jump</button>;
+}
 
 function renderPage(path = '/w/w1') {
   return render(
@@ -82,13 +87,12 @@ describe('WorkspaceHomePage (SCR-06)', () => {
   });
 
   it('guard 403 ACCESS_REMOVED: clears data, notice set, resolution re-run (AC-17)', async () => {
-    useWorkspaceStore.getState().setCurrent(acme);
     enterWorkspace.mockRejectedValue(new ApiError(403, 'ACCESS_REMOVED' as never, 'gone'));
     resolveWorkspace.mockResolvedValue(undefined);
     renderPage();
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
     expect(useWorkspaceStore.getState().current).toBeNull();
-    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('Acme Flowers');
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('this workspace');
   });
 
   it('guard 401: goes to sign-in', async () => {
@@ -100,8 +104,53 @@ describe('WorkspaceHomePage (SCR-06)', () => {
   it('guard 404: renders the not-found screen in place', async () => {
     enterWorkspace.mockRejectedValue(new ApiError(404, 'NOT_FOUND' as never, 'nf'));
     renderPage();
-    expect(await screen.findByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Go to my workspace' })).toBeInTheDocument();
     expect(screen.queryByText('Your inbox arrives here')).not.toBeInTheDocument();
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
+  });
+
+  it('a late response for A after moving to B changes nothing', async () => {
+    let resolveA!: (w: typeof acme) => void;
+    enterWorkspace.mockImplementation((id: string) =>
+      id === 'w1' ? new Promise((r) => (resolveA = r)) : Promise.resolve(bolt),
+    );
+    render(
+      <MemoryRouter initialEntries={['/w/w1']}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+        </Routes>
+        <Jump to="/w/w2" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    await screen.findByRole('button', { name: /Bolt Bikes/ });
+    resolveA(acme);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
+  });
+
+  it('late 403 for A after moving to B is ignored', async () => {
+    let rejectA!: (e: unknown) => void;
+    enterWorkspace.mockImplementation((id: string) =>
+      id === 'w1' ? new Promise((_, r) => (rejectA = r)) : Promise.resolve(bolt),
+    );
+    render(
+      <MemoryRouter initialEntries={['/w/w1']}>
+        <Routes>
+          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+        </Routes>
+        <Jump to="/w/w2" />
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    await screen.findByRole('button', { name: /Bolt Bikes/ });
+    rejectA(new ApiError(403, 'ACCESS_REMOVED' as never, 'gone'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
   });
 
   it('error: unexpected shows Something went wrong and Retry', async () => {

@@ -27,9 +27,6 @@ export const acceptInvitation = (body: InvitationAccept) =>
     body: JSON.stringify(body),
   });
 
-export const enterWorkspace = (workspaceId: string) =>
-  apiRequest(`/api/workspaces/${workspaceId}/enter`, WorkspaceSummary, { method: 'POST' });
-
 export const lookUpPasswordResetLink = (token: string) =>
   apiRequest('/api/password-reset-links/lookup', undefined, {
     method: 'POST',

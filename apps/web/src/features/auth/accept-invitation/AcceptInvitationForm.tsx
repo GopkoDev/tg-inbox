@@ -2,7 +2,7 @@ import { ErrorCode, PASSWORD_MESSAGE, type InvitationPreview } from '@tg/shared'
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { useNavigate, useParams } from 'react-router';
-import { acceptInvitation, enterWorkspace, lookUpInvitation } from '@/features/auth/api';
+import { acceptInvitation, lookUpInvitation } from '@/features/auth/api';
 import {
   LinkUnavailable,
   type LinkUnavailableProps,
@@ -97,7 +97,6 @@ export function AcceptInvitationForm() {
         password,
         ...(newAccount ? { display_name: trimmed } : {}),
       });
-      await enterWorkspace(workspace.id).catch(() => undefined);
       void navigate(`/w/${workspace.id}`);
       return;
     } catch (error) {
