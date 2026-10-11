@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r6"
-status: "todo"
+status: "done"
 ---
 
 # T54 — Harden link-token log masking (raw packets, non-canonical paths) and pin the URL-error message
@@ -34,13 +34,13 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: add `'err.rawPacket'` to `REDACT`, keeping every existing path.
-- [ ] `platform/logger.ts`: widen the mask to any number of leading slashes, any letter case, and `/` or `%2F` after the prefix (e.g. `/^(\/+(?:invite|reset-password)(?:\/|%2f))[^/?]+/i`). `/assets/invite/x.js` and `/invite` stay unmasked.
-- [ ] Drop the trace-level exception from `.env.example` and the api-sync-report entry; add an api-sync-report line for this change.
-- [ ] Tests:
+- [x] `platform/logger.ts`: add `'err.rawPacket'` to `REDACT`, keeping every existing path.
+- [x] `platform/logger.ts`: widen the mask to any number of leading slashes, any letter case, and `/` or `%2F` after the prefix (e.g. `/^(\/+(?:invite|reset-password)(?:\/|%2f))[^/?]+/i`). `/assets/invite/x.js` and `/invite` stay unmasked.
+- [x] Drop the trace-level exception from `.env.example` and the api-sync-report entry; add an api-sync-report line for this change.
+- [x] Tests:
   - unit (`logger.test.ts`): mask cases for `/Invite/<t>`, `/INVITE/<t>`, `//invite/<t>`, `/invite%2F<t>`, `/Reset-Password/<t>`; `err.rawPacket` is in the redact list, and a pino logger built with `loggerOptions` writes `[Redacted]` for it;
   - integration (`app.int.test.ts`): both URL-error tests assert `message: 'Invalid request URL'` and that the body does not contain the param / path.
-- [ ] RED proof for each: the new cases fail without the change (AA4: with `FST_ERR_MAX_PARAM_LENGTH` removed from the set).
+- [x] RED proof for each: the new cases fail without the change (AA4: with `FST_ERR_MAX_PARAM_LENGTH` removed from the set).
 
 ## Edge cases
 
@@ -53,7 +53,7 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Definition of Done
 
-- [ ] No log line at any level contains an invitation or reset token, whatever the path's case or slashes
-- [ ] Both URL-error codes are pinned by a test that fails when either is dropped
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] No log line at any level contains an invitation or reset token, whatever the path's case or slashes
+- [x] Both URL-error codes are pinned by a test that fails when either is dropped
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds

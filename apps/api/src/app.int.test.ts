@@ -59,8 +59,9 @@ describe('skeleton smoke test', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
-      error: { code: 'VALIDATION_ERROR', message: expect.any(String) },
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid request URL' },
     });
+    expect(response.body).not.toContain('memberships');
   });
 
   it('answers a path param over the max length with 400 VALIDATION_ERROR (no 414)', async () => {
@@ -70,8 +71,9 @@ describe('skeleton smoke test', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toEqual({
-      error: { code: 'VALIDATION_ERROR', message: expect.any(String) },
+      error: { code: 'VALIDATION_ERROR', message: 'Invalid request URL' },
     });
+    expect(response.body).not.toContain('a'.repeat(120));
   });
 
   it('answers unknown routes with the error envelope', async () => {

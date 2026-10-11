@@ -1,4 +1,6 @@
-import type { FastifyRequest } from 'fastify';
+import { connect } from 'node:net';
+import { Writable } from 'node:stream';
+import Fastify, { type FastifyRequest } from 'fastify';
 import { describe, expect, it } from 'vitest';
 import type { Config } from './config.js';
 import { loggerOptions, maskLinkTokens } from './logger.js';
@@ -10,6 +12,12 @@ describe('maskLinkTokens', () => {
     ['/invite/tok123?x=1', '/invite/[redacted]?x=1'],
     ['/reset-password/tok%E0%A4%A', '/reset-password/[redacted]'],
     ['/invite/tok123/', '/invite/[redacted]/'],
+    ['/Invite/tok123', '/Invite/[redacted]'],
+    ['/INVITE/tok123?x=1', '/INVITE/[redacted]?x=1'],
+    ['//invite/tok123', '//invite/[redacted]'],
+    ['/invite%2Ftok123', '/invite%2F[redacted]'],
+    ['/invite%2ftok123', '/invite%2f[redacted]'],
+    ['/Reset-Password/tok123', '/Reset-Password/[redacted]'],
   ])('masks %s', (url, masked) => {
     expect(maskLinkTokens(url)).toBe(masked);
   });
@@ -68,5 +76,39 @@ describe('loggerOptions req serializer', () => {
         '*.botToken',
       ]),
     );
+  });
+});
+
+describe('loggerOptions at trace (review r6 AA2)', () => {
+  const token = 'Zk3tokenNeverLogged9xQ';
+
+  it('redacts the raw request bytes Fastify logs for an unparseable request', async () => {
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer, _encoding, done) {
+        lines.push(...chunk.toString().split('\n').filter(Boolean));
+        done();
+      },
+    });
+    const app = Fastify({
+      logger: loggerOptions({ LOG_LEVEL: 'trace', NODE_ENV: 'test' } as Config, stream),
+    });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    try {
+      const { port } = app.server.address() as { port: number };
+      await new Promise<void>((resolve) => {
+        const socket = connect(port, '127.0.0.1', () =>
+          socket.write(`GET /invite/${token} HTTP/1.1\r\nHost: x\r\nBad\u0001Header: y\r\n\r\n`),
+        );
+        socket.on('data', () => undefined);
+        socket.on('close', () => resolve());
+      });
+    } finally {
+      await app.close();
+    }
+    const clientError = lines
+      .map((line) => JSON.parse(line) as { msg?: string; err?: { rawPacket?: unknown } })
+      .find((entry) => entry.msg === 'client error');
+    expect(clientError?.err?.rawPacket).toBe('[Redacted]');
   });
 });

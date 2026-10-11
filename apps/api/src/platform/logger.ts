@@ -2,7 +2,8 @@ import type { FastifyRequest, FastifyServerOptions } from 'fastify';
 import type { DestinationStream } from 'pino';
 import type { Config } from './config.js';
 
-// Bot tokens and webhook secrets are tenant secrets — never logged.
+// Bot tokens and webhook secrets are tenant secrets — never logged. `err.rawPacket` holds the raw
+// bytes of a request Fastify could not parse (logged at trace): its path may carry a link token.
 const REDACT = [
   'req.headers.authorization',
   'req.headers.cookie',
@@ -10,10 +11,12 @@ const REDACT = [
   'req.headers["x-telegram-bot-api-secret-token"]',
   '*.token',
   '*.botToken',
+  'err.rawPacket',
 ];
 
 // Invitation and reset links carry their token in the path (`/invite/<t>`, `/reset-password/<t>`).
-const LINK_TOKEN_PATH = /^(\/(?:invite|reset-password)\/)[^/?]+/;
+// The SPA router matches them case-insensitively, so any case, extra leading slashes or `%2F` too.
+const LINK_TOKEN_PATH = /^(\/+(?:invite|reset-password)(?:\/|%2f))[^/?]+/i;
 
 /** Masks the token segment of an invitation / reset link; any other url is returned unchanged. */
 export function maskLinkTokens(url: string): string {
