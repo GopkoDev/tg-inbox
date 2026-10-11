@@ -5,12 +5,12 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | [Promote the four staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | S | — | todo |
-| T2 | [Add platform primitives: bot error codes incl. the first 5xx, owner-guard message, config keys, Bot API root, secret-header redaction](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | todo |
-| T3 | [Build the scriptable fake Telegram Bot API and the webhook update builder for tests](./t03-fake-telegram.md) | tests | Dmytro Hopko | M | — | todo |
+| T1 | [Promote the four staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | S | — | done |
+| T2 | [Add platform primitives: bot error codes incl. the first 5xx, owner-guard message, config keys, Bot API root, secret-header redaction](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | done |
+| T3 | [Build the scriptable fake Telegram Bot API and the webhook update builder for tests](./t03-fake-telegram.md) | tests | Dmytro Hopko | M | — | done |
 | T4 | [Define the bots zod contracts in packages/shared](./t04-shared-contracts.md) | ports | Dmytro Hopko | S | T2 | todo |
-| T5 | [Implement the bots domain: token check, connection states, inbound filter, update normalisation, due rule](./t05-bots-domain.md) | domain | Dmytro Hopko | M | — | todo |
-| T6 | [Implement the conversations and contacts domain rules: message kinds, edit rule, profile refresh](./t06-conversation-contact-domain.md) | domain | Dmytro Hopko | S | — | todo |
+| T5 | [Implement the bots domain: token check, connection states, inbound filter, update normalisation, due rule](./t05-bots-domain.md) | domain | Dmytro Hopko | M | — | done |
+| T6 | [Implement the conversations and contacts domain rules: message kinds, edit rule, profile refresh](./t06-conversation-contact-domain.md) | domain | Dmytro Hopko | S | — | done |
 | T7 | [Build the contacts module: repository with isolation tests, upsert-from-profile and count use cases](./t07-contacts-module.md) | infra | Dmytro Hopko | M | T1, T6 | todo |
 | T8 | [Build the conversation and message repositories with cross-workspace isolation tests](./t08-conversations-infra.md) | infra | Dmytro Hopko | M | T1, T6 | todo |
 | T9 | [Implement the conversations app layer: capture inbound message, apply edit, last message time, has conversations](./t09-capture-use-cases.md) | app | Dmytro Hopko | M | T7, T8 | todo |
