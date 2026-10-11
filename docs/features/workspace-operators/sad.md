@@ -9,35 +9,25 @@ target_surfaces: []  # filled in §4 — subset of: backend-service | web-fronte
 
 # Software Architecture Document — workspace-operators
 
-<!-- 12 Arc42 sections. Empty section → <!-- N/A: <one-line reason> -->. -->
-<!-- C4 Context (L1) lives inline in §3. C4 Container (L2) lives inline in §5. -->
-<!-- Numbers in §10 come VERBATIM from spec.md §6 NFR — no inventing, no rounding. -->
-
 ## 1. Introduction and goals
 
-<!-- 🎯 Why: durable memory of «what + the three dominant qualities + who cares». A year from
-     now nobody recalls which three qualities were critical for this system.
-     📋 Write: 1 ¶ intent + 3 lines of top-3 quality goals + a stakeholders table.
-     ¶4 is the override slot — critic `Override` resolutions emit «Decision override: <headline>
-     — rationale: <reason>» bullets here so downstream skills see the deliberate choice. -->
-
-**Intent.** <One paragraph from spec §2 Goals — what we're building and for whom.>
+**Intent.** workspace-operators gives tg-inbox its tenancy and identity foundation. A platform admin creates a workspace for a pilot business together with a single-use invitation for its first business owner; from then on business owners run their own team in the web panel — inviting people by copyable, expiring links, deactivating and reactivating members, reviewing who has or is about to get access. People sign in with email and password, keep one account across every workspace they belong to, and switch between workspaces while seeing only one business's data at a time. Every later roadmap capability (bot connection, inbox, contacts) attaches to a workspace and relies on the access guard this feature introduces.
 
 **Top-3 quality goals (1-liners; full scenarios in §10):**
 
-1. <e.g. "Availability under partial failure of a downstream module">
-2. <e.g. "Read performance for the dashboard under data-scale growth">
-3. <e.g. "Recoverability with <30 min RTO">
+1. **Cross-workspace isolation** — zero data reads or writes across workspaces, and a deactivated member loses access to that workspace within 5 s.
+2. **Credential and session security** — brute-force lockout, no account enumeration, sessions that end at once on sign-out or password reset.
+3. **Responsiveness of everyday actions** — sign-in, team, switch and invite actions stay within the spec §6 latency targets.
 
 **Stakeholders.**
 
 | Role | Interest | Sign-off owner? |
 |---|---|---|
-| <author role from glossary> | <feature usage> | No |
-| <consumer role from glossary> | <read usage> | No |
+| Platform admin | Creates workspaces with the first business owner invitation, re-issues it, issues password-reset links | No |
+| Business owner | Runs the workspace's team: invites, deactivates, reactivates, reviews members and invitations | No |
+| Operator | Joins by invitation, signs in and out, switches between workspaces | No |
 | Tech Lead | SAD approval | Yes |
-
-<!-- Decision overrides (¶4) — populated by the critic resolution loop, empty otherwise. -->
+| Security Lead | Security review of the new authentication and tenancy boundary (spec §6.1: review required) | Yes |
 
 ## 2. Constraints
 
