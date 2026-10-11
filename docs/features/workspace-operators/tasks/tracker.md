@@ -32,7 +32,7 @@
 | T25 | [Build SCR-08 invite member dialog](./t25-invite-dialog.md) | ui | Dmytro Hopko | S | T24 | done |
 | T26 | [Add API-level end-to-end flows for every user story](./t26-api-e2e.md) | ports | Dmytro Hopko | M | T18 | done |
 | T27 | [Add the six browser end-to-end flows and their CI step](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T25, T26 | done |
-| T28 | [Make concurrent invitation acceptance refuse cleanly instead of failing with 500](./t28-accept-invitation-concurrency.md) | app | Dmytro Hopko | M | T29 | todo |
+| T28 | [Make concurrent invitation acceptance refuse cleanly instead of failing with 500](./t28-accept-invitation-concurrency.md) | app | Dmytro Hopko | M | T29 | done |
 | T29 | [Make the sign-in lockout atomic per email and use the contract's credential message](./t29-atomic-sign-in-lockout.md) | app | Dmytro Hopko | M | — | done |
 | T30 | [Shape route validation errors as the contract's field details and accept only JSON on mutating routes](./t30-validation-envelope-and-csrf.md) | infra | Dmytro Hopko | S | — | done |
 | T31 | [Align team-route ids, statuses and error messages with the contract](./t31-team-routes-contract-fidelity.md) | ports | Dmytro Hopko | S | — | done |
