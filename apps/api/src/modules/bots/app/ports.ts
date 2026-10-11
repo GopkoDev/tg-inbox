@@ -94,3 +94,33 @@ export interface WebhookSecrets {
   /** The bot's webhook secret for a capture epoch (stable across rotation and reconnect). */
   secretFor(botId: string, connectedAt: Date): string;
 }
+
+/** Per-call Bot API timeout on owner actions, so connect / rotate / disconnect stay within 3 s. */
+export const OWNER_ACTION_TIMEOUT = 1000;
+/** Per-call Bot API timeout in the scheduled health check. */
+export const HEALTH_CHECK_TIMEOUT = 10_000;
+
+/**
+ * Typed outcomes of a Bot API call: `unauthorized` — Telegram rejects the token (revoked,
+ * deleted); `transient` — network, timeout, 5xx or rate limit, nothing to conclude.
+ */
+export type GetMeResult =
+  | { ok: true; telegramBotId: bigint; name: string; username: string }
+  | 'unauthorized'
+  | 'transient';
+
+/** Where the bot delivers: our webhook URL, another service's, or none (polling is invisible). */
+export type WebhookTarget = 'ours' | 'foreign' | 'none' | 'unauthorized' | 'transient';
+
+export interface TelegramGateway {
+  getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
+  getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
+  /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
+  setWebhook(
+    token: string,
+    webhook: { url: string; secret: string; dropPending: boolean },
+    timeoutMs: number,
+  ): Promise<'ok' | 'failed'>;
+  /** Always drops pending updates. */
+  deleteWebhook(token: string, timeoutMs: number): Promise<'ok' | 'failed'>;
+}
