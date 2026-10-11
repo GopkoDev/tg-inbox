@@ -1,0 +1,34 @@
+# Tracker — workspace-operators
+
+> Status of every task in the epic. `implement` updates `done` as it commits each task.
+> States: `todo` · `in_progress` · `blocked` · `review` · `done`.
+
+| # | Task | Layer | Owner | Estimate | Blocked by | Status |
+|---|---|---|---|---|---|---|
+| T1 | [Promote the seven staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | M | — | todo |
+| T2 | [Add platform primitives: error classes and codes, clock port, link tokens, config keys](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | todo |
+| T3 | [Define the auth and workspaces zod contracts in packages/shared](./t03-shared-contracts.md) | ports | Dmytro Hopko | M | — | todo |
+| T4 | [Implement the auth and workspaces domain rules](./t04-domain-rules.md) | domain | Dmytro Hopko | M | — | todo |
+| T5 | [Build the auth repositories and the argon2id password hasher](./t05-auth-infra.md) | infra | Dmytro Hopko | M | T1, T2, T4 | todo |
+| T6 | [Build the workspaces repositories with cross-workspace isolation tests](./t06-workspaces-infra.md) | infra | Dmytro Hopko | L | T1, T2, T4 | todo |
+| T7 | [Implement the auth credential and session use cases](./t07-auth-credentials-sessions.md) | app | Dmytro Hopko | M | T5 | todo |
+| T8 | [Implement the password-reset link use cases](./t08-auth-reset-links.md) | app | Dmytro Hopko | M | T7 | todo |
+| T9 | [Implement create-workspace and re-issue-owner-invitation use cases](./t09-workspaces-admin-use-cases.md) | app | Dmytro Hopko | S | T6 | todo |
+| T10 | [Implement invitation lookup and acceptance](./t10-accept-invitation.md) | app | Dmytro Hopko | M | T6, T7 | todo |
+| T11 | [Implement workspace access: guard check, my workspaces, enter](./t11-workspace-access.md) | app | Dmytro Hopko | M | T6, T7 | todo |
+| T12 | [Implement the team use cases: invite, revoke, list, deactivate, reactivate](./t12-team-use-cases.md) | app | Dmytro Hopko | M | T6, T7 | todo |
+| T13 | [Expose the auth routes with the session cookie and resolver](./t13-auth-routes.md) | ports | Dmytro Hopko | M | T2, T3, T7, T8 | todo |
+| T14 | [Expose the workspace guard and the me / workspaces / enter routes](./t14-guard-and-access-routes.md) | ports | Dmytro Hopko | M | T11, T13 | todo |
+| T15 | [Expose the invitation lookup and acceptance routes](./t15-invitation-routes.md) | ports | Dmytro Hopko | M | T10, T14 | todo |
+| T16 | [Expose the owner-only team routes](./t16-team-routes.md) | ports | Dmytro Hopko | M | T12, T14 | todo |
+| T17 | [Extract the shared dependency builder, serve the SPA from one origin, update the conventions docs](./t17-wiring-same-origin.md) | wiring | Dmytro Hopko | M | T14, T15, T16 | todo |
+| T18 | [Build the admin CLI with its three commands](./t18-admin-cli.md) | ports | Dmytro Hopko | M | T8, T9, T17 | todo |
+| T19 | [Lay the web foundation: shadcn primitives, API client, shared guard handling, stores](./t19-web-foundation.md) | ui | Dmytro Hopko | M | T2, T3 | todo |
+| T20 | [Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found](./t20-sign-in-and-resolution.md) | ui | Dmytro Hopko | M | T19 | todo |
+| T21 | [Build SCR-02 accept invitation and SCR-03 link unavailable](./t21-accept-invitation-screens.md) | ui | Dmytro Hopko | M | T20 | todo |
+| T22 | [Build SCR-09 set new password](./t22-set-new-password-screen.md) | ui | Dmytro Hopko | S | T21 | todo |
+| T23 | [Build the AppShell, SCR-06 workspace home and SCR-04 picker / switcher](./t23-app-shell-home-picker.md) | ui | Dmytro Hopko | M | T20 | todo |
+| T24 | [Build SCR-07 team screen](./t24-team-screen.md) | ui | Dmytro Hopko | M | T23 | todo |
+| T25 | [Build SCR-08 invite member dialog](./t25-invite-dialog.md) | ui | Dmytro Hopko | S | T24 | todo |
+
+**Total:** 25 tasks, ~18 person-days (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.

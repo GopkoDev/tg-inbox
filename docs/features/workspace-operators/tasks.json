@@ -1,0 +1,542 @@
+{
+  "slug": "workspace-operators",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Promote the seven staged migrations and regenerate DB types",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-09",
+        "AC-14",
+        "AC-16",
+        "AC-21"
+      ],
+      "dod": "The seven Kysely migrations apply and revert cleanly on a fresh Postgres 16 and the regenerated db.types.gen.ts compiles.",
+      "files_hint": [
+        "docs/features/workspace-operators/migrations/",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t01-promote-migrations.md"
+    },
+    {
+      "id": "T2",
+      "title": "Add platform primitives: error classes and codes, clock port, link tokens, config keys",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-09",
+        "AC-14",
+        "AC-17"
+      ],
+      "dod": "Unit tests prove every new error class maps to its code and HTTP status in the envelope, link tokens are 43-char base64url with a 32-byte SHA-256 hash, and config parses PUBLIC_WEB_URL and WEB_DIST_DIR.",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "packages/shared/src/errors.ts",
+        "apps/api/src/platform/clock.ts",
+        "apps/api/src/platform/tokens.ts",
+        "apps/api/src/platform/config.ts",
+        ".env.example",
+        "apps/api/src/test/postgres.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t02-platform-primitives.md"
+    },
+    {
+      "id": "T3",
+      "title": "Define the auth and workspaces zod contracts in packages/shared",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-02",
+        "AC-05",
+        "AC-20"
+      ],
+      "dod": "Unit tests show the shared schemas accept the openapi.yaml examples and reject an empty name, a non-email, and a password under 10 characters, and that no response schema has a token or link field except IssuedInvitation.link.",
+      "files_hint": [
+        "packages/shared/src/auth.ts",
+        "packages/shared/src/workspaces.ts",
+        "packages/shared/src/index.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t03-shared-contracts.md"
+    },
+    {
+      "id": "T4",
+      "title": "Implement the auth and workspaces domain rules",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-09",
+        "AC-16",
+        "AC-18",
+        "AC-19"
+      ],
+      "dod": "Unit tests cover email normalisation, the 10–1024 password policy, the 10-in-15-minutes lockout window, invitation validity, and the last-active-owner rule, with no I/O.",
+      "files_hint": [
+        "apps/api/src/modules/auth/domain/",
+        "apps/api/src/modules/workspaces/domain/"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t04-domain-rules.md"
+    },
+    {
+      "id": "T5",
+      "title": "Build the auth repositories and the argon2id password hasher",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-21"
+      ],
+      "dod": "Integration tests against Testcontainers Postgres pass for every auth repository method (scoped by account or normalised email), including the conditional reset-link consume, and the hasher round-trips argon2id PHC strings.",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/ports.ts",
+        "apps/api/src/modules/auth/infra/",
+        "apps/api/src/test/fixtures.ts",
+        "apps/api/package.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t05-auth-infra.md"
+    },
+    {
+      "id": "T6",
+      "title": "Build the workspaces repositories with cross-workspace isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T2",
+        "T4"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-16",
+        "AC-18"
+      ],
+      "dod": "Every workspaces repository method has a Testcontainers test on twoWorkspaces() proving it never reads or changes the other workspace's rows, including the three controlled exceptions.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/ports.ts",
+        "apps/api/src/modules/workspaces/infra/",
+        "apps/api/src/test/fixtures.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t06-workspaces-infra.md"
+    },
+    {
+      "id": "T7",
+      "title": "Implement the auth credential and session use cases",
+      "layer": "app",
+      "deps": [
+        "T5"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-11"
+      ],
+      "dod": "Unit tests with port fakes and a controllable clock show the same error for an unknown email and a wrong password, the lockout after 10 failures, sign-out ending only that session, and 30-day idle expiry that background requests do not extend.",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/credentials.ts",
+        "apps/api/src/modules/auth/app/sessions.ts",
+        "apps/api/src/modules/auth/app/accounts.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t07-auth-credentials-sessions.md"
+    },
+    {
+      "id": "T8",
+      "title": "Implement the password-reset link use cases",
+      "layer": "app",
+      "deps": [
+        "T7"
+      ],
+      "acs": [
+        "AC-21",
+        "AC-22"
+      ],
+      "dod": "Tests show issuing a link supersedes the earlier one, and redeeming it once ends every other session, clears the failure count, and signs the device in, while expired, used or superseded links are refused.",
+      "files_hint": [
+        "apps/api/src/modules/auth/app/reset-links.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t08-auth-reset-links.md"
+    },
+    {
+      "id": "T9",
+      "title": "Implement create-workspace and re-issue-owner-invitation use cases",
+      "layer": "app",
+      "deps": [
+        "T6"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-01b",
+        "AC-02"
+      ],
+      "dod": "Unit tests show creating a workspace issues a 7-day owner invitation and returns its link once, invalid input creates nothing and names the field, and re-issuing supersedes the earlier invitation or refuses once members exist.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/admin.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t09-workspaces-admin-use-cases.md"
+    },
+    {
+      "id": "T10",
+      "title": "Implement invitation lookup and acceptance",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T7"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-04b",
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "Tests cover the new-account path, the existing-password path, the wrong-email refusal, the 10-character refusal, the no-longer-valid refusal with the right whom-to-ask hint, and the lost race against a concurrent consume.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/accept-invitation.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t10-accept-invitation.md"
+    },
+    {
+      "id": "T11",
+      "title": "Implement workspace access: guard check, my workspaces, enter",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T7"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-10",
+        "AC-12",
+        "AC-13",
+        "AC-17"
+      ],
+      "dod": "Unit tests show the guard returns { workspaceId, role } for an active member, NotFoundError when the account was never a member, and AccessRemovedError when the membership is deactivated, and that enter sets last_used_at, which getMe reports.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/access.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t11-workspace-access.md"
+    },
+    {
+      "id": "T12",
+      "title": "Implement the team use cases: invite, revoke, list, deactivate, reactivate",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T7"
+      ],
+      "acs": [
+        "AC-14",
+        "AC-16",
+        "AC-18",
+        "AC-19",
+        "AC-20"
+      ],
+      "dod": "Tests cover invite (with supersede), already-a-member, revoke, the team list without links, reactivation keeping the role, and two concurrent deactivations against Postgres where at most one leaves an active owner.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/team.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t12-team-use-cases.md"
+    },
+    {
+      "id": "T13",
+      "title": "Expose the auth routes with the session cookie and resolver",
+      "layer": "ports",
+      "deps": [
+        "T2",
+        "T3",
+        "T7",
+        "T8"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-11",
+        "AC-21",
+        "AC-22"
+      ],
+      "dod": "app.inject() integration tests show sign-in, sign-out, and reset lookup/redeem returning the openapi.yaml statuses and codes, byte-identical lockout responses for known and unknown emails, and session lifetime driven by a controllable clock.",
+      "files_hint": [
+        "apps/api/src/modules/auth/http/",
+        "apps/api/src/app.ts",
+        "apps/api/package.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t13-auth-routes.md"
+    },
+    {
+      "id": "T14",
+      "title": "Expose the workspace guard and the me / workspaces / enter routes",
+      "layer": "ports",
+      "deps": [
+        "T11",
+        "T13"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-10",
+        "AC-12",
+        "AC-13",
+        "AC-17"
+      ],
+      "dod": "app.inject() tests show getMe, listMyWorkspaces and enterWorkspace return the contract shapes, a foreign workspace answers 404 NOT_FOUND, and after a deactivation two open sessions both get 403 ACCESS_REMOVED while the member's other workspace still answers 200.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/http/guard.ts",
+        "apps/api/src/modules/workspaces/http/routes.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t14-guard-and-access-routes.md"
+    },
+    {
+      "id": "T15",
+      "title": "Expose the invitation lookup and acceptance routes",
+      "layer": "ports",
+      "deps": [
+        "T10",
+        "T14"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-04b",
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "app.inject() tests show lookUpInvitation and acceptInvitation answering 200/400/401/403/404 per openapi.yaml, with acceptance setting the session cookie.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/http/invitation-routes.ts",
+        "apps/api/src/modules/workspaces/http/routes.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t15-invitation-routes.md"
+    },
+    {
+      "id": "T16",
+      "title": "Expose the owner-only team routes",
+      "layer": "ports",
+      "deps": [
+        "T12",
+        "T14"
+      ],
+      "acs": [
+        "AC-14",
+        "AC-15",
+        "AC-16",
+        "AC-18",
+        "AC-19",
+        "AC-20"
+      ],
+      "dod": "app.inject() tests show every team route returning its contract status, 403 OWNER_ONLY for an operator, and 404 for a session from another workspace.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/http/team-routes.ts",
+        "apps/api/src/modules/workspaces/http/routes.ts"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t16-team-routes.md"
+    },
+    {
+      "id": "T17",
+      "title": "Extract the shared dependency builder, serve the SPA from one origin, update the conventions docs",
+      "layer": "wiring",
+      "deps": [
+        "T14",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-11"
+      ],
+      "dod": "buildApp() builds its modules through buildDeps(), the smoke test stays green, an inject test shows /w/<id>/team serving index.html when WEB_DIST_DIR is set, cookies are redacted in logs, and CLAUDE.md plus the architecture map describe the new conventions.",
+      "files_hint": [
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/platform/logger.ts",
+        "apps/web/vite.config.ts",
+        "apps/api/package.json",
+        "CLAUDE.md",
+        "docs/architecture-map.md"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t17-wiring-same-origin.md"
+    },
+    {
+      "id": "T18",
+      "title": "Build the admin CLI with its three commands",
+      "layer": "ports",
+      "deps": [
+        "T8",
+        "T9",
+        "T17"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-01b",
+        "AC-02",
+        "AC-21"
+      ],
+      "dod": "Integration tests run each pnpm admin command against Testcontainers Postgres and assert the contracts/cli.md stdout, stderr, exit code, and audit line, with the link never logged.",
+      "files_hint": [
+        "apps/api/src/cli/",
+        "apps/api/package.json",
+        "package.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t18-admin-cli.md"
+    },
+    {
+      "id": "T19",
+      "title": "Lay the web foundation: shadcn primitives, API client, shared guard handling, stores",
+      "layer": "ui",
+      "deps": [
+        "T2",
+        "T3"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-13",
+        "AC-17"
+      ],
+      "dod": "The ten shadcn primitives are installed with @/shared/lib/utils imports, and Testing Library tests show the guard handler reacting to 401, 403 ACCESS_REMOVED and 404 as the screens.md Shared guard states table says.",
+      "files_hint": [
+        "apps/web/src/shared/ui/",
+        "apps/web/src/shared/api/client.ts",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/features/auth/store.ts",
+        "apps/web/src/features/workspaces/store.ts",
+        "apps/web/package.json"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t19-web-foundation.md"
+    },
+    {
+      "id": "T20",
+      "title": "Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found",
+      "layer": "ui",
+      "deps": [
+        "T19"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-13"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-01, SCR-05 and SCR-10 and show the AC-07 resolution choosing the return address, then the last-used workspace, the only workspace, the picker, or no access.",
+      "files_hint": [
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/features/auth/sign-in/",
+        "apps/web/src/features/workspaces/resolve.ts",
+        "apps/web/src/pages/SignInPage.tsx",
+        "apps/web/src/pages/NoAccessPage.tsx",
+        "apps/web/src/pages/NotFoundPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t20-sign-in-and-resolution.md"
+    },
+    {
+      "id": "T21",
+      "title": "Build SCR-02 accept invitation and SCR-03 link unavailable",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-04b",
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-02 and the invitation variants of SCR-03 against mocked lookUpInvitation and acceptInvitation responses.",
+      "files_hint": [
+        "apps/web/src/features/auth/accept-invitation/",
+        "apps/web/src/features/auth/link-unavailable/",
+        "apps/web/src/pages/AcceptInvitationPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t21-accept-invitation-screens.md"
+    },
+    {
+      "id": "T22",
+      "title": "Build SCR-09 set new password",
+      "layer": "ui",
+      "deps": [
+        "T21"
+      ],
+      "acs": [
+        "AC-21",
+        "AC-22"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-09 and the reset-link variant of SCR-03 against mocked lookup and redeem responses.",
+      "files_hint": [
+        "apps/web/src/features/auth/reset-password/",
+        "apps/web/src/features/auth/link-unavailable/",
+        "apps/web/src/pages/ResetPasswordPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t22-set-new-password-screen.md"
+    },
+    {
+      "id": "T23",
+      "title": "Build the AppShell, SCR-06 workspace home and SCR-04 picker / switcher",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-15",
+        "AC-17"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-04 and SCR-06, show that operators get no Team link, and show switching calls enterWorkspace and drops the previous workspace's data.",
+      "files_hint": [
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/features/workspaces/picker/",
+        "apps/web/src/features/workspaces/home/",
+        "apps/web/src/pages/WorkspacesPage.tsx",
+        "apps/web/src/pages/WorkspaceHomePage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t23-app-shell-home-picker.md"
+    },
+    {
+      "id": "T24",
+      "title": "Build SCR-07 team screen",
+      "layer": "ui",
+      "deps": [
+        "T23"
+      ],
+      "acs": [
+        "AC-15",
+        "AC-17",
+        "AC-18",
+        "AC-19",
+        "AC-20"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-07, including the confirm dialogs, last-active-owner, stale-row and owners-only states, and show that no invitation link is ever rendered.",
+      "files_hint": [
+        "apps/web/src/features/workspaces/team/",
+        "apps/web/src/pages/TeamPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t24-team-screen.md"
+    },
+    {
+      "id": "T25",
+      "title": "Build SCR-08 invite member dialog",
+      "layer": "ui",
+      "deps": [
+        "T24"
+      ],
+      "acs": [
+        "AC-14",
+        "AC-15",
+        "AC-16"
+      ],
+      "dod": "Testing Library tests render every declared state of SCR-08, including the one-time link with Copy and its disappearance after Done once the pending list is refetched.",
+      "files_hint": [
+        "apps/web/src/features/workspaces/invite/",
+        "apps/web/src/pages/TeamPage.tsx"
+      ],
+      "file": "docs/features/workspace-operators/tasks/t25-invite-dialog.md"
+    }
+  ]
+}
