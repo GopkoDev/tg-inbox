@@ -43,7 +43,7 @@
 | T36 | [Send malformed token links to SCR-03 and align screen copy with the manifest](./t36-token-link-errors-and-copy.md) | ui | Dmytro Hopko | S | T35 | done |
 | T37 | [Exercise last-used workspace and direct Team loads in the browser flows](./t37-e2e-last-used-and-direct-team-load.md) | ui | Dmytro Hopko | S | T34, T36 | done |
 | T38 | [Keep argon2 out of the sign-in lock transaction and bound the pg pool](./t38-sign-in-lock-without-holding-a-connection.md) | app | Dmytro Hopko | M | — | done |
-| T39 | [Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract](./t39-fastify-4xx-and-415-contract.md) | infra | Dmytro Hopko | S | — | todo |
+| T39 | [Keep Fastify's own 4xx statuses, refuse untyped bodies, document 415 in the contract](./t39-fastify-4xx-and-415-contract.md) | infra | Dmytro Hopko | S | — | done |
 | T40 | [Let the loser of a same-email acceptance race continue through the existing-account path](./t40-accept-race-falls-back-to-existing-account.md) | app | Dmytro Hopko | S | T38 | todo |
 | T41 | [End the previous session on reset-link redeem, pin the response schemas with a test, fix the auth map row](./t41-redeem-ends-previous-session-and-schema-pin.md) | ports | Dmytro Hopko | S | — | done |
 | T42 | [Make Docker-backed tests remove their containers and data, even on failure](./t42-docker-tests-clean-up-after-themselves.md) | infra | Dmytro Hopko | S | T38 | todo |
