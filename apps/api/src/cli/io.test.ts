@@ -9,6 +9,8 @@ const config: Config = {
   PORT: 0,
   LOG_LEVEL: 'info',
   DATABASE_URL: 'postgres://u:p@localhost:5432/db',
+  DATABASE_POOL_MAX: 10,
+  DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
   PUBLIC_WEB_URL: 'http://localhost:5173',
 };
 

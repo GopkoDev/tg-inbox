@@ -9,6 +9,8 @@ export function e2eConfig(databaseUrl: string, port: number): Config {
     PORT: port,
     LOG_LEVEL: 'silent',
     DATABASE_URL: databaseUrl,
+    DATABASE_POOL_MAX: 10,
+    DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
     PUBLIC_WEB_URL: `http://localhost:${port}`,
     WEB_DIST_DIR: resolve(import.meta.dirname, '../../dist'),
   };

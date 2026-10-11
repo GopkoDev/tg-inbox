@@ -158,3 +158,50 @@ describe('contract message and atomic lockout', () => {
     expect(hasher.dummyCalls).toBe(10);
   });
 });
+
+describe('no lock held while hashing', () => {
+  it('AC-09: the email lock is released before the hash is verified, and a pending attempt already counts', async () => {
+    const clock = fixedClock(new Date('2026-01-01T10:00:00Z'));
+    const accounts = fakeAccountRepo();
+    const failures = fakeFailureRepo();
+    const base = fakeHasher();
+    const lock = fakeEmailLock();
+    let held = 0;
+    const heldDuringHash: number[] = [];
+    const recentDuringHash: number[] = [];
+    const hasher = {
+      ...base,
+      async verify(hash: string, password: string) {
+        heldDuringHash.push(held);
+        recentDuringHash.push((await failures.listRecent('bob@x.com', clock.now())).length);
+        return base.verify(hash, password);
+      },
+    };
+    const creds = createCredentialUseCases({
+      accounts,
+      failures,
+      hasher,
+      clock,
+      sessionUseCases: createSessionUseCases({ sessions: fakeSessionRepo(), clock }),
+      emailLock: (email, fn) =>
+        lock(email, async (tx) => {
+          held += 1;
+          try {
+            return await fn(tx);
+          } finally {
+            held -= 1;
+          }
+        }),
+    });
+    await createAccountUseCases({ accounts, hasher: base, clock }).createAccount({
+      email: 'bob@x.com',
+      displayName: 'Bob',
+      password: 'correct-horse-1',
+    });
+    await creds.signIn('bob@x.com', 'correct-horse-1');
+    expect(heldDuringHash).toEqual([0]);
+    expect(recentDuringHash).toEqual([1]);
+    // success cleared the provisional attempt
+    expect(await failures.listRecent('bob@x.com', clock.now())).toHaveLength(0);
+  });
+});

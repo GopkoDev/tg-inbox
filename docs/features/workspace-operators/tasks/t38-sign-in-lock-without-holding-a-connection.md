@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T38 — Keep argon2 out of the sign-in lock transaction and bound the pg pool
@@ -46,9 +46,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Never hold a DB connection while hashing. Keep AC-09's guarantee (at most 10 failed verifications per email per 15 min under concurrency) with short transactions only — e.g. reserve-then-verify: in one short transaction under the email advisory lock, check the lockout and insert a provisional failure row (the attempt counts immediately), commit; verify the hash outside any transaction; on success delete that provisional row and clear the failures in a second short transaction. Equivalent designs are fine as long as no connection is held during argon2 and the parallel-burst test still holds.
-- [ ] Bound the pool explicitly: add `DATABASE_POOL_MAX` and `DATABASE_POOL_CONNECTION_TIMEOUT_MS` (sane defaults, e.g. 10 and 5000) to `platform/config.ts` and document them in `.env.example`; pass them in `platform/db.ts`. Update `testConfig` / e2e config if their `Config` objects must carry the new keys.
-- [ ] Tests: the existing 20-parallel test still passes (≤10 recorded failures, rest 429, also for an unknown email); a new test proves no connection is held during the hash (e.g. a fake hasher that blocks until a separate query on a pool of size 1–2 succeeds, or assert `pool.totalCount - pool.idleCount` while a verify is pending); a successful sign-in still clears the failure count (AC-09).
+- [x] Never hold a DB connection while hashing. Keep AC-09's guarantee (at most 10 failed verifications per email per 15 min under concurrency) with short transactions only — e.g. reserve-then-verify: in one short transaction under the email advisory lock, check the lockout and insert a provisional failure row (the attempt counts immediately), commit; verify the hash outside any transaction; on success delete that provisional row and clear the failures in a second short transaction. Equivalent designs are fine as long as no connection is held during argon2 and the parallel-burst test still holds.
+- [x] Bound the pool explicitly: add `DATABASE_POOL_MAX` and `DATABASE_POOL_CONNECTION_TIMEOUT_MS` (sane defaults, e.g. 10 and 5000) to `platform/config.ts` and document them in `.env.example`; pass them in `platform/db.ts`. Update `testConfig` / e2e config if their `Config` objects must carry the new keys.
+- [x] Tests: the existing 20-parallel test still passes (≤10 recorded failures, rest 429, also for an unknown email); a new test proves no connection is held during the hash (e.g. a fake hasher that blocks until a separate query on a pool of size 1–2 succeeds, or assert `pool.totalCount - pool.idleCount` while a verify is pending); a successful sign-in still clears the failure count (AC-09).
 
 ## Edge cases
 
@@ -60,8 +60,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No DB connection is held while argon2 runs
-- [ ] Pool max + connection timeout configured and documented
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No DB connection is held while argon2 runs
+- [x] Pool max + connection timeout configured and documented
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

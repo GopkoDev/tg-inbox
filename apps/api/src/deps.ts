@@ -27,7 +27,10 @@ import { createDb } from './platform/db.js';
  */
 export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   const clock = overrides.clock ?? systemClock;
-  const db = createDb(config.DATABASE_URL);
+  const db = createDb(config.DATABASE_URL, {
+    max: config.DATABASE_POOL_MAX,
+    connectionTimeoutMillis: config.DATABASE_POOL_CONNECTION_TIMEOUT_MS,
+  });
 
   // --- auth dependencies (T17 extracts this block into a shared dependency builder) ---
   const hasher = createPasswordHasher();
