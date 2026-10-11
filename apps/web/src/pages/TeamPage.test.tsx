@@ -13,6 +13,7 @@ const listPendingInvitations = vi.fn();
 const deactivateMembership = vi.fn();
 const reactivateMembership = vi.fn();
 const revokeInvitation = vi.fn();
+const createInvitation = vi.fn();
 vi.mock('@/features/workspaces/api', () => ({
   listMyWorkspaces: (a?: string) => listMyWorkspaces(a),
   enterWorkspace: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('@/features/workspaces/api', () => ({
   deactivateMembership: (w: string, id: string) => deactivateMembership(w, id),
   reactivateMembership: (w: string, id: string) => reactivateMembership(w, id),
   revokeInvitation: (w: string, id: string) => revokeInvitation(w, id),
+  createInvitation: (w: string, b: unknown) => createInvitation(w, b),
 }));
 const resolveWorkspace = vi.fn();
 vi.mock('@/features/workspaces/resolve', () => ({
@@ -254,5 +256,46 @@ describe('TeamPage (SCR-07)', () => {
     fireEvent.click(await lastButton('Deactivate'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
     expect(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+  });
+});
+
+describe('TeamPage invite dialog (SCR-08)', () => {
+  const issued = {
+    invitation: { ...inv('i2', 'max@acme.test') },
+    link: 'https://app.test/invite/tok',
+  };
+  const openAndCreate = async () => {
+    await screen.findByText('Bob');
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    fireEvent.change(await screen.findByLabelText('Email'), {
+      target: { value: 'max@acme.test' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Create invitation/ }));
+  };
+
+  it('Done refetches the pending list, shows the new row, link is gone', async () => {
+    createInvitation.mockResolvedValue(issued);
+    renderPage();
+    await openAndCreate();
+    await screen.findByDisplayValue(issued.link);
+    listPendingInvitations.mockResolvedValue(
+      page([inv('i1', 'new@x.test'), inv('i2', 'max@acme.test')]),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Done' }));
+    expect(
+      await within(screen.getByTestId('pending-invitations')).findByText('max@acme.test'),
+    ).toBeInTheDocument();
+    expect(screen.queryByDisplayValue(issued.link)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Invite' }));
+    expect(await screen.findByLabelText('Email')).toHaveValue('');
+    expect(screen.queryByDisplayValue(issued.link)).not.toBeInTheDocument();
+  });
+
+  it('403 OWNER_ONLY: dialog closes and the owners-only state shows (AC-15)', async () => {
+    createInvitation.mockRejectedValue(err(403, 'OWNER_ONLY'));
+    renderPage();
+    await openAndCreate();
+    expect(await screen.findByText('Only business owners manage the team')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Email')).not.toBeInTheDocument();
   });
 });

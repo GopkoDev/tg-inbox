@@ -1,4 +1,5 @@
 import {
+  IssuedInvitation,
   Membership,
   MembershipPage,
   PendingInvitationPage,
@@ -49,3 +50,12 @@ export const revokeInvitation = (workspaceId: string, invitationId: string) =>
     undefined,
     { method: 'POST' },
   );
+
+export const createInvitation = (
+  workspaceId: string,
+  body: { email: string; role: 'owner' | 'operator' },
+) =>
+  apiRequest(`${ws(workspaceId)}/invitations`, IssuedInvitation, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });

@@ -20,6 +20,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
+import { InviteDialog } from '../invite/InviteDialog';
 import { useWorkspaceStore } from '../store';
 import { useTeam } from './useTeam';
 
@@ -76,6 +77,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
   const workspaceName = useWorkspaceStore((s) => s.current?.name) ?? 'this workspace';
   const myEmail = useAuthStore((s) => s.account?.email);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [inviteOpen, setInviteOpen] = useState(false);
   const { busy } = team;
 
   if (team.status === 'not-found') return <NotFoundPage />;
@@ -114,7 +116,14 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
       <section className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-lg font-semibold">Members</h2>
-          <Button onClick={onInvite}>Invite</Button>
+          <Button
+            onClick={() => {
+              onInvite?.();
+              setInviteOpen(true);
+            }}
+          >
+            Invite
+          </Button>
         </div>
         {loading ? (
           <SkeletonRows />
@@ -220,6 +229,19 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
           </>
         )}
       </section>
+
+      <InviteDialog
+        workspaceId={workspaceId}
+        open={inviteOpen}
+        onClose={(created) => {
+          setInviteOpen(false);
+          if (created) void team.refreshInvitations();
+        }}
+        onFail={(reason) => {
+          setInviteOpen(false);
+          team.setRefused(reason);
+        }}
+      />
 
       <AlertDialog open={confirm !== null} onOpenChange={(open) => !open && setConfirm(null)}>
         <AlertDialogContent>

@@ -77,6 +77,19 @@ export function useTeam(workspaceId: string) {
     setAttempt((n) => n + 1);
   };
 
+  /** Reloads the pending list in place (no skeleton), e.g. after an invitation was created. */
+  const refreshInvitations = async () => {
+    try {
+      const page = await listPendingInvitations(workspaceId, undefined);
+      setInvitations({ items: page.items, next: page.has_next ? page.next_cursor : null });
+    } catch (error) {
+      await fail(error, () => setNotice('error'));
+    }
+  };
+
+  /** The invite dialog was refused: show the matching screen state. */
+  const setRefused = (reason: 'owner-only' | 'not-found') => setStatus(reason);
+
   const showMoreMembers = async () => {
     if (!members.next) return;
     try {
@@ -143,6 +156,8 @@ export function useTeam(workspaceId: string) {
     notice,
     busy,
     retry,
+    refreshInvitations,
+    setRefused,
     showMoreMembers,
     showMoreInvitations,
     deactivate,
