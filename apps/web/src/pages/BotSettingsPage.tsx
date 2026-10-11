@@ -38,6 +38,16 @@ export function BotSettingsPage() {
   const [paste, setPaste] = useState<PasteState | null>(null);
   const [takeover, setTakeover] = useState<Scoped<TakeoverRequest> | null>(null);
   const [disconnect, setDisconnect] = useState<Scoped<BotIdentity> | null>(null);
+  // The page is not remounted when the URL's workspace changes: every switch drops the dialogs
+  // (and so a pasted token waiting in SCR-04's closure), also one a late response reopened for
+  // the workspace left — returning to it never brings them back.
+  const [scope, setScope] = useState(workspaceId);
+  if (scope !== workspaceId) {
+    setScope(workspaceId);
+    setPaste(null);
+    setTakeover(null);
+    setDisconnect(null);
+  }
 
   const openPaste = (notice?: string) => {
     const state = useBotStore.getState().settings?.state;

@@ -352,12 +352,20 @@ describe('BotSettingsPage (SCR-02)', () => {
 
     it('a URL change to another workspace drops an open takeover (and its token) for good', async () => {
       await pasteUntilTakeover();
-      enterWorkspace.mockReturnValue(new Promise(() => undefined));
+      enterWorkspace.mockImplementation((id: string) =>
+        Promise.resolve({ id, name: id === 'w1' ? 'Acme Flowers' : 'Bolt', role: 'owner' }),
+      );
       await act(() => nav.current('/w/w2/bot'));
+      await waitFor(() => expect(useWorkspaceStore.getState().current?.id).toBe('w2'));
+      expect(await screen.findByText('No bot is connected')).toBeInTheDocument();
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
       await act(() => nav.current('/w/w1/bot'));
+      await waitFor(() => expect(useWorkspaceStore.getState().current?.id).toBe('w1'));
+      // The page body is rendered again for w1 — and the old SCR-04 does not come back.
+      expect(await screen.findByText('No bot is connected')).toBeInTheDocument();
       expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expectNoToken(document.body);
     });
 
     it('takeover cancelled: no request, still not connected, the token is dropped', async () => {
