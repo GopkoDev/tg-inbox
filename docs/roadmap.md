@@ -20,7 +20,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | # | Step | Source | Size | Status |
 |---|---|---|:---:|---|
 | 1 | Project skeleton — the empty repo becomes a buildable, testable project | idea-brief.md §1 Raw idea | S | idea |
-| 2 | Workspace & operator accounts — a business is created by hand and its operators sign in to the web panel | idea-brief.md §3 Users | S | idea |
+| 2 | Workspace & operator accounts — a business is created by hand and its operators sign in to the web panel | idea-brief.md §3 Users | M | spec'd → [`features/workspace-operators`](features/workspace-operators/spec.md) |
 | 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | idea |
 | 4 | Shared web inbox — operators see conversations and reply; the customer receives the reply in the bot | idea-brief.md §2 Problem | M | idea |
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | S | idea |
