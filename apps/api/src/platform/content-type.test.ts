@@ -31,6 +31,15 @@ describe('requireJsonBodies', () => {
     expect(res.json().error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
   });
 
+  it('the hook alone (no error handler) answers 415 UNSUPPORTED_MEDIA_TYPE for a body with no content-type', async () => {
+    const app = Fastify();
+    requireJsonBodies(app);
+    app.post('/api/act', () => ({ ok: true }));
+    const res = await app.inject({ method: 'POST', url: '/api/act', payload: 'x' });
+    expect(res.statusCode).toBe(415);
+    expect(res.json().error.code).toBe('UNSUPPORTED_MEDIA_TYPE');
+  });
+
   it('keeps Fastify 4xx statuses without error-level logs', async () => {
     const lines: string[] = [];
     const app = Fastify({

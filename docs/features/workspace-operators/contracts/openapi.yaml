@@ -66,6 +66,7 @@ paths:
               email: "operator@example.test"
               password: "correct-horse-battery"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed in; the session cookie is set
@@ -100,6 +101,7 @@ paths:
         - SessionCookie: []
         - {}
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Signed out; the session cookie is cleared
@@ -123,6 +125,7 @@ paths:
             example:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: The link is valid; show the new-password form (SCR-09)
@@ -151,6 +154,7 @@ paths:
               token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
               password: "a-new-long-password"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Password changed; this device is signed in, every other session ended
@@ -250,6 +254,7 @@ paths:
             example:
               token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The invitation is valid
@@ -301,6 +306,7 @@ paths:
                   token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
                   password: "the-existing-password"
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Joined; this device is signed in
@@ -347,6 +353,7 @@ paths:
         opens this workspace (AC-12). Other devices stay where they are: the workspace lives in the URL.
       operationId: enterWorkspace
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: Entered
@@ -424,6 +431,7 @@ paths:
         unchanged member.
       operationId: deactivateMembership
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now deactivated
@@ -466,6 +474,7 @@ paths:
         with the unchanged member.
       operationId: reactivateMembership
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "200":
           description: The member, now active
@@ -544,6 +553,7 @@ paths:
               email: "new.hire@example.test"
               role: operator
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "201":
           description: Invitation issued; show the link once to copy
@@ -597,6 +607,7 @@ paths:
         An invitation that is no longer pending, or belongs to another workspace, is not found.
       operationId: revokeInvitation
       responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
         "415": { $ref: "#/components/responses/UnsupportedMediaType" }
         "204":
           description: Revoked
@@ -766,6 +777,16 @@ components:
           example:
             error: { code: UNSUPPORTED_MEDIA_TYPE, message: "Only application/json request bodies are accepted" }
 
+    PayloadTooLarge:
+      description: |
+        Cross-cutting on every operation that takes a body (POST): the body is larger than the server's
+        body limit. Refused before the handler runs.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: PAYLOAD_TOO_LARGE, message: "Request body is too large" }
+
   schemas:
     # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
     ErrorCode:
@@ -776,10 +797,11 @@ components:
         FORBIDDEN 403 · ACCESS_REMOVED 403 · OWNER_ONLY 403 · INVITATION_FOR_ANOTHER_EMAIL 403 ·
         NOT_FOUND 404 · INVITATION_INVALID 404 · RESET_LINK_INVALID 404 · CONFLICT 409 ·
         ALREADY_A_MEMBER 409 · LAST_ACTIVE_OWNER 409 · OWNER_ALREADY_JOINED 409 (admin CLI only) ·
-        TOO_MANY_ATTEMPTS 429 · UNSUPPORTED_MEDIA_TYPE 415 · INTERNAL_ERROR 500.
+        PAYLOAD_TOO_LARGE 413 · TOO_MANY_ATTEMPTS 429 · UNSUPPORTED_MEDIA_TYPE 415 · INTERNAL_ERROR 500.
       enum:
         - VALIDATION_ERROR
         - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
         - NOT_FOUND
         - FORBIDDEN
         - CONFLICT

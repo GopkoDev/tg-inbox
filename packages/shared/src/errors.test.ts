@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { ErrorCode, ErrorEnvelope } from './errors.js';
 
 describe('ErrorCode', () => {
-  it('declares the 17 codes', () => {
-    expect(Object.keys(ErrorCode)).toHaveLength(17);
+  it('declares the 18 codes', () => {
+    expect(Object.keys(ErrorCode)).toHaveLength(18);
     for (const c of [
       'UNSUPPORTED_MEDIA_TYPE',
+      'PAYLOAD_TOO_LARGE',
       'UNAUTHENTICATED',
       'INVALID_CREDENTIALS',
       'ACCESS_REMOVED',

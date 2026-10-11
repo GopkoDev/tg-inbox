@@ -54,6 +54,31 @@ describe('error handler', () => {
     expect(res.json().error.code).toBe(code);
   });
 
+  it('maps a body over bodyLimit to 413 PAYLOAD_TOO_LARGE', async () => {
+    const app = Fastify({ bodyLimit: 10 });
+    registerErrorHandler(app);
+    app.post('/p', () => ({ ok: true }));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/p',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ big: 'x'.repeat(100) }),
+    });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  it('answers any other framework 4xx with 400 VALIDATION_ERROR', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/t', () => {
+      throw Object.assign(new Error('teapot'), { statusCode: 418 });
+    });
+    const res = await app.inject('/t');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('VALIDATION_ERROR');
+  });
+
   it('puts ask into details for InvitationInvalidError', async () => {
     const app = Fastify();
     registerErrorHandler(app);

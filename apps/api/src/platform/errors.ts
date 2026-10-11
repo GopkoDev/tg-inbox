@@ -130,16 +130,24 @@ export function registerErrorHandler(
     const status = error.statusCode;
     if (status !== undefined && status >= 400 && status < 500) {
       request.log.info({ err: error }, 'client error');
+      if (status === 415) {
+        return reply
+          .status(415)
+          .send(
+            envelope(
+              ErrorCode.UNSUPPORTED_MEDIA_TYPE,
+              'Only application/json request bodies are accepted',
+            ),
+          );
+      }
+      if (status === 413) {
+        return reply
+          .status(413)
+          .send(envelope(ErrorCode.PAYLOAD_TOO_LARGE, 'Request body is too large'));
+      }
       return reply
-        .status(status)
-        .send(
-          status === 415
-            ? envelope(
-                ErrorCode.UNSUPPORTED_MEDIA_TYPE,
-                'Only application/json request bodies are accepted',
-              )
-            : envelope(ErrorCode.VALIDATION_ERROR, error.message || 'Invalid request'),
-        );
+        .status(400)
+        .send(envelope(ErrorCode.VALIDATION_ERROR, error.message || 'Invalid request'));
     }
     request.log.error({ err: error }, 'unhandled error');
     return reply.status(500).send(envelope(ErrorCode.INTERNAL_ERROR, 'Internal server error'));
