@@ -1,8 +1,10 @@
 import type { FastifyInstance, InjectOptions } from 'fastify';
+import { expect } from 'vitest';
 import { sql } from 'kysely';
 import type { Deps } from '../deps.js';
 import { runAdmin } from '../cli/run.js';
 import { SESSION_COOKIE } from '../platform/session-cookie.js';
+import type { FakeTelegram } from '../test/fake-telegram.js';
 
 export const PASSWORD = 'correct horse battery';
 
@@ -73,7 +75,37 @@ export async function runCli(deps: Deps, ...argv: string[]): Promise<CliRun> {
 
 /** Wipes every table between flows (test-owned reset; never used to read links or tokens). */
 export async function truncateAll(db: Deps['db']): Promise<void> {
-  await sql`TRUNCATE invitations, memberships, sessions, password_reset_links, sign_in_failures, workspaces, accounts RESTART IDENTITY CASCADE`.execute(
+  await sql`TRUNCATE messages, conversations, contacts, bots, invitations, memberships, sessions, password_reset_links, sign_in_failures, workspaces, accounts RESTART IDENTITY CASCADE`.execute(
     db,
   );
+}
+
+/** A bot's webhook as Telegram knows it: read from the fake's last recorded `setWebhook` call. */
+export interface RegisteredWebhook {
+  /** The bot row id at the end of the webhook URL. */
+  id: string;
+  url: string;
+  secret: string;
+}
+
+export function registeredWebhook(fake: FakeTelegram, token: string): RegisteredWebhook {
+  const set = fake
+    .calls(token)
+    .filter((c) => c.method === 'setWebhook')
+    .at(-1);
+  expect(set, 'setWebhook was called for this token').toBeDefined();
+  const url = String(set!.params.url);
+  return { id: url.slice(url.lastIndexOf('/') + 1), url, secret: String(set!.params.secret_token) };
+}
+
+/**
+ * One cron tick of the health check, inline (no pg-boss, no sleeping): the bots due now under the
+ * deps' clock are each checked once — what `bots.schedule-health-checks` + `bots.check-health` do.
+ */
+export async function runHealthTick(deps: Deps): Promise<number> {
+  const due = await deps.bots.healthCheck.scheduleChecks();
+  for (const { workspaceId, botId } of due) {
+    await deps.bots.healthCheck.checkOne(workspaceId, botId);
+  }
+  return due.length;
 }
