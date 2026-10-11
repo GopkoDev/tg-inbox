@@ -125,5 +125,9 @@ export function testConfig(databaseUrl: string): Config {
     DATABASE_POOL_MAX: 10,
     DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
     PUBLIC_WEB_URL: 'http://localhost:5173',
+    TELEGRAM_WEBHOOK_BASE_URL: 'https://tg-inbox.example.test',
+    TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
+    // Visibly fake test key (never a real secret).
+    BOT_TOKEN_ENCRYPTION_KEY: { id: 'test0001', key: Buffer.alloc(32, 0x5a) },
   };
 }

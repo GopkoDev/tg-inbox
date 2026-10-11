@@ -13,5 +13,9 @@ export function e2eConfig(databaseUrl: string, port: number): Config {
     DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
     PUBLIC_WEB_URL: `http://localhost:${port}`,
     WEB_DIST_DIR: resolve(import.meta.dirname, '../../dist'),
+    TELEGRAM_WEBHOOK_BASE_URL: `http://localhost:${port}`,
+    TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
+    // Visibly fake test key (never a real secret).
+    BOT_TOKEN_ENCRYPTION_KEY: { id: 'test0001', key: Buffer.alloc(32, 0x5a) },
   };
 }
