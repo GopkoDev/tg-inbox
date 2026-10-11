@@ -9,7 +9,7 @@ export type BotStatus = 'loading' | 'ready' | 'error' | 'owners_only' | 'not_fou
 
 /** A one-line result shown above the settings (an action's success or the server's message). */
 export interface BotNotice {
-  tone: 'success' | 'error';
+  tone: 'success' | 'info' | 'error';
   text: string;
 }
 
