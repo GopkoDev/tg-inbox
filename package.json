@@ -13,6 +13,7 @@
     "lint": "eslint . && prettier --check . && pnpm typecheck",
     "typecheck": "pnpm --filter @tg/shared build && pnpm -r typecheck",
     "format": "prettier --write .",
+    "admin": "pnpm --filter @tg/api admin",
     "db:new": "pnpm --filter @tg/api db:new",
     "db:migrate": "pnpm --filter @tg/api db:migrate",
     "db:rollback": "pnpm --filter @tg/api db:rollback",
