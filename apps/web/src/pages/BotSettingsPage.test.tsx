@@ -22,10 +22,12 @@ vi.mock('@/features/workspaces/resolve', () => ({
 }));
 const getBotSettings = vi.fn();
 const reconnectBot = vi.fn();
+const pasteBotToken = vi.fn();
 vi.mock('@/features/bot/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/bot/api')>()),
   getBotSettings: (w: string, o?: unknown) => getBotSettings(w, o),
   reconnectBot: (w: string, b: unknown) => reconnectBot(w, b),
+  pasteBotToken: (w: string, b: unknown) => pasteBotToken(w, b),
 }));
 
 import { BotSettingsPage } from './BotSettingsPage';
@@ -46,9 +48,9 @@ const notConnected: BotSettings = { state: 'not_connected' };
 const err = (status: number, code: string, message = code, details?: unknown) =>
   new ApiError(status, code as never, message, details);
 
-const onPasteToken = vi.fn();
 const onDisconnect = vi.fn();
 const onTakeoverWarning = vi.fn();
+const onPasteTakeover = vi.fn();
 
 function renderPage() {
   return render(
@@ -58,9 +60,9 @@ function renderPage() {
           path="/w/:workspaceId/bot"
           element={
             <BotSettingsPage
-              onPasteToken={onPasteToken}
               onDisconnect={onDisconnect}
               onTakeoverWarning={onTakeoverWarning}
+              onPasteTakeover={onPasteTakeover}
             />
           }
         />
@@ -107,7 +109,7 @@ describe('BotSettingsPage (SCR-02)', () => {
       ),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Connect bot' }));
-    expect(onPasteToken).toHaveBeenCalledWith(undefined);
+    expect(screen.getByRole('dialog', { name: 'Connect bot' })).toBeInTheDocument();
     expectNoToken(container);
   });
 
@@ -128,7 +130,8 @@ describe('BotSettingsPage (SCR-02)', () => {
     expect(within(facts).getByText('Checked with Telegram')).toBeInTheDocument();
     expect(within(facts).getByText(formatBotTime(CHECKED))).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'New token' }));
-    expect(onPasteToken).toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'New token' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }));
     expect(onDisconnect).toHaveBeenCalled();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
@@ -154,7 +157,8 @@ describe('BotSettingsPage (SCR-02)', () => {
     );
     expect(screen.getByText('12')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Paste new token' }));
-    expect(onPasteToken).toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'New token' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeEnabled();
     expect(screen.queryByRole('button', { name: 'Reconnect' })).not.toBeInTheDocument();
     expectNoToken(container);
@@ -168,7 +172,8 @@ describe('BotSettingsPage (SCR-02)', () => {
       "Another service took over this bot's messages. Reconnect to receive them here again; messages the other service received are not recovered.",
     );
     fireEvent.click(screen.getByRole('button', { name: 'Paste token again' }));
-    expect(onPasteToken).toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'New token' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.getByRole('button', { name: 'Reconnect' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Disconnect' })).toBeEnabled();
   });
@@ -211,7 +216,8 @@ describe('BotSettingsPage (SCR-02)', () => {
       renderPage();
       fireEvent.click(await screen.findByRole('button', { name: 'Reconnect' }));
       expect(await screen.findByText('Not working — needs a new token')).toBeInTheDocument();
-      expect(onPasteToken).toHaveBeenCalledWith(message);
+      const dialog = screen.getByRole('dialog', { name: 'New token' });
+      expect(within(dialog).getByRole('alert')).toHaveTextContent(message);
     });
 
     it('stale: NOTHING_TO_RECONNECT → store ← details.settings and a notice with the server message', async () => {
@@ -269,5 +275,35 @@ describe('BotSettingsPage (SCR-02)', () => {
     getBotSettings.mockResolvedValue(notConnected);
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('No bot is connected')).toBeInTheDocument();
+  });
+
+  describe('paste token (SCR-03 over SCR-02)', () => {
+    const TOKEN = '100000001:TEST-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    it('connect: success closes the dialog and SCR-02 shows the connected bot (AC-01)', async () => {
+      getBotSettings.mockResolvedValue(notConnected);
+      pasteBotToken.mockResolvedValue(settingsOf({ last_message_received_at: null }));
+      const { container } = renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect bot' }));
+      fireEvent.change(screen.getByLabelText('Bot token'), { target: { value: TOKEN } });
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      expect(await screen.findByText('Connected')).toBeInTheDocument();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expectNoToken(container);
+      expect(JSON.stringify(useBotStore.getState())).not.toContain(TOKEN);
+    });
+
+    it('takeover warning: hands { token, bot } to SCR-04', async () => {
+      getBotSettings.mockResolvedValue(notConnected);
+      pasteBotToken.mockRejectedValue(
+        err(409, 'TAKEOVER_CONFIRMATION_REQUIRED', 'Connecting will stop…', { bot }),
+      );
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect bot' }));
+      fireEvent.change(screen.getByLabelText('Bot token'), { target: { value: TOKEN } });
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      await waitFor(() => expect(onPasteTakeover).toHaveBeenCalledWith({ token: TOKEN, bot }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    });
   });
 });

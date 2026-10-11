@@ -27,6 +27,8 @@ interface BotStoreState {
   load: (workspaceId: string, guard?: GuardFn, options?: { background?: boolean }) => Promise<void>;
   replace: (settings: BotSettings, notice?: BotNotice | null) => void;
   setNotice: (notice: BotNotice | null) => void;
+  /** An action was refused for the whole page (an operator, or no membership). */
+  markRefused: (status: 'owners_only' | 'not_found') => void;
   clear: () => void;
 }
 
@@ -67,6 +69,7 @@ export const useBotStore = create<BotStoreState>()((set, get) => ({
   },
   replace: (settings, notice = null) => set({ settings, status: 'ready', notice }),
   setNotice: (notice) => set({ notice }),
+  markRefused: (status) => set({ settings: null, status, notice: null }),
   clear: () => set({ ...EMPTY }),
 }));
 
