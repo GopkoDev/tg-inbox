@@ -5,10 +5,10 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | [Promote the seven staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | M | — | todo |
-| T2 | [Add platform primitives: error classes and codes, clock port, link tokens, config keys](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | todo |
-| T3 | [Define the auth and workspaces zod contracts in packages/shared](./t03-shared-contracts.md) | ports | Dmytro Hopko | M | — | todo |
-| T4 | [Implement the auth and workspaces domain rules](./t04-domain-rules.md) | domain | Dmytro Hopko | M | — | todo |
+| T1 | [Promote the seven staged migrations and regenerate DB types](./t01-promote-migrations.md) | migration | Dmytro Hopko | M | — | done |
+| T2 | [Add platform primitives: error classes and codes, clock port, link tokens, config keys](./t02-platform-primitives.md) | infra | Dmytro Hopko | M | — | done |
+| T3 | [Define the auth and workspaces zod contracts in packages/shared](./t03-shared-contracts.md) | ports | Dmytro Hopko | M | — | done |
+| T4 | [Implement the auth and workspaces domain rules](./t04-domain-rules.md) | domain | Dmytro Hopko | M | — | done |
 | T5 | [Build the auth repositories and the argon2id password hasher](./t05-auth-infra.md) | infra | Dmytro Hopko | M | T1, T2, T4 | todo |
 | T6 | [Build the workspaces repositories with cross-workspace isolation tests](./t06-workspaces-infra.md) | infra | Dmytro Hopko | L | T1, T2, T4 | todo |
 | T7 | [Implement the auth credential and session use cases](./t07-auth-credentials-sessions.md) | app | Dmytro Hopko | M | T5 | todo |
