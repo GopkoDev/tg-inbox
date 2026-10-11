@@ -389,22 +389,23 @@ Each §1 quality goal expanded into testable scenarios; targets are quoted from 
 
 ## 11. Risks and technical debt
 
-<!-- 🎯 Why: ⭐ collects EVERYTHING that can break — not only the technical. Without §11 risks get
-     discussed at standups and lost; debt lives only in the head of whoever accepted it.
-     📋 Write: a risk/debt table — severity — mitigation — owner. Accepted debt in its own block.
-     📌 The first risk is often a product risk, not a technical one. That's normal. -->
-
-<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows created by
-     a Save-as-OQ resolution during the Socratic walk (see references/socratic.md). -->
-
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
-| <e.g. Worker lag may reach hours during a downstream outage> | Medium | <alert >10 min, on-call playbook, retry backoff> | <DevOps> |
-| <e.g. No event-schema versioning in v1> | Medium | <ADR-NNNN planned for v2, tolerate unknown fields> | <Backend> |
-| Open architectural decision: <decision-headline> | Open question | Resolve before <stage trigger or YYYY-MM-DD>; <inline rationale from the Save-as-OQ> | <owner> |
+| Tenancy is enforced by convention: a later module that skips the workspace guard or a `workspace_id` filter leaks another business's data | High | Every workspace-scoped route sits under `/api/workspaces/:workspaceId/…` behind the guard of ADR-0003; isolation tests per repository and per route in CI (QG-1a); review checks both for every new module | Tech Lead |
+| Nobody proves they own the invited email — whoever holds an invitation link becomes that email's account (accepted risk, spec §6.1) | Medium | Links passed over a trusted channel, shown once, single use, 7-day expiry, revocable; the business owner sees who joined; revisit together with automatic emails | Dmytro Hopko |
+| Targeted lockout: anyone who knows an email — or holds an invitation link for it — can keep that email locked out by repeating wrong passwords | Medium | The lock lasts only 15 minutes; a platform admin's reset link clears it; alert on lockout spikes (§7); add a per-IP limit if abuse is seen | Tech Lead |
+| No per-IP rate limit — credential stuffing spread across many emails is only slowed per email | Low | Lockout-spike alert; add a per-IP limit in the API or at a reverse proxy once a deployment target exists | Tech Lead |
+| The inbox's live channel (roadmap step 4) could keep pushing a deactivated member's workspace data past the 5 s budget | Medium | Constraint for step 4's spec and design: every pushed message passes the same membership check, or open connections re-check at least every 5 s | Tech Lead |
+| The admin CLI needs a shell on the server or a tunnel to the database, but no deployment target is chosen | Medium | Choose a target that allows one of the two before onboarding pilot #1; until then the CLI runs against the database from a trusted machine | Dmytro Hopko |
+| The built-in `node:crypto` argon2 may still be experimental on Node 26 | Low | Use `@node-rs/argon2` with the same PHC string format; switching later needs no data migration | Tech Lead |
+| `CLAUDE.md` and `docs/architecture-map.md` still say only `buildApp()` builds dependencies and leave the route prefix, static serving and dev CORS open | Low | Update both as part of this feature's tasks (shared dependency builder, `/api` prefix, same origin, `auth` + `workspaces` modules, new error classes) | Tech Lead |
+| No delivery date — TBD by PM | Low | Set a target before roadmap step 3 is scheduled | Dmytro Hopko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
-- <e.g. the entity is immutable / unversioned — OK for v1, may need audit versioning in v2>
+- Expired sessions, sign-in failures and used or expired links are not purged — rows are ignored once expired; add a scheduled pg-boss purge job when any table passes ~100k rows (§7).
+- No account deletion or data export (spec §3 non-goals cover self-service profile changes).
+- Admin audit lines live only in the process logs; their retention depends on the deployment target chosen later.
+- A whole workspace cannot be suspended; ending a pilot means deactivating its members (spec §8 default).
 
 ## 12. Glossary
 
