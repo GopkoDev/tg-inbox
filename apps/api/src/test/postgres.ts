@@ -10,22 +10,43 @@ const MIGRATION_FOLDER = resolve(import.meta.dirname, '../../migrations');
 
 export interface TestDatabase {
   url: string;
+  containerId: string;
+  /** Stops and removes the container and its volumes; calling it again is a no-op. */
   stop(): Promise<void>;
 }
 
+export interface StartTestDatabaseOptions {
+  migrationFolder?: string;
+  /** Extra container labels (lets a test find its own container). */
+  labels?: Record<string, string>;
+}
+
 /** Ephemeral Postgres 16 with every migration applied — one per integration suite. */
-export async function startTestDatabase(): Promise<TestDatabase> {
-  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer(
-    'postgres:16-alpine',
-  ).start();
+export async function startTestDatabase(
+  options: StartTestDatabaseOptions = {},
+): Promise<TestDatabase> {
+  // The data dir lives on tmpfs so the image's VOLUME never creates an anonymous volume.
+  const container: StartedPostgreSqlContainer = await new PostgreSqlContainer('postgres:16-alpine')
+    .withTmpFs({ '/var/lib/postgresql/data': 'rw' })
+    .withLabels(options.labels ?? {})
+    .start();
+  const remove = () => container.stop({ remove: true, removeVolumes: true });
   const url = container.getConnectionUri();
-  await migrateToLatest(url);
+  try {
+    await migrateToLatest(url, options.migrationFolder ?? MIGRATION_FOLDER);
+  } catch (err) {
+    await remove().catch(() => undefined);
+    throw err;
+  }
+  let stopped: Promise<void> | undefined;
   return {
     url,
-    stop: async () => {
-      await waitForClientsToDisconnect(url);
-      await container.stop();
-    },
+    containerId: container.getId(),
+    stop: () =>
+      (stopped ??= (async () => {
+        await waitForClientsToDisconnect(url);
+        await remove();
+      })()),
   };
 }
 
@@ -51,14 +72,14 @@ async function waitForClientsToDisconnect(connectionString: string): Promise<voi
   }
 }
 
-async function migrateToLatest(connectionString: string): Promise<void> {
+async function migrateToLatest(connectionString: string, migrationFolder: string): Promise<void> {
   const db = new Kysely<unknown>({
     dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString }) }),
   });
   try {
     const migrator = new Migrator({
       db,
-      provider: new TSFileMigrationProvider({ migrationFolder: MIGRATION_FOLDER }),
+      provider: new TSFileMigrationProvider({ migrationFolder }),
     });
     const { error } = await migrator.migrateToLatest();
     if (error) throw error;

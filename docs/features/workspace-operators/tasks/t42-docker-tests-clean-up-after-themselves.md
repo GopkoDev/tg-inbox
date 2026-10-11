@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T42 — Make Docker-backed tests remove their containers and data, even on failure
@@ -30,12 +30,12 @@ status: "todo"
 
 ## Checklist
 
-- [ ] `startTestDatabase()`: run the container with its data dir on tmpfs (`.withTmpFs({ '/var/lib/postgresql/data': 'rw' })`) so no volume is created; if migration (or anything after `start()`) throws, stop the container before rethrowing.
-- [ ] `stop()`: `container.stop({ remove: true, removeVolumes: true })` explicitly; make `stop()` idempotent (a second call is a no-op).
-- [ ] e2e `globalSetup`: wrap everything after `startTestDatabase()` so a failure closes the app (if started) and stops the database before rethrowing; teardown unchanged otherwise.
-- [ ] Keep Ryuk enabled (do not set `TESTCONTAINERS_RYUK_DISABLED`) as the safety net for killed processes.
-- [ ] Add `scripts/clean-test-containers.sh` + root script `test:docker:clean`: `docker ps -aq --filter label=org.testcontainers=true` → `docker rm -f -v`, then remove dangling anonymous volumes left by those containers. It must never touch containers/volumes without the `org.testcontainers` label (compose `tg-postgres-1`, `tg_pgdata`, anything else). Document it in CLAUDE.md §Tests and the commands table.
-- [ ] Integration test `postgres.int.test.ts`: start → stop leaves no container with that id (`docker inspect` fails / container runtime client lookup) and no volume mounted by it; a forced migration failure (e.g. a bad migration folder via an injectable option) still removes the container.
+- [x] `startTestDatabase()`: run the container with its data dir on tmpfs (`.withTmpFs({ '/var/lib/postgresql/data': 'rw' })`) so no volume is created; if migration (or anything after `start()`) throws, stop the container before rethrowing.
+- [x] `stop()`: `container.stop({ remove: true, removeVolumes: true })` explicitly; make `stop()` idempotent (a second call is a no-op).
+- [x] e2e `globalSetup`: wrap everything after `startTestDatabase()` so a failure closes the app (if started) and stops the database before rethrowing; teardown unchanged otherwise.
+- [x] Keep Ryuk enabled (do not set `TESTCONTAINERS_RYUK_DISABLED`) as the safety net for killed processes.
+- [x] Add `scripts/clean-test-containers.sh` + root script `test:docker:clean`: `docker ps -aq --filter label=org.testcontainers=true` → `docker rm -f -v`, then remove dangling anonymous volumes left by those containers. It must never touch containers/volumes without the `org.testcontainers` label (compose `tg-postgres-1`, `tg_pgdata`, anything else). Document it in CLAUDE.md §Tests and the commands table.
+- [x] Integration test `postgres.int.test.ts`: start → stop leaves no container with that id (`docker inspect` fails / container runtime client lookup) and no volume mounted by it; a forced migration failure (e.g. a bad migration folder via an injectable option) still removes the container.
 
 ## Edge cases
 
@@ -48,8 +48,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] A full `pnpm test` run leaves zero `org.testcontainers` containers and no new anonymous volumes (check `docker ps -a` / `docker volume ls` before and after)
-- [ ] Cleanup script removes only labelled test containers
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] A full `pnpm test` run leaves zero `org.testcontainers` containers and no new anonymous volumes (check `docker ps -a` / `docker volume ls` before and after)
+- [x] Cleanup script removes only labelled test containers
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

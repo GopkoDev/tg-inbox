@@ -36,6 +36,7 @@ the short version. When they disagree, the map wins — fix this file.
 - Unit: `*.test.ts` next to the code — domain + app with in-memory port fakes.
 - Integration: `*.int.test.ts` — real Postgres via Testcontainers (`apps/api/src/test/postgres.ts` applies migrations), HTTP via `app.inject()`. Needs Docker.
 - Web: `*.test.tsx` with Testing Library.
+- Docker-backed suites remove their container and data (tmpfs, `stop()` removes volumes, even on failure); Ryuk stays enabled. After a killed run: `pnpm test:docker:clean` (only `org.testcontainers`-labelled containers).
 - Smoke test: `apps/api/src/app.int.test.ts` — boots `buildApp()`, `GET /health` → 200.
 
 ## Commands
@@ -47,6 +48,7 @@ the short version. When they disagree, the map wins — fix this file.
 | Dev (api + web)            | `pnpm dev`                                    |
 | Build                      | `pnpm -r build`                               |
 | Test                       | `pnpm test`                                   |
+| Clean test containers      | `pnpm test:docker:clean`                      |
 | Lint (ESLint+Prettier+tsc) | `pnpm lint` (`pnpm format` to fix formatting) |
 | New migration              | `pnpm db:new <name>`                          |
 | Apply / revert last        | `pnpm db:migrate` / `pnpm db:rollback`        |

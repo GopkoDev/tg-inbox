@@ -10,6 +10,7 @@
     "dev": "pnpm -r --parallel dev",
     "build": "pnpm -r build",
     "test": "vitest run",
+    "test:docker:clean": "bash scripts/clean-test-containers.sh",
     "lint": "eslint . && prettier --check . && pnpm typecheck",
     "typecheck": "pnpm --filter @tg/shared build && pnpm -r typecheck",
     "format": "prettier --write .",
