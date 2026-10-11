@@ -95,6 +95,7 @@ export async function buildApp(
         paste: bots.paste,
         reconnect: bots.reconnect,
         disconnect: bots.disconnect,
+        webhook: bots.acceptUpdate,
         access: workspaceAccess,
         authenticate,
       }),
