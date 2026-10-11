@@ -31,6 +31,6 @@
 | T24 | [Build SCR-07 team screen](./t24-team-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T25 | [Build SCR-08 invite member dialog](./t25-invite-dialog.md) | ui | Dmytro Hopko | S | T24 | done |
 | T26 | [Add API-level end-to-end flows for every user story](./t26-api-e2e.md) | ports | Dmytro Hopko | M | T18 | done |
-| T27 | [Add the six browser end-to-end flows and their CI step](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T25, T26 | todo |
+| T27 | [Add the six browser end-to-end flows and their CI step](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T25, T26 | done |
 
 **Total:** 27 tasks, ~19.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.
