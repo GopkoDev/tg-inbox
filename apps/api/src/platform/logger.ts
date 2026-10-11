@@ -20,7 +20,7 @@ export function maskLinkTokens(url: string): string {
   return url.replace(LINK_TOKEN_PATH, '$1[redacted]');
 }
 
-/** Fastify's default `req` serializer, with link tokens masked out of the url. */
+/** Fastify's default `req` serializer (minus `version`: no route versioning), link tokens masked. */
 function serializeRequest(req: FastifyRequest): Record<string, unknown> {
   return {
     method: req.method,
