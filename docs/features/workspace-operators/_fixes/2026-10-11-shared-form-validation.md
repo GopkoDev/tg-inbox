@@ -3,7 +3,7 @@ slug: workspace-operators
 date: 2026-10-11
 triage: gap
 acs: [AC-05b, AC-05, AC-03, AC-08, AC-14, AC-21]
-commit: 61ec6be, 74bbeab (round-12 follow-up), e3e1510 (round-13 follow-up), 34784d9 (round-14 follow-up)
+commit: 61ec6be, 74bbeab (round-12 follow-up), e3e1510 (round-13 follow-up), 34784d9 (round-14 follow-up), d11ac4c (round-15 follow-up)
 recurrence_of: none
 ---
 
@@ -95,7 +95,7 @@ Pinning tests:
   - The SCR-01 validation row now names the shared messages for empty fields.
   - `contracts/openapi.yaml` `InvitationAccept.password` became bound-only (`maxLength: 1024`). Its description says the 10–1024 policy applies only when `account_exists` is false.
 
-[review-2026-10-11-r15.md](../_review/review-2026-10-11-r15.md), round-15 commit:
+[review-2026-10-11-r15.md](../_review/review-2026-10-11-r15.md), `d11ac4c`:
 
 - **I3:** the shared zod `InvitationAccept.password` is now `PasswordBound` as well, so the shared schema, the contract and the route body agree. `AcceptBody` no longer overrides the password.
   - Pinning test (shared): `InvitationAccept only bounds the password`.
