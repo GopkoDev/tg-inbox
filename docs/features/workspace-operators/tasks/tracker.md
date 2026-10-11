@@ -11,9 +11,9 @@
 | T4 | [Implement the auth and workspaces domain rules](./t04-domain-rules.md) | domain | Dmytro Hopko | M | — | done |
 | T5 | [Build the auth repositories and the argon2id password hasher](./t05-auth-infra.md) | infra | Dmytro Hopko | M | T1, T2, T4 | done |
 | T6 | [Build the workspaces repositories with cross-workspace isolation tests](./t06-workspaces-infra.md) | infra | Dmytro Hopko | L | T1, T2, T4 | done |
-| T7 | [Implement the auth credential and session use cases](./t07-auth-credentials-sessions.md) | app | Dmytro Hopko | M | T5 | todo |
+| T7 | [Implement the auth credential and session use cases](./t07-auth-credentials-sessions.md) | app | Dmytro Hopko | M | T5 | done |
 | T8 | [Implement the password-reset link use cases](./t08-auth-reset-links.md) | app | Dmytro Hopko | M | T7 | todo |
-| T9 | [Implement create-workspace and re-issue-owner-invitation use cases](./t09-workspaces-admin-use-cases.md) | app | Dmytro Hopko | S | T6 | todo |
+| T9 | [Implement create-workspace and re-issue-owner-invitation use cases](./t09-workspaces-admin-use-cases.md) | app | Dmytro Hopko | S | T6 | done |
 | T10 | [Implement invitation lookup and acceptance](./t10-accept-invitation.md) | app | Dmytro Hopko | M | T6, T7 | todo |
 | T11 | [Implement workspace access: guard check, my workspaces, enter](./t11-workspace-access.md) | app | Dmytro Hopko | M | T6, T7 | todo |
 | T12 | [Implement the team use cases: invite, revoke, list, deactivate, reactivate](./t12-team-use-cases.md) | app | Dmytro Hopko | M | T6, T7 | todo |
@@ -24,7 +24,7 @@
 | T17 | [Extract the shared dependency builder, serve the SPA from one origin, update the conventions docs](./t17-wiring-same-origin.md) | wiring | Dmytro Hopko | M | T14, T15, T16 | todo |
 | T18 | [Build the admin CLI with its three commands](./t18-admin-cli.md) | ports | Dmytro Hopko | M | T8, T9, T17 | todo |
 | T19 | [Lay the web foundation: shadcn primitives, API client, shared guard handling, stores](./t19-web-foundation.md) | ui | Dmytro Hopko | M | T2, T3 | done |
-| T20 | [Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found](./t20-sign-in-and-resolution.md) | ui | Dmytro Hopko | M | T19 | todo |
+| T20 | [Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found](./t20-sign-in-and-resolution.md) | ui | Dmytro Hopko | M | T19 | done |
 | T21 | [Build SCR-02 accept invitation and SCR-03 link unavailable](./t21-accept-invitation-screens.md) | ui | Dmytro Hopko | M | T20 | todo |
 | T22 | [Build SCR-09 set new password](./t22-set-new-password-screen.md) | ui | Dmytro Hopko | S | T21 | todo |
 | T23 | [Build the AppShell, SCR-06 workspace home and SCR-04 picker / switcher](./t23-app-shell-home-picker.md) | ui | Dmytro Hopko | M | T20 | todo |
