@@ -1,0 +1,81 @@
+{
+  "slug": "_scaffold",
+  "source": "docs/architecture-map.md (mode: greenfield-bootstrap) + docs/adr/0001-0003",
+  "smoke_test": "pnpm install && pnpm -r build succeed; apps/api boots and GET /health returns 200 with a live DB ping; pnpm test runs green (smoke test included); pnpm db:generate + pnpm db:migrate apply cleanly to a fresh Postgres (forward-only per ADR-0003 — no revert step)",
+  "tasks": [
+    {
+      "id": "S1",
+      "title": "Create the pnpm monorepo, Node 26 pin and the folder/module structure with entry points",
+      "layer": "scaffold",
+      "deps": [],
+      "acs": [],
+      "dod": "nvm use picks Node 26 from .nvmrc; pnpm install + pnpm -r build succeed on the empty apps/api (Fastify buildApp + main.ts, platform/{config,errors,ids,logger}.ts, modules/health), apps/web (Vite + React + Tailwind + shadcn/ui init, Zustand, React Router, HomePage shell) and packages/shared (errors.ts with error codes, health schema)",
+      "files_hint": [
+        ".nvmrc",
+        "package.json",
+        "pnpm-workspace.yaml",
+        "tsconfig.base.json",
+        ".env.example",
+        "apps/api/src/main.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/platform/",
+        "apps/api/src/modules/health/",
+        "apps/web/",
+        "packages/shared/src/"
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "Add local Postgres, the Drizzle db client, drizzle-kit config and the pg-boss bootstrap",
+      "layer": "scaffold",
+      "deps": ["S1"],
+      "acs": [],
+      "dod": "docker compose up -d starts Postgres 16; pnpm db:generate produces an initial migration in apps/api/drizzle/ from the module schema glob; pnpm db:migrate applies it to a fresh DB; pg-boss starts against the same DB; GET /health pings the DB",
+      "files_hint": [
+        "docker-compose.yml",
+        "apps/api/drizzle.config.ts",
+        "apps/api/drizzle/",
+        "apps/api/src/platform/db.ts",
+        "apps/api/src/platform/jobs.ts",
+        "apps/api/src/platform/telegram.ts"
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "Wire the test harness (Vitest workspaces, Testcontainers Postgres) and the skeleton smoke test",
+      "layer": "scaffold",
+      "deps": ["S2"],
+      "acs": [],
+      "dod": "pnpm test runs api, web and shared suites green; apps/api/src/app.int.test.ts starts a Testcontainers Postgres, applies migrations, boots buildApp() and gets 200 from GET /health via app.inject(); apps/web has one rendering test of HomePage",
+      "files_hint": [
+        "vitest.workspace.ts",
+        "apps/api/vitest.config.ts",
+        "apps/api/src/test/",
+        "apps/api/src/app.int.test.ts",
+        "apps/web/src/pages/HomePage.test.tsx"
+      ]
+    },
+    {
+      "id": "S4",
+      "title": "Add lint/format tooling and the GitHub Actions CI workflow",
+      "layer": "scaffold",
+      "deps": ["S3"],
+      "acs": [],
+      "dod": "pnpm lint (ESLint + Prettier check + tsc --noEmit) passes; .github/workflows/ci.yml runs on Node from .nvmrc with pnpm: install → lint → build → test; workflow YAML is valid and its commands match the map's machine keys",
+      "files_hint": [
+        "eslint.config.js",
+        ".prettierrc",
+        ".github/workflows/ci.yml"
+      ]
+    },
+    {
+      "id": "S5",
+      "title": "Write CLAUDE.md and README from the chosen conventions",
+      "layer": "scaffold",
+      "deps": ["S1"],
+      "acs": [],
+      "dod": "CLAUDE.md states the module layering, error envelope, UUIDv7 ids, workspace_id tenancy rule, forward-only drizzle-kit migrations, test layout and the commands — consistent with docs/architecture-map.md; README covers nvm use, docker compose up, pnpm dev/test/db:migrate",
+      "files_hint": ["CLAUDE.md", "README.md"]
+    }
+  ]
+}
