@@ -1,0 +1,1025 @@
+# Derived contract — workspace-operators. Do not hand-edit the shape: it is projected from
+#   fields + constraints  ← data-model.md (+ sad.md §8 for the password bounds — no column holds a plain password)
+#   error responses       ← sad.md §6 flows 1–3 and 6–12 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check: api-sync-report.md next to this file.
+# Platform-admin actions (US-01, US-08 issue) have no HTTP surface (feature ADR-0001) — see cli.md.
+#
+# Deviations from the api-skill defaults (recorded in api-sync-report.md):
+#   - auth: an opaque session cookie, not a bearer token (feature ADR-0002)
+#   - paths: /api/... with no /v1 segment (feature ADR-0003, ADR-0004)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts; confirmed with the owner 2026-10-11)
+openapi: 3.1.0
+
+info:
+  title: workspace-operators API
+  version: 0.1.0
+  description: |
+    The tenancy and identity foundation of tg-inbox. Every later capability (bot connection, the
+    shared inbox, contacts) belongs to one workspace, the space of one business, and is used by that
+    business's team. This API lets people join a workspace through a single-use invitation link,
+    sign in with email and password, switch between the workspaces they belong to, and lets business
+    owners run their team: invite, deactivate, reactivate and revoke. Everything stays inside one
+    workspace: a workspace's data is visible only to its active members.
+
+    Sessions are opaque `HttpOnly` cookies served from the same origin as the web panel. Every
+    workspace-scoped route sits under `/api/workspaces/{workspaceId}/…` behind the workspace-access
+    guard: never a member → `404 NOT_FOUND`, deactivated → `403 ACCESS_REMOVED`, active → the route
+    runs. Mutating routes accept only `application/json` bodies.
+
+servers:
+  - url: /
+    description: Same origin as the web panel (production serves both; in development Vite proxies /api)
+
+# Global default: every operation needs a session cookie unless it declares otherwise.
+security:
+  - SessionCookie: []
+
+tags:
+  - name: auth
+    description: Sign-in, sign-out and password-reset links — module `auth`
+  - name: workspaces
+    description: The signed-in account, invitations, the workspace guard and the team — module `workspaces`
+
+paths:
+  # ───────────────────────────── auth ─────────────────────────────
+  /api/auth/sign-in:
+    post:
+      tags: [auth]
+      summary: Sign in with email and password (US-03)
+      description: |
+        Flow 1. The email is trimmed and lower-cased before any comparison. An unknown email and a wrong
+        password get the same answer (AC-08). After 10 failures for one email within 15 minutes, every
+        attempt for that email is refused for 15 minutes from the 10th failure, including a correct
+        password, and the answer is the same whether or not the email has an account (AC-09). On success the
+        session cookie is set; the panel then calls `getMe` and `listMyWorkspaces` to resolve the
+        workspace (AC-07, AC-10).
+      operationId: signIn
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SignIn" }
+            example:
+              email: "operator@example.test"
+              password: "correct-horse-battery"
+      responses:
+        "204":
+          description: Signed in; the session cookie is set
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetSessionCookie" }
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          description: Unknown email or wrong password, the same answer for both (AC-08)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: INVALID_CREDENTIALS, message: "Email or password is incorrect" }
+        "429":
+          description: The email is locked out after 10 failed attempts (AC-09)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: TOO_MANY_ATTEMPTS, message: "Too many failed attempts, try again later" }
+
+  /api/auth/sign-out:
+    post:
+      tags: [auth]
+      summary: Sign out on this device (US-03)
+      description: |
+        Flow 6. Ends this device's session; other devices keep theirs (AC-11). Answers 204 and clears
+        the cookie even when there is no session or it has already expired.
+      operationId: signOut
+      security:
+        - SessionCookie: []
+        - {}
+      responses:
+        "204":
+          description: Signed out; the session cookie is cleared
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/ClearSessionCookie" }
+
+  /api/password-reset-links/lookup:
+    post:
+      tags: [auth]
+      summary: Check a password-reset link before showing the new-password form (US-08)
+      description: |
+        Flow 12, first half. The link token travels in the body, not the path, so it never appears in
+        request logs (sad.md §8). The account is not revealed.
+      operationId: lookUpPasswordResetLink
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkTokenBody" }
+            example:
+              token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
+      responses:
+        "204":
+          description: The link is valid; show the new-password form (SCR-09)
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "404":
+          $ref: "#/components/responses/ResetLinkInvalid"
+
+  /api/password-reset-links/redeem:
+    post:
+      tags: [auth]
+      summary: Set a new password through a reset link (US-08)
+      description: |
+        Flow 12, second half (AC-21). Consumes the link once, stores the new password hash, ends every
+        session of the account, clears the email's sign-in failures (AC-09) and signs this device in.
+        A session cookie already on this device is replaced. The panel then resolves the workspace as
+        after sign-in (AC-07).
+      operationId: redeemPasswordResetLink
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordResetRedeem" }
+            example:
+              token: "q3Vx0Zb6pXh2rT9mLk1NwY4cE8sJfA7uGd5iHoP0BzQ"
+              password: "a-new-long-password"
+      responses:
+        "204":
+          description: Password changed; this device is signed in, every other session ended
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetSessionCookie" }
+        "400":
+          description: The new password is shorter than 10 or longer than 1024 characters
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: "The password must be at least 10 characters long"
+                  details: { field: password }
+        "404":
+          $ref: "#/components/responses/ResetLinkInvalid"
+
+  # ─────────────────────── workspaces: the account ───────────────────────
+  /api/me:
+    get:
+      tags: [workspaces]
+      summary: Who am I (US-03, US-04)
+      description: |
+        Flows 1, 7 and 12: the signed-in account and the workspace it used last. The panel opens
+        `last_used_workspace_id` when it is set (AC-07, AC-12); otherwise it reads `listMyWorkspaces`:
+        exactly one item opens it, several open the picker (SCR-04), none opens the no-access screen
+        (SCR-05, AC-10).
+      operationId: getMe
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The signed-in account
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Me" }
+              example:
+                account:
+                  id: "01920000-0000-7000-8000-000000000001"
+                  email: "operator@example.test"
+                  display_name: "Test User"
+                last_used_workspace_id: "01920000-0000-7000-8000-0000000000a1"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/me/workspaces:
+    get:
+      tags: [workspaces]
+      summary: List the workspaces where I am an active member (US-03, US-04)
+      description: |
+        Flows 1 and 7: active memberships only, ordered by workspace id (creation order). Feeds the
+        post-sign-in picker and the workspace switcher (SCR-04).
+      operationId: listMyWorkspaces
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of active workspaces
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSummaryPage" }
+              example:
+                items:
+                  - { id: "01920000-0000-7000-8000-0000000000a1", name: "Test Workspace 1", role: owner }
+                  - { id: "01920000-0000-7000-8000-0000000000b2", name: "Test Workspace 2", role: operator }
+                has_next: false
+                has_prev: false
+                next_cursor: null
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  # ─────────────────────── workspaces: joining by invitation ───────────────────────
+  /api/invitations/lookup:
+    post:
+      tags: [workspaces]
+      summary: Open an invitation link (US-02)
+      description: |
+        Flow 2, first half. Tells the panel which form to show: create an account (name + password,
+        AC-03) or confirm the existing account's password (AC-04). The token travels in the body so it
+        never appears in request logs. When the device is signed in, the invitation must be for that
+        account's email (AC-04b).
+      operationId: lookUpInvitation
+      security:
+        - SessionCookie: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LinkTokenBody" }
+            example:
+              token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
+      responses:
+        "200":
+          description: The invitation is valid
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InvitationPreview" }
+              example:
+                workspace_name: "Test Workspace 1"
+                email: "new.hire@example.test"
+                role: operator
+                account_exists: false
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "403":
+          $ref: "#/components/responses/InvitationForAnotherEmail"
+        "404":
+          $ref: "#/components/responses/InvitationInvalid"
+
+  /api/invitations/accept:
+    post:
+      tags: [workspaces]
+      summary: Accept an invitation and sign in (US-02)
+      description: |
+        Flow 2, second half. With no account for the invited email, creates one from `display_name` +
+        `password` (AC-03). With an account, `password` must be that account's existing password
+        (AC-04), and `display_name` is ignored; a wrong password counts toward the AC-09 lockout, and a
+        locked-out email gets the same `INVALID_CREDENTIALS` answer. Adds an active membership with the
+        invited role, consumes the invitation, signs this device in and returns the joined workspace.
+        A session cookie already on this device is replaced and its session ended.
+      operationId: acceptInvitation
+      security:
+        - SessionCookie: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationAccept" }
+            examples:
+              newAccount:
+                summary: No account for the invited email yet (AC-03)
+                value:
+                  token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
+                  display_name: "Test User"
+                  password: "correct-horse-battery"
+              existingAccount:
+                summary: The invited email already has an account (AC-04)
+                value:
+                  token: "Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
+                  password: "the-existing-password"
+      responses:
+        "200":
+          description: Joined; this device is signed in
+          headers:
+            Set-Cookie: { $ref: "#/components/headers/SetSessionCookie" }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSummary" }
+              example: { id: "01920000-0000-7000-8000-0000000000a1", name: "Test Workspace 1", role: operator }
+        "400":
+          description: |
+            Password shorter than 10 or longer than 1024 characters (AC-05), or `display_name` missing,
+            blank or longer than 200 characters when an account has to be created. Nothing is written.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: "The password must be at least 10 characters long"
+                  details: { field: password }
+        "401":
+          description: Wrong existing password, or the email is locked out (AC-04, AC-09)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: INVALID_CREDENTIALS, message: "Email or password is incorrect" }
+        "403":
+          $ref: "#/components/responses/InvitationForAnotherEmail"
+        "404":
+          $ref: "#/components/responses/InvitationInvalid"
+
+  # ─────────────────────── workspaces: inside one workspace ───────────────────────
+  /api/workspaces/{workspaceId}/enter:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      tags: [workspaces]
+      summary: Enter a workspace and remember it as the last used (US-04)
+      description: |
+        Flow 7. Called once when the panel opens a workspace (after sign-in, joining or switching).
+        Passes the guard and records the membership's `last_used_at`, so the next sign-in on any device
+        opens this workspace (AC-12). Other devices stay where they are: the workspace lives in the URL.
+      operationId: enterWorkspace
+      responses:
+        "200":
+          description: Entered
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WorkspaceSummary" }
+              example: { id: "01920000-0000-7000-8000-0000000000b2", name: "Test Workspace 2", role: operator }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+  /api/workspaces/{workspaceId}/memberships:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [workspaces]
+      summary: List the workspace's members (US-07, business owners only)
+      description: |
+        Flow 10. Every member, active and deactivated, with name, email, role and state (AC-20),
+        ordered by membership id (join order).
+      operationId: listMemberships
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembershipPage" }
+              example:
+                items:
+                  - id: "01920000-0000-7000-8000-0000000000c1"
+                    display_name: "Test User"
+                    email: "owner@example.test"
+                    role: owner
+                    state: active
+                    created_at: "2026-10-01T09:00:00Z"
+                    deactivated_at: null
+                  - id: "01920000-0000-7000-8000-0000000000c2"
+                    display_name: "Test User"
+                    email: "operator@example.test"
+                    role: operator
+                    state: deactivated
+                    created_at: "2026-10-02T09:00:00Z"
+                    deactivated_at: "2026-10-09T15:30:00Z"
+                has_next: false
+                has_prev: false
+                next_cursor: null
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+  /api/workspaces/{workspaceId}/memberships/{membershipId}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/MembershipId"
+    post:
+      tags: [workspaces]
+      summary: Deactivate a member (US-06, business owners only)
+      description: |
+        Flow 9. The member loses access to this workspace on their next request (AC-17); their account and
+        other memberships stay intact. Refused when it would leave the workspace with no active business
+        owner, including an owner deactivating themselves (AC-18). Already deactivated → 200 with the
+        unchanged member.
+      operationId: deactivateMembership
+      responses:
+        "200":
+          description: The member, now deactivated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membership" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c2"
+                display_name: "Test User"
+                email: "operator@example.test"
+                role: operator
+                state: deactivated
+                created_at: "2026-10-02T09:00:00Z"
+                deactivated_at: "2026-10-11T10:00:00Z"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceOrItemNotFound"
+        "409":
+          description: It would leave the workspace with no active business owner (AC-18)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: LAST_ACTIVE_OWNER
+                  message: "A workspace must always have at least one active business owner"
+
+  /api/workspaces/{workspaceId}/memberships/{membershipId}/reactivate:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/MembershipId"
+    post:
+      tags: [workspaces]
+      summary: Reactivate a member (US-06, business owners only)
+      description: |
+        Flow 9. The member regains access with the role they had before (AC-19). Already active → 200
+        with the unchanged member.
+      operationId: reactivateMembership
+      responses:
+        "200":
+          description: The member, now active
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membership" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c2"
+                display_name: "Test User"
+                email: "operator@example.test"
+                role: operator
+                state: active
+                created_at: "2026-10-02T09:00:00Z"
+                deactivated_at: null
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceOrItemNotFound"
+
+  /api/workspaces/{workspaceId}/invitations:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [workspaces]
+      summary: List the workspace's pending invitations (US-07, business owners only)
+      description: |
+        Flow 10. Pending, unexpired invitations with email, role and expiry, never the link or its
+        token (AC-20), ordered by invitation id (creation order).
+      operationId: listPendingInvitations
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+        - $ref: "#/components/parameters/After"
+        - $ref: "#/components/parameters/Before"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of pending invitations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PendingInvitationPage" }
+              example:
+                items:
+                  - id: "01920000-0000-7000-8000-0000000000d1"
+                    email: "new.hire@example.test"
+                    role: operator
+                    created_at: "2026-10-10T12:00:00Z"
+                    expires_at: "2026-10-17T12:00:00Z"
+                has_next: false
+                has_prev: false
+                next_cursor: null
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+    post:
+      tags: [workspaces]
+      summary: Invite a person by email (US-05, business owners only)
+      description: |
+        Flow 8. Issues a 7-day invitation for the email and role and returns its link: the only time
+        the link is ever returned (AC-14). Any earlier pending invitation for the same email in this
+        workspace stops working. Refused when the email already has a membership here, active or
+        deactivated (AC-16).
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/InvitationCreate" }
+            example:
+              email: "new.hire@example.test"
+              role: operator
+      responses:
+        "201":
+          description: Invitation issued; show the link once to copy
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedInvitation" }
+              example:
+                invitation:
+                  id: "01920000-0000-7000-8000-0000000000d1"
+                  email: "new.hire@example.test"
+                  role: operator
+                  created_at: "2026-10-10T12:00:00Z"
+                  expires_at: "2026-10-17T12:00:00Z"
+                link: "https://panel.example.test/invite/Zt8wQm2LbV0nR5xYc7HkP1sJ4uFg9aE3dO6iT2rWqBn"
+        "400":
+          description: The email is not a valid address or the role is unknown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: "Enter a valid email address"
+                  details: { field: email }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+        "409":
+          description: The email already has a membership in this workspace (AC-16)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error:
+                  code: ALREADY_A_MEMBER
+                  message: "This person is already a member — reactivate them if they are deactivated"
+                  details: { membership_id: "01920000-0000-7000-8000-0000000000c2", state: deactivated }
+
+  /api/workspaces/{workspaceId}/invitations/{invitationId}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/InvitationId"
+    post:
+      tags: [workspaces]
+      summary: Revoke a pending invitation (US-07, business owners only)
+      description: |
+        Flow 10. The invitation leaves the pending list and its link stops working (AC-20, AC-06).
+        An invitation that is no longer pending, or belongs to another workspace, is not found.
+      operationId: revokeInvitation
+      responses:
+        "204":
+          description: Revoked
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceOrItemNotFound"
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: |
+        Opaque session token (32 random bytes, base64url) in an `HttpOnly`, `SameSite=Lax`, `Path=/`
+        cookie, `Secure` outside local development (feature ADR-0002). The server stores only its
+        SHA-256 hash. A session idle for more than 30 days is treated as signed out; only requests
+        triggered by a user action extend it (see `BackgroundRequest`).
+
+  headers:
+    SetSessionCookie:
+      description: "`session=<token>; HttpOnly; SameSite=Lax; Path=/; Secure` (no `Secure` in development)"
+      schema: { type: string }
+    ClearSessionCookie:
+      description: "`session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0`"
+      schema: { type: string }
+
+  parameters:
+    WorkspaceId:
+      in: path
+      name: workspaceId
+      required: true
+      description: A malformed or unknown id answers 404 exactly like a workspace the caller never belonged to
+      schema: { type: string, format: uuid }
+    MembershipId:
+      in: path
+      name: membershipId
+      required: true
+      schema: { type: string, format: uuid }
+    InvitationId:
+      in: path
+      name: invitationId
+      required: true
+      schema: { type: string, format: uuid }
+    BackgroundRequest:
+      in: header
+      name: X-Background-Request
+      required: false
+      description: |
+        Sent as `1` by the web panel on automatic requests (polling, refetch on focus). Such a request is
+        served normally but does not extend the session's 30-day idle window (spec §6, ADR-0002).
+        Every authenticated operation honours it; it is listed on the read operations the panel polls.
+      schema: { type: string, enum: ["1"] }
+    After:
+      in: query
+      name: after
+      description: cursor — id of the last item seen; the page starts after it
+      schema: { type: string, format: uuid }
+    Before:
+      in: query
+      name: before
+      description: cursor — id of the first item seen; the page ends before it
+      schema: { type: string, format: uuid }
+    Limit:
+      in: query
+      name: limit
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  responses:
+    ValidationFailed:
+      description: The request does not match the schema
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: VALIDATION_ERROR, message: "body/email must match format \"email\"" }
+    Unauthenticated:
+      description: No session, or the session ended (signed out, password reset, idle for 30 days); sign in again
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNAUTHENTICATED, message: "Sign in to continue" }
+    WorkspaceNotFound:
+      description: |
+        Never a member of this workspace, or no such workspace: indistinguishable on purpose (AC-13)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    WorkspaceOrItemNotFound:
+      description: |
+        The workspace is not found for the caller (AC-13), or the membership / invitation does not
+        exist in this workspace (or the invitation is no longer pending), so refresh the list
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    AccessRemoved:
+      description: The caller's membership in this workspace is deactivated (AC-17)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+    OwnerRouteForbidden:
+      description: The membership is deactivated (AC-17), or the caller is an operator on an owner-only route (AC-15)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            accessRemoved:
+              value:
+                error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+            ownerOnly:
+              value:
+                error: { code: OWNER_ONLY, message: "Only business owners manage the team" }
+    InvitationInvalid:
+      description: |
+        Unknown, expired (older than 7 days), already accepted, revoked or replaced (AC-06).
+        `details.ask` tells the panel whom to suggest asking for a new one.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/InvitationInvalidError" }
+          examples:
+            teamInvitation:
+              value:
+                error:
+                  code: INVITATION_INVALID
+                  message: "This invitation is no longer valid — ask a business owner for a new one"
+                  details: { ask: business_owner }
+            firstOwnerInvitation:
+              value:
+                error:
+                  code: INVITATION_INVALID
+                  message: "This invitation is no longer valid — ask the tg-inbox team for a new one"
+                  details: { ask: tg_inbox_team }
+    InvitationForAnotherEmail:
+      description: The device is signed in with an account whose email differs from the invited one (AC-04b)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error:
+              code: INVITATION_FOR_ANOTHER_EMAIL
+              message: "This invitation belongs to another email — sign out and open the link again"
+    ResetLinkInvalid:
+      description: Unknown, older than 24 hours, already used or replaced by a newer link (AC-22)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: RESET_LINK_INVALID, message: "This reset link is no longer valid" }
+
+  schemas:
+    # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts. The first five exist; the rest are added by this
+        feature. HTTP status per code: VALIDATION_ERROR 400 · UNAUTHENTICATED 401 · INVALID_CREDENTIALS 401 ·
+        FORBIDDEN 403 · ACCESS_REMOVED 403 · OWNER_ONLY 403 · INVITATION_FOR_ANOTHER_EMAIL 403 ·
+        NOT_FOUND 404 · INVITATION_INVALID 404 · RESET_LINK_INVALID 404 · CONFLICT 409 ·
+        ALREADY_A_MEMBER 409 · LAST_ACTIVE_OWNER 409 · OWNER_ALREADY_JOINED 409 (admin CLI only) ·
+        TOO_MANY_ATTEMPTS 429 · INTERNAL_ERROR 500.
+      enum:
+        - VALIDATION_ERROR
+        - NOT_FOUND
+        - FORBIDDEN
+        - CONFLICT
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - INVALID_CREDENTIALS
+        - TOO_MANY_ATTEMPTS
+        - ACCESS_REMOVED
+        - OWNER_ONLY
+        - INVITATION_INVALID
+        - INVITATION_FOR_ANOTHER_EMAIL
+        - RESET_LINK_INVALID
+        - ALREADY_A_MEMBER
+        - LAST_ACTIVE_OWNER
+        - OWNER_ALREADY_JOINED
+
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message: { type: string }
+        details:
+          description: optional structured context (the invalid field, the conflicting membership, whom to ask)
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+
+    InvitationInvalidError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: INVITATION_INVALID }
+            message: { type: string }
+            details:
+              type: object
+              required: [ask]
+              additionalProperties: false
+              properties:
+                ask:
+                  type: string
+                  enum: [business_owner, tg_inbox_team]
+                  description: |
+                    `tg_inbox_team` when the invitation is the first business owner's (its workspace has
+                    no memberships: only a platform admin re-issues it); otherwise, including an
+                    unknown token, `business_owner`
+
+    # ───────── shared value types (data-model.md) ─────────
+    Email:
+      type: string
+      format: email
+      minLength: 3
+      maxLength: 254
+      description: An email as the server returns it, always normalised (trimmed, lower-cased; spec §6.1)
+
+    EmailInput:
+      type: string
+      maxLength: 320
+      description: |
+        An email as a person types it. The server first trims surrounding spaces and lower-cases it
+        (spec §6.1: ` Bob@x.com` and `bob@x.com` are the same account), and only then requires a valid
+        address of 3–254 characters; `format` is deliberately absent here because it would reject the
+        surrounding spaces the spec allows. The 320-character cap only bounds the raw input.
+
+    Password:
+      type: string
+      minLength: 10
+      maxLength: 1024
+      description: Never stored, logged or returned; only an argon2id hash is kept (sad.md §8)
+
+    DisplayName:
+      type: string
+      minLength: 1
+      maxLength: 200
+      description: Trimmed; must not be blank after trimming
+
+    Role:
+      type: string
+      enum: [owner, operator]
+      description: "`owner` = business owner"
+
+    MembershipState:
+      type: string
+      enum: [active, deactivated]
+
+    LinkToken:
+      type: string
+      pattern: "^[A-Za-z0-9_-]{43}$"
+      description: 32 random bytes, base64url without padding; the last path segment of an invitation or reset link
+
+    # ───────── auth ─────────
+    SignIn:
+      type: object
+      required: [email, password]
+      additionalProperties: false
+      properties:
+        email: { $ref: "#/components/schemas/EmailInput" }
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: Not checked against the 10-character minimum here, so no hint about the policy leaks
+
+    LinkTokenBody:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token: { $ref: "#/components/schemas/LinkToken" }
+
+    PasswordResetRedeem:
+      type: object
+      required: [token, password]
+      additionalProperties: false
+      properties:
+        token: { $ref: "#/components/schemas/LinkToken" }
+        password: { $ref: "#/components/schemas/Password" }
+
+    # ───────── workspaces: the account ─────────
+    Account:
+      type: object
+      required: [id, email, display_name]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        email: { $ref: "#/components/schemas/Email" }
+        display_name: { $ref: "#/components/schemas/DisplayName" }
+
+    Me:
+      type: object
+      required: [account, last_used_workspace_id]
+      additionalProperties: false
+      properties:
+        account: { $ref: "#/components/schemas/Account" }
+        last_used_workspace_id:
+          type: [string, "null"]
+          format: uuid
+          description: The active membership with the latest `last_used_at`; null when none was ever entered or it is no longer active
+
+    WorkspaceSummary:
+      type: object
+      required: [id, name, role]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string, minLength: 1, maxLength: 200 }
+        role: { $ref: "#/components/schemas/Role" }
+
+    WorkspaceSummaryPage:
+      type: object
+      required: [items, has_next, has_prev, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/WorkspaceSummary" }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+        next_cursor: { type: [string, "null"], format: uuid }
+
+    # ───────── workspaces: invitations ─────────
+    InvitationPreview:
+      type: object
+      required: [workspace_name, email, role, account_exists]
+      additionalProperties: false
+      properties:
+        workspace_name: { type: string, minLength: 1, maxLength: 200 }
+        email: { $ref: "#/components/schemas/Email" }
+        role: { $ref: "#/components/schemas/Role" }
+        account_exists:
+          type: boolean
+          description: true → confirm-password form (AC-04); false → create-account form (AC-03)
+
+    InvitationAccept:
+      type: object
+      required: [token, password]
+      additionalProperties: false
+      properties:
+        token: { $ref: "#/components/schemas/LinkToken" }
+        password: { $ref: "#/components/schemas/Password" }
+        display_name:
+          $ref: "#/components/schemas/DisplayName"
+          description: Required when no account exists for the invited email; ignored otherwise
+
+    InvitationCreate:
+      type: object
+      required: [email, role]
+      additionalProperties: false
+      properties:
+        email: { $ref: "#/components/schemas/EmailInput" }
+        role: { $ref: "#/components/schemas/Role" }
+
+    PendingInvitation:
+      type: object
+      required: [id, email, role, created_at, expires_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        email: { $ref: "#/components/schemas/Email" }
+        role: { $ref: "#/components/schemas/Role" }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+
+    PendingInvitationPage:
+      type: object
+      required: [items, has_next, has_prev, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/PendingInvitation" }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+        next_cursor: { type: [string, "null"], format: uuid }
+
+    IssuedInvitation:
+      type: object
+      required: [invitation, link]
+      additionalProperties: false
+      properties:
+        invitation: { $ref: "#/components/schemas/PendingInvitation" }
+        link:
+          type: string
+          format: uri
+          description: "`PUBLIC_WEB_URL` + `/invite/` + the link token. Returned only here, never again"
+
+    # ───────── workspaces: the team ─────────
+    Membership:
+      type: object
+      required: [id, display_name, email, role, state, created_at, deactivated_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { $ref: "#/components/schemas/DisplayName" }
+        email: { $ref: "#/components/schemas/Email" }
+        role: { $ref: "#/components/schemas/Role" }
+        state: { $ref: "#/components/schemas/MembershipState" }
+        created_at:
+          type: string
+          format: date-time
+          description: When the person joined
+        deactivated_at: { type: [string, "null"], format: date-time }
+
+    MembershipPage:
+      type: object
+      required: [items, has_next, has_prev, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Membership" }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+        next_cursor: { type: [string, "null"], format: uuid }
