@@ -496,6 +496,18 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
     expect(screen.getByTestId('where')).toHaveTextContent('/sign-in');
   });
 
+  it('/w/w1/team -> a page without a shell, late 403 for w1: no notice, no resolution, stays', async () => {
+    renderBoth('/workspaces');
+    await startDeactivate();
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('other')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('where')).toHaveTextContent('/workspaces');
+  });
+
   it('/w/w1/team -> /w/w1, late 403 for w1: notice and resolution still happen (AC-17)', async () => {
     renderBoth('/w/w1');
     await startDeactivate();

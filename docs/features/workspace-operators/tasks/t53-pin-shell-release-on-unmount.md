@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r6"
-status: "todo"
+status: "done"
 ---
 
 # T53 — Pin the shell's release of the address workspace when the person leaves for a page without a shell
@@ -49,8 +49,8 @@ status: "todo"
 
 ## Checklist
 
-- [ ] A fifth case in the Z1 block of `pages/TeamPage.test.tsx`: `/w/w1/team` → a route with no shell (the `*` route), then a late 403 `ACCESS_REMOVED` for w1. Assert: no notice in the store, `resolveWorkspace` not called, the location unchanged.
-- [ ] RED proof: the case fails when the cleanup in `app-shell.tsx` is removed.
+- [x] A fifth case in the Z1 block of `pages/TeamPage.test.tsx`: `/w/w1/team` → a route with no shell (the `*` route), then a late 403 `ACCESS_REMOVED` for w1. Assert: no notice in the store, `resolveWorkspace` not called, the location unchanged.
+- [x] RED proof: the case fails when the cleanup in `app-shell.tsx` is removed.
 
 ## Edge cases
 
@@ -60,6 +60,6 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] A test fails when the shell stops releasing the address workspace on unmount
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] A test fails when the shell stops releasing the address workspace on unmount
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds
