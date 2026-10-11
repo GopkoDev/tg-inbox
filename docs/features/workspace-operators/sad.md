@@ -115,49 +115,73 @@ Each tactical decision in later sections traces to one of these choices; a contr
 
 ## 5. Building block view
 
-<!-- 🎯 Why: INTERNAL DECOMPOSITION — modules, containers, datastores. The static topology: who
-     may talk to whom. Without §5, §6 (the flows) has no vocabulary of participants.
-     📋 Write: 1 ¶ on the style (layered / hexagonal / clean / event-driven) + a folder tree + a
-     C4Container block.
-     📌 Draw ONE Container per declared `target_surface` (frontmatter): a fullstack
-     [backend-service, web-frontend] = a backend-API container + a web/SPA container; a
-     [backend-service, mobile-app] = the API + the mobile app. The Container(web, …) line below is
-     just one surface's container — swap/add per what was declared in §4. → _shared/surfaces.md
-     📌 e.g. «web app, content API, media worker, datastore, object store, CDN». -->
+The backend follows the repo's modular-monolith convention unchanged: each module has `domain` (pure rules — password policy, invitation validity, the "at least one active business owner" rule) → `app` (use cases and the ports they need) → `infra` (Kysely repositories) → `http` (routes and zod schemas from `packages/shared`). The feature adds two modules with a one-way dependency — `workspaces` calls `auth`'s app layer, never the reverse ([ADR-0005](adr/0005-split-identity-into-an-auth-module-and-a-workspaces-module.md)) — plus a server-side admin CLI that drives the same app layer ([ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md)). A shared dependency builder in the composition root constructs both modules once and is used by `buildApp()` and by the CLI alike.
 
-<One paragraph: layered / hexagonal / clean / event-driven, and why.>
+**Table ownership** (names indicative; `data-model` fixes them):
+
+| Module | Tables | Tenancy |
+|---|---|---|
+| `auth` | accounts, sessions, sign-in failures, password-reset links | Platform-level — no `workspace_id`; repositories are scoped by account or by normalised email |
+| `workspaces` | workspaces, memberships, invitations | Tenant-owned — non-null `workspace_id` on memberships and invitations; every repository method takes `workspaceId`; each repository gets a cross-workspace isolation test |
+
+A workspace has no status column in v1: "awaiting its first business owner" means it has no memberships yet, and a whole workspace cannot be suspended — members are deactivated instead (spec §8 default, closed here). The last-used workspace for the next sign-in is a `last_used_at` time on the membership.
 
 **Internal decomposition:**
 
 ```
-<e.g. modules/<feature>/>
-├── domain/       <entities + sentinel errors>
-├── app/          <use cases / services>
-├── infra/        <repository + integration impl>
-├── ports/        <handlers, DTOs, error mapping>
-└── wiring        <self-wiring entry point>
+apps/api/src/
+├── modules/auth/
+│   ├── domain/       password policy, normalised email, lockout window rule
+│   ├── app/          sign in / sign out, resolve session, create account, verify password,
+│   │                 issue + redeem password-reset link (accept an optional transaction)
+│   ├── infra/        account, session, sign-in-failure, reset-link repositories; password hasher
+│   └── http/         routes.ts → registerAuth(app, deps): sign-in, sign-out, reset-link redemption
+├── modules/workspaces/
+│   ├── domain/       membership roles + states, invitation validity, last-active-owner rule
+│   ├── app/          create workspace with first-owner invitation, re-issue it, invite, revoke,
+│   │                 accept invitation, deactivate / reactivate, list team, current account + workspaces
+│   ├── infra/        workspace, membership, invitation repositories
+│   └── http/         routes.ts → registerWorkspaces(app, deps); the workspace-access guard (ADR-0003)
+├── cli/admin.ts      pnpm admin <command> — platform-admin commands over the same app layer
+└── app.ts            buildApp() + the shared dependency builder used by the CLI
+apps/web/src/
+├── features/auth/        sign-in, accept invitation, set new password; session store
+├── features/workspaces/  workspace picker + switcher, team, invite member, no-access, not-found
+└── pages/ + app/routes.tsx  public routes and /w/<workspaceId>/… routes
+packages/shared/src/  auth.ts, workspaces.ts — request/response zod schemas + new error codes
 ```
 
-**C4 Container (L2):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. ONE Container per declared target_surface (frontmatter); the web container below is one example surface. -->
+**C4 Container (L2):**
 
 ```mermaid
 C4Container
-    title <feature> — Containers
+    title workspace-operators — Containers
 
-    Person(actor, "<Actor>")
+    Person(admin, "Platform admin")
+    Person(owner, "Business owner")
+    Person(operator, "Operator")
 
-    Container_Boundary(app, "<Our system>") {
-        Container(web, "<Web/UI>", "<technology>", "<purpose>")
-        Container(api, "<API/handler>", "<technology>", "<purpose>")
-        ContainerDb(db, "<Datastore>", "<technology>", "<purpose>")
+    Container_Boundary(tginbox, "tg-inbox") {
+        Container(spa, "Web panel", "React 19, Vite, Zustand, shadcn/ui", "Sign-in, invitation acceptance, workspace picker, team management")
+        Container(cli, "Admin CLI", "Node 26, pnpm admin", "Creates workspaces, re-issues first-owner invitations, issues reset links")
+        Container(http, "API server", "Node 26, Fastify 5, zod", "Routes under /api, session cookie, serves the built web panel")
+        Container(workspaces, "workspaces module", "TypeScript app + infra layers", "Workspaces, memberships, invitations, team rules, workspace-access guard")
+        Container(auth, "auth module", "TypeScript app + infra layers", "Accounts, password hashes, sessions, sign-in lockout, reset links")
     }
 
-    System_Ext(ext, "<External>", "<purpose>")
+    ContainerDb(db, "Database", "PostgreSQL 16", "accounts, sessions, sign-in failures, reset links, workspaces, memberships, invitations")
 
-    Rel(actor, web, "<interaction>", "<protocol>")
-    Rel(web, api, "<calls>")
-    Rel(api, db, "<reads/writes>", "<driver>")
-    Rel(api, ext, "<emits>", "<protocol>")
+    Rel(operator, spa, "Joins, signs in, switches workspaces", "HTTPS")
+    Rel(owner, spa, "Manages the team", "HTTPS")
+    Rel(admin, cli, "Runs admin commands", "shell on the server")
+    Rel(spa, http, "Calls the API with the session cookie", "JSON over HTTPS, same origin")
+    Rel(http, auth, "Sign-in, sign-out, session resolution, reset redemption")
+    Rel(http, workspaces, "Workspace guard, team and invitation use cases")
+    Rel(cli, workspaces, "Create workspace, re-issue first-owner invitation")
+    Rel(cli, auth, "Issue password-reset link")
+    Rel(workspaces, auth, "Create account, verify password, open session")
+    Rel(auth, db, "Reads and writes its tables", "SQL via Kysely")
+    Rel(workspaces, db, "Reads and writes its tables", "SQL via Kysely")
 ```
 
 ## 6. Runtime view
