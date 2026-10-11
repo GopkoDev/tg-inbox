@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
-import { InvitationInvalidError } from '../../../platform/errors.js';
+import { InvalidCredentialsError, InvitationInvalidError } from '../../../platform/errors.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createAccountUseCases } from '../../auth/app/accounts.js';
 import { createCredentialUseCases } from '../../auth/app/credentials.js';
@@ -137,22 +137,33 @@ describe('accept invitation (Postgres)', () => {
     expect(accountRows).toHaveLength(1);
   });
 
-  it('two workspaces inviting the same new email, accepted concurrently: one wins, the other is invalid', async () => {
+  it('AC-04: two workspaces inviting the same new email, same password: both join, one account', async () => {
     const a = await owner('both@acme.test');
     const b = await owner('both@acme.test');
     const attempt = (token: string) =>
       uc.acceptInvitation({ token, password: 'long-enough-pw', displayName: 'Both' });
     const results = await Promise.allSettled([attempt(a.token), attempt(b.token)]);
-    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
-    const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
-    expect(lost.reason).toBeInstanceOf(InvitationInvalidError);
+    expect(results.map((r) => r.status)).toEqual(['fulfilled', 'fulfilled']);
     const accountRows = await db
       .selectFrom('accounts')
       .select('id')
       .where('email', '=', 'both@acme.test')
       .execute();
     expect(accountRows).toHaveLength(1);
-    expect((await memberCount(a.workspaceId)) + (await memberCount(b.workspaceId))).toBe(1);
+    expect(await memberCount(a.workspaceId)).toBe(1);
+    expect(await memberCount(b.workspaceId)).toBe(1);
+  });
+
+  it('AC-04: same new email, different passwords: the loser gets INVALID_CREDENTIALS and stays pending', async () => {
+    const a = await owner('diff@acme.test');
+    const b = await owner('diff@acme.test');
+    const results = await Promise.allSettled([
+      uc.acceptInvitation({ token: a.token, password: 'first-password-1', displayName: 'D' }),
+      uc.acceptInvitation({ token: b.token, password: 'second-password-2', displayName: 'D' }),
+    ]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(lost.reason).toBeInstanceOf(InvalidCredentialsError);
     const states = await db
       .selectFrom('invitations')
       .select(['id', 'state'])
@@ -160,6 +171,7 @@ describe('accept invitation (Postgres)', () => {
       .execute();
     expect(states.filter((r) => r.state === 'accepted')).toHaveLength(1);
     expect(states.filter((r) => r.state === 'pending')).toHaveLength(1);
+    expect((await memberCount(a.workspaceId)) + (await memberCount(b.workspaceId))).toBe(1);
   });
 
   it('a short password writes nothing (no account, invitation still pending)', async () => {

@@ -51,6 +51,9 @@ function isEmailTaken(err: unknown): boolean {
   return e?.code === '23505' && e.constraint === 'accounts_email_key';
 }
 
+/** Thrown inside the transaction (forcing a rollback) when another invitation created the account. */
+class EmailTakenRace extends Error {}
+
 const NO_LONGER_VALID = 'This invitation is no longer valid';
 
 export function createAcceptInvitation(deps: AcceptInvitationDeps) {
@@ -116,55 +119,60 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
           ? undefined
           : await credentials.verifyPassword(invitation.email, input.password);
 
-      return uow.run(async (repos, tx) => {
-        const now = clock.now();
-        await repos.workspaces.lockForUpdate(invitation.workspaceId);
-        // Consume first: the loser of a race on the same invitation is refused before any insert.
-        const consumed = await repos.invitations.consume(
-          invitation.workspaceId,
-          invitation.tokenHash,
-          now,
-        );
-        if (!consumed) {
-          const ask = askFor(await repos.memberships.hasAnyMember(invitation.workspaceId));
-          throw new InvitationInvalidError(NO_LONGER_VALID, ask);
-        }
-        let accountId = verifiedId;
-        if (accountId === undefined) {
-          try {
-            accountId = (await accounts.insertPreparedAccount(prepared!, tx)).id;
-          } catch (err) {
-            // Another invitation for the same new email won the race; the rollback restores this one.
-            if (isEmailTaken(err)) {
-              throw new InvitationInvalidError(
-                NO_LONGER_VALID,
-                askFor(await memberships.hasAnyMember(invitation.workspaceId)),
-              );
-            }
-            throw err;
+      const commit = (accountIdVerified: string | undefined) =>
+        uow.run(async (repos, tx) => {
+          const now = clock.now();
+          await repos.workspaces.lockForUpdate(invitation.workspaceId);
+          // Consume first: the loser of a race on the same invitation is refused before any insert.
+          const consumed = await repos.invitations.consume(
+            invitation.workspaceId,
+            invitation.tokenHash,
+            now,
+          );
+          if (!consumed) {
+            const ask = askFor(await repos.memberships.hasAnyMember(invitation.workspaceId));
+            throw new InvitationInvalidError(NO_LONGER_VALID, ask);
           }
-        }
-        const existing = await repos.memberships.findByAccount(invitation.workspaceId, accountId);
-        if (existing) throw new AlreadyAMemberError('This person is already a member');
-        await repos.memberships.insert(invitation.workspaceId, {
-          id: newId(),
-          accountId,
-          role: invitation.role,
-          state: 'active',
-          lastUsedAt: null,
-          deactivatedAt: null,
-          createdAt: now,
-        });
-        const sessionToken = await sessions.openSession(accountId, tx);
-        return {
-          workspace: {
-            id: invitation.workspaceId,
-            name: invitation.workspaceName,
+          let accountId = accountIdVerified;
+          if (accountId === undefined) {
+            try {
+              accountId = (await accounts.insertPreparedAccount(prepared!, tx)).id;
+            } catch (err) {
+              // Another invitation for the same new email won the race; roll back (this invitation
+              // stays pending) and continue through the existing-account path outside the transaction.
+              if (isEmailTaken(err)) throw new EmailTakenRace();
+              throw err;
+            }
+          }
+          const existing = await repos.memberships.findByAccount(invitation.workspaceId, accountId);
+          if (existing) throw new AlreadyAMemberError('This person is already a member');
+          await repos.memberships.insert(invitation.workspaceId, {
+            id: newId(),
+            accountId,
             role: invitation.role,
-          },
-          sessionToken,
-        };
-      });
+            state: 'active',
+            lastUsedAt: null,
+            deactivatedAt: null,
+            createdAt: now,
+          });
+          const sessionToken = await sessions.openSession(accountId, tx);
+          return {
+            workspace: {
+              id: invitation.workspaceId,
+              name: invitation.workspaceName,
+              role: invitation.role,
+            },
+            sessionToken,
+          };
+        });
+
+      try {
+        return await commit(verifiedId);
+      } catch (err) {
+        if (!(err instanceof EmailTakenRace)) throw err;
+        const raced = await credentials.verifyPassword(invitation.email, input.password);
+        return commit(raced);
+      }
     },
   };
 }

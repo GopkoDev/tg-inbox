@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r2"
-status: "todo"
+status: "done"
 ---
 
 # T40 — Let the loser of a same-email acceptance race continue through the existing-account path
@@ -46,9 +46,9 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Detect the email-taken case inside `uow.run`, let the transaction roll back, and handle it outside: retry once through the existing-account path (`credentials.verifyPassword(email, password)` → on success accept as an existing account; on mismatch 401 `INVALID_CREDENTIALS`, AC-04). No query on another connection while the transaction is open.
-- [ ] The same-invitation race (the invitation already consumed by the winner) still answers `InvitationInvalidError` (AC-06).
-- [ ] Integration tests: two invitations for the same new email accepted concurrently with the same password → both succeed (two memberships, one account); with different passwords → one succeeds, the other gets `InvalidCredentialsError`; the same-invitation race test stays as it is.
+- [x] Detect the email-taken case inside `uow.run`, let the transaction roll back, and handle it outside: retry once through the existing-account path (`credentials.verifyPassword(email, password)` → on success accept as an existing account; on mismatch 401 `INVALID_CREDENTIALS`, AC-04). No query on another connection while the transaction is open.
+- [x] The same-invitation race (the invitation already consumed by the winner) still answers `InvitationInvalidError` (AC-06).
+- [x] Integration tests: two invitations for the same new email accepted concurrently with the same password → both succeed (two memberships, one account); with different passwords → one succeeds, the other gets `InvalidCredentialsError`; the same-invitation race test stays as it is.
 
 ## Edge cases
 
@@ -60,8 +60,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] No 404 for a still-pending invitation
-- [ ] No second-connection query inside an open transaction
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] No 404 for a still-pending invitation
+- [x] No second-connection query inside an open transaction
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
