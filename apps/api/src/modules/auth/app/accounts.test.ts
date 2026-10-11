@@ -71,3 +71,28 @@ describe('lookups', () => {
     await expect(uc.getAccountsByIds([a.id, b.id])).resolves.toHaveLength(2);
   });
 });
+
+describe('prepareAccount / insertPreparedAccount', () => {
+  it('prepares a hashed account without writing, then inserts it later', async () => {
+    const { uc, accounts, clock } = setup();
+    const p = await uc.prepareAccount({
+      email: ' Bob@X.com ',
+      displayName: 'Bob',
+      password: 'correct-horse-1',
+    });
+    expect(p.email).toBe('bob@x.com');
+    expect(p.passwordHash).not.toBe('correct-horse-1');
+    expect(accounts.rows).toHaveLength(0);
+    const a = await uc.insertPreparedAccount(p);
+    expect(a.passwordHash).toBe(p.passwordHash);
+    expect(a.createdAt).toEqual(clock.now());
+  });
+
+  it('refuses a short password before anything is hashed or written', async () => {
+    const { uc, accounts } = setup();
+    await expect(
+      uc.prepareAccount({ email: 'a@x.com', displayName: 'A', password: 'short' }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(accounts.rows).toHaveLength(0);
+  });
+});

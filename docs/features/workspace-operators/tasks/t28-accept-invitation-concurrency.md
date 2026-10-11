@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T28 — Make concurrent invitation acceptance refuse cleanly instead of failing with 500
@@ -46,10 +46,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Check the password policy and hash the password **before** `uow.run` (split `createAccount` in `auth/app/accounts.ts` so the hash can be prepared outside the transaction, e.g. `prepareAccount(input)` → `{ email, displayName, passwordHash }` + `insertPreparedAccount(prepared, tx)`, or let `createAccount` accept a precomputed hash). A policy failure must still write nothing (AC-05 keeps holding).
-- [ ] Inside the transaction: lock the workspace, then `consume` the invitation **first**; only when it was consumed insert the account (new-account path) and the membership.
-- [ ] Map a Postgres unique violation on `accounts_email_key` (code `23505`, constraint `accounts_email_key`) raised during the insert to `InvitationInvalidError` (404 envelope) — the transaction rolls back, so the consumed invitation is restored.
-- [ ] Strengthen `accept-invitation.int.test.ts`: two concurrent accepts of the same invitation for a new email → exactly one fulfils, the other rejects with `InvitationInvalidError`; two invitations (two workspaces) for the same new email accepted concurrently → one fulfils, the other rejects with `InvitationInvalidError` (not a raw DB error), and nothing half-written remains.
+- [x] Check the password policy and hash the password **before** `uow.run` (split `createAccount` in `auth/app/accounts.ts` so the hash can be prepared outside the transaction, e.g. `prepareAccount(input)` → `{ email, displayName, passwordHash }` + `insertPreparedAccount(prepared, tx)`, or let `createAccount` accept a precomputed hash). A policy failure must still write nothing (AC-05 keeps holding).
+- [x] Inside the transaction: lock the workspace, then `consume` the invitation **first**; only when it was consumed insert the account (new-account path) and the membership.
+- [x] Map a Postgres unique violation on `accounts_email_key` (code `23505`, constraint `accounts_email_key`) raised during the insert to `InvitationInvalidError` (404 envelope) — the transaction rolls back, so the consumed invitation is restored.
+- [x] Strengthen `accept-invitation.int.test.ts`: two concurrent accepts of the same invitation for a new email → exactly one fulfils, the other rejects with `InvitationInvalidError`; two invitations (two workspaces) for the same new email accepted concurrently → one fulfils, the other rejects with `InvitationInvalidError` (not a raw DB error), and nothing half-written remains.
 
 ## Edge cases
 
@@ -61,8 +61,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] `accept-invitation.int.test.ts` asserts the loser's error class for both races
-- [ ] No argon2 hashing inside `uow.run`
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] `accept-invitation.int.test.ts` asserts the loser's error class for both races
+- [x] No argon2 hashing inside `uow.run`
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

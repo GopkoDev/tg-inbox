@@ -126,6 +126,8 @@ describe('accept invitation (Postgres)', () => {
       uc.acceptInvitation({ token: o.token, password: 'long-enough-pw', displayName: 'Twice' });
     const results = await Promise.allSettled([attempt(), attempt()]);
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const lost = results.find((r) => r.status === 'rejected');
+    expect((lost as PromiseRejectedResult).reason).toBeInstanceOf(InvitationInvalidError);
     expect(await memberCount(o.workspaceId)).toBe(1);
     const accountRows = await db
       .selectFrom('accounts')
@@ -133,6 +135,31 @@ describe('accept invitation (Postgres)', () => {
       .where('email', '=', 'twice@acme.test')
       .execute();
     expect(accountRows).toHaveLength(1);
+  });
+
+  it('two workspaces inviting the same new email, accepted concurrently: one wins, the other is invalid', async () => {
+    const a = await owner('both@acme.test');
+    const b = await owner('both@acme.test');
+    const attempt = (token: string) =>
+      uc.acceptInvitation({ token, password: 'long-enough-pw', displayName: 'Both' });
+    const results = await Promise.allSettled([attempt(a.token), attempt(b.token)]);
+    expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+    const lost = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(lost.reason).toBeInstanceOf(InvitationInvalidError);
+    const accountRows = await db
+      .selectFrom('accounts')
+      .select('id')
+      .where('email', '=', 'both@acme.test')
+      .execute();
+    expect(accountRows).toHaveLength(1);
+    expect((await memberCount(a.workspaceId)) + (await memberCount(b.workspaceId))).toBe(1);
+    const states = await db
+      .selectFrom('invitations')
+      .select(['id', 'state'])
+      .where('id', 'in', [a.invitationId, b.invitationId])
+      .execute();
+    expect(states.filter((r) => r.state === 'accepted')).toHaveLength(1);
+    expect(states.filter((r) => r.state === 'pending')).toHaveLength(1);
   });
 
   it('a short password writes nothing (no account, invitation still pending)', async () => {

@@ -10,7 +10,22 @@ export interface AccountDeps {
   clock: Clock;
 }
 
+/** A validated account whose password is already hashed; insert it later, inside a transaction. */
+export interface PreparedAccount {
+  email: string;
+  displayName: string;
+  passwordHash: string;
+}
+
 export interface AccountUseCases {
+  /** Checks the password policy and hashes the password; writes nothing. */
+  prepareAccount(input: {
+    email: string;
+    displayName: string;
+    password: string;
+  }): Promise<PreparedAccount>;
+  /** Rejects with a Postgres unique violation when the email already has an account. */
+  insertPreparedAccount(prepared: PreparedAccount, tx?: Executor): Promise<Account>;
   /** Rejects with a Postgres unique violation when the email already has an account. */
   createAccount(
     input: { email: string; displayName: string; password: string },
@@ -22,15 +37,31 @@ export interface AccountUseCases {
 }
 
 export function createAccountUseCases({ accounts, hasher, clock }: AccountDeps): AccountUseCases {
+  async function prepareAccount({
+    email,
+    displayName,
+    password,
+  }: {
+    email: string;
+    displayName: string;
+    password: string;
+  }): Promise<PreparedAccount> {
+    const check = checkPasswordPolicy(password);
+    if (!check.ok) throw new ValidationError(check.message, { field: check.field });
+    return {
+      email: normaliseEmail(email),
+      displayName,
+      passwordHash: await hasher.hash(password),
+    };
+  }
+  const insertPreparedAccount = (prepared: PreparedAccount, tx?: Executor) =>
+    accounts.insert({ ...prepared, now: clock.now() }, tx);
+
   return {
-    async createAccount({ email, displayName, password }, tx) {
-      const check = checkPasswordPolicy(password);
-      if (!check.ok) throw new ValidationError(check.message, { field: check.field });
-      const passwordHash = await hasher.hash(password);
-      return accounts.insert(
-        { email: normaliseEmail(email), displayName, passwordHash, now: clock.now() },
-        tx,
-      );
+    prepareAccount,
+    insertPreparedAccount,
+    async createAccount(input, tx) {
+      return insertPreparedAccount(await prepareAccount(input), tx);
     },
     async findAccountIdByEmail(email, tx) {
       return (await accounts.findByEmail(normaliseEmail(email), tx))?.id;

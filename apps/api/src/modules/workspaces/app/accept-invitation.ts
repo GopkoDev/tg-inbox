@@ -20,7 +20,10 @@ export interface AcceptInvitationDeps {
   /** Non-transactional reads for the lookup (possession of the link is the scope). */
   invitations: Pick<InvitationRepo, 'findByTokenHash'>;
   memberships: Pick<MembershipRepo, 'hasAnyMember'>;
-  accounts: Pick<AccountUseCases, 'findAccountIdByEmail' | 'createAccount'>;
+  accounts: Pick<
+    AccountUseCases,
+    'findAccountIdByEmail' | 'prepareAccount' | 'insertPreparedAccount'
+  >;
   credentials: Pick<CredentialUseCases, 'verifyPassword'>;
   sessions: Pick<SessionUseCases, 'openSession'>;
   clock: Clock;
@@ -41,6 +44,11 @@ export interface InvitationView {
 export interface InvitationAccepted {
   workspace: { id: string; name: string; role: Role };
   sessionToken: string;
+}
+
+function isEmailTaken(err: unknown): boolean {
+  const e = err as { code?: string; constraint?: string } | null;
+  return e?.code === '23505' && e.constraint === 'accounts_email_key';
 }
 
 const NO_LONGER_VALID = 'This invitation is no longer valid';
@@ -91,6 +99,17 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
         displayName = parsed.data;
       }
 
+      // New account: policy check + argon2 hash outside the transaction (nothing is written, and
+      // the workspace row lock is not held while hashing).
+      const prepared =
+        existingId === undefined
+          ? await accounts.prepareAccount({
+              email: invitation.email,
+              displayName,
+              password: input.password,
+            })
+          : undefined;
+
       // Existing account: verified outside any transaction so a failure is committed on its own.
       const verifiedId =
         existingId === undefined
@@ -100,15 +119,7 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
       return uow.run(async (repos, tx) => {
         const now = clock.now();
         await repos.workspaces.lockForUpdate(invitation.workspaceId);
-        // A new account comes first: it enforces the password policy, so a rejection writes nothing.
-        const accountId =
-          verifiedId ??
-          (
-            await accounts.createAccount(
-              { email: invitation.email, displayName, password: input.password },
-              tx,
-            )
-          ).id;
+        // Consume first: the loser of a race on the same invitation is refused before any insert.
         const consumed = await repos.invitations.consume(
           invitation.workspaceId,
           invitation.tokenHash,
@@ -117,6 +128,21 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
         if (!consumed) {
           const ask = askFor(await repos.memberships.hasAnyMember(invitation.workspaceId));
           throw new InvitationInvalidError(NO_LONGER_VALID, ask);
+        }
+        let accountId = verifiedId;
+        if (accountId === undefined) {
+          try {
+            accountId = (await accounts.insertPreparedAccount(prepared!, tx)).id;
+          } catch (err) {
+            // Another invitation for the same new email won the race; the rollback restores this one.
+            if (isEmailTaken(err)) {
+              throw new InvitationInvalidError(
+                NO_LONGER_VALID,
+                askFor(await memberships.hasAnyMember(invitation.workspaceId)),
+              );
+            }
+            throw err;
+          }
         }
         const existing = await repos.memberships.findByAccount(invitation.workspaceId, accountId);
         if (existing) throw new AlreadyAMemberError('This person is already a member');
