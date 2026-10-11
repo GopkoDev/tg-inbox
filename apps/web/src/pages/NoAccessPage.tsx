@@ -42,7 +42,7 @@ export function NoAccessPage() {
         <CardContent className="space-y-4">
           {notice && (
             <Alert>
-              <AlertDescription>Your access to {notice} was removed</AlertDescription>
+              <AlertDescription>Your access to {notice.name} was removed</AlertDescription>
             </Alert>
           )}
           {account && <p className="text-muted-foreground text-sm">Signed in as {account.email}</p>}

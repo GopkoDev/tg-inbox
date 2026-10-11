@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r4"
-status: "todo"
+status: "done"
 ---
 
 # T49 — Key the access-removed notice by workspace and ignore guard refusals from a page the person has left
@@ -51,10 +51,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Store: the notice carries the workspace it is about (e.g. `{ workspaceId, name }`), and every reader (shell, picker, no-access page) still shows the name.
-- [ ] Guard: with nothing entered, keep an existing notice only when it is for the same workspace id (the Retry case). A refusal for a different workspace replaces it.
-- [ ] Shell: `shellGuard` ignores a refusal for an id that is not the shell's current URL workspace. It does not call `guard`, so there is no notice, no resolution and no navigation, and it does not mark an error.
-- [ ] Tests:
+- [x] Store: the notice carries the workspace it is about (e.g. `{ workspaceId, name }`), and every reader (shell, picker, no-access page) still shows the name.
+- [x] Guard: with nothing entered, keep an existing notice only when it is for the same workspace id (the Retry case). A refusal for a different workspace replaces it.
+- [x] Shell: `shellGuard` ignores a refusal for an id that is not the shell's current URL workspace. It does not call `guard`, so there is no notice, no resolution and no navigation, and it does not mark an error.
+- [x] Tests:
   - a removal from a second, never-entered workspace while an older notice is still shown names "this workspace", not the old name;
   - a late 403 from w1 after moving to w2 (both the SCR-10 case and the entered case) shows no notice and does not navigate;
   - the existing Retry tests still keep "Acme Flowers".
@@ -69,8 +69,8 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] The notice always names the workspace whose refusal produced it
-- [ ] A refusal from a page the person has left has no visible effect
-- [ ] Web unit tests green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] The notice always names the workspace whose refusal produced it
+- [x] A refusal from a page the person has left has no visible effect
+- [x] Web unit tests green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)

@@ -121,7 +121,9 @@ describe('AppShell', () => {
 
   it('access-removed notice is shown and dismissible (AC-17)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
-    useWorkspaceStore.getState().setAccessRemovedNotice('Acme Flowers');
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w1', name: 'Acme Flowers' });
     renderShell('/w/w2');
     expect(screen.getByRole('alert')).toHaveTextContent('Your access to Acme Flowers was removed');
     fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));

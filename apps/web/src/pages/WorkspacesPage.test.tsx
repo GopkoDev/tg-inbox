@@ -62,7 +62,9 @@ describe('WorkspacesPage (SCR-04)', () => {
   });
 
   it('access-removed notice above the list', async () => {
-    useWorkspaceStore.getState().setAccessRemovedNotice('Acme Flowers');
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w1', name: 'Acme Flowers' });
     renderPage();
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'Your access to Acme Flowers was removed',

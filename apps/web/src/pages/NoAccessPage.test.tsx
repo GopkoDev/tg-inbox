@@ -40,7 +40,9 @@ describe('NoAccessPage (AC-10)', () => {
   });
 
   it('access-removed: names the workspace in a notice', () => {
-    useWorkspaceStore.getState().setAccessRemovedNotice('Acme Flowers');
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w1', name: 'Acme Flowers' });
     renderPage();
     expect(screen.getByRole('alert')).toHaveTextContent('Your access to Acme Flowers was removed');
   });

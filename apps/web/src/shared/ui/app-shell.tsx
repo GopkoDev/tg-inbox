@@ -1,5 +1,5 @@
 import { Menu, UserRound, X } from 'lucide-react';
-import { useCallback, useEffect, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react';
 import { Link, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
@@ -34,9 +34,16 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { workspaceId = '' } = useParams();
   const entry = useWorkspaceFromUrl(workspaceId, guard);
   const { markError } = entry;
-  // A page call whose access-removed resolution fails leaves nothing entered: show Retry, not a skeleton.
+  const urlRef = useRef(workspaceId);
+  useLayoutEffect(() => {
+    urlRef.current = workspaceId;
+  });
+  // A refusal for a workspace the person has left has no effect (no notice, no resolution, no
+  // error row). A page call whose access-removed resolution fails leaves nothing entered: show
+  // Retry, not a skeleton.
   const shellGuard = useCallback<GuardFn>(
     async (error, id) => {
+      if (id !== undefined && id !== urlRef.current) return 'handled';
       try {
         return await guard(error, id);
       } catch (cause) {
@@ -114,7 +121,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div className="px-4 pt-3">
             <Alert>
               <AlertDescription className="flex items-center justify-between gap-2">
-                Your access to {notice} was removed
+                Your access to {notice.name} was removed
                 <Button
                   variant="ghost"
                   size="icon"

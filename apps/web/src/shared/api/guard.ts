@@ -36,12 +36,12 @@ export async function handleGuardError(
     const ws = useWorkspaceStore.getState();
     const id = workspaceId ?? ws.current?.id;
     if (ws.current && id === ws.current.id) {
-      ws.setAccessRemovedNotice(ws.current.name);
+      ws.setAccessRemovedNotice({ workspaceId: id, name: ws.current.name });
       ws.clearWorkspace(id);
-    } else if (!ws.current && !ws.accessRemovedNotice) {
+    } else if (!ws.current && id && ws.accessRemovedNotice?.workspaceId !== id) {
       // The name is unknown (nothing entered yet): still tell the person (AC-17), but keep a
-      // notice that already names the workspace (a Retry after a failed resolution).
-      ws.setAccessRemovedNotice('this workspace');
+      // notice that already names this same workspace (a Retry after a failed resolution).
+      ws.setAccessRemovedNotice({ workspaceId: id, name: 'this workspace' });
     }
     await ctx.resolveWorkspaces();
     return 'handled';

@@ -46,7 +46,11 @@ describe('handleGuardError', () => {
     });
     const r = await handleGuardError(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'), c, 'w-acme');
     expect(r).toBe('handled');
-    expect(seenAtResolve).toEqual({ current: null, data: {}, notice: 'Acme Flowers' });
+    expect(seenAtResolve).toEqual({
+      current: null,
+      data: {},
+      notice: { workspaceId: 'w-acme', name: 'Acme Flowers' },
+    });
     expect(useAuthStore.getState().account).toEqual(account);
     expect(c.resolveWorkspaces).toHaveBeenCalledOnce();
   });
@@ -61,8 +65,35 @@ describe('handleGuardError', () => {
     const c = ctx();
     const r = await handleGuardError(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'), c, 'w-acme');
     expect(r).toBe('handled');
-    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('this workspace');
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toEqual({
+      workspaceId: 'w-acme',
+      name: 'this workspace',
+    });
     expect(c.resolveWorkspaces).toHaveBeenCalledOnce();
+  });
+
+  it('403 ACCESS_REMOVED with nothing entered keeps the notice for the same workspace (Retry)', async () => {
+    useWorkspaceStore.getState().clear();
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w-acme', name: 'Acme Flowers' });
+    await handleGuardError(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'), ctx(), 'w-acme');
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toEqual({
+      workspaceId: 'w-acme',
+      name: 'Acme Flowers',
+    });
+  });
+
+  it('403 ACCESS_REMOVED for a never-entered workspace replaces an older notice (X1)', async () => {
+    useWorkspaceStore.getState().clear();
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w-acme', name: 'Acme Flowers' });
+    await handleGuardError(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'), ctx(), 'w-cozy');
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toEqual({
+      workspaceId: 'w-cozy',
+      name: 'this workspace',
+    });
   });
 
   it('404: signals render-in-place', async () => {

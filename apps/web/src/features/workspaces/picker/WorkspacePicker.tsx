@@ -19,7 +19,7 @@ export function WorkspacePicker() {
     <div className="space-y-3">
       {notice && (
         <Alert>
-          <AlertDescription>Your access to {notice} was removed</AlertDescription>
+          <AlertDescription>Your access to {notice.name} was removed</AlertDescription>
         </Alert>
       )}
       {error === 'refused' && (

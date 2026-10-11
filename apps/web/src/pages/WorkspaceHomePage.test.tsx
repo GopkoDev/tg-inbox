@@ -78,7 +78,9 @@ describe('WorkspaceHomePage (SCR-06)', () => {
   });
 
   it('access-removed notice shown under the header (AC-17)', async () => {
-    useWorkspaceStore.getState().setAccessRemovedNotice('Acme Flowers');
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w1', name: 'Acme Flowers' });
     enterWorkspace.mockResolvedValue(bolt);
     renderPage('/w/w2');
     expect(await screen.findByRole('alert')).toHaveTextContent(
@@ -92,7 +94,7 @@ describe('WorkspaceHomePage (SCR-06)', () => {
     renderPage();
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
     expect(useWorkspaceStore.getState().current).toBeNull();
-    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('this workspace');
+    expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('this workspace');
   });
 
   it('guard 401: goes to sign-in', async () => {

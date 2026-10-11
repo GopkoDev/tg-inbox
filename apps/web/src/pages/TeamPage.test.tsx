@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -74,6 +74,9 @@ function renderPage(path = '/w/w1/team') {
 function Jump({ to }: { to: string }) {
   const navigate = useNavigate();
   return <button onClick={() => void navigate(to)}>jump</button>;
+}
+function Where() {
+  return <p data-testid="where">{useLocation().pathname}</p>;
 }
 const err = (status: number, code: string) => new ApiError(status, code as never, code);
 const rowOf = (name: string) => screen.getByText(name).closest('tr')!;
@@ -229,7 +232,7 @@ describe('TeamPage (SCR-07)', () => {
     resolveWorkspace.mockResolvedValue(undefined);
     renderPage();
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
-    expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('Acme Flowers');
+    expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('Acme Flowers');
   });
 
   it('403 ACCESS_REMOVED on an action: member rows are gone before resolution finishes (AC-17)', async () => {
@@ -265,7 +268,7 @@ describe('TeamPage (SCR-07)', () => {
       expect(await screen.findByText('home screen')).toBeInTheDocument();
       expect(resolveWorkspace).toHaveBeenCalledTimes(2);
       expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
-      expect(useWorkspaceStore.getState().accessRemovedNotice).toBe('Acme Flowers');
+      expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('Acme Flowers');
     },
   );
 
@@ -291,6 +294,68 @@ describe('TeamPage (SCR-07)', () => {
     await new Promise((r) => setTimeout(r, 30));
     expect(screen.getByText('Page not found')).toBeInTheDocument();
     expect(screen.queryByTestId('shell-body-skeleton')).not.toBeInTheDocument();
+  });
+
+  it('a late 403 ACCESS_REMOVED for w1 after moving to a not-found w2: no notice, no resolution (X2)', async () => {
+    let failLate: (e: unknown) => void = () => undefined;
+    deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
+    enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
+    resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w9'));
+    render(
+      <MemoryRouter initialEntries={['/w/w1/team']}>
+        <Routes>
+          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="*" element={<p>other</p>} />
+        </Routes>
+        <Jump to="/w/w2/team" />
+        <Where />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Bob');
+    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    fireEvent.click(await lastButton('Deactivate'));
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByText('Page not found')).toBeInTheDocument();
+    expect(screen.queryByText(/was removed/)).not.toBeInTheDocument();
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2/team');
+  });
+
+  it('a late 403 ACCESS_REMOVED for w1 after entering w2: stays on w2 team, no notice (X2)', async () => {
+    const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'owner' as const };
+    let failLate: (e: unknown) => void = () => undefined;
+    deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
+    enterWorkspace.mockResolvedValue(bolt);
+    resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w2'));
+    render(
+      <MemoryRouter initialEntries={['/w/w1/team']}>
+        <Routes>
+          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="*" element={<p>other</p>} />
+        </Routes>
+        <Jump to="/w/w2/team" />
+        <Where />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Bob');
+    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    fireEvent.click(await lastButton('Deactivate'));
+    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    await waitFor(() => expect(useWorkspaceStore.getState().current).toEqual(bolt));
+    await waitFor(() => expect(listMemberships).toHaveBeenCalledWith('w2', undefined));
+    expect(await screen.findByText('Bob')).toBeInTheDocument();
+    failLate(err(403, 'ACCESS_REMOVED'));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2/team');
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(screen.queryByText(/was removed/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Something went wrong')).not.toBeInTheDocument();
   });
 
   it('401: guard goes to sign-in', async () => {
