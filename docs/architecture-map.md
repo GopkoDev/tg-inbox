@@ -60,16 +60,18 @@ separate process later without code changes to modules.
 ## Module inventory
 
 Target layout — modular monolith → [ADR-0002](adr/0002-organize-the-backend-as-a-modular-monolith-with-layered-modules.md).
-Only `platform` and the baseline `health` module are created by scaffold; feature modules appear as
+Scaffold created `platform` and the baseline `health` module; `auth` and `workspaces` arrived with workspace-operators; other feature modules appear as
 roadmap steps are specified.
 
 | Module | Path | Layers | Wired at | Responsibility |
 |---|---|---|---|---|
 | platform | `apps/api/src/platform/` | — (shared infra) | `apps/api/src/app.ts` (`buildApp`), `apps/api/src/deps.ts` (`buildDeps`) | config, db client, errors, ids, logger, telegram client factory, job queue |
+| auth | `apps/api/src/modules/auth/` | domain / app / infra / http | `apps/api/src/app.ts` (routes under `/api/auth`), `apps/api/src/deps.ts` (use cases) | accounts, sessions, login/logout, password change and admin-issued reset links; owns `accounts`, `sessions`, `sign_in_failures`, `password_reset_links` → `docs/features/workspace-operators/data-model.md` |
+| workspaces | `apps/api/src/modules/workspaces/` | domain / app / infra / http | `apps/api/src/app.ts` (routes under `/api`), `apps/api/src/deps.ts` (use cases; also the admin CLI) | workspaces, memberships (owner/operator roles) and invitations; owns `workspaces`, `memberships`, `invitations` tables → `docs/features/workspace-operators/data-model.md` |
 | health | `apps/api/src/modules/health/` | http | `apps/api/src/app.ts` | baseline module: `GET /health` (db ping) — the scaffold precedent |
 | shared | `packages/shared/src/` | — | imported by `apps/api` + `apps/web` | zod schemas / DTO types / error codes shared across the wire |
 | web | `apps/web/src/` | app / pages / features / shared | `apps/web/src/main.tsx` | operator web panel |
-| *(future)* workspaces, auth, bots, conversations, contacts, notifications, broadcasts, posts | `apps/api/src/modules/<m>/` | domain / app / infra / http | `apps/api/src/app.ts` | one module per roadmap step (see `docs/roadmap.md`) |
+| *(future)* bots, conversations, contacts, notifications, broadcasts, posts | `apps/api/src/modules/<m>/` | domain / app / infra / http | `apps/api/src/app.ts` | one module per roadmap step (see `docs/roadmap.md`) |
 
 ## Conventions (the rules a new feature must match)
 

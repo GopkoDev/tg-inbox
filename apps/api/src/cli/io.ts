@@ -1,5 +1,8 @@
 import { userInfo } from 'node:os';
 import { ErrorCode } from '@tg/shared';
+import pino, { type DestinationStream, type LoggerOptions } from 'pino';
+import type { Config } from '../platform/config.js';
+import { loggerOptions } from '../platform/logger.js';
 import {
   AppError,
   NotFoundError,
@@ -20,13 +23,16 @@ export interface CliIo {
 
 export const EXIT = { ok: 0, internal: 1, usage: 2, notFound: 3, refused: 4 } as const;
 
-export function createStderrAuditLogger(stderr: CliIo['stderr']): AuditLogger {
-  return {
-    info(fields, message) {
-      const line = { level: 30, time: Date.now(), ...fields, ...(message && { msg: message }) };
-      stderr.write(`${JSON.stringify(line)}\n`);
-    },
+/**
+ * Audit logger on the platform pino options (level, redaction), writing JSON lines to `destination`
+ * (stderr in the CLI). The dev pretty-print transport is dropped: it cannot be combined with a stream.
+ */
+export function createAuditLogger(config: Config, destination: DestinationStream): AuditLogger {
+  const options: LoggerOptions & { transport?: unknown } = {
+    ...(loggerOptions(config) as LoggerOptions),
   };
+  delete options.transport;
+  return pino(options, destination);
 }
 
 function osUser(): string {

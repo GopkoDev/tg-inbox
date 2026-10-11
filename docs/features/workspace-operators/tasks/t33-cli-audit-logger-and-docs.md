@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11"
-status: "todo"
+status: "done"
 ---
 
 # T33 — Route the CLI audit through the platform logger, fix the admin script, update the architecture map
@@ -56,10 +56,10 @@ status: "todo"
 
 ## Checklist
 
-- [ ] Build the audit logger with `pino(loggerOptions(config))` (from `platform/logger.ts`) writing to stderr (fd 2); keep the audit fields (ids only, never a token or link); stdout keeps carrying only the command result.
-- [ ] `admin` script → `tsx --conditions=development src/cli/admin.ts`; add `admin:prod` (or document) `node dist/cli/admin.js`, and make sure `tsconfig.build.json` emits the CLI.
-- [ ] architecture-map: add `auth` and `workspaces` module rows (path, layers, registered in `app.ts`, tables owned — see data-model.md) and remove them from the *(future)* row.
-- [ ] Tests: the audit line is valid pino JSON on stderr with the expected fields and contains no link/token.
+- [x] Build the audit logger with `pino(loggerOptions(config))` (from `platform/logger.ts`) writing to stderr (fd 2); keep the audit fields (ids only, never a token or link); stdout keeps carrying only the command result.
+- [x] `admin` script → `tsx --conditions=development src/cli/admin.ts`; add `admin:prod` (or document) `node dist/cli/admin.js`, and make sure `tsconfig.build.json` emits the CLI.
+- [x] architecture-map: add `auth` and `workspaces` module rows (path, layers, registered in `app.ts`, tables owned — see data-model.md) and remove them from the *(future)* row.
+- [x] Tests: the audit line is valid pino JSON on stderr with the expected fields and contains no link/token.
 
 ## Edge cases
 
@@ -69,9 +69,9 @@ status: "todo"
 
 ## Definition of Done
 
-- [ ] CLI audit uses the platform logger
-- [ ] `pnpm admin --help` works with fresh shared sources
-- [ ] architecture-map reflects the two modules
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
-- [ ] the regression test for each closed finding fails without the fix (RED first)
+- [x] CLI audit uses the platform logger
+- [x] `pnpm admin --help` works with fresh shared sources
+- [x] architecture-map reflects the two modules
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds (layers, tenancy, errors, config, no `process.env`)
+- [x] the regression test for each closed finding fails without the fix (RED first)
