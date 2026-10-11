@@ -23,14 +23,14 @@
 | T16 | [Expose the owner-only bot routes and wire the bots, conversations and contacts modules into buildDeps / buildApp](./t16-owner-routes.md) | ports | Dmytro Hopko | M | T4, T12, T13 | done |
 | T17 | [Expose the Telegram webhook route with secret-before-parse, empty-body 401/200 and fail-closed 500](./t17-webhook-route.md) | ports | Dmytro Hopko | M | T14, T16 | done |
 | T18 | [Register the health-check workers in buildApp and prove five-minute freshness over a simulated hour](./t18-register-health-jobs.md) | wiring | Dmytro Hopko | S | T15, T16 | done |
-| T19 | [Update CLAUDE.md, the architecture map, the workspace-operators SAD and the design system for the new modules, exceptions and config](./t19-conventions-docs.md) | docs | Dmytro Hopko | S | T16, T17, T18 | todo |
-| T20 | [Add the three API-level end-to-end stories: capture lifecycle, edits and redeliveries, health and recovery](./t20-api-e2e.md) | tests | Dmytro Hopko | M | T17, T18 | todo |
-| T21 | [Add the token-secrecy suite: no token, secret or message text in any log line or response across every bot flow](./t21-token-secrecy-suite.md) | tests | Dmytro Hopko | S | T17, T18 | todo |
-| T22 | [Write the load-test script for throughput, flood isolation, owner actions and settings load (runnable locally, run pre-pilot)](./t22-load-test-script.md) | tests | Dmytro Hopko | M | T17 | todo |
+| T19 | [Update CLAUDE.md, the architecture map, the workspace-operators SAD and the design system for the new modules, exceptions and config](./t19-conventions-docs.md) | docs | Dmytro Hopko | S | T16, T17, T18 | done |
+| T20 | [Add the three API-level end-to-end stories: capture lifecycle, edits and redeliveries, health and recovery](./t20-api-e2e.md) | tests | Dmytro Hopko | M | T17, T18 | done |
+| T21 | [Add the token-secrecy suite: no token, secret or message text in any log line or response across every bot flow](./t21-token-secrecy-suite.md) | tests | Dmytro Hopko | S | T17, T18 | done |
+| T22 | [Write the load-test script for throughput, flood isolation, owner actions and settings load (runnable locally, run pre-pilot)](./t22-load-test-script.md) | tests | Dmytro Hopko | M | T17 | done |
 | T23 | [Lay the web bot foundation: bot API client, store, /w/:workspaceId/bot route and the owner-only Bot entry in AppShell (SCR-01)](./t23-web-bot-foundation.md) | ui | Dmytro Hopko | M | T4 | done |
 | T24 | [Build SCR-02 Bot settings with every declared state](./t24-bot-settings-page.md) | ui | Dmytro Hopko | M | T23 | done |
 | T25 | [Build SCR-03 Paste token dialog with every declared state](./t25-paste-token-dialog.md) | ui | Dmytro Hopko | M | T24 | done |
 | T26 | [Build SCR-04 Confirm takeover and SCR-05 Confirm disconnect](./t26-confirm-dialogs.md) | ui | Dmytro Hopko | M | T25 | done |
-| T27 | [Add the seven browser end-to-end flows for bot settings against the fake Bot API](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T20, T26 | todo |
+| T27 | [Add the seven browser end-to-end flows for bot settings against the fake Bot API](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T20, T26 | done |
 
 **Total:** 27 tasks, ~25 person-days (S = ½ day, M = 1 day, L = 1½ days of focused work; L tasks stay within one reviewable PR).
