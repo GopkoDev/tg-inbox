@@ -18,8 +18,8 @@ const REDACT = [
 // The mask works on a normalised path, not a pattern over the raw url, and covers a superset on
 // purpose: every form the SPA router or Fastify resolves to a link route (any case, encoded letters,
 // an absolute-form `http://host/...` target), plus forms no router resolves but a client may still
-// send (`//`, `%2F`, `\`, `.` / `..` segments). Once the normalised path is exactly a link prefix,
-// whatever follows is masked, even when a later `..` walks back over the token.
+// send (`//`, `%2F`, `\`, `%5C`, `.` / `..` segments). Once the normalised path is exactly a link
+// prefix, whatever follows is masked, even when a later `..` walks back over the token.
 const LINK_PREFIXES = new Set(['invite', 'reset-password']);
 const ABSOLUTE_FORM_AUTHORITY = /^[a-z][a-z0-9+.-]*:\/\/[^/]*/i;
 
@@ -37,7 +37,7 @@ export function maskLinkTokens(url: string): string {
   const path = (queryAt === -1 ? url : url.slice(0, queryAt)).replace(ABSOLUTE_FORM_AUTHORITY, '');
   const query = queryAt === -1 ? '' : url.slice(queryAt);
   const segments: string[] = [];
-  for (const raw of path.split(/\/|\\|%2f/i)) {
+  for (const raw of path.split(/\/|\\|%2f|%5c/i)) {
     const segment = decodeSegment(raw);
     if (segment === '') continue;
     const [prefix] = segments;

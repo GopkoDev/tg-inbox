@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
 source: "review-2026-10-11-r10"
-status: "todo"
+status: "done"
 ---
 
 # T58 — Mask encoded-backslash (`%5C`) link forms
@@ -32,11 +32,11 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Checklist
 
-- [ ] `platform/logger.ts`: split the path on `%5c` (any case) as well as `/`, `\` and `%2f`.
-- [ ] Mention `%5C` next to `\` in the comments at `logger.ts:20-21` and `logger.test.ts:19-20`.
-- [ ] Add an api-sync-report line for this change (no operation, status or code changes).
-- [ ] Tests (unit, `logger.test.ts`): `/invite%5Ctok123`, `/invite%5ctok123`, `/reset-password%5Ctok123`, plus every existing case.
-- [ ] RED proof: the new masked cases fail against the current `maskLinkTokens`.
+- [x] `platform/logger.ts`: split the path on `%5c` (any case) as well as `/`, `\` and `%2f`.
+- [x] Mention `%5C` next to `\` in the comments at `logger.ts:20-21` and `logger.test.ts:19-20`.
+- [x] Add an api-sync-report line for this change (no operation, status or code changes).
+- [x] Tests (unit, `logger.test.ts`): `/invite%5Ctok123`, `/invite%5ctok123`, `/reset-password%5Ctok123`, plus every existing case.
+- [x] RED proof: the new masked cases fail against the current `maskLinkTokens`.
 
 ## Edge cases
 
@@ -48,8 +48,8 @@ None of these findings maps to a §5 AC. They enforce sad.md:716 ("link tokens a
 
 ## Definition of Done
 
-- [ ] No `incoming request` line contains an invitation or reset token for a link form separated by `\` or `%5C`
-- [ ] The mask's comments list `%5C` among the forms no router resolves
-- [ ] The serializer never throws on a malformed url
-- [ ] Unit + integration green; `pnpm lint` clean
-- [ ] every Hard Rule in CLAUDE.md still holds
+- [x] No `incoming request` line contains an invitation or reset token for a link form separated by `\` or `%5C`
+- [x] The mask's comments list `%5C` among the forms no router resolves
+- [x] The serializer never throws on a malformed url
+- [x] Unit + integration green; `pnpm lint` clean
+- [x] every Hard Rule in CLAUDE.md still holds

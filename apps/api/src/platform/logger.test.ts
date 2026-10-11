@@ -17,8 +17,8 @@ describe('maskLinkTokens', () => {
 
   // Non-canonical forms: the mask covers a superset on purpose — every form the SPA router or
   // Fastify resolves to a link route (case, encoded letters, absolute-form targets), plus forms no
-  // router resolves but a client may still send (extra slashes, `%2F`, `\`, dot segments). The token
-  // must not be logged; the normalised prefix that is logged instead is free-form.
+  // router resolves but a client may still send (extra slashes, `%2F`, `\`, `%5C`, dot segments).
+  // The token must not be logged; the normalised prefix that is logged instead is free-form.
   it.each([
     '/invite/tok123/',
     '/Invite/tok123',
@@ -43,6 +43,9 @@ describe('maskLinkTokens', () => {
     '/invite\\tok123',
     '\\invite\\tok123',
     '/reset-password\\tok123',
+    '/invite%5Ctok123',
+    '/invite%5ctok123',
+    '/reset-password%5Ctok123',
   ])('hides the token in %s', (url) => {
     const masked = maskLinkTokens(url);
     expect(masked).not.toContain('tok123');
