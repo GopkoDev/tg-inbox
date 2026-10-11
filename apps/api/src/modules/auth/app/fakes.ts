@@ -3,9 +3,12 @@ import type {
   Account,
   AccountRepo,
   PasswordHasher,
+  ResetLinkRecord,
+  ResetLinkRepo,
   Session,
   SessionRepo,
   SignInFailureRepo,
+  Transaction,
 } from './ports.js';
 
 /** In-memory port fakes for unit tests of the auth use cases. */
@@ -115,3 +118,44 @@ export function fakeHasher(): PasswordHasher & { dummyCalls: number } {
   };
   return h;
 }
+
+export function fakeResetLinkRepo(): ResetLinkRepo & { rows: ResetLinkRecord[] } {
+  const rows: ResetLinkRecord[] = [];
+  return {
+    rows,
+    async insert(input) {
+      const r: ResetLinkRecord = {
+        id: newId(),
+        accountId: input.accountId,
+        tokenHash: input.tokenHash,
+        state: 'pending',
+        expiresAt: input.expiresAt,
+        createdAt: input.now,
+        closedAt: null,
+      };
+      rows.push(r);
+      return r;
+    },
+    async supersedePending(accountId, now) {
+      for (const r of rows) {
+        if (r.accountId === accountId && r.state === 'pending') {
+          r.state = 'superseded';
+          r.closedAt = now;
+        }
+      }
+    },
+    async findByTokenHash(tokenHash) {
+      return rows.find((r) => r.tokenHash.equals(tokenHash));
+    },
+    async consume(tokenHash, now) {
+      const r = rows.find((x) => x.tokenHash.equals(tokenHash));
+      if (!r || r.state !== 'pending' || r.expiresAt.getTime() <= now.getTime()) return undefined;
+      r.state = 'used';
+      r.closedAt = now;
+      return r;
+    },
+  };
+}
+
+/** Runs the unit of work without a real transaction. */
+export const fakeTransaction: Transaction = (fn) => fn(undefined);

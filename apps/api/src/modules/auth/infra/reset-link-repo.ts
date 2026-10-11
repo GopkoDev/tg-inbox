@@ -44,6 +44,15 @@ export function createResetLinkRepo(db: Db): ResetLinkRepo {
         .execute();
     },
 
+    async findByTokenHash(tokenHash, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('password_reset_links')
+        .selectAll()
+        .where('token_hash', '=', tokenHash)
+        .executeTakeFirst();
+      return row && toRecord(row);
+    },
+
     async consume(tokenHash, now, tx) {
       const row = await (tx ?? db)
         .updateTable('password_reset_links')

@@ -72,9 +72,13 @@ export interface ResetLinkRepo {
   ): Promise<ResetLinkRecord>;
   /** Marks every pending link of the account superseded; no-op when there is none. */
   supersedePending(accountId: string, now: Date, tx?: Executor): Promise<void>;
+  findByTokenHash(tokenHash: Buffer, tx?: Executor): Promise<ResetLinkRecord | undefined>;
   /** Atomically pending -> used if unexpired at `now`; returns the link, or undefined if not consumed. */
   consume(tokenHash: Buffer, now: Date, tx?: Executor): Promise<ResetLinkRecord | undefined>;
 }
+
+/** Runs `fn` in one database transaction, handing it the executor to pass to every repo call. */
+export type Transaction = <T>(fn: (tx: Executor | undefined) => Promise<T>) => Promise<T>;
 
 export interface PasswordHasher {
   /** Returns an argon2id PHC string. */
