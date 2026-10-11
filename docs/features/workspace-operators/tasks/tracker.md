@@ -17,7 +17,7 @@
 | T10 | [Implement invitation lookup and acceptance](./t10-accept-invitation.md) | app | Dmytro Hopko | M | T6, T7 | done |
 | T11 | [Implement workspace access: guard check, my workspaces, enter](./t11-workspace-access.md) | app | Dmytro Hopko | M | T6, T7 | done |
 | T12 | [Implement the team use cases: invite, revoke, list, deactivate, reactivate](./t12-team-use-cases.md) | app | Dmytro Hopko | M | T6, T7 | done |
-| T13 | [Expose the auth routes with the session cookie and resolver](./t13-auth-routes.md) | ports | Dmytro Hopko | M | T2, T3, T7, T8 | todo |
+| T13 | [Expose the auth routes with the session cookie and resolver](./t13-auth-routes.md) | ports | Dmytro Hopko | M | T2, T3, T7, T8 | done |
 | T14 | [Expose the workspace guard and the me / workspaces / enter routes](./t14-guard-and-access-routes.md) | ports | Dmytro Hopko | M | T11, T13 | todo |
 | T15 | [Expose the invitation lookup and acceptance routes](./t15-invitation-routes.md) | ports | Dmytro Hopko | M | T10, T14 | todo |
 | T16 | [Expose the owner-only team routes](./t16-team-routes.md) | ports | Dmytro Hopko | M | T12, T14 | todo |
@@ -26,9 +26,9 @@
 | T19 | [Lay the web foundation: shadcn primitives, API client, shared guard handling, stores](./t19-web-foundation.md) | ui | Dmytro Hopko | M | T2, T3 | done |
 | T20 | [Build SCR-01 sign-in, the workspace resolution, SCR-05 no access and SCR-10 not found](./t20-sign-in-and-resolution.md) | ui | Dmytro Hopko | M | T19 | done |
 | T21 | [Build SCR-02 accept invitation and SCR-03 link unavailable](./t21-accept-invitation-screens.md) | ui | Dmytro Hopko | M | T20 | done |
-| T22 | [Build SCR-09 set new password](./t22-set-new-password-screen.md) | ui | Dmytro Hopko | S | T21 | todo |
+| T22 | [Build SCR-09 set new password](./t22-set-new-password-screen.md) | ui | Dmytro Hopko | S | T21 | done |
 | T23 | [Build the AppShell, SCR-06 workspace home and SCR-04 picker / switcher](./t23-app-shell-home-picker.md) | ui | Dmytro Hopko | M | T20 | done |
-| T24 | [Build SCR-07 team screen](./t24-team-screen.md) | ui | Dmytro Hopko | M | T23 | todo |
+| T24 | [Build SCR-07 team screen](./t24-team-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T25 | [Build SCR-08 invite member dialog](./t25-invite-dialog.md) | ui | Dmytro Hopko | S | T24 | todo |
 | T26 | [Add API-level end-to-end flows for every user story](./t26-api-e2e.md) | ports | Dmytro Hopko | M | T18 | todo |
 | T27 | [Add the six browser end-to-end flows and their CI step](./t27-ui-e2e.md) | ui | Dmytro Hopko | M | T25, T26 | todo |
