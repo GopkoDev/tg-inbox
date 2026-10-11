@@ -15,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/shared/ui/alert-dialog';
+import { ROLE_LABEL } from '@/shared/lib/roles';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
@@ -150,12 +151,12 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                         )}
                       </div>
                       <div className="text-muted-foreground md:hidden">
-                        {m.email} · {m.role}
+                        {m.email} · {ROLE_LABEL[m.role]}
                       </div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">{m.email}</TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <Badge variant="secondary">{m.role}</Badge>
+                      <Badge variant="secondary">{ROLE_LABEL[m.role]}</Badge>
                     </TableCell>
                     <TableCell>
                       <Badge variant={m.state === 'active' ? 'default' : 'outline'}>
@@ -210,10 +211,10 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                   <TableRow key={i.id}>
                     <TableCell>
                       <div>{i.email}</div>
-                      <div className="text-muted-foreground md:hidden">{i.role}</div>
+                      <div className="text-muted-foreground md:hidden">{ROLE_LABEL[i.role]}</div>
                     </TableCell>
                     <TableCell className="hidden md:table-cell">
-                      <Badge variant="secondary">{i.role}</Badge>
+                      <Badge variant="secondary">{ROLE_LABEL[i.role]}</Badge>
                     </TableCell>
                     <TableCell className="text-muted-foreground">
                       expires {new Date(i.expires_at).toLocaleDateString()}

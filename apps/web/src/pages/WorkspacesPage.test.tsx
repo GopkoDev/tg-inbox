@@ -54,8 +54,10 @@ describe('WorkspacesPage (SCR-04)', () => {
 
   it('default: one row per workspace with a role badge, signed-in email', async () => {
     renderPage();
-    expect(await screen.findByRole('button', { name: /Acme Flowers/ })).toHaveTextContent('owner');
-    expect(screen.getByRole('button', { name: /Bolt Bikes/ })).toHaveTextContent('operator');
+    expect(await screen.findByRole('button', { name: /Acme Flowers/ })).toHaveTextContent(
+      'Business owner',
+    );
+    expect(screen.getByRole('button', { name: /Bolt Bikes/ })).toHaveTextContent('Operator');
     expect(screen.getByText(/Signed in as o@x\.io/)).toBeInTheDocument();
   });
 

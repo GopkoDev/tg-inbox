@@ -185,9 +185,9 @@ page (phone; desktop = same card, max-w-md)   switcher (desktop header menu)
 +--------------------------------+            +--------------------------+
 |  Choose a workspace            |            | Acme Flowers        ▾    |
 |                                |            +--------------------------+
-|  [ Acme Flowers      Owner   ] |            | ✓ Acme Flowers   Owner   |
-|  [ Bolt Bikes        Operator] |            |   Bolt Bikes     Operator|
-|  [ Cozy Cafe         Operator] |            +--------------------------+
+|  [ Acme Flowers   Business owner ] |        | ✓ Acme Flowers  Business owner |
+|  [ Bolt Bikes     Operator      ] |        |   Bolt Bikes    Operator       |
+|  [ Cozy Cafe      Operator      ] |        +--------------------------+
 |                                |
 |  Signed in as ana@acme.test    |
 |  [ Sign out ]                  |
@@ -282,7 +282,7 @@ default — desktop
 |  Team                                                   [ + Invite ]|
 |  Members                                                            |
 |  Name        Email             Role       State                     |
-|  Ana (you)     ana@acme.test   [Owner]    [Active]    [Deactivate]  |
+|  Ana (you)     ana@acme.test   [Business owner] [Active] [Deactivate]|
 |  Bob Petrenko  bob@acme.test   [Operator] [Active]    [Deactivate]  |
 |  Ira Melnyk    ira@acme.test   [Operator] [Deactivated][Reactivate] |
 |                                                                     |

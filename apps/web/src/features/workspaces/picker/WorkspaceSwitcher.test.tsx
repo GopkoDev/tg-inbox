@@ -51,6 +51,18 @@ describe('WorkspaceSwitcher (AC-12)', () => {
     );
   });
 
+  it('shows role labels, not raw role values', async () => {
+    renderSwitcher();
+    openMenu('Acme Flowers');
+    const boltItem = await screen.findByRole('menuitem', { name: /Bolt Bikes/ });
+    expect(boltItem).toHaveTextContent('Operator');
+    expect(screen.getByRole('menuitem', { name: /Acme Flowers/ })).toHaveTextContent(
+      'Business owner',
+    );
+    expect(screen.queryByText('operator')).not.toBeInTheDocument();
+    expect(screen.queryByText('owner')).not.toBeInTheDocument();
+  });
+
   it('switching enters the new workspace and drops the old workspace data', async () => {
     enterWorkspace.mockResolvedValue(bolt);
     renderSwitcher();

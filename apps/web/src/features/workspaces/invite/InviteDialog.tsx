@@ -1,4 +1,4 @@
-import type { IssuedInvitation } from '@tg/shared';
+import type { IssuedInvitation, Role } from '@tg/shared';
 import { ErrorCode } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
@@ -17,7 +17,8 @@ import {
 import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
-import { ROLE_LABEL, type Role } from '@/shared/lib/roles';
+
+import { ROLE_LABEL } from '@/shared/lib/roles';
 import { createInvitation } from '../api';
 
 export type InviteFailure = 'owner-only' | 'not-found';

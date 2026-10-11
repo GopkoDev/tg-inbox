@@ -107,7 +107,7 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.getByText('(you)')).toBeInTheDocument();
     const pending = screen.getByTestId('pending-invitations');
     expect(within(pending).getByText('new@x.test')).toBeInTheDocument();
-    expect(within(pending).getAllByText('operator').length).toBeGreaterThan(0);
+    expect(within(pending).getAllByText('Operator').length).toBeGreaterThan(0);
     expect(within(pending).getByText(/expires/i)).toBeInTheDocument();
     expect(within(pending).queryByRole('link')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Invite' })).toBeInTheDocument();
@@ -169,7 +169,7 @@ describe('TeamPage (SCR-07)', () => {
       expect(within(rowOf('Carl')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument(),
     );
     expect(within(rowOf('Carl')).getByText('Active')).toBeInTheDocument();
-    expect(within(rowOf('Carl')).getByText('operator')).toBeInTheDocument();
+    expect(within(rowOf('Carl')).getByText('Operator')).toBeInTheDocument();
     expect(reactivateMembership).toHaveBeenCalledWith('w1', 'm3');
   });
 

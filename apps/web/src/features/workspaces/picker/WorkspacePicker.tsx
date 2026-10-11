@@ -1,6 +1,7 @@
 import { Loader2 } from 'lucide-react';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
+import { ROLE_LABEL } from '@/shared/lib/roles';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
@@ -61,7 +62,7 @@ export function WorkspacePicker() {
                 {enteringId === w.id ? (
                   <Loader2 className="animate-spin" data-testid="entering-spinner" />
                 ) : (
-                  <Badge variant="secondary">{w.role}</Badge>
+                  <Badge variant="secondary">{ROLE_LABEL[w.role]}</Badge>
                 )}
               </Button>
             </li>

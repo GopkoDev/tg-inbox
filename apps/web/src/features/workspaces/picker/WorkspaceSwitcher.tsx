@@ -1,6 +1,7 @@
 import { Check, ChevronDown, Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ROLE_LABEL } from '@/shared/lib/roles';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
@@ -68,7 +69,7 @@ export function WorkspaceSwitcher() {
               <span className="size-4" />
             )}
             <span className="flex-1 truncate">{w.name}</span>
-            <Badge variant="secondary">{w.role}</Badge>
+            <Badge variant="secondary">{ROLE_LABEL[w.role]}</Badge>
           </DropdownMenuItem>
         ))}
         {list.hasMore && (
