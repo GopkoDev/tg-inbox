@@ -1,0 +1,101 @@
+---
+status: living
+updated_at: "2026-10-11"
+---
+
+# Roadmap — tg-inbox
+
+> **A decomposition, not a promise.** The overall idea broken into incremental steps: what each
+> step is, where it comes from, how big it is — or that nobody has looked at it yet — and in which
+> order, and parallel lanes, we walk them. **No dates** (except shipped history), **no scores** —
+> order is the prioritization. The *solution* for any step lives in its `docs/features/<slug>/`
+> spec, not here.
+
+## Destination
+
+Businesses that run multi-operator support in Telegram answer customers from a shared web inbox, grow a tagged contact base from every conversation, and reach it through broadcasts, group posts, AI reply drafts and an MCP server their own AI assistant can drive.
+
+## Steps
+
+| # | Step | Source | Size | Status |
+|---|---|---|:---:|---|
+| 1 | Project skeleton — the empty repo becomes a buildable, testable project | idea-brief.md §1 Raw idea | S | idea |
+| 2 | Workspace & operator accounts — a business is created by hand and its operators sign in to the web panel | idea-brief.md §3 Users | S | idea |
+| 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | idea |
+| 4 | Shared web inbox — operators see conversations and reply; the customer receives the reply in the bot | idea-brief.md §2 Problem | M | idea |
+| 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | S | idea |
+| 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | S | idea |
+| 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | S | idea |
+| 8 | Broadcasts by tag — send a message to a tagged segment, throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation | M | idea |
+| 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
+| 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | idea |
+| 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
+
+## Not yet specified
+
+| Area | What we'd have to learn | Blocks | How it gets sharpened |
+|---|---|:---:|---|
+| AI reply drafts | Where the AI gets business knowledge (past conversations, owner-supplied docs), where drafts appear in the inbox, what quality bar makes operators use them, cost per tenant | 9 | Recon pass once the inbox holds real pilot conversations; a throwaway prototype on those transcripts |
+| Platform MCP server | Which actions to expose (read conversations/contacts, launch broadcasts), how an external AI authenticates on behalf of a workspace, read-only vs write | 11 | Recon pass after broadcasts ship; a conversation with 2–3 pilot owners about what they'd ask their AI |
+
+## Out of scope
+
+- Self-serve signup and onboarding — pilots are connected by hand; effort goes into support, not onboarding.
+- Billing / payments — v1 success is daily usage, not revenue.
+- Collecting phone / email from customers — contact = Telegram profile + tags + history; extra fields add friction and consent questions.
+- Operators replying inside Telegram — the bot serves the end customer only; all operator work is on the web.
+- Paid high-throughput broadcasts — Telegram gates them behind 100k monthly active users, out of reach for pilot bots.
+
+## Open decisions
+
+| # | Question | Type | Owner | Blocks |
+|---|---|:---:|:---:|:---:|
+| D1 | What exactly counts as an operator being "inactive on the web" before the bot pings them? | grilling | human | 6 |
+| D2 | Where do the first 5–10 pilot businesses come from, and do they have 3+ operators? | grilling | human | — |
+| D3 | Is the positioning "Telegram CRM" or "support tool" through v1? | grilling | human | — |
+| D4 | When does pricing start, and what does a pilot get for using an unpaid v1? | grilling | human | — |
+
+## Decisions so far
+
+- Each business connects its own BotFather bot (own brand, own contact base) → [`docs/idea-brief.md` §3 Users](idea-brief.md)
+- Operators work only in the web panel; the bot is for end customers → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
+- A contact is Telegram profile + operator tags + conversation history → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
+- AI comes as reply drafts for operators, not autonomous answers → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
+- MCP means a platform server for the owner's external AI assistant → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
+- Broadcasts must throttle to ~30 msgs/s per bot; blocked users surface via the my_chat_member update → [Telegram Bot FAQ](https://core.telegram.org/bots/faq)
+- Channel posting needs the bot as admin with can_post_messages; scheduling is ours to build (no native scheduling) → [Telegram Bot API](https://core.telegram.org/bots/api#chatadministratorrights)
+
+## Dependency graph
+
+```mermaid
+flowchart LR
+  s1["1 · Skeleton"] -->|nothing to build into| s2["2 · Workspace & operators"]
+  s2 -->|a bot belongs to a workspace| s3["3 · Bot & inbound"]
+  s3 -->|inbox shows captured conversations| s4["4 · Web inbox"]
+  s3 -->|contacts are created on inbound| s7["7 · Contacts"]
+  s4 -->|statuses live on inbox conversations| s5["5 · Assignment & statuses"]
+  s4 -->|notifies about inbox messages| s6["6 · Notifications"]
+  s7 -->|segments are contact tags| s8["8 · Broadcasts"]
+  s4 -->|drafts appear in the reply box| s9["9 · AI drafts (fog)"]
+  s3 -->|posts go out via the connected bot| s10["10 · Group posts"]
+  s7 -->|exposes contacts & tags| s11["11 · MCP server (fog)"]
+  s8 -->|exposes launching broadcasts| s11
+```
+
+## Execution path
+
+| Wave | Steps | Zone per step (why parallel-safe) | Unlocks |
+|:---:|---|---|---|
+| 1 | 1 | repo skeleton (new) | 2 |
+| 2 | 2 | workspace & auth (new) | 3 |
+| 3 | 3 | bot ingress (new) | 4, 7, 10 |
+| 4 | 4 ∥ 7 | 4: inbox (new) · 7: contacts (new) (disjoint UI zones and data) | 5, 6, 8, 9 |
+| 5 | 5 ∥ 6 | 5: inbox conversation state (new) · 6: notifications (new) (disjoint) | — |
+| 6 | 8 | broadcasts (new) | 11 |
+| 7 | 10 | posts & scheduler (new) — graph allows wave 4; placed here to keep the brief's version order | — |
+
+## Shipped
+
+| Step | Shipped | Link |
+|---|---|---|
+| — | — | — |
