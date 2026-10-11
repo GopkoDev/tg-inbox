@@ -322,21 +322,24 @@ No production target is chosen yet (architecture map: deferred until the first p
 
 ## 8. Crosscutting concepts
 
-<!-- 🎯 Why: CROSS-CUTTING PATTERNS spanning several modules: logging, errors, authorization, ID
-     strategy, events, caching. ⭐ The second-densest section. A pattern inside one module is NOT
-     here; a project-wide convention belongs in the convention file.
-     📋 Write: a table — concept / convention / where defined. One row per concept.
-     📌 e.g. «sortable time-based IDs generated in the app layer» as a default from the convention file. -->
-
 | Concept | Convention | Where defined |
 |---|---|---|
-| Logging | <e.g. structured, fields `module=<name>`> | <convention file §X or here> |
-| Authentication | <e.g. token-based via middleware> | <convention file §X> |
-| Error handling | <e.g. domain sentinel → ports error mapping → JSON> | <convention file §X> |
-| ID strategy | <e.g. sortable time-based ID in the app layer> | <convention file §X> |
-| Internationalisation | <e.g. N/A, single language> | — |
-| Observability | <e.g. tracing on the request boundary> | — |
-| Events | <module-specific patterns, if any> | <here> |
+| Logging | pino through `platform/logger.ts`; request logs redact the `cookie` and `set-cookie` headers; passwords, session tokens and link tokens are never logged; admin CLI actions write one audit line each | `CLAUDE.md` + here |
+| Authentication | Opaque session token in an `HttpOnly`, `SameSite=Lax` cookie, hashed session rows in Postgres, 30-day idle expiry refreshed only by user-triggered requests (the web client marks automatic requests with a header); `auth` exposes the session resolver that every authenticated route uses; public routes (sign-in, invitation lookup and acceptance, reset-link redemption) are explicit | [ADR-0002](adr/0002-use-opaque-cookie-sessions-stored-in-postgres.md) |
+| Authorization | Workspace-scoped routes live under `/api/workspaces/:workspaceId/…` behind the `workspaces` guard: never a member → not found, deactivated → access-removed refusal, active → `{ workspaceId, role }`; owner-only routes add a role check (`ForbiddenError`); platform-admin actions exist only in the CLI | [ADR-0003](adr/0003-carry-the-active-workspace-in-the-url-and-check-membership-on-every-request.md), [ADR-0001](adr/0001-build-an-api-a-spa-and-a-server-side-admin-cli.md) |
+| Password storage | argon2id in the self-describing PHC string format (parameters stored with the hash, so they can be raised later by re-hashing at the next sign-in); built-in `node:crypto` argon2, or `@node-rs/argon2` if the built-in is still experimental on Node 26; a sign-in for an unknown email still runs one hash verification so response time does not reveal whether an account exists; passwords are 10–1024 characters | here |
+| Email identity | Emails are trimmed and lower-cased before every comparison and stored in that normalised form with a unique index on accounts | spec §6.1 + here |
+| Brute-force lockout | A failure log per normalised email in Postgres; 10 failures within 15 minutes lock the email for 15 minutes from the 10th failure; it counts sign-in attempts and existing-password confirmations during invitation acceptance alike, behaves identically for emails without an account, and is cleared by a successful sign-in or a password reset | spec AC-09 + here |
+| Invitation and reset links | Each link carries 32 random bytes; only their SHA-256 hash is stored; the link is shown exactly once (in the API response to the business owner right after creation, or on the admin CLI's stdout); single use through a conditional update that succeeds only while the link is pending and unexpired; invitations last 7 days, reset links 24 hours; issuing a new one for the same email in the workspace (or for the same account) supersedes the earlier one; expiry is compared against the database clock | here |
+| Concurrency | Team-changing commands lock the workspace row for the transaction (last active business owner, AC-18); account creation relies on the unique normalised email; invitation acceptance runs in one transaction across `workspaces` and `auth` | §4, [ADR-0005](adr/0005-split-identity-into-an-auth-module-and-a-workspaces-module.md) |
+| Error handling | The existing envelope `{ "error": { "code", "message", "details"? } }`; the platform gains `UnauthenticatedError` (401) and `TooManyRequestsError` (429), and `AppError` subclasses may carry a more specific code (e.g. invalid credentials, link no longer valid, already a member, last active owner, access removed); the exact list is fixed at the `api` stage in `packages/shared/src/errors.ts` | `CLAUDE.md` + here |
+| ID strategy | UUIDv7 from `newId()` for every row; link and session tokens are random secrets, never identifiers | `CLAUDE.md` |
+| CSRF | Same origin plus `SameSite=Lax` cookies, and mutating routes accept only `application/json` bodies | [ADR-0004](adr/0004-serve-the-spa-and-the-api-from-one-origin-under-api.md) |
+| Configuration | `PUBLIC_WEB_URL` and `WEB_DIST_DIR` added to `platform/config.ts` and `.env.example` | §7 |
+| Internationalisation | N/A in v1 — one UI language | — |
+| Observability | Fastify per-request id and duration in every log line; p95 by route from the logs | §7 |
+| Events / jobs | None — this feature emits no events and schedules no pg-boss jobs | — |
+| Rate limiting | Only the per-email lockout; no per-IP limit in v1 (§11) | here |
 
 ## 9. Architecture decisions
 
