@@ -40,7 +40,7 @@
 | T33 | [Route the CLI audit through the platform logger, fix the admin script, update the architecture map](./t33-cli-audit-logger-and-docs.md) | wiring | Dmytro Hopko | S | — | done |
 | T34 | [Make the app shell enter the workspace in the URL, guard late responses, keep the access-removed notice](./t34-shell-enters-workspace-from-url.md) | ui | Dmytro Hopko | M | — | done |
 | T35 | [Guard Team 'Show more', render SCR-10 in place without nested landmarks, link the invite form errors](./t35-team-list-and-invite-polish.md) | ui | Dmytro Hopko | S | T34 | done |
-| T36 | [Send malformed token links to SCR-03 and align screen copy with the manifest](./t36-token-link-errors-and-copy.md) | ui | Dmytro Hopko | S | T35 | todo |
+| T36 | [Send malformed token links to SCR-03 and align screen copy with the manifest](./t36-token-link-errors-and-copy.md) | ui | Dmytro Hopko | S | T35 | done |
 | T37 | [Exercise last-used workspace and direct Team loads in the browser flows](./t37-e2e-last-used-and-direct-team-load.md) | ui | Dmytro Hopko | S | T34, T36 | todo |
 
 **Total:** 37 tasks (T28–T37 are follow-ups from `_review/review-2026-10-11.md`), ~19.5 person-days (T26/T27 added by implement to cover the test-plan e2e rows) (S = 0.5 d, M = 0.75 d, L = 1 d). The critical path runs T1 → T5 → T7 → T8 → T13 → T14 → T15 → T17 → T18 (9 waves). The UI branch (T19–T25) runs alongside the backend from wave 2.
