@@ -19,6 +19,13 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
+    // Playwright flows run in Node (global setup, seeding) next to the browser specs.
+    files: ['apps/web/e2e/**/*.ts', 'apps/web/playwright.config.ts'],
+    languageOptions: { globals: globals.node },
+    // Playwright fixtures call `use(...)`, which is not a React hook.
+    rules: { 'react-hooks/rules-of-hooks': 'off' },
+  },
+  {
     // Migrations are frozen in time and take Kysely<any> by design.
     files: ['apps/api/migrations/**/*.ts'],
     rules: { '@typescript-eslint/no-explicit-any': 'off' },

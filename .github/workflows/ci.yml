@@ -20,3 +20,6 @@ jobs:
       - run: pnpm -r build
       # Integration tests start Postgres via Testcontainers on the runner's Docker.
       - run: pnpm test
+      # Browser flows: Playwright starts Postgres (Testcontainers) and serves the built SPA from the API.
+      - run: pnpm --filter @tg/web exec playwright install --with-deps chromium
+      - run: pnpm --filter @tg/web test:e2e

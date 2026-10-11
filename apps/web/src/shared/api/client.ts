@@ -49,7 +49,8 @@ export async function apiRequest(
 ): Promise<unknown> {
   const { background, ...rest } = init;
   const headers = new Headers(rest.headers);
-  if (!headers.has('content-type')) headers.set('content-type', 'application/json');
+  if (rest.body !== undefined && !headers.has('content-type'))
+    headers.set('content-type', 'application/json');
   if (background) headers.set('x-background-request', '1');
   const response = await fetch(`${BASE_URL}${path}`, {
     credentials: 'same-origin',
