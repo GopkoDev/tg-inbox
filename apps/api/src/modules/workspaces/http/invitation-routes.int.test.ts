@@ -127,6 +127,16 @@ describe('invitation routes (postgres)', () => {
     expect(failures).toHaveLength(1);
   });
 
+  it('AC-04: a short wrong existing password is 401, not a 400 policy error', async () => {
+    const ws = await insertWorkspace(db);
+    await insertAccount(db, { email: 'short-old@x.com', passwordHash });
+    const inv = await insertInvitation(db, ws, { email: 'short-old@x.com' });
+
+    const res = await accept({ token: inv.token, password: 'abc' });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('INVALID_CREDENTIALS');
+  });
+
   it('AC-04: a locked-out email is refused with the generic credentials error', async () => {
     const ws = await insertWorkspace(db);
     await insertAccount(db, { email: 'locked@x.com', passwordHash });
