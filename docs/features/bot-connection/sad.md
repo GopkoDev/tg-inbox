@@ -354,6 +354,315 @@ sequenceDiagram
 
 The Bot settings page reads the stored state, name, username and last-checked time, plus the last message time from `conversations` and the contacts count from `contacts` — no Telegram call on load.
 
+The flows below were added by the `sequences` stage. They use the generic participant vocabulary (`<user>`, `<ui>`, `<client>`, `<service>`, `<data-store>`, `<external-system>`), each labelled with the §5 container it stands for. "The guard" always means the `workspaces` access guard of workspace-operators critical flow 3 (non-member → not found) followed by the owner-role check. SCR ids refer to `ux-flows.md`.
+
+### Flow 4: Open the bot settings (US-05, US-01 — AC-03, AC-15, AC-16, AC-16b)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant B as <service> bots
+    participant Cv as <service> conversations
+    participant Ct as <service> contacts
+    participant D as <data-store> Database
+    Note over U,W: Precondition: the person is signed in and opens the Bot settings address (SCR-02)
+    U->>W: open Bot settings of the workspace
+    W->>H: get bot settings for the workspace
+    H->>H: run the guard
+    alt no active membership in the workspace
+        H-->>W: not found
+        W-->>U: neutral not-found screen (SCR-06), no hint the workspace or bot exists
+    else member who is not a business owner
+        H-->>W: only business owners manage the bot
+        W-->>U: refusal on SCR-02, no bot data shown
+    else business owner
+        H->>B: get bot settings
+        B->>D: read this workspace's bot row
+        alt no row, or a row kept after a disconnect
+            B-->>H: state not connected
+        else connected, needs a new token or taken over
+            B->>Cv: last message received time for the workspace
+            Cv->>D: read the newest message time of the workspace
+            B->>Ct: count contacts of the workspace
+            Ct->>D: count contacts of the workspace
+            B-->>H: name, username, stored state, last checked time, last message time, contacts count
+        end
+        H-->>W: bot settings, never the token or the webhook secret
+        alt state connected
+            W-->>U: connected, name, username, last message received, contacts captured
+        else state needs a new token
+            W-->>U: not working, needs a new token, messages not arriving, captured data kept
+        else state taken over
+            W-->>U: not receiving messages, another service took them over, offers reconnect
+        else not connected
+            W-->>U: not connected, offers connect
+        end
+    end
+    Note over U,D: Postcondition: nothing is written and no Telegram call is made, the state shown is at most 5 minutes old (flow 3)
+```
+
+Loading the page is a pure database read (ADR-0008): the stored state is kept fresh by flow 3 and by every owner action, so the page meets the 300 ms load target. The last-message time is read per workspace — `data-model` needs an index that answers "newest message of a workspace" without scanning. Every later flow that ends on SCR-02 returns the same settings payload as this flow.
+
+### Flow 5: Rotate the token or re-paste after a revoke (US-06, US-05 — AC-17, AC-16, AC-02)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant B as <service> bots
+    participant T as <external-system> Telegram Bot API
+    participant D as <data-store> Database
+    Note over U,D: Precondition: the workspace's bot row holds bot X in state connected, needs a new token or taken over
+    U->>W: choose new token, paste the token of bot X (SCR-03)
+    W->>H: paste token for the workspace
+    H->>H: run the guard (owner only)
+    H->>B: connect or rotate with the trimmed token
+    B->>T: getMe with the pasted token
+    alt not a token, or Telegram rejects it
+        B-->>H: token not valid, nothing changed
+        H-->>W: refusal
+        W-->>U: token not valid, copy it again from BotFather, the existing connection keeps working
+    else token of a different bot
+        B-->>H: workspace keeps one business bot
+        H-->>W: refusal
+        W-->>U: disconnect first, or once customers wrote the workspace stays with that bot
+    else token of bot X
+        B->>T: getWebhookInfo
+        alt registered URL is another service's and no confirmation sent
+            B-->>H: confirmation required with the bot name and username
+            H-->>W: confirmation required
+            W-->>U: takeover warning (SCR-04), resubmits with confirmation as in flow 1
+        else ours, empty, or the owner confirmed
+            B->>D: update the row with the newly encrypted token, state connected
+            Note over B,D: persists bot (token replaced, webhook secret and capture epoch kept)
+            B->>T: setWebhook with our URL, the stored secret, allowed updates, keeping pending updates
+            alt setWebhook fails
+                B->>D: restore the previous token and state
+                B-->>H: Telegram unavailable, try again
+                H-->>W: refusal
+                W-->>U: try again, the existing connection keeps working
+            else registered
+                B-->>H: connected bot settings
+                H-->>W: settings, never the token
+                W-->>U: connected with the new token (SCR-02)
+            end
+        end
+    end
+    Note over U,T: Postcondition: the old token is no longer used, existing customers continue their conversations, updates Telegram still holds (up to 24 h) arrive in order through flow 2
+```
+
+Rotation is the "same bot" branch of flow 1, drawn here for its own guarantees: the capture epoch (connected-at) is not reset and `setWebhook` keeps pending updates, so messages customers sent while the token was revoked (AC-16) are captured once the new token is registered. The webhook secret is kept across rotation ([ADR-0002](adr/0002-receive-updates-through-one-webhook-per-bot-authenticated-by-a-per-bot-secret.md)), so deliveries in flight during the rotation keep passing the secret check. A transient failure of `getMe` or `getWebhookInfo` refuses with "Telegram unavailable, try again" and changes nothing.
+
+### Flow 6: Reconnect with the stored token after a takeover (US-05 — AC-16b, AC-06)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant B as <service> bots
+    participant T as <external-system> Telegram Bot API
+    participant D as <data-store> Database
+    Note over U,D: Precondition: the bot row is in state taken over and still holds the encrypted token
+    U->>W: choose reconnect on SCR-02
+    W->>H: reconnect the workspace's bot
+    H->>H: run the guard (owner only)
+    H->>B: reconnect with the stored token
+    B->>D: read the bot row and decrypt its token
+    alt no bot or state is not taken over
+        B-->>H: nothing to reconnect
+        H-->>W: refusal with the current settings
+    else taken over
+        B->>T: getMe with the stored token
+        alt Telegram rejects the token
+            B->>D: state needs a new token, checked now
+            Note over B,D: persists bot state
+            B-->>H: token not valid, paste a new one
+            H-->>W: refusal
+            W-->>U: not working, needs a new token (SCR-02, then SCR-03)
+        else transient failure
+            B-->>H: Telegram unavailable, try again
+            H-->>W: refusal, nothing changed
+        else bot info
+            B->>T: getWebhookInfo
+            alt registered URL is another service's and no confirmation sent
+                B-->>H: confirmation required with the bot name and username
+                H-->>W: confirmation required
+                W-->>U: takeover warning (SCR-04)
+                U->>W: confirm
+                W->>H: reconnect the workspace's bot with confirmation
+                Note over W,B: the confirming request repeats this flow from the guard, re-checking with Telegram
+            else already ours, or the owner confirmed
+                B->>T: setWebhook with our URL, the stored secret, allowed updates, keeping pending updates
+                alt setWebhook fails
+                    B-->>H: Telegram unavailable, try again
+                    H-->>W: refusal, state stays taken over
+                else registered
+                    B->>D: state connected, refresh name and username, checked now
+                    Note over B,D: persists bot state (capture epoch kept)
+                    B-->>H: connected bot settings
+                    H-->>W: settings, never the token
+                    W-->>U: connected again (SCR-02)
+                end
+            end
+        end
+    end
+    Note over U,T: Postcondition: new messages continue existing conversations, messages the other service received meanwhile are not recovered
+```
+
+Pasting the same token again on SCR-03 takes flow 5 instead and ends in the same state. If the cancel button on SCR-04 is chosen, no request is sent and the state stays "taken over". Unlike flow 5, the row is written only after `setWebhook` succeeds, because the token and secret do not change — there is nothing to restore.
+
+### Flow 7: Disconnect the bot (US-06 — AC-18)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> Business owner
+    participant W as <ui> Web panel
+    participant H as <service> API server
+    participant B as <service> bots
+    participant Cv as <service> conversations
+    participant T as <external-system> Telegram Bot API
+    participant D as <data-store> Database
+    Note over U,D: Precondition: the workspace's bot row is connected, needs a new token or taken over
+    U->>W: choose disconnect, confirm on SCR-05
+    W->>H: disconnect the workspace's bot
+    H->>H: run the guard (owner only)
+    H->>B: disconnect
+    B->>D: read the bot row and decrypt its token
+    alt no bot connected
+        B-->>H: no bot connected
+        H-->>W: refusal with the current settings
+    else bot present
+        B->>T: getWebhookInfo with the stored token
+        alt transient failure
+            B-->>H: Telegram unavailable, try again
+            H-->>W: refusal, nothing changed
+            W-->>U: try again, the bot is still connected
+        else Telegram rejects the token
+            Note over B,T: the token is dead, nothing to remove at Telegram, disconnect proceeds
+        else registered URL is ours
+            B->>T: deleteWebhook dropping pending updates
+        else registered URL is another service's or empty
+            Note over B,T: never remove another service's webhook, disconnect proceeds
+        end
+        B->>Cv: has conversations for the workspace
+        Cv->>D: check whether any conversation exists
+        alt conversations exist
+            B->>D: clear the token and the secret hash, state not connected
+            Note over B,D: persists bot (row kept so the bot stays bound to this workspace)
+        else nothing captured
+            B->>D: delete the bot row
+            Note over B,D: removes bot (the bot is free for any workspace)
+        end
+        B-->>H: settings with state not connected
+        H-->>W: settings
+        W-->>U: not connected, captured contacts and conversations kept (SCR-02)
+    end
+    Note over U,D: Postcondition: tg-inbox holds no token for the bot, later deliveries fail the secret check (flow 2) and a later connect starts a new capture epoch
+```
+
+Messages sent after the disconnect are never captured: Telegram's pending updates are dropped here, deliveries to the old webhook fail the secret check because the hash is cleared, and a later connect (flow 1, "no row or the same bot") sets a new capture epoch and registers the webhook with `drop_pending_updates` — so even a late redelivery dated before that connect is ignored by the flow 2 filter.
+
+### Flow 8: Capture an edited message (US-04 — AC-10, AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as <user> End customer
+    participant T as <external-system> Telegram Bot API
+    participant H as <service> API server
+    participant B as <service> bots
+    participant Cv as <service> conversations
+    participant D as <data-store> Database
+    Note over U,T: Trigger: the customer edits the text or caption of a message sent to the bot
+    U->>T: edit a message in the private chat
+    T->>H: edited message update for the bot id with the secret header
+    H->>B: accept webhook update
+    B->>D: find the bot by webhook id and compare the secret hash
+    alt unknown bot or secret mismatch
+        B-->>H: not from Telegram for this bot
+        H-->>T: unauthorized, nothing changed
+    else authentic
+        B->>B: apply the inbound filter of flow 2
+        alt filtered out
+            B-->>H: ignored
+        else private chat with a human sender
+            B->>Cv: apply the edit for the workspace (chat, message id, new text or caption, edit time, update id)
+            Cv->>D: find the message by conversation and Telegram message id
+            alt message not captured
+                Cv-->>B: nothing to edit, the edit is not kept
+            else stored edit time and update id are the same or later
+                Note over Cv,D: idempotency key: edit time with update-id tie-break, a redelivered or older edit changes nothing
+                Cv-->>B: already applied
+            else this edit is later
+                Cv->>D: update text or caption, mark edited, store edit time and update id, only if still later
+                Note over Cv,D: persists message edit (conditional update keyed by conversation and Telegram message id)
+                Cv-->>B: edit applied
+            end
+            B-->>H: done
+        end
+        H-->>T: ok
+    end
+    Note over H,T: a database failure answers a server error and Telegram retries with backoff
+    alt Telegram's redelivery window (24 h) runs out
+        Note over T,H: Telegram drops the update, there is no dead-letter on our side, the webhook server-error alert (§7) is the signal
+    end
+    Note over U,D: Postcondition: the conversation holds the latest text once, no message is added
+```
+
+The conditional update (`edited_at` older than the incoming edit, or equal with a lower update id) makes concurrent and redelivered edits converge on the one the customer made last, whatever order they arrive in. A redelivered original message (AC-11) is the "already present" outcome of flow 2: the insert keyed by (conversation, Telegram message id) does nothing, and the conversation is ordered by Telegram message id, so a late redelivery takes its original place.
+
+### Coverage: user stories and acceptance criteria
+
+| User story | Flows |
+|---|---|
+| US-01 Connect the business bot | 1 (+ 4 for the owner-only guard) |
+| US-02 Reach the business through its bot | 2 |
+| US-03 Grow the contact base automatically | 2 (contact upsert) |
+| US-04 Keep each customer's messages in one conversation | 2, 8 |
+| US-05 Check the bot's health | 3, 4, 6 |
+| US-06 Rotate the token or disconnect the bot | 5, 7 (+ 1 for connecting again) |
+
+| AC | Shown in |
+|---|---|
+| AC-01 | Flow 1, "no foreign webhook" → "registered" branch |
+| AC-02 | Flow 1, "not a bot token by format" and "Telegram rejects the token" branches; flow 5, same branch for rotation (existing connection untouched) |
+| AC-03 | Flow 4, "not a business owner" and "no active membership" branches; flows 1, 5, 6, 7 run the same guard |
+| AC-04 | Flow 1, "unique Telegram bot id violated" branch |
+| AC-05 | Flow 1, "row holds a different bot" branch; flow 5, "token of a different bot" branch; flow 7 keeps the row when conversations exist |
+| AC-06 | Flow 1, "registered URL is another service's" branch; flow 6, same branch on reconnect |
+| AC-07 | Flow 2, "captured kind" path (contact and conversation created, last message time read in flow 4) |
+| AC-08 | Flow 2, contact upsert "refresh when this message is newer" |
+| AC-09 | Flow 2, normalised message (kinds and captions per §8 Message kinds) |
+| AC-10 | Flow 8 |
+| AC-11 | Flow 2, "insert keyed by Telegram message id, ignore if present"; flow 8, prose on ordering |
+| AC-12 | Flow 2, "group, channel, bot sender, business message" branch |
+| AC-13 | Flow 2 — the webhook secret resolves exactly one workspace and every capture write is keyed by that workspace id (contacts unique per workspace and Telegram user id); the "neither workspace can see the other" half is structural — tenancy-scoped repositories plus the isolation tests of §8 |
+| AC-14 | Flow 2 and flow 8, "unknown bot or secret mismatch" branch |
+| AC-15 | Flow 3 (freshness) + flow 4 (what the page shows) |
+| AC-16 | Flow 3, "unauthorized" branch; flow 4, "needs a new token"; flow 5 (recovery and pending updates captured) |
+| AC-16b | Flow 3, "registered URL is not ours"; flow 4, "taken over"; flow 6 |
+| AC-17 | Flow 5 |
+| AC-18 | Flow 7 |
+| AC-19 | Flow 1, "no row or the same bot" path after a disconnect (row kept by flow 7) + flow 2 contact and conversation upserts |
+
+Every user story maps to at least one flow and every acceptance criterion to a flow or branch; only the read-isolation half of AC-13 is structural rather than a runtime step.
+
+**Flagged for later stages (not decided here):**
+
+- *Flow 6, a separate reconnect action* — the spec allows reconnect without a paste; `api` names this endpoint next to the paste endpoint.
+- *Flow 7, disconnect order* — `deleteWebhook` runs before the row is changed, so a crash between them leaves the bot connected with no webhook; the next health check (flow 3) reports it as "taken over" (empty URL ≠ ours) and the owner can disconnect again. Accepted for pilots; revisit if seen.
+- *Flow 8, no dead-letter* — Telegram owns delivery retries (up to 24 h); tg-inbox has no queue for inbound updates (ADR-0003), so the alert on webhook server errors is the only dead-letter signal.
+- *Persist hints for `data-model`:* bots unique by workspace and by Telegram bot id, lookup by id with secret hash, due-for-check by state and last-checked-at; contacts unique by (workspace, Telegram user id) and counted per workspace; conversations unique by (workspace, contact); messages unique by (conversation, Telegram message id), ordered by Telegram message id within a conversation, newest by workspace for the "last message received" read, conditional edit by (edited-at, edit update id); "has conversations" per workspace.
+- No new participants beyond the §5 containers. The async flows (2, 8 inbound, 3 health check) rely on Telegram redelivery and pg-boss singleton jobs respectively; their idempotency keys are the unique constraints above and the per-bot singleton key.
+
 ## 7. Deployment view
 
 No production target is chosen yet (architecture map: deferred until the first pilot goes live). This feature keeps one Node 26 process — Fastify API, built web panel, Telegram webhook ingress and pg-boss workers — talking to one PostgreSQL 16 database ([ADR-0001](adr/0001-build-bot-connection-as-an-api-with-a-telegram-webhook-ingress-and-an-owner-only-panel-page.md)). New is the requirement that `/api/telegram/webhook/*` be reachable from Telegram over public HTTPS on a port Telegram accepts (443, 80, 88 or 8443); in development this means a tunnel to the local API. A second replica needs no code change: capture is idempotent, and pg-boss singleton keys keep one health check per bot at a time.
