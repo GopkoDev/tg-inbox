@@ -1,4 +1,5 @@
 import { DUE_AFTER_MS } from '../domain/health.js';
+import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
 import type {
   BotRecord,
   BotRepo,
@@ -171,15 +172,36 @@ export function fakeBotTransaction(repo: { rows: FakeBotRow[] }): Transaction {
 export function fakeConversationsApi(): ConversationsApi & {
   last: Map<string, Date>;
   withConversations: Set<string>;
+  captured: { workspaceId: string; message: NormalisedMessage }[];
+  edits: { workspaceId: string; edit: NormalisedEdit }[];
+  editOutcome: 'applied' | 'not_later' | 'not_found';
 } {
-  const last = new Map<string, Date>();
-  const withConversations = new Set<string>();
-  return {
-    last,
-    withConversations,
-    lastMessageReceivedAt: async (w) => last.get(w) ?? null,
-    hasConversations: async (w) => withConversations.has(w),
+  const fake = {
+    last: new Map<string, Date>(),
+    withConversations: new Set<string>(),
+    captured: [] as { workspaceId: string; message: NormalisedMessage }[],
+    edits: [] as { workspaceId: string; edit: NormalisedEdit }[],
+    editOutcome: 'applied' as 'applied' | 'not_later' | 'not_found',
+    lastMessageReceivedAt: async (w: string) => fake.last.get(w) ?? null,
+    hasConversations: async (w: string) => fake.withConversations.has(w),
+    async captureInbound(workspaceId: string, message: NormalisedMessage) {
+      const seen = fake.captured.some(
+        (c) =>
+          c.workspaceId === workspaceId &&
+          c.message.chatId === message.chatId &&
+          c.message.messageId === message.messageId,
+      );
+      if (seen) return 'already_present' as const;
+      fake.captured.push({ workspaceId, message });
+      fake.withConversations.add(workspaceId);
+      return 'captured' as const;
+    },
+    async applyEdit(workspaceId: string, edit: NormalisedEdit) {
+      fake.edits.push({ workspaceId, edit });
+      return fake.editOutcome;
+    },
   };
+  return fake;
 }
 
 export function fakeContactsApi(): ContactsApi & { counts: Map<string, number> } {

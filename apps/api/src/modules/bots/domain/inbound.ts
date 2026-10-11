@@ -71,6 +71,8 @@ export interface NormalisedEdit {
   body: string;
   editedAt: Date;
   updateId: bigint;
+  /** Telegram's edited message object, stored in place of the old one. */
+  raw: Record<string, unknown>;
 }
 
 export type IgnoreReason =
@@ -165,6 +167,7 @@ export function classifyUpdate(
         body,
         editedAt: new Date(message.edit_date * 1000),
         updateId: BigInt(update.update_id),
+        raw: message,
       },
     };
   }

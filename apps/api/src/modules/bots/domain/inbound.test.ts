@@ -178,6 +178,7 @@ describe('classifyUpdate — edits (AC-10, AC-09 live location)', () => {
         body: 'Fixed',
         editedAt: new Date((DATE + 60) * 1000),
         updateId: 900005n,
+        raw: (edit as unknown as { edited_message: Record<string, unknown> }).edited_message,
       },
     });
   });

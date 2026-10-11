@@ -1,5 +1,6 @@
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
+import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
 
 /** A Kysely handle or a transaction. */
 export type Executor = Db;
@@ -130,6 +131,16 @@ export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
 
 /** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
 export interface ConversationsApi {
+  /** Contact, conversation and message in one transaction; a redelivery is `already_present`. */
+  captureInbound(
+    workspaceId: string,
+    message: NormalisedMessage,
+  ): Promise<'captured' | 'already_present'>;
+  /** Replaces the text only when the edit is later; nothing for an uncaptured message (AC-10). */
+  applyEdit(
+    workspaceId: string,
+    edit: NormalisedEdit,
+  ): Promise<'applied' | 'not_later' | 'not_found'>;
   lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
   hasConversations(workspaceId: string): Promise<boolean>;
 }
