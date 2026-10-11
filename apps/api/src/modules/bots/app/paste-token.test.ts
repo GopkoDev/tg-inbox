@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   BotBelongsToAnotherWorkspaceError,
   BotTokenInvalidError,
@@ -403,5 +403,67 @@ describe('pasteToken — concurrent writes to one workspace (R2)', () => {
     });
     expect(h.bots.rows).toHaveLength(1);
     expect(h.bots.rows[0]).toMatchObject({ telegramBotId: 100001n, state: 'connected' });
+  });
+});
+
+describe("pasteToken — undoing a failed setWebhook never touches another writer's row (R3)", () => {
+  it('a rotation whose setWebhook fails after a disconnect cleared the row → TELEGRAM_UNAVAILABLE, row stays disconnected', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.conversations.withConversations.add('ws-a');
+    h.telegram.me = ME;
+    h.telegram.setWebhook = async () => {
+      await h.bots.clearOnDisconnect('ws-a', botRow().id);
+      return 'failed';
+    };
+    expect(await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false))).toBeInstanceOf(
+      TelegramUnavailableError,
+    );
+    expect(h.bots.rows[0]).toMatchObject({ state: 'disconnected', token: null, connectedAt: null });
+  });
+
+  it('connect again whose setWebhook fails after a second paste rotated onto it leaves that paste connected', async () => {
+    const kept = botRow({
+      state: 'disconnected',
+      token: null,
+      webhookSecret: null,
+      connectedAt: null,
+      lastCheckedAt: at(100),
+    });
+    const h = createBotsHarness([kept]);
+    h.conversations.withConversations.add('ws-a');
+    h.telegram.me = ME;
+    let releaseA!: () => void;
+    let calls = 0;
+    const setSecrets: string[] = [];
+    h.telegram.setWebhook = async (_token, webhook) => {
+      calls += 1;
+      if (calls === 1) {
+        // Paste A: held while paste B runs to completion, then fails.
+        await new Promise<void>((resolve) => (releaseA = resolve));
+        return 'failed';
+      }
+      setSecrets.push(webhook.secret);
+      return 'ok';
+    };
+    const a = h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    h.clock.advance(1000);
+    expect(await h.paste.pasteToken('ws-a', NEW_TOKEN, false)).toMatchObject({
+      state: 'connected',
+    });
+    releaseA();
+    expect(await refusal(a)).toBeInstanceOf(TelegramUnavailableError);
+    const row = h.bots.rows[0]!;
+    expect(row.state).toBe('connected');
+    expect(row.webhookSecret).toBe(setSecrets.at(-1));
+  });
+
+  it('a row that keeps changing under the paste → TELEGRAM_UNAVAILABLE (try again), never a 500', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.telegram.me = ME;
+    h.bots.update = async () => ({ ok: false, reason: 'not_found' });
+    expect(await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false))).toBeInstanceOf(
+      TelegramUnavailableError,
+    );
   });
 });

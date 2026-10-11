@@ -242,6 +242,24 @@ describe('bot repository', () => {
     expect(await repo.findByWorkspace(w)).toMatchObject({ name: 'Y', state: 'disconnected' });
   });
 
+  it('delete and clearOnDisconnect with ifWritten act only on the row as that writer left it', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, {
+      workspaceId: w,
+      connectedAt: at(1),
+      lastCheckedAt: at(2),
+    });
+    const other = { connectedAt: at(1), lastCheckedAt: at(3) };
+    expect(await repo.clearOnDisconnect(w, bot.id, undefined, other)).toBe(false);
+    expect(await repo.delete(w, bot.id, undefined, other)).toBe(false);
+    expect(await repo.findByWorkspace(w)).toMatchObject({ state: 'connected' });
+    const mine = { connectedAt: at(1), lastCheckedAt: at(2) };
+    expect(await repo.clearOnDisconnect(w, bot.id, undefined, mine)).toBe(true);
+    // Now disconnected: an undo keyed on the live row no longer matches.
+    expect(await repo.delete(w, bot.id, undefined, mine)).toBe(false);
+    expect(await repo.findByWorkspace(w)).toMatchObject({ state: 'disconnected' });
+  });
+
   it('setState does not touch a disconnected row', async () => {
     const w = await insertWorkspace(db);
     const { bot } = await insertBot(db, { workspaceId: w, state: 'disconnected' });

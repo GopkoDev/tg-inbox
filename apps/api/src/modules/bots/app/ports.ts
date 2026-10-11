@@ -52,6 +52,15 @@ export type BotWriteResult =
   | { ok: false; reason: 'workspace_has_bot' }
   | { ok: false; reason: 'not_found' };
 
+/**
+ * A live row as one writer left it: its capture epoch and, optionally, the check time it wrote.
+ * Conditional writes keyed on it touch the row only if no other writer changed it since.
+ */
+export interface LiveRowGuard {
+  connectedAt: Date;
+  lastCheckedAt?: Date;
+}
+
 export interface BotRepo {
   findByWorkspace(workspaceId: string, tx?: Executor): Promise<BotRecord | null>;
   /** A second bot of the workspace still rejects (`bots_workspace_id_key`, the AC-05 backstop). */
@@ -65,7 +74,7 @@ export interface BotRepo {
     botId: string,
     patch: BotPatch,
     tx?: Executor,
-    ifRead?: 'disconnected' | { connectedAt: Date },
+    ifRead?: 'disconnected' | LiveRowGuard,
   ): Promise<BotWriteResult>;
   /**
    * Records the outcome of a Bot API exchange on a live bot; false when no live row matched.
@@ -80,9 +89,23 @@ export interface BotRepo {
     options?: { identity?: { name: string; username: string }; ifLastCheckedAt?: Date | null },
     tx?: Executor,
   ): Promise<boolean>;
-  /** Keeps the row (and so the binding) without token, secret hash and capture epoch (AC-18). */
-  clearOnDisconnect(workspaceId: string, botId: string, tx?: Executor): Promise<boolean>;
-  delete(workspaceId: string, botId: string, tx?: Executor): Promise<boolean>;
+  /**
+   * Keeps the row (and so the binding) without token, secret hash and capture epoch (AC-18).
+   * `ifWritten`: only while the row is still the live one this caller wrote (an undo).
+   */
+  clearOnDisconnect(
+    workspaceId: string,
+    botId: string,
+    tx?: Executor,
+    ifWritten?: LiveRowGuard,
+  ): Promise<boolean>;
+  /** `ifWritten`: only while the row is still the live one this caller wrote (an undo). */
+  delete(
+    workspaceId: string,
+    botId: string,
+    tx?: Executor,
+    ifWritten?: LiveRowGuard,
+  ): Promise<boolean>;
   /**
    * A live bot with its decrypted token, for a Bot API call right after. `token` is null when the
    * stored token cannot be decrypted (the key was lost or changed, ADR-0006): the bot then needs

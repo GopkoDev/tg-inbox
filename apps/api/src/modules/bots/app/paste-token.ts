@@ -15,6 +15,7 @@ import {
   type BotRecord,
   type BotRepo,
   type ConversationsApi,
+  type LiveRowGuard,
   type TelegramGateway,
   type Transaction,
   type WebhookSecrets,
@@ -39,7 +40,8 @@ export interface PasteToken {
   /**
    * Flows 1 and 5: connect, connect again or rotate, deciding refusals in the contract's order —
    * token form, Telegram rejects it, a different bot, bound to another workspace, takeover
-   * confirmation. Any refusal changes nothing.
+   * confirmation. Any refusal changes nothing — apart from finishing a disconnect that was cut
+   * short (a disconnected row with no conversation is deleted before deciding).
    */
   pasteToken(workspaceId: string, raw: string, confirmTakeover: boolean): Promise<BotSettings>;
 }
@@ -71,7 +73,9 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
           await connect(workspaceId, token, me.telegramBotId, identity, confirmTakeover);
           break;
         } catch (err) {
-          if (!(err instanceof RowChanged) || attempt === 2) throw err;
+          if (!(err instanceof RowChanged)) throw err;
+          // Still changing under us: a transient conflict — the owner tries again (never a 500).
+          if (attempt === 2) throw new TelegramUnavailableError();
         }
       }
       return settings.getSettings(workspaceId);
@@ -166,7 +170,13 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
       OWNER_ACTION_TIMEOUT,
     );
     if (set === 'failed') {
-      await restore(workspaceId, botId, decision.action, row, previous);
+      // The undo touches the row only while it is still what this paste wrote: a disconnect or
+      // another paste that changed it since keeps its own state.
+      const written = {
+        connectedAt: decision.action === 'rotate' ? connectedAt : now,
+        lastCheckedAt: now,
+      };
+      await restore(workspaceId, botId, decision.action, row, previous, written);
       throw new TelegramUnavailableError();
     }
   }
@@ -177,14 +187,17 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
     action: 'connect' | 'connectAgain' | 'rotate',
     row: BotRecord | null,
     previous: { bot: BotRecord; token: string | null } | null,
+    written: LiveRowGuard,
   ) {
     if (action === 'connect') {
-      await bots.delete(workspaceId, botId);
+      await bots.delete(workspaceId, botId, undefined, written);
       return;
     }
     if (!row) return;
     await transaction(async (tx) => {
-      if (action === 'connectAgain') await bots.clearOnDisconnect(workspaceId, botId, tx);
+      if (action === 'connectAgain') {
+        if (!(await bots.clearOnDisconnect(workspaceId, botId, tx, written))) return;
+      }
       await bots.update(
         workspaceId,
         botId,
@@ -201,6 +214,7 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
               : { token: previous.token, state: row.state })),
         },
         tx,
+        action === 'connectAgain' ? 'disconnected' : written,
       );
     });
   }

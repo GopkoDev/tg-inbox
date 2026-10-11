@@ -20,12 +20,29 @@ describe('disconnect (flow 7, AC-18)', () => {
     expect(err.details).toEqual({ settings: { state: 'not_connected' } });
   });
 
-  it('already disconnected → NO_BOT_CONNECTED, no Telegram call', async () => {
+  it('already disconnected (kept for its conversations) → NO_BOT_CONNECTED, no Telegram call', async () => {
     const h = createBotsHarness([
       botRow({ state: 'disconnected', token: null, webhookSecret: null, connectedAt: null }),
     ]);
+    h.conversations.withConversations.add('ws-a');
     expect(await refusal(h.disconnect.disconnect('ws-a'))).toBeInstanceOf(NoBotConnectedError);
     expect(h.telegram.calls).toHaveLength(0);
+    expect(h.bots.rows).toHaveLength(1);
+  });
+
+  it('a disconnect cut short after its clear (no conversations) is finished by running it again', async () => {
+    const h = createBotsHarness([botRow()]);
+    const hasConversations = h.conversations.hasConversations;
+    h.conversations.hasConversations = async () => {
+      throw new Error('database unavailable');
+    };
+    await expect(h.disconnect.disconnect('ws-a')).rejects.toThrow('database unavailable');
+    expect(h.bots.rows[0]).toMatchObject({ state: 'disconnected' });
+    h.conversations.hasConversations = hasConversations;
+    const calls = h.telegram.calls.length;
+    expect(await h.disconnect.disconnect('ws-a')).toEqual({ state: 'not_connected' });
+    expect(h.bots.rows).toHaveLength(0);
+    expect(h.telegram.calls).toHaveLength(calls);
   });
 
   it.each(['connected', 'needs_token', 'taken_over'] as const)(

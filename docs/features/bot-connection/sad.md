@@ -254,6 +254,9 @@ sequenceDiagram
         else accepted
             Tg-->>Bots: bot id, name, username
             Bots->>Db: read this workspace's bot row
+            opt row is disconnected and the workspace has no conversation (a disconnect cut short)
+                Bots->>Db: delete the row, then decide as with no row
+            end
             alt row holds a different bot
                 Bots-->>Http: workspace keeps one business bot
             else no row or the same bot

@@ -33,6 +33,12 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
   return {
     async disconnect(workspaceId) {
       const row = await bots.findByWorkspace(workspaceId);
+      // A disconnected row is kept only for its conversations (AC-05). One without is a
+      // disconnect cut short between its clear and its delete: running disconnect again finishes it.
+      if (row?.state === 'disconnected' && !(await conversations.hasConversations(workspaceId))) {
+        await bots.delete(workspaceId, row.id);
+        return settings.getSettings(workspaceId);
+      }
       const found =
         row && row.state !== 'disconnected' ? await bots.findForCheck(workspaceId, row.id) : null;
       if (!found) throw new NoBotConnectedError(await settings.getSettings(workspaceId));

@@ -368,6 +368,26 @@ describe('BotSettingsPage (SCR-02)', () => {
       expectNoToken(document.body);
     });
 
+    it('a slow paste in the workspace just left never closes the dialog opened in the new one', async () => {
+      getBotSettings.mockResolvedValue(notConnected);
+      enterWorkspace.mockImplementation((id: string) =>
+        Promise.resolve({ id, name: id === 'w1' ? 'Acme Flowers' : 'Bolt', role: 'owner' }),
+      );
+      let resolveW1!: (s: BotSettings) => void;
+      pasteBotToken.mockReturnValueOnce(new Promise((r) => (resolveW1 = r)));
+      renderPage();
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect bot' }));
+      fireEvent.change(screen.getByLabelText('Bot token'), { target: { value: TOKEN } });
+      fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+      await act(() => nav.current('/w/w2/bot'));
+      await waitFor(() => expect(useWorkspaceStore.getState().current?.id).toBe('w2'));
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect bot' }));
+      fireEvent.change(screen.getByLabelText('Bot token'), { target: { value: 'typing in w2' } });
+      await act(async () => resolveW1(settingsOf()));
+      expect(screen.getByRole('dialog', { name: 'Connect bot' })).toBeInTheDocument();
+      expect(screen.getByLabelText('Bot token')).toHaveValue('typing in w2');
+    });
+
     it('takeover cancelled: no request, still not connected, the token is dropped', async () => {
       await pasteUntilTakeover();
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));

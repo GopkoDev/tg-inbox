@@ -1,6 +1,7 @@
 import { DUE_AFTER_MS } from '../domain/health.js';
 import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
 import type {
+  LiveRowGuard,
   BotRecord,
   BotRepo,
   ContactsApi,
@@ -26,6 +27,11 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
   const find = (w: string, id: string) => rows.find((r) => r.workspaceId === w && r.id === id);
   const boundElsewhere = (w: string, telegramBotId: bigint, id?: string) =>
     rows.some((r) => r.telegramBotId === telegramBotId && r.id !== id && r.workspaceId !== w);
+  const matches = (r: FakeBotRow, g: LiveRowGuard | undefined) =>
+    g === undefined ||
+    (r.state !== 'disconnected' &&
+      r.connectedAt?.getTime() === g.connectedAt.getTime() &&
+      (g.lastCheckedAt === undefined || r.lastCheckedAt?.getTime() === g.lastCheckedAt.getTime()));
   const record = (r: FakeBotRow): BotRecord => {
     const copy: Partial<FakeBotRow> = { ...r };
     delete copy.token;
@@ -59,12 +65,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       if (ifRead === 'disconnected' && row.state !== 'disconnected') {
         return { ok: false, reason: 'not_found' };
       }
-      if (
-        ifRead &&
-        ifRead !== 'disconnected' &&
-        (row.state === 'disconnected' ||
-          row.connectedAt?.getTime() !== ifRead.connectedAt.getTime())
-      ) {
+      if (ifRead && ifRead !== 'disconnected' && !matches(row, ifRead)) {
         return { ok: false, reason: 'not_found' };
       }
       const next = { ...row, ...patch };
@@ -87,9 +88,9 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       Object.assign(row, { state, lastCheckedAt: checkedAt }, options?.identity ?? {});
       return true;
     },
-    async clearOnDisconnect(workspaceId, botId) {
+    async clearOnDisconnect(workspaceId, botId, _tx, ifWritten) {
       const row = find(workspaceId, botId);
-      if (!row) return false;
+      if (!row || !matches(row, ifWritten)) return false;
       Object.assign(row, {
         state: 'disconnected',
         token: null,
@@ -98,9 +99,9 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       });
       return true;
     },
-    async delete(workspaceId, botId) {
+    async delete(workspaceId, botId, _tx, ifWritten) {
       const i = rows.findIndex((r) => r.workspaceId === workspaceId && r.id === botId);
-      if (i < 0) return false;
+      if (i < 0 || !matches(rows[i]!, ifWritten)) return false;
       rows.splice(i, 1);
       return true;
     },

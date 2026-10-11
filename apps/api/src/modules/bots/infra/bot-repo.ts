@@ -1,9 +1,9 @@
-import type { Selectable } from 'kysely';
+import type { ExpressionBuilder, Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
-import type { Bots } from '../../../platform/db.types.gen.js';
+import type { Bots, DB } from '../../../platform/db.types.gen.js';
 import type { BotState } from '../domain/connection.js';
 import { DUE_AFTER_MS } from '../domain/health.js';
-import type { BotRecord, BotRepo, TokenCipher } from '../app/ports.js';
+import type { BotRecord, BotRepo, LiveRowGuard, TokenCipher } from '../app/ports.js';
 import { TokenDecryptError } from './token-cipher.js';
 import { hashSecret, secretMatches } from './webhook-secret.js';
 
@@ -55,6 +55,14 @@ function decryptOrNull(cipher: TokenCipher, blob: Buffer): string | null {
     throw err;
   }
 }
+
+/** The row is live with this epoch (and check time, when given): no other writer changed it. */
+const liveAsWritten = (guard: LiveRowGuard) => (eb: ExpressionBuilder<DB, 'bots'>) =>
+  eb.and([
+    eb('state', '<>', 'disconnected'),
+    eb('connected_at', '=', guard.connectedAt),
+    ...(guard.lastCheckedAt ? [eb('last_checked_at', '=', guard.lastCheckedAt)] : []),
+  ]);
 
 export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
   return {
@@ -112,9 +120,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
           .where('id', '=', botId)
           .$if(ifRead === 'disconnected', (qb) => qb.where('state', '=', 'disconnected'))
           .$if(ifRead !== undefined && ifRead !== 'disconnected', (qb) =>
-            qb
-              .where('state', '<>', 'disconnected')
-              .where('connected_at', '=', (ifRead as { connectedAt: Date }).connectedAt),
+            qb.where(liveAsWritten(ifRead as LiveRowGuard)),
           )
           .executeTakeFirst();
         return result.numUpdatedRows > 0n ? { ok: true } : { ok: false, reason: 'not_found' };
@@ -147,7 +153,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
       return result.numUpdatedRows > 0n;
     },
 
-    async clearOnDisconnect(workspaceId, botId, tx) {
+    async clearOnDisconnect(workspaceId, botId, tx, ifWritten) {
       const result = await (tx ?? db)
         .updateTable('bots')
         .set({
@@ -158,15 +164,17 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', botId)
+        .$if(ifWritten !== undefined, (qb) => qb.where(liveAsWritten(ifWritten!)))
         .executeTakeFirst();
       return result.numUpdatedRows > 0n;
     },
 
-    async delete(workspaceId, botId, tx) {
+    async delete(workspaceId, botId, tx, ifWritten) {
       const result = await (tx ?? db)
         .deleteFrom('bots')
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', botId)
+        .$if(ifWritten !== undefined, (qb) => qb.where(liveAsWritten(ifWritten!)))
         .executeTakeFirst();
       return result.numDeletedRows > 0n;
     },

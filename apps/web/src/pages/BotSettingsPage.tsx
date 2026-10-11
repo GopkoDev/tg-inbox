@@ -110,19 +110,19 @@ export function BotSettingsPage() {
         open={openPasteState !== null}
         mode={openPasteState?.mode ?? 'connect'}
         notice={openPasteState?.notice ?? null}
-        onClose={() => setPaste(null)}
+        onClose={() => setPaste((p) => (p?.workspaceId === workspaceId ? null : p))}
         onTakeover={onPasteTakeover}
       />
       <ConfirmTakeoverDialog
         workspaceId={workspaceId}
         request={here(takeover)?.value ?? null}
-        onClose={() => setTakeover(null)}
+        onClose={() => setTakeover((t) => (t?.workspaceId === workspaceId ? null : t))}
         onRefused={onTakeoverRefused}
       />
       <ConfirmDisconnectDialog
         workspaceId={workspaceId}
         bot={here(disconnect)?.value ?? null}
-        onClose={() => setDisconnect(null)}
+        onClose={() => setDisconnect((d) => (d?.workspaceId === workspaceId ? null : d))}
       />
     </AppShell>
   );
