@@ -1,6 +1,6 @@
 ---
 status: Living
-updated_at: "2026-10-11"
+updated_at: '2026-10-11'
 ---
 
 # Domain Context — tg-inbox
