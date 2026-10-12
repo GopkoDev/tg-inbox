@@ -3,7 +3,21 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from "kysely";
+import type { ColumnType } from 'kysely';
+
+export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
+
+export type Json = JsonValue;
+
+export type JsonArray = JsonValue[];
+
+export type JsonObject = {
+  [x: string]: JsonValue | undefined;
+};
+
+export type JsonPrimitive = boolean | number | string | null;
+
+export type JsonValue = JsonArray | JsonObject | JsonPrimitive;
 
 export type Timestamp = ColumnType<Date, Date | string, Date | string>;
 
@@ -13,6 +27,40 @@ export interface Accounts {
   email: string;
   id: string;
   password_hash: string;
+}
+
+export interface Bots {
+  connected_at: Timestamp | null;
+  created_at: Timestamp;
+  id: string;
+  last_checked_at: Timestamp | null;
+  name: string;
+  state: string;
+  telegram_bot_id: Int8;
+  token_encrypted: Buffer | null;
+  username: string;
+  webhook_secret_hash: Buffer | null;
+  workspace_id: string;
+}
+
+export interface Contacts {
+  created_at: Timestamp;
+  first_name: string;
+  id: string;
+  language_code: string | null;
+  last_name: string | null;
+  profile_seen_at: Timestamp;
+  telegram_user_id: Int8;
+  username: string | null;
+  workspace_id: string;
+}
+
+export interface Conversations {
+  contact_id: string;
+  created_at: Timestamp;
+  id: string;
+  telegram_chat_id: Int8;
+  workspace_id: string;
 }
 
 export interface Invitations {
@@ -35,6 +83,20 @@ export interface Memberships {
   last_used_at: Timestamp | null;
   role: string;
   state: string;
+  workspace_id: string;
+}
+
+export interface Messages {
+  body: string | null;
+  conversation_id: string;
+  edit_update_id: Int8 | null;
+  edited_at: Timestamp | null;
+  id: string;
+  kind: string;
+  received_at: Timestamp;
+  sent_at: Timestamp;
+  telegram_message: Json;
+  telegram_message_id: Int8;
   workspace_id: string;
 }
 
@@ -70,8 +132,12 @@ export interface Workspaces {
 
 export interface DB {
   accounts: Accounts;
+  bots: Bots;
+  contacts: Contacts;
+  conversations: Conversations;
   invitations: Invitations;
   memberships: Memberships;
+  messages: Messages;
   password_reset_links: PasswordResetLinks;
   sessions: Sessions;
   sign_in_failures: SignInFailures;

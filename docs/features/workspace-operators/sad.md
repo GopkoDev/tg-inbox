@@ -131,7 +131,12 @@ The backend follows the repo's modular-monolith convention unchanged: each modul
 - *invitation by token hash* — scoped by possession of the secret link; returns one invitation and its workspace's name (AC-03–AC-06);
 - *membership for the guard* — scoped by (account id, workspace id from the URL); this is the lookup that grants a `workspaceId` to everything else (ADR-0003).
 
-Every other method in `workspaces` takes `workspaceId`; a new exception needs a change to this SAD. `auth` tables are platform-level and scoped by account or normalised email (above).
+bot-connection added two more, in `bots` ([bot-connection ADR-0007](../bot-connection/adr/0007-bind-a-bot-to-one-workspace-with-unique-constraints-and-two-controlled-tenancy-exceptions.md), its sad.md §5), each with its own isolation test:
+
+- *bot by webhook id* — scoped by possession of the webhook secret: returns the bot row only when the presented secret's SHA-256 matches the stored hash, and so produces the workspace id for a capture;
+- *bots due for a health check* — returns (bot id, workspace id) pairs of live bots last checked 3 or more minutes ago; used only by the scheduled `bots.schedule-health-checks` job.
+
+Every other method in `workspaces` (and in `bots`) takes `workspaceId`; a new exception needs a change to this SAD. `auth` tables are platform-level and scoped by account or normalised email (above).
 
 A workspace has no status column in v1: "awaiting its first business owner" means it has no memberships yet, and a whole workspace cannot be suspended — members are deactivated instead (spec §8 default, closed here). The last-used workspace for the next sign-in is a `last_used_at` time on the membership.
 

@@ -1,6 +1,6 @@
 import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
-import type { Config } from '../platform/config.js';
+import { botTokenEncryptionKey, type Config } from '../platform/config.js';
 import { audit, createAuditLogger, type CliIo } from './io.js';
 
 const config: Config = {
@@ -12,6 +12,9 @@ const config: Config = {
   DATABASE_POOL_MAX: 10,
   DATABASE_POOL_CONNECTION_TIMEOUT_MS: 5000,
   PUBLIC_WEB_URL: 'http://localhost:5173',
+  TELEGRAM_WEBHOOK_BASE_URL: 'http://localhost:5173',
+  TELEGRAM_WEBHOOK_MAX_CONNECTIONS: 5,
+  BOT_TOKEN_ENCRYPTION_KEY: botTokenEncryptionKey(Buffer.alloc(32, 0x5a)),
 };
 
 function sink() {

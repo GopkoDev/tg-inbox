@@ -4,5 +4,5 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "migrations", "kysely.config.ts", "vitest.config.ts"]
+  "include": ["src", "load", "migrations", "kysely.config.ts", "vitest.config.ts"]
 }

@@ -17,6 +17,21 @@ import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
 import { createTeam } from './modules/workspaces/app/team.js';
 import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
 import { createWorkspaceAdmin } from './modules/workspaces/app/admin.js';
+import { createAcceptUpdate } from './modules/bots/app/accept-update.js';
+import { createDisconnect } from './modules/bots/app/disconnect.js';
+import { createHealthCheck } from './modules/bots/app/health-check.js';
+import { createPasteToken } from './modules/bots/app/paste-token.js';
+import { createReconnect } from './modules/bots/app/reconnect.js';
+import { createBotSettings } from './modules/bots/app/settings.js';
+import { createBotRepo } from './modules/bots/infra/bot-repo.js';
+import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
+import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
+import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
+import { createContacts } from './modules/contacts/app/contacts.js';
+import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
+import { createConversations } from './modules/conversations/app/conversations.js';
+import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
+import { createMessageRepo } from './modules/conversations/infra/message-repo.js';
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
@@ -92,6 +107,42 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
 
+  // --- contacts → conversations → bots (one-way: bots → conversations → contacts, bots → contacts) ---
+  const transaction = <T>(fn: (tx: typeof db) => Promise<T>) => db.transaction().execute(fn);
+  const contacts = createContacts({ repo: createContactRepo(db), clock });
+  const conversations = createConversations({
+    transaction,
+    conversations: createConversationRepo(db),
+    messages: createMessageRepo(db),
+    contacts,
+    clock,
+  });
+  const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
+  const telegram = createTelegramGateway({
+    ...(config.TELEGRAM_API_ROOT && { apiRoot: config.TELEGRAM_API_ROOT }),
+    maxConnections: config.TELEGRAM_WEBHOOK_MAX_CONNECTIONS,
+  });
+  const secrets = createWebhookSecrets(config.BOT_TOKEN_ENCRYPTION_KEY.key);
+  const webhookBaseUrl = config.TELEGRAM_WEBHOOK_BASE_URL;
+  const botSettings = createBotSettings({ bots: botRepo, conversations, contacts });
+  const botOwnerDeps = {
+    bots: botRepo,
+    telegram,
+    secrets,
+    clock,
+    settings: botSettings,
+    webhookBaseUrl,
+  };
+  const bots = {
+    settings: botSettings,
+    paste: createPasteToken({ ...botOwnerDeps, conversations, transaction }),
+    reconnect: createReconnect(botOwnerDeps),
+    disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
+    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),
+    healthCheck: createHealthCheck({ bots: botRepo, telegram, clock, webhookBaseUrl }),
+  };
+  // --- end bots dependencies ---
+
   return {
     config,
     clock,
@@ -106,6 +157,9 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     acceptInvitation,
     team,
     workspaceAdmin,
+    contacts,
+    conversations,
+    bots,
     /** Releases the database pool. */
     destroy: () => db.destroy(),
   };

@@ -1,7 +1,7 @@
 ---
 status: current
 mode: greenfield-bootstrap   # current (brownfield scan) | greenfield-bootstrap (target foundation)
-updated_at: "2026-10-11"
+updated_at: "2026-10-12"
 reflects_commit: "f172cee"
 # machine-readable keys — the DECIDED toolchain (greenfield); scaffold reconciles them with what actually runs.
 language: "typescript (node 26)"
@@ -60,25 +60,30 @@ separate process later without code changes to modules.
 ## Module inventory
 
 Target layout — modular monolith → [ADR-0002](adr/0002-organize-the-backend-as-a-modular-monolith-with-layered-modules.md).
-Scaffold created `platform` and the baseline `health` module; `auth` and `workspaces` arrived with workspace-operators; other feature modules appear as
-roadmap steps are specified.
+Scaffold created `platform` and the baseline `health` module; `auth` and `workspaces` arrived with workspace-operators;
+`bots`, `conversations` and `contacts` with bot-connection; other feature modules appear as roadmap steps are specified.
+Module dependencies are one-way: `bots → conversations → contacts` and `bots → contacts` (app-layer calls only,
+[bot-connection ADR-0005](features/bot-connection/adr/0005-split-the-feature-into-bots-conversations-and-contacts-modules.md)).
 
 | Module | Path | Layers | Wired at | Responsibility |
 |---|---|---|---|---|
 | platform | `apps/api/src/platform/` | — (shared infra) | `apps/api/src/app.ts` (`buildApp`), `apps/api/src/deps.ts` (`buildDeps`) | config, db client, errors, ids, logger, telegram client factory, job queue |
 | auth | `apps/api/src/modules/auth/` | domain / app / infra / http | `apps/api/src/app.ts` (routes under `/api/auth` and `/api/password-reset-links`), `apps/api/src/deps.ts` (use cases) | accounts, sessions, login/logout, password change and admin-issued reset links; owns `accounts`, `sessions`, `sign_in_failures`, `password_reset_links` → `docs/features/workspace-operators/data-model.md` |
 | workspaces | `apps/api/src/modules/workspaces/` | domain / app / infra / http | `apps/api/src/app.ts` (routes under `/api`), `apps/api/src/deps.ts` (use cases; also the admin CLI) | workspaces, memberships (owner/operator roles) and invitations; owns `workspaces`, `memberships`, `invitations` tables → `docs/features/workspace-operators/data-model.md` |
+| bots | `apps/api/src/modules/bots/` | domain / app / infra / http | `apps/api/src/app.ts` (owner routes under `/api/workspaces/:workspaceId/bot…`, public `POST /api/telegram/webhook/:botId`, the health-check workers), `apps/api/src/deps.ts` (use cases) | the workspace's business bot: encrypted token, per-bot webhook + secret, connection state, scheduled health checks; the only module that talks to Telegram; owns `bots` → `docs/features/bot-connection/data-model.md` |
+| conversations | `apps/api/src/modules/conversations/` | domain / app / infra | `apps/api/src/deps.ts` (app layer called by `bots`; no routes yet) | capture of inbound private messages and edits (idempotent, ordered by Telegram ids); owns `conversations`, `messages` |
+| contacts | `apps/api/src/modules/contacts/` | domain / app / infra | `apps/api/src/deps.ts` (app layer called by `conversations` and `bots`; no routes yet) | end customers built from their Telegram profile; owns `contacts` |
 | health | `apps/api/src/modules/health/` | http | `apps/api/src/app.ts` | baseline module: `GET /health` (db ping) — the scaffold precedent |
 | shared | `packages/shared/src/` | — | imported by `apps/api` + `apps/web` | zod schemas / DTO types / error codes shared across the wire |
 | web | `apps/web/src/` | app / pages / features / shared | `apps/web/src/main.tsx` | operator web panel |
-| *(future)* bots, conversations, contacts, notifications, broadcasts, posts | `apps/api/src/modules/<m>/` | domain / app / infra / http | `apps/api/src/app.ts` | one module per roadmap step (see `docs/roadmap.md`) |
+| *(future)* notifications, broadcasts, posts | `apps/api/src/modules/<m>/` | domain / app / infra / http | `apps/api/src/app.ts` | one module per roadmap step (see `docs/roadmap.md`) |
 
 ## Conventions (the rules a new feature must match)
 
 > Greenfield: these are **decided rules**, cited against the files scaffold will create. Every
 > feature conforms to them; scaffold creates the first instance of each.
 
-- **Module wiring / registration:** each module exports a Fastify plugin `register<Module>(app, deps)` from `modules/<m>/http/routes.ts`; `buildDeps()` in `apps/api/src/deps.ts` is the shared dependency builder (used by `buildApp()` and the admin CLI; no Fastify import; includes `destroy()`), and `buildApp()` in `apps/api/src/app.ts` (composition root) registers every module plugin. Module HTTP routes live under `/api` (`/health` stays at root); the `auth` and `workspaces` modules are registered this way. With `WEB_DIST_DIR` set the API serves the built SPA from the same origin, falling back to `index.html` for HTML `GET`s outside `/api`; in development Vite proxies `/api`. No module self-registers or reads globals.
+- **Module wiring / registration:** each module exports a Fastify plugin `register<Module>(app, deps)` from `modules/<m>/http/routes.ts`; `buildDeps()` in `apps/api/src/deps.ts` is the shared dependency builder (used by `buildApp()` and the admin CLI; no Fastify import; includes `destroy()`), and `buildApp()` in `apps/api/src/app.ts` (composition root) registers every module plugin. Module HTTP routes live under `/api` (`/health` stays at root); the `auth`, `workspaces` and `bots` modules are registered this way. With `WEB_DIST_DIR` set the API serves the built SPA from the same origin, falling back to `index.html` for HTML `GET`s outside `/api`; in development Vite proxies `/api`. No module self-registers or reads globals.
 - **Module layers:** `domain/` (pure types + rules, no I/O) → `app/` (use cases; depend on ports declared here) → `infra/` (Kysely repositories, Telegram adapters implementing the ports) → `http/` (routes, zod request/response schemas). Imports flow inward only; `domain` imports nothing outside itself.
 - **Error handling:** domain/app throw typed `AppError` subclasses (`NotFoundError`, `ValidationError`, `ForbiddenError`, `ConflictError`, `UnauthenticatedError`, `TooManyRequestsError`, plus specific-code subclasses such as `InvalidCredentialsError`) from `apps/api/src/platform/errors.ts`; one Fastify error handler maps them to the envelope `{ "error": { "code": string, "message": string, "details"?: unknown } }` with the matching HTTP status. Error `code`s are declared in `packages/shared/src/errors.ts` so the web panel can switch on them.
 - **IDs:** **UUIDv7**, generated in the application via `newId()` in `apps/api/src/platform/ids.ts` (never DB defaults); stored as Postgres `uuid`. Telegram's own ids (chat id, user id, message id) are stored as `bigint` alongside, never used as primary keys.
@@ -87,8 +92,9 @@ roadmap steps are specified.
 - **Tests:** **Vitest** everywhere. Unit tests sit next to the code (`*.test.ts`) — domain + app with in-memory port fakes. Integration tests (`*.int.test.ts`) hit a real Postgres via **Testcontainers** (migrations applied at suite start) and use Fastify `app.inject()` for HTTP. Web: Vitest + Testing Library (`*.test.tsx`). Smoke test: `apps/api/src/app.int.test.ts` boots `buildApp()` and gets `200` from `GET /health`.
 - **Inter-module communication:** in-process direct calls to another module's **app-layer** functions (passed in through the composition root); asynchronous work (broadcast sends, scheduled posts, pings) goes through **pg-boss** jobs with named queues `<module>.<job>`. No HTTP between modules.
 - **Validation / contracts:** request + response bodies are zod schemas from `packages/shared`; Fastify validates with `fastify-type-provider-zod`; the web panel parses responses with the same schemas.
-- **Telegram:** all Bot API calls go through `apps/api/src/platform/telegram.ts` (grammY `Api` per bot token); webhook requests are authenticated by Telegram's `X-Telegram-Bot-Api-Secret-Token` header. Bot tokens are tenant secrets — never logged, never returned by the API.
-- **Config:** env vars parsed once by a zod schema in `apps/api/src/platform/config.ts`; `.env.example` documents every key; no `process.env` reads elsewhere.
+- **Telegram:** all Bot API calls go through `telegramApi(token, { apiRoot })` in `apps/api/src/platform/telegram.ts` (grammY `Api` per bot token; `apiRoot` from `TELEGRAM_API_ROOT`, a fake Bot API in tests), wrapped by the `bots` gateway (`modules/bots/infra/telegram-gateway.ts`) into typed outcomes. Each connected bot posts to its own webhook `POST /api/telegram/webhook/:botId` (opaque bot row id, never the token), authenticated by Telegram's `X-Telegram-Bot-Api-Secret-Token` header — a per-bot secret derived as HMAC(`BOT_TOKEN_ENCRYPTION_KEY`, bot id ‖ capture epoch), only its SHA-256 stored, checked before the body is parsed; the header is redacted from logs. Telegram delivers only to a **public HTTPS** URL (`TELEGRAM_WEBHOOK_BASE_URL`; local testing needs a tunnel). Bot tokens are tenant secrets — encrypted at rest (AES-256-GCM), never logged, never returned by the API.
+- **Errors from upstreams:** `TelegramUnavailableError` (`503 TELEGRAM_UNAVAILABLE`) is the first 5xx `AppError` — an expected upstream failure, logged with its code only (never Telegram's text or URL).
+- **Config:** env vars parsed once by a zod schema in `apps/api/src/platform/config.ts`; `.env.example` documents every key; no `process.env` reads elsewhere. bot-connection added four keys: `BOT_TOKEN_ENCRYPTION_KEY` (required, 32 bytes base64), `TELEGRAM_WEBHOOK_BASE_URL` (default `PUBLIC_WEB_URL`), `TELEGRAM_WEBHOOK_MAX_CONNECTIONS` (default min(10, `DATABASE_POOL_MAX` − 1), must stay below the pool), `TELEGRAM_API_ROOT` (optional; tests only).
 - **UI / styling:** Tailwind + shadcn/ui components in `apps/web/src/shared/ui/`; feature UI composes them — detail in §Frontend / UI foundation.
 
 ## Datastores
@@ -96,7 +102,7 @@ roadmap steps are specified.
 | Store | Engine | Accessed via | Notes |
 |---|---|---|---|
 | Main DB | PostgreSQL 16 | Kysely + `pg` (`apps/api/src/platform/db.ts`) | all tenant data, every tenant table scoped by `workspace_id` |
-| Job queue | PostgreSQL 16 (pg-boss schema `pgboss`) | pg-boss (`apps/api/src/platform/jobs.ts`) | same database, separate schema managed by pg-boss itself (not by our migrations) |
+| Job queue | PostgreSQL 16 (pg-boss schema `pgboss`) | pg-boss (`apps/api/src/platform/jobs.ts`) | same database, separate schema managed by pg-boss itself (not by our migrations). Queues: `bots.schedule-health-checks` (cron every minute) and `bots.check-health` (one per due bot, `exclusive` per bot id), registered by `buildApp()` |
 
 ## Frontend / UI foundation
 
@@ -124,7 +130,7 @@ roadmap steps are specified.
 - **Node 26 is Current, not yet LTS** (LTS from end of October 2026) — acceptable for a pre-pilot product; revisit only if a dependency breaks on 26.
 - **Generated DB types depend on a live, migrated database** — `db.types.gen.ts` must be regenerated after every migration; a stale file compiles against the wrong schema. Destructive changes still need expand → migrate → contract across releases even though `down` exists (a `down` that drops data is not a real rollback).
 - **Telegram Bot API limits:** ~30 msgs/s per bot for broadcasts; channel posting needs the bot as admin with `can_post_messages`; no native scheduling (ours via pg-boss) — see `docs/roadmap.md` § Decisions so far.
-- **Multi-tenancy by convention** (`workspace_id` filter in every repository, no Postgres RLS in v1) — a missed filter is a data leak; every repository needs an integration test that proves cross-workspace isolation. Controlled exceptions (the `workspaces` reads that produce the workspace id): memberships of an account, invitation by token hash, membership for the guard; a new exception needs a change to the SAD.
+- **Multi-tenancy by convention** (`workspace_id` filter in every repository, no Postgres RLS in v1) — a missed filter is a data leak; every repository needs an integration test that proves cross-workspace isolation. Five controlled exceptions (reads that produce the workspace id): the three `workspaces` reads — memberships of an account, invitation by token hash, membership for the guard — and the two `bots` reads — *bot by webhook id* (scoped by possession of the webhook secret: returns the row only when the secret's hash matches) and *bots due for a health check* (used only by the scheduled job) ([bot-connection ADR-0007](features/bot-connection/adr/0007-bind-a-bot-to-one-workspace-with-unique-constraints-and-two-controlled-tenancy-exceptions.md)); a new exception needs a change to the SAD.
 - **One process** runs HTTP + webhooks + job workers in v1 — fine for 5–10 pilots; split workers out if broadcast load interferes with webhook latency.
 - No deployment target decided yet — deferred until the first pilot goes live.
 - **TypeScript is pinned to `~6.0`** — TypeScript 7 (the native port) is outside typescript-eslint's supported range (`<6.1`); bump together once typescript-eslint supports it.

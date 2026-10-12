@@ -157,3 +157,35 @@ describe('loggerOptions at trace (review r6 AA2)', () => {
     expect(clientError?.err?.rawPacket).toBe('[Redacted]');
   });
 });
+
+describe('loggerOptions request headers', () => {
+  it('never logs the Telegram webhook secret header of a request', async () => {
+    const secret = 'webhookSecretNeverLogged_42';
+    const lines: string[] = [];
+    const stream = new Writable({
+      write(chunk: Buffer, _encoding, done) {
+        lines.push(...chunk.toString().split('\n').filter(Boolean));
+        done();
+      },
+    });
+    const app = Fastify({
+      logger: loggerOptions({ LOG_LEVEL: 'trace', NODE_ENV: 'test' } as Config, stream),
+    });
+    app.post('/api/telegram/webhook/x', (request) => {
+      request.log.info({ headers: request.headers }, 'webhook headers');
+      return { ok: true };
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/api/telegram/webhook/x',
+      headers: { 'x-telegram-bot-api-secret-token': secret },
+      payload: {},
+    });
+    await app.close();
+    expect(lines.join('\n')).not.toContain(secret);
+    const entry = lines
+      .map((line) => JSON.parse(line) as { msg?: string; headers?: Record<string, string> })
+      .find((e) => e.msg === 'webhook headers');
+    expect(entry?.headers?.['x-telegram-bot-api-secret-token']).toBe('[Redacted]');
+  });
+});
