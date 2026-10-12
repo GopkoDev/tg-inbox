@@ -352,7 +352,9 @@ paths:
         After that, if the workspace has conversations, the bot row is kept without its token, secret
         hash or capture epoch, so the bot stays bound to this workspace (AC-05, AC-19). If nothing was
         captured, the row is deleted. Every contact and conversation stays. Messages sent afterwards are
-        never captured.
+        never captured. A stored token the server can no longer decrypt (ADR-0006) skips the Telegram calls.
+        Running disconnect again after one cut short (a disconnected row with no conversation) deletes that
+        row and answers `200` with `not_connected`.
       operationId: disconnectBot
       responses:
         "413": { $ref: "#/components/responses/PayloadTooLarge" }

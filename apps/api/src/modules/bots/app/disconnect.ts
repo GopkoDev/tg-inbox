@@ -64,8 +64,8 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
       // Clear first: from here no delivery authenticates, so no new first conversation can
       // appear after the check below. A delivery that authenticated earlier and commits between
       // the clear and the check is seen by it; only one still in flight past the check remains
-      // (a sub-millisecond window, accepted). Should the check fail after the clear, the paste
-      // that follows finishes the delete of a disconnected row nobody wrote through.
+      // (a sub-millisecond window, accepted). Should the check fail after the clear, running
+      // disconnect again (or the next paste) finishes the delete of a row nobody wrote through.
       await bots.clearOnDisconnect(workspaceId, bot.id);
       if (!(await conversations.hasConversations(workspaceId))) {
         await bots.delete(workspaceId, bot.id);

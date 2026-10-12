@@ -466,4 +466,27 @@ describe("pasteToken — undoing a failed setWebhook never touches another write
       TelegramUnavailableError,
     );
   });
+
+  it('a rotation whose setWebhook fails after a second rotation succeeded keeps the second token', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.telegram.me = ME;
+    const SECOND = tokenOf(100001n, 's');
+    let releaseA!: () => void;
+    let calls = 0;
+    h.telegram.setWebhook = async () => {
+      calls += 1;
+      if (calls === 1) {
+        await new Promise<void>((resolve) => (releaseA = resolve));
+        return 'failed';
+      }
+      return 'ok';
+    };
+    const a = h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    await vi.waitFor(() => expect(calls).toBe(1));
+    h.clock.advance(1000);
+    expect(await h.paste.pasteToken('ws-a', SECOND, false)).toMatchObject({ state: 'connected' });
+    releaseA();
+    expect(await refusal(a)).toBeInstanceOf(TelegramUnavailableError);
+    expect(h.bots.rows[0]).toMatchObject({ state: 'connected', token: SECOND });
+  });
 });

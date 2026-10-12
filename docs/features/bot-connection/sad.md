@@ -545,7 +545,11 @@ sequenceDiagram
     H->>H: run the guard (owner only)
     H->>B: disconnect
     B->>D: read the bot row and decrypt its token
-    alt no bot connected
+    alt row disconnected and the workspace has no conversation (a disconnect cut short)
+        B->>D: delete the bot row
+        B-->>H: settings with state not connected
+        H-->>W: settings
+    else no bot connected
         B-->>H: no bot connected
         H-->>W: refusal with the current settings
     else bot present
@@ -572,7 +576,7 @@ sequenceDiagram
             Note over B,D: persists bot (row kept so the bot stays bound to this workspace)
         else nothing captured
             B->>D: delete the bot row
-            Note over B,D: removes bot (the bot is free for any workspace); a disconnected row with no conversation left by a failure here is deleted by the next paste
+            Note over B,D: removes bot (the bot is free for any workspace); a disconnected row with no conversation left by a failure here is deleted by running disconnect again or by the next paste
         end
         B-->>H: settings with state not connected
         H-->>W: settings
