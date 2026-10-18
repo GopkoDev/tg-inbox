@@ -445,32 +445,48 @@ Each top-3 goal from §1 expanded into scenarios; every number is quoted from sp
 
 ## 11. Risks and technical debt
 
-<!-- 🎯 Why: ⭐ collects EVERYTHING that can break — not only the technical. Without §11 risks get
-     discussed at standups and lost; debt lives only in the head of whoever accepted it.
-     📋 Write: a risk/debt table — severity — mitigation — owner. Accepted debt in its own block.
-     📌 The first risk is often a product risk, not a technical one. That's normal. -->
-
-<!-- Severity literals: Low / Medium / High for regular risks; "Open question" for rows created by
-     a Save-as-OQ resolution during the Socratic walk (see references/socratic.md). -->
-
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
-| <e.g. Worker lag may reach hours during a downstream outage> | Medium | <alert >10 min, on-call playbook, retry backoff> | <DevOps> |
-| <e.g. No event-schema versioning in v1> | Medium | <ADR-NNNN planned for v2, tolerate unknown fields> | <Backend> |
-| Open architectural decision: <decision-headline> | Open question | Resolve before <stage trigger or YYYY-MM-DD>; <inline rationale from the Save-as-OQ> | <owner> |
+| Pilots keep their forwarder bot because a reply ends "not confirmed" or "not delivered" too often during Telegram hiccups, eroding trust in the inbox (product risk behind spec §7 KPIs) | Medium | Plain-language states with one-click "Try again" / "send again"; alert on every such reply (§7); review the counts with pilots weekly in the first 30 days | Dmytro Hopko |
+| Job pickup and the drain add latency to every send; with the default polling the p95 ≤ 2 s target would be at risk | Medium | `inbox.deliver-replies` polls every 0.5 s; seeded latency test in §10; if p95 drifts, trigger the drain in-process right after the reply commits | Tech Lead |
+| A slow Telegram answer (up to the 10 s timeout) holds the later replies of that conversation, and timeouts turn into "not confirmed" replies that may have arrived | Medium | Timeout chosen well above Telegram's normal latency; "not confirmed" count alerted; the member decides with the duplicate warning (AC-11) | Tech Lead |
+| Signals emitted while an instance's `LISTEN` connection is reconnecting are lost; clients would show stale data until the next change | Low | Listener reconnects with backoff and tells every socket to resynchronise after a gap; clients also resync on socket reconnect (ADR-0003) | Tech Lead |
+| The 5 s socket re-validation and per-change refetches grow with open tabs | Low | Fine at pilot scale; thresholds in §7 | Tech Lead |
+| Video seeking and long audio rely on Telegram's file server honouring byte-range requests; without it Safari may refuse to play video | Medium | Forward `Range` and verify against the real Bot API before the first pilot; fall back to a full download for video if ranges are not honoured | Tech Lead |
+| Animated and video stickers (`.tgs`, `.webm`) and video notes may not display natively in every browser | Low | Show the sticker's static thumbnail when the animated form cannot play; decided per kind at `screens` | Tech Lead |
+| Serving customer-supplied files from the panel's origin could execute script if a type slipped through | Medium | Allow-listed content types, `nosniff`, sandboxing CSP and `attachment` for documents (ADR-0006); covered by the security review | Security Lead |
+| No proactive per-chat pacing: several members answering one chat in a burst could hit Telegram's per-chat limit | Low | Sequential drain per conversation + 429 back-off honouring `retry_after`; the per-member limit caps runaway clients | Tech Lead |
+| Same-second ordering between a customer message (Telegram's whole-second time) and a reply (our clock) is decided by rule, not truth | Low | Message-before-reply tie rule (ADR-0008); acceptable for support threads | Tech Lead |
+| Read state, reply texts and attempts are kept indefinitely; removal only by hand on request | Low | Accepted for pilots, like captured messages (bot-connection §11); belongs with a later privacy / retention step | Dmytro Hopko |
+| `CLAUDE.md`, the architecture map and the module list do not yet show the `inbox` module, `platform/realtime`, the new dependency line and the delivery queue | Low | Update both in this feature's tasks | Tech Lead |
+| Spec §8: should members be able to edit or delete a reply after it is sent? Default now: no | Open question | Resolve after 30 days of pilot use; editing would add a Telegram `editMessageText` path and an "edited" state on replies, no change to delivery | Dmytro Hopko |
+| Spec §8: should a member be able to mute or hide a conversation flooded by one sender? Default now: no | Open question | Resolve before roadmap step 5 (assignment & statuses) is specified; would be a per-conversation flag read by the list query | Dmytro Hopko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
-- <e.g. the entity is immutable / unversioned — OK for v1, may need audit versioning in v2>
+- No stored copies of media: every open re-downloads from Telegram, and media of a disconnected bot stays unavailable (spec §3).
+- No full-text search in message text; contact search is a scan per workspace without a dedicated index until §7's threshold.
+- Socket access is guaranteed by a 5 s periodic re-validation rather than by session-end signals.
+- The delivery worker runs in the API process; split out when broadcast or webhook load interferes (architecture map).
 
 ## 12. Glossary
 
-<!-- 🎯 Why: ⭐ the DOMAIN GLOSSARY that ends arguments a year later («checkpoint — weekly or
-     biweekly? quarter — calendar or fiscal?»).
-     📋 Write: a term / meaning table. Business + technical terms mixed.
-     📌 e.g. «Lesson | a unit inside a course made of blocks (text, video)». -->
+Terms marked † are not yet in [CONTEXT.md](../../../CONTEXT.md) — candidates for `/sdd:glossary`.
 
 | Term | Meaning |
 |---|---|
-| <e.g. domain object A> | <its meaning in this domain> |
-| <e.g. domain object B> | <its meaning> |
-| <e.g. domain invariant name> | <the rule, in plain language> |
+| Inbox | The web-panel screen where a workspace's operators and business owners see all of the workspace's conversations, read them and reply; shared by the whole team. NOT Conversation. |
+| Conversation | The one continuous thread between a workspace and one contact, holding the contact's messages and the team's replies. NOT a support ticket. |
+| Message | One thing an end customer sent to the business bot, captured into their conversation; an edit replaces its text. NOT Reply. |
+| Reply | A text a member writes in a conversation, which the business bot sends to that conversation's end customer; the team sees its author, the customer only the bot. NOT Message, NOT a broadcast. |
+| Operator / Business owner | Workspace members; in the inbox both roles have the same rights; only business owners manage the bot. |
+| End customer / Contact | The person writing to the business bot / that person's record inside one workspace. |
+| Business bot | The workspace's own Telegram bot; sends every reply and is the only source of customer media. |
+| Delivery state † | What a reply shows: sending, sent, not delivered (with its reason), not confirmed. |
+| Not confirmed † | A reply whose send to Telegram got no answer, so it may or may not have reached the customer; never resent without a member's confirmation. |
+| Waiting for a reply † | A conversation whose customer wrote after the last reply marked "sent"; the one shared marker before statuses exist. |
+| Unread † | Customer messages that arrived in tg-inbox after a member last read the conversation (and after their membership became active); counted per member, by arrival. |
+| Arrival watermark † | The per-member, per-conversation point in arrival order up to which the member has read. |
+| Client reply key † | The id the browser gives a reply before sending it, so a repeated submit finds the same reply instead of creating a second one. |
+| Change signal † | A small live notice ("this conversation, item or bot changed") pushed to open inboxes; the browser then re-reads the change. Carries ids only. |
+| Drain † | The per-conversation delivery job that sends that conversation's pending replies one at a time, oldest first. |
+| Position time † | Where an item sits in the thread: a message by its Telegram send time, a reply by when a member (re)sent it. |
