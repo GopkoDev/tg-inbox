@@ -136,13 +136,13 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 **Given** a conversation of "Acme Flowers" that has been assigned, reassigned, unassigned, closed and reopened
 **When** any member opens its thread
-**Then** each change appears in the thread at the time it happened (its position time), among the messages and replies, as a short line naming the member who made it (or "the customer wrote" / "a reply was not delivered" / "the member was deactivated" for automatic changes) and the time; these lines are never sent to the end customer, do not count as unread, and appear live in a thread open in another member's tab
+**Then** each change appears in the thread at the time it happened (its position time), among the messages and replies, as a short line naming the member who made it (or "the customer wrote" / "a reply was not delivered" / "the assignee was deactivated" for automatic changes) and the time; these lines are never sent to the end customer, do not count as unread, and appear live in a thread open in another member's tab
 
 ### AC-10 (US-06) — cross-context
 
 **Given** an operator of "Acme Flowers" who is the assignee of open and closed conversations
 **When** a business owner deactivates their membership
-**Then** every conversation of "Acme Flowers" assigned to them, open and closed, becomes unassigned as part of the deactivation itself — there is no moment when a deactivated member is anyone's assignee, and an assignment to them made at the same moment is refused (AC-04) — open ones appear under "unassigned" for the team without reloading, and each thread records "unassigned — <member> was deactivated"; conversations of another workspace the same account belongs to keep that assignee; reactivating the member later does not give the conversations back
+**Then** every conversation of "Acme Flowers" assigned to them, open and closed, becomes unassigned as part of the deactivation itself — there is no moment when a deactivated member is anyone's assignee, and an assignment to them made at the same moment is either refused (AC-04) or, if it was recorded first, undone by the deactivation itself with its own activity line — open ones appear under "unassigned" for the team without reloading, and each thread records "unassigned — <member> was deactivated"; conversations of another workspace the same account belongs to keep that assignee; reactivating the member later does not give the conversations back
 
 ### AC-11 (US-02, US-03) — authorization
 
@@ -165,7 +165,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 | Reopen on customer message p95 — message captured → conversation shown open to the team | ≤ 3 s | timing from capture to push; integration test |
 | Inbox list p95 — first page of any lens, workspace with 1 000 conversations | ≤ 500 ms server time (as shared-inbox §6) | request timing log; seeded integration test per lens |
 | Single assignee | 0 conversations with more than one assignee or with an assignee who is not an active member | integrity check in the integration suite and a periodic reconciliation query in the run book |
-| Deactivation unassign | 0 conversations assigned to a deactivated member at any moment — unassigning is part of the deactivation itself (AC-10) | integration test: deactivate during a concurrent assign → the assign is refused, no assignment remains |
+| Deactivation unassign | 0 conversations assigned to a deactivated member at any moment — unassigning is part of the deactivation itself (AC-10) | integration test: deactivate during a concurrent assign → the assign is refused or undone, no assignment remains |
 | Lost customers | 0 closed conversations whose latest customer message arrived after the close | integrity check: closed conversations with a later customer arrival must not exist |
 | Change rate per member | ≤ 60 assignment/status changes per rolling 60 s per member per workspace (AC-12) | integration test: the 61st change within a minute is refused |
 | Availability | 99.5 % monthly (as shared-inbox §6) | uptime check on the health endpoint |
