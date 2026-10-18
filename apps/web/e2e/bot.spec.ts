@@ -182,6 +182,6 @@ test('an operator sees no Bot entry and the owners-only page at the Bot address 
   await page.goto(`/w/${workspaceId}/bot`);
   await expect(page.getByText('Only business owners manage the bot')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect bot' })).toHaveCount(0);
-  await page.getByRole('button', { name: 'Back to home' }).click();
+  await page.getByRole('button', { name: 'Back to inbox' }).click();
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
 });

@@ -74,7 +74,7 @@ function renderPage() {
         <Route path="/w/:workspaceId/bot" element={<AppShell />}>
           <Route index element={<BotSettingsPage />} />
         </Route>
-        <Route path="/w/:workspaceId" element={<p>home screen</p>} />
+        <Route path="/w/:workspaceId/inbox" element={<p>home screen</p>} />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
       </Routes>
     </InDataRouter>,
@@ -281,13 +281,13 @@ describe('BotSettingsPage (SCR-02)', () => {
     });
   });
 
-  it('owners only: an operator gets only the refusal and Back to home (AC-03)', async () => {
+  it('owners only: an operator gets only the refusal and Back to inbox (AC-03)', async () => {
     getBotSettings.mockRejectedValue(err(403, 'OWNER_ONLY', 'Only business owners manage the bot'));
     renderPage();
     expect(await screen.findByText('Only business owners manage the bot')).toBeInTheDocument();
     expect(screen.queryByText('Acme Flowers Support')).not.toBeInTheDocument();
     expect(getBotSettings).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Back to home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to inbox' }));
     expect(await screen.findByText('home screen')).toBeInTheDocument();
   });
 
@@ -502,7 +502,7 @@ describe('BotSettingsPage (SCR-02)', () => {
       const dialog = screen.getByRole('alertdialog');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
       expect(await screen.findByText('Only business owners manage the bot')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Back to home' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Back to inbox' })).toBeInTheDocument();
     });
   });
 });
