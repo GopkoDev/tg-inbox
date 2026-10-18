@@ -49,11 +49,11 @@ export function WorkspacePicker() {
         </Alert>
       )}
       {list.status === 'ready' && (
-        <ul className="space-y-1">
+        <ul className="flex flex-col gap-2">
           {list.items.map((w) => (
             <li key={w.id}>
               <Button
-                variant="ghost"
+                variant="outline"
                 className="h-auto w-full justify-between py-2"
                 disabled={entering}
                 onClick={() => void enter(w.id)}

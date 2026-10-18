@@ -30,7 +30,7 @@ updated_at: "2026-10-18"
 
 | State | Trigger / condition | Components (from the inventory) | Source-ref |
 |---|---|---|---|
-| default | `/sign-in` signed out — centred column: product mark (lucide `MessagesSquare` in a `size-8` rounded square), heading «Sign in to tg-inbox», one-line description «Answer your customers' Telegram messages together», email + password fields, **Sign in** | NEW: AuthLayout, shadcn:field, Input, Label, Button | wireframe «auth default» |
+| default | `/sign-in` signed out — centred column: product mark (lucide `MessagesSquare` in a `size-8` rounded square), heading «Sign in» (existing text, spec: copy unchanged), one-line description «Answer your customers' Telegram messages together», email + password fields, **Sign in** | NEW: AuthLayout, shadcn:field, Input, Label, Button | wireframe «auth default» |
 | validation | submit with an empty / invalid email or empty password — message under the field, `aria-invalid` (AC-05) | shadcn:field, Input | wireframe «auth default» (field error line) |
 | error: wrong credentials | existing in-place message «Email or password is incorrect» above the button (AC-05) | Alert (destructive) | — |
 | submitting, session-ended, success, error: unexpected | inherited: workspace-operators §SCR-01 — success follows the AC-07 destination rule (AC-04) | Button (disabled + `Loader2`), Alert | — |
@@ -39,7 +39,7 @@ updated_at: "2026-10-18"
 auth default (desktop and phone — one centred column, max-w-sm, min-h-svh, p-6 md:p-10)
             +------------------------------+
             |            [◼]               |
-            |    Sign in to tg-inbox       |
+            |          Sign in             |
             |  Answer your customers'      |
             |  Telegram messages together  |
             |                              |
@@ -79,7 +79,7 @@ auth default (desktop and phone — one centred column, max-w-sm, min-h-svh, p-6
 
 | State | Trigger / condition | Components (from the inventory) | Source-ref |
 |---|---|---|---|
-| default | several active memberships — centred column (`max-w-md`), heading «Choose a workspace», one full-width row per workspace (name + role badge) | NEW: AuthLayout, Button (`outline`), Badge | wireframe «picker» |
+| default | several active memberships — centred column (`max-w-md`), heading «Your workspaces» (existing text), one full-width row per workspace (name + role badge) | NEW: AuthLayout, Button (`outline`), Badge | wireframe «picker» |
 | access-removed | arrived through the guard — dismissible notice «Your access to Acme Flowers was removed» above the list (AC-18) | Alert | wireframe «picker» |
 | loading, error: unexpected, guard states | inherited: workspace-operators §SCR-04 | Skeleton, Alert, Button | — |
 
@@ -87,7 +87,7 @@ auth default (desktop and phone — one centred column, max-w-sm, min-h-svh, p-6
 picker
             +------------------------------+
             |            [◼]               |
-            |     Choose a workspace       |
+            |      Your workspaces         |
             | [i] Your access to Bloom     |
             |     Bakery was removed   [x] |
             | [ Acme Flowers   Business owner ] |

@@ -31,13 +31,13 @@ This task builds AuthLayout and re-lays sign-in, accept invitation, set new pass
 
 ## Inlined context
 
-> | default | `/sign-in` signed out — centred column: product mark (lucide `MessagesSquare` in a `size-8` rounded square), heading «Sign in to tg-inbox», one-line description «Answer your customers' Telegram messages together», email + password fields, **Sign in** | NEW: AuthLayout, shadcn:field, Input, Label, Button | wireframe «auth default» |
+> | default | `/sign-in` signed out — centred column: product mark (lucide `MessagesSquare` in a `size-8` rounded square), heading «Sign in» (existing text, spec: copy unchanged), one-line description «Answer your customers' Telegram messages together», email + password fields, **Sign in** | NEW: AuthLayout, shadcn:field, Input, Label, Button | wireframe «auth default» |
 > | validation | submit with an empty / invalid email or empty password — message under the field, `aria-invalid` (AC-05) | shadcn:field, Input | wireframe «auth default» (field error line) |
 > | error: wrong credentials | existing in-place message «Email or password is incorrect» above the button (AC-05) | Alert (destructive) | — |
 >
 > — `screens.md §SCR-01, states default / validation / error, verbatim` · full text: [screens.md](../screens.md)
 
-> SCR-02 Accept invitation, SCR-03 Set new password, SCR-04 Link unavailable, SCR-05 Workspace picker (heading «Choose a workspace», one full-width row per workspace with a role badge, access-removed notice above the list), SCR-06 No access — all on NEW: AuthLayout; every other state inherited verbatim from workspace-operators §SCR-02 / §SCR-09 / §SCR-03 / §SCR-04 / §SCR-05.
+> SCR-02 Accept invitation, SCR-03 Set new password, SCR-04 Link unavailable, SCR-05 Workspace picker (heading «Your workspaces» (existing text), one full-width row per workspace with a role badge, access-removed notice above the list), SCR-06 No access — all on NEW: AuthLayout; every other state inherited verbatim from workspace-operators §SCR-02 / §SCR-09 / §SCR-03 / §SCR-04 / §SCR-05.
 >
 > — `screens.md §SCR-02…SCR-06, abridged` · full text: [screens.md](../screens.md)
 

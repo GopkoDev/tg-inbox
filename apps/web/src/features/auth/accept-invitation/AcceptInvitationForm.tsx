@@ -20,9 +20,9 @@ import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
+import { AuthLayout } from '@/shared/ui/auth-layout';
+import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { Skeleton } from '@/shared/ui/skeleton';
 
 const GENERIC = 'Something went wrong';
@@ -133,100 +133,96 @@ export function AcceptInvitationForm() {
   }
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>
-          <h1>{preview ? `Join ${preview.workspace_name}` : 'Accept invitation'}</h1>
-        </CardTitle>
-        <CardDescription>
-          {preview ? (
-            <>
-              You are invited as <Badge variant="secondary">{ROLE_LABEL[preview.role]}</Badge>
-            </>
-          ) : (
-            'Checking your invitation…'
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {lookupFailed ? (
-          <div className="space-y-4">
-            <Alert variant="destructive">
-              <AlertDescription>{GENERIC}</AlertDescription>
-            </Alert>
-            <Button variant="outline" onClick={retryLookup}>
-              Retry
-            </Button>
-          </div>
-        ) : !preview ? (
-          <div data-testid="invitation-loading" className="space-y-4">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </div>
+    <AuthLayout
+      className="max-w-md"
+      title={preview ? `Join ${preview.workspace_name}` : 'Accept invitation'}
+      description={
+        preview ? (
+          <>
+            You are invited as <Badge variant="secondary">{ROLE_LABEL[preview.role]}</Badge>
+          </>
         ) : (
-          <form onSubmit={(e) => void onSubmit(e)} className="space-y-4" noValidate>
-            {alert && (
-              <Alert variant="destructive">
-                <AlertDescription>{alert}</AlertDescription>
-              </Alert>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" readOnly value={preview.email} />
-            </div>
-            {!preview.account_exists && (
-              <div className="space-y-2">
-                <Label htmlFor="name">Your name</Label>
-                <Input
-                  id="name"
-                  autoComplete="name"
-                  disabled={submitting}
-                  value={name}
-                  aria-invalid={nameError ? true : undefined}
-                  aria-describedby={nameError ? 'name-error' : undefined}
-                  onChange={(e) => setName(e.target.value)}
-                />
-                {nameError && (
-                  <p id="name-error" className="text-destructive text-sm">
-                    {nameError}
-                  </p>
-                )}
-              </div>
-            )}
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+          'Checking your invitation…'
+        )
+      }
+    >
+      {lookupFailed ? (
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription>{GENERIC}</AlertDescription>
+          </Alert>
+          <Button variant="outline" onClick={retryLookup}>
+            Retry
+          </Button>
+        </div>
+      ) : !preview ? (
+        <div data-testid="invitation-loading" className="space-y-4">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+      ) : (
+        <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-6" noValidate>
+          {alert && (
+            <Alert variant="destructive">
+              <AlertDescription>{alert}</AlertDescription>
+            </Alert>
+          )}
+          <Field>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input id="email" type="email" readOnly value={preview.email} />
+          </Field>
+          {!preview.account_exists && (
+            <Field>
+              <FieldLabel htmlFor="name">Your name</FieldLabel>
               <Input
-                id="password"
-                type="password"
-                autoComplete={preview.account_exists ? 'current-password' : 'new-password'}
+                id="name"
+                autoComplete="name"
                 disabled={submitting}
-                value={password}
-                aria-invalid={passwordError ? true : undefined}
-                aria-describedby={passwordError ? 'password-error' : undefined}
-                onChange={(e) => setPassword(e.target.value)}
+                value={name}
+                aria-invalid={nameError ? true : undefined}
+                aria-describedby={nameError ? 'name-error' : undefined}
+                onChange={(e) => setName(e.target.value)}
               />
-              {!preview.account_exists && !passwordError && (
-                <p className="text-muted-foreground text-sm">At least 10 characters</p>
-              )}
-              {preview.account_exists && (
-                <p className="text-muted-foreground text-sm">
-                  {preview.email} already has a tg-inbox account. Enter its password to join.
+              {nameError && (
+                <p id="name-error" className="text-destructive text-sm">
+                  {nameError}
                 </p>
               )}
-              {passwordError && (
-                <p id="password-error" className="text-destructive text-sm">
-                  {passwordError}
-                </p>
-              )}
-            </div>
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
-              {preview.account_exists ? 'Join workspace' : 'Create account and join'}
-            </Button>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+            </Field>
+          )}
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <Input
+              id="password"
+              type="password"
+              autoComplete={preview.account_exists ? 'current-password' : 'new-password'}
+              disabled={submitting}
+              value={password}
+              aria-invalid={passwordError ? true : undefined}
+              aria-describedby={passwordError ? 'password-error' : undefined}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {!preview.account_exists && !passwordError && (
+              <FieldDescription>At least 10 characters</FieldDescription>
+            )}
+            {preview.account_exists && (
+              <FieldDescription>
+                {preview.email} already has a tg-inbox account. Enter its password to join.
+              </FieldDescription>
+            )}
+            {passwordError && (
+              <p id="password-error" className="text-destructive text-sm">
+                {passwordError}
+              </p>
+            )}
+          </Field>
+          <Button type="submit" className="w-full" disabled={submitting}>
+            {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
+            {preview.account_exists ? 'Join workspace' : 'Create account and join'}
+          </Button>
+        </form>
+      )}
+    </AuthLayout>
   );
 }

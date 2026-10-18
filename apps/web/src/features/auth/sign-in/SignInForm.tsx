@@ -8,9 +8,9 @@ import { ApiError } from '@/shared/api/client';
 import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/shared/ui/card';
+import { AuthLayout } from '@/shared/ui/auth-layout';
+import { Field, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { Skeleton } from '@/shared/ui/skeleton';
 
 const GENERIC = 'Something went wrong';
@@ -72,80 +72,72 @@ export function SignInForm() {
   }
 
   return (
-    <Card className="w-full max-w-sm">
-      <CardHeader>
-        <CardTitle>
-          <h1>Sign in</h1>
-        </CardTitle>
-        <CardDescription>Sign in to your tg-inbox account.</CardDescription>
-      </CardHeader>
-      <CardContent>
-        {booting ? (
-          <div data-testid="sign-in-loading" className="space-y-4">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </div>
-        ) : (
-          <form onSubmit={(e) => void onSubmit(e)} className="space-y-4" noValidate>
-            {sessionEnded && (
-              <Alert>
-                <AlertDescription>Sign in to continue</AlertDescription>
-              </Alert>
+    <AuthLayout title="Sign in" description="Answer your customers' Telegram messages together">
+      {booting ? (
+        <div data-testid="sign-in-loading" className="flex flex-col gap-6">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+      ) : (
+        <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-6" noValidate>
+          {sessionEnded && (
+            <Alert>
+              <AlertDescription>Sign in to continue</AlertDescription>
+            </Alert>
+          )}
+          {alert && (
+            <Alert variant="destructive">
+              <AlertDescription>{alert}</AlertDescription>
+            </Alert>
+          )}
+          <Field>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input
+              id="email"
+              type="text"
+              autoComplete="email"
+              required
+              disabled={submitting}
+              value={email}
+              aria-invalid={emailError ? true : undefined}
+              aria-describedby={emailError ? 'email-error' : undefined}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            {emailError && (
+              <p id="email-error" className="text-destructive text-sm">
+                {emailError}
+              </p>
             )}
-            {alert && (
-              <Alert variant="destructive">
-                <AlertDescription>{alert}</AlertDescription>
-              </Alert>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="current-password"
+              required
+              disabled={submitting}
+              value={password}
+              aria-invalid={passwordError ? true : undefined}
+              aria-describedby={passwordError ? 'password-error' : undefined}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {passwordError && (
+              <p id="password-error" className="text-destructive text-sm">
+                {passwordError}
+              </p>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="text"
-                autoComplete="email"
-                required
-                disabled={submitting}
-                value={email}
-                aria-invalid={emailError ? true : undefined}
-                aria-describedby={emailError ? 'email-error' : undefined}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-              {emailError && (
-                <p id="email-error" className="text-destructive text-sm">
-                  {emailError}
-                </p>
-              )}
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                disabled={submitting}
-                value={password}
-                aria-invalid={passwordError ? true : undefined}
-                aria-describedby={passwordError ? 'password-error' : undefined}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              {passwordError && (
-                <p id="password-error" className="text-destructive text-sm">
-                  {passwordError}
-                </p>
-              )}
-            </div>
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
-              Sign in
-            </Button>
-            <p className="text-muted-foreground text-sm">
-              Forgot your password? Ask the tg-inbox team for a reset link.
-            </p>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+          </Field>
+          <Button type="submit" className="w-full" disabled={submitting}>
+            {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
+            Sign in
+          </Button>
+          <p className="text-muted-foreground text-sm">
+            Forgot your password? Ask the tg-inbox team for a reset link.
+          </p>
+        </form>
+      )}
+    </AuthLayout>
   );
 }

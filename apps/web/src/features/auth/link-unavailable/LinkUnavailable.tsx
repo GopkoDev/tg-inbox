@@ -6,7 +6,7 @@ import { useAuthStore } from '@/features/auth/store';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { Button, buttonVariants } from '@/shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
+import { AuthLayout } from '@/shared/ui/auth-layout';
 
 export type LinkUnavailableProps =
   | { reason: 'invitation-invalid'; ask: 'business_owner' | 'tg_inbox_team'; reload?: () => void }
@@ -50,17 +50,13 @@ export function LinkUnavailable(props: LinkUnavailableProps) {
       : 'a business owner';
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <Link2Off className="text-muted-foreground size-6" aria-hidden="true" />
-        <CardTitle>
-          <h1>
-            {anotherEmail ? 'This invitation is for another email' : "This link can't be used"}
-          </h1>
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <p>
+    <AuthLayout
+      className="max-w-md"
+      title={anotherEmail ? 'This invitation is for another email' : "This link can't be used"}
+    >
+      <div className="flex flex-col gap-4">
+        <Link2Off className="text-muted-foreground mx-auto size-6" aria-hidden="true" />
+        <p className="text-center">
           {anotherEmail
             ? 'This invitation belongs to another email — sign out and open the link again'
             : props.reason === 'reset-link-invalid'
@@ -89,7 +85,7 @@ export function LinkUnavailable(props: LinkUnavailableProps) {
             Go to sign-in
           </Link>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </AuthLayout>
   );
 }

@@ -9,9 +9,9 @@ import { ApiError } from '@/shared/api/client';
 import { firstIssue } from '@/shared/lib/validate';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
+import { AuthLayout } from '@/shared/ui/auth-layout';
+import { Field, FieldDescription, FieldLabel } from '@/shared/ui/field';
 import { Input } from '@/shared/ui/input';
-import { Label } from '@/shared/ui/label';
 import { Skeleton } from '@/shared/ui/skeleton';
 
 const GENERIC = 'Something went wrong';
@@ -91,63 +91,54 @@ export function ResetPasswordForm() {
   }
 
   return (
-    <Card className="w-full max-w-md">
-      <CardHeader>
-        <CardTitle>
-          <h1>Set a new password</h1>
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        {lookupFailed ? (
-          <div className="space-y-4">
+    <AuthLayout title="Set a new password">
+      {lookupFailed ? (
+        <div className="space-y-4">
+          <Alert variant="destructive">
+            <AlertDescription>{GENERIC}</AlertDescription>
+          </Alert>
+          <Button variant="outline" onClick={retryLookup}>
+            Retry
+          </Button>
+        </div>
+      ) : !ready ? (
+        <div data-testid="reset-loading" className="space-y-4">
+          <Skeleton className="h-9 w-full" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+      ) : (
+        <form onSubmit={(e) => void onSubmit(e)} className="flex flex-col gap-6" noValidate>
+          {alert && (
             <Alert variant="destructive">
-              <AlertDescription>{GENERIC}</AlertDescription>
+              <AlertDescription>{alert}</AlertDescription>
             </Alert>
-            <Button variant="outline" onClick={retryLookup}>
-              Retry
-            </Button>
-          </div>
-        ) : !ready ? (
-          <div data-testid="reset-loading" className="space-y-4">
-            <Skeleton className="h-9 w-full" />
-            <Skeleton className="h-9 w-full" />
-          </div>
-        ) : (
-          <form onSubmit={(e) => void onSubmit(e)} className="space-y-4" noValidate>
-            {alert && (
-              <Alert variant="destructive">
-                <AlertDescription>{alert}</AlertDescription>
-              </Alert>
+          )}
+          <Field>
+            <FieldLabel htmlFor="password">New password</FieldLabel>
+            <Input
+              id="password"
+              type="password"
+              autoComplete="new-password"
+              disabled={submitting}
+              value={password}
+              aria-invalid={passwordError ? true : undefined}
+              aria-describedby={passwordError ? 'password-error' : undefined}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {!passwordError && <FieldDescription>At least 10 characters</FieldDescription>}
+            {passwordError && (
+              <p id="password-error" className="text-destructive text-sm">
+                {passwordError}
+              </p>
             )}
-            <div className="space-y-2">
-              <Label htmlFor="password">New password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="new-password"
-                disabled={submitting}
-                value={password}
-                aria-invalid={passwordError ? true : undefined}
-                aria-describedby={passwordError ? 'password-error' : undefined}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-              {!passwordError && (
-                <p className="text-muted-foreground text-sm">At least 10 characters</p>
-              )}
-              {passwordError && (
-                <p id="password-error" className="text-destructive text-sm">
-                  {passwordError}
-                </p>
-              )}
-            </div>
-            <Button type="submit" className="w-full" disabled={submitting}>
-              {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
-              Set password
-            </Button>
-            <p className="text-muted-foreground text-sm">Every other device will be signed out.</p>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+          </Field>
+          <Button type="submit" className="w-full" disabled={submitting}>
+            {submitting && <Loader2 className="animate-spin" aria-hidden="true" />}
+            Set password
+          </Button>
+          <p className="text-muted-foreground text-sm">Every other device will be signed out.</p>
+        </form>
+      )}
+    </AuthLayout>
   );
 }
