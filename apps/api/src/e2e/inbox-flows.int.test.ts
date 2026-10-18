@@ -121,7 +121,8 @@ describe('shared-inbox end-to-end stories (postgres + pg-boss worker + fake Bot 
     const text = 'Hello!\nYes, we have red tulips.\n\nAnything else?';
     const sent = await reply(w, conv, text);
     expect(sent.statusCode).toBe(201);
-    const id = ThreadReply.parse(sent.json()).id;
+    const sentReply = ThreadReply.parse(sent.json());
+    const id = sentReply.id;
     await settled(id);
     expect((await stateOf(id)).state).toBe('sent');
 
@@ -132,7 +133,24 @@ describe('shared-inbox end-to-end stories (postgres + pg-boss worker + fake Bot 
     expect(JSON.stringify(calls[0]!.params)).not.toContain('Olga');
 
     // The customer answers (and edits the answer): the same conversation, the edit shows without reorder.
-    expect((await write(w.hook, 910001, 2, 'Great, two please')).statusCode).toBe(200);
+    // Telegram dates have second precision and a message in the reply's second sorts before it
+    // (ADR-0008), so the answer is dated at least one second after the reply.
+    const answerAt = Math.max(nowS(), Math.floor(Date.parse(sentReply.position_at) / 1000) + 1);
+    expect(
+      (
+        await signedDelivery(
+          app,
+          w.hook,
+          telegramUpdate({
+            updateId: nextUpdate++,
+            messageId: 2,
+            date: answerAt,
+            fromId: 910001,
+            text: 'Great, two please',
+          }),
+        )
+      ).statusCode,
+    ).toBe(200);
     expect(
       (
         await signedDelivery(
@@ -141,10 +159,10 @@ describe('shared-inbox end-to-end stories (postgres + pg-boss worker + fake Bot 
           telegramEdit({
             updateId: nextUpdate++,
             messageId: 2,
-            date: nowS(),
+            date: answerAt,
             fromId: 910001,
             text: 'Great, three please',
-            editDate: nowS() + 1,
+            editDate: answerAt + 1,
           }),
         )
       ).statusCode,
