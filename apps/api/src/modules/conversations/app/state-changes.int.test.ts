@@ -13,11 +13,15 @@ import {
   insertReply,
   twoWorkspacesWithInbox,
 } from '../../../test/fixtures/conversations.js';
+import { insertAccountRow } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import type { CloseSnapshot } from '../domain/state.js';
 import { createActivityRepo } from '../infra/activity-repo.js';
 import { createConversationRepo } from '../infra/conversation-repo.js';
 import { createConversationSignals } from '../infra/conversation-signals.js';
+import { createWorkspaceAccess } from '../../workspaces/app/access.js';
+import { KyselyUnitOfWork } from '../../workspaces/infra/unit-of-work.js';
+import { createConversations } from './conversations.js';
 import { createStateChanges, type ChangeResult } from './state-changes.js';
 
 const B = new Date('2026-10-11T10:00:00Z');
@@ -336,5 +340,175 @@ describe('state changes (Postgres)', () => {
     } finally {
       await listener.stop();
     }
+  });
+
+  describe('unassignDeactivatedMember (AC-10)', () => {
+    function app() {
+      return createConversations({
+        transaction: inTx,
+        conversations: createConversationRepo(db),
+        messages: {} as never,
+        activities: createActivityRepo(db),
+        contacts: {} as never,
+        signals: createConversationSignals(),
+        clock: fixedClock(NOW),
+      });
+    }
+    const unassign = (workspaceId: string, accountId: string) =>
+      inTx((tx) => app().unassignDeactivatedMember(tx, { workspaceId, accountId, at: NOW }));
+    const entries = (conversationId: string) =>
+      db
+        .selectFrom('conversation_activities')
+        .selectAll()
+        .where('conversation_id', '=', conversationId)
+        .execute();
+
+    it('unassigns open and closed conversations of that workspace only, one entry each, status kept', async () => {
+      const { a, b, sharedAccountId } = await twoWorkspacesWithInbox(db);
+      const open = await conversation(a.workspaceId, {
+        assigneeAccountId: sharedAccountId,
+        stateVersion: 3,
+      });
+      const closed = await conversation(a.workspaceId, {
+        status: 'closed',
+        assigneeAccountId: sharedAccountId,
+      });
+      const mine = await conversation(a.workspaceId, { assigneeAccountId: a.accountId });
+      const elsewhere = b.assignedConversationId;
+
+      const got: RealtimeSignal[] = [];
+      const listener = await startRealtimeListener(database.url, pino({ level: 'silent' }), {
+        reconnectDelayMs: 50,
+      });
+      listener.onSignal((sig) => got.push(sig));
+      try {
+        await unassign(a.workspaceId, sharedAccountId);
+        const end = Date.now() + 10_000;
+        while (got.length < 3 && Date.now() < end) await new Promise((r) => setTimeout(r, 25));
+        await new Promise((r) => setTimeout(r, 200));
+      } finally {
+        await listener.stop();
+      }
+
+      expect(await rowOf(open)).toMatchObject({
+        assignee_account_id: null,
+        status: 'open',
+        state_version: 4,
+      });
+      expect(await rowOf(closed)).toMatchObject({
+        assignee_account_id: null,
+        status: 'closed',
+        state_version: 1,
+      });
+      expect((await rowOf(a.assignedConversationId)).assignee_account_id).toBeNull();
+      expect((await rowOf(mine)).assignee_account_id).toBe(a.accountId);
+      expect((await rowOf(elsewhere)).assignee_account_id).toBe(sharedAccountId);
+      for (const id of [open, closed]) {
+        const rows = await entries(id);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          kind: 'unassigned',
+          cause: 'member_deactivated',
+          actor_account_id: null,
+          previous_assignee_account_id: sharedAccountId,
+          new_assignee_account_id: null,
+        });
+      }
+      expect(await entries(mine)).toHaveLength(0);
+      expect(await entries(elsewhere)).toHaveLength(1); // the fixture's own 'assigned' line only
+      const changed = got.filter((g) => g.type === 'conversation.changed');
+      expect(changed.map((g) => (g as { conversation_id: string }).conversation_id).sort()).toEqual(
+        [open, closed, a.assignedConversationId].sort(),
+      );
+    });
+
+    it('a member with nothing assigned writes nothing', async () => {
+      const { a } = await twoWorkspacesWithInbox(db);
+      const lone = await insertAccountRow(db);
+      await unassign(a.workspaceId, lone);
+      const n = await db
+        .selectFrom('conversation_activities')
+        .select('id')
+        .where('workspace_id', '=', a.workspaceId)
+        .where('cause', '=', 'member_deactivated')
+        .execute();
+      expect(n).toHaveLength(0);
+    });
+
+    it('lock order: an assign that share-locked the membership first is undone by the deactivation', async () => {
+      const { a, sharedAccountId } = await twoWorkspacesWithInbox(db);
+      const id = await conversation(a.workspaceId);
+      const order: string[] = [];
+      await Promise.all([
+        inTx(async (tx) => {
+          const active = await createWorkspaceAccess({
+            uow: new KyselyUnitOfWork(db),
+            clock: fixedClock(NOW),
+            auth: {} as never,
+          }).lockActiveMembers(tx, a.workspaceId, [sharedAccountId]);
+          expect(active).toEqual([sharedAccountId]);
+          order.push('assign-locked');
+          await new Promise((r) => setTimeout(r, 300));
+          const r = await sc().changeAssignee(tx, {
+            workspaceId: a.workspaceId,
+            actorAccountId: a.accountId,
+            conversationId: id,
+            assigneeAccountId: sharedAccountId,
+            expectedStateVersion: 0,
+          });
+          expect(r.outcome).toBe('recorded');
+          order.push('assign-done');
+        }),
+        (async () => {
+          await new Promise((r) => setTimeout(r, 100));
+          // the deactivation's membership UPDATE waits on the assign's FOR SHARE
+          await inTx(async (tx) => {
+            await tx
+              .updateTable('memberships')
+              .set({ state: 'deactivated', deactivated_at: NOW })
+              .where('workspace_id', '=', a.workspaceId)
+              .where('account_id', '=', sharedAccountId)
+              .execute();
+            order.push('membership-updated');
+            await app().unassignDeactivatedMember(tx, {
+              workspaceId: a.workspaceId,
+              accountId: sharedAccountId,
+              at: NOW,
+            });
+          });
+        })(),
+      ]);
+      expect(order).toEqual(['assign-locked', 'assign-done', 'membership-updated']);
+      expect((await rowOf(id)).assignee_account_id).toBeNull();
+      const kinds = (await entries(id)).map((e) => e.kind).sort();
+      expect(kinds).toEqual(['assigned', 'unassigned']);
+    });
+
+    it('lock order: a deactivation first makes a later assign refuse the member (lockActiveMembers)', async () => {
+      const { a, sharedAccountId } = await twoWorkspacesWithInbox(db);
+      const id = await conversation(a.workspaceId);
+      await inTx(async (tx) => {
+        await tx
+          .updateTable('memberships')
+          .set({ state: 'deactivated', deactivated_at: NOW })
+          .where('workspace_id', '=', a.workspaceId)
+          .where('account_id', '=', sharedAccountId)
+          .execute();
+        await app().unassignDeactivatedMember(tx, {
+          workspaceId: a.workspaceId,
+          accountId: sharedAccountId,
+          at: NOW,
+        });
+      });
+      const active = await inTx((tx) =>
+        createWorkspaceAccess({
+          uow: new KyselyUnitOfWork(db),
+          clock: fixedClock(NOW),
+          auth: {} as never,
+        }).lockActiveMembers(tx, a.workspaceId, [sharedAccountId]),
+      );
+      expect(active).toEqual([]);
+      expect((await rowOf(id)).assignee_account_id).toBeNull();
+    });
   });
 });

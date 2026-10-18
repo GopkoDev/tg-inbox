@@ -44,6 +44,11 @@ export interface ConversationRepo {
    */
   lockState(workspaceId: string, conversationId: string, tx: Executor): Promise<LockedState | null>;
   /**
+   * Locks (`FOR UPDATE`, by id) every conversation of the workspace assigned to the account, open and
+   * closed, and returns their ids. The deactivation's step 3: it runs after the membership `UPDATE`.
+   */
+  lockAssignedTo(workspaceId: string, accountId: string, tx: Executor): Promise<string[]>;
+  /**
    * Writes the given state fields and raises `state_version` by one in the same UPDATE; never touches
    * `last_activity_at`. Returns the new version, null when the conversation is not in the workspace.
    */

@@ -109,6 +109,12 @@ export function fakeConversationRepo(): ConversationRepo & {
           row.lastMessageReceivedAt.getTime() > row.lastReplySentAt.getTime(),
       };
     },
+    async lockAssignedTo(workspaceId, accountId) {
+      return rows
+        .filter((r) => r.workspaceId === workspaceId && r.assigneeAccountId === accountId)
+        .map((r) => r.id)
+        .sort();
+    },
     async writeState(workspaceId, conversationId, change) {
       const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
       if (!row) return null;

@@ -105,6 +105,18 @@ export function createConversationRepo(db: Db): ConversationRepo {
       };
     },
 
+    async lockAssignedTo(workspaceId, accountId, tx) {
+      const rows = await tx
+        .selectFrom('conversations')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('assignee_account_id', '=', accountId)
+        .orderBy('id')
+        .forUpdate()
+        .execute();
+      return rows.map((r) => r.id);
+    },
+
     async writeState(workspaceId, conversationId, change, tx) {
       const row = await (tx ?? db)
         .updateTable('conversations')

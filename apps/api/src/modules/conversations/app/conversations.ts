@@ -59,6 +59,16 @@ export interface Conversations {
   applyEdit(workspaceId: string, edit: InboundEdit): Promise<EditOutcome>;
   lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
   hasConversations(workspaceId: string): Promise<boolean>;
+  /**
+   * The `onMembershipDeactivated` port: inside the deactivation's transaction, after the membership
+   * `UPDATE`, returns every conversation of the workspace assigned to the account to the team.
+   * Lock order (sad.md §8): workspace row, membership row, then these conversation rows by id; the
+   * assign path share-locks memberships before its conversation row, so the two never cross.
+   */
+  unassignDeactivatedMember(
+    tx: Executor,
+    event: { workspaceId: string; accountId: string; at: Date },
+  ): Promise<void>;
 }
 
 export function createConversations(deps: ConversationsDeps): Conversations {
@@ -118,6 +128,22 @@ export function createConversations(deps: ConversationsDeps): Conversations {
         }
         return outcome;
       });
+    },
+
+    async unassignDeactivatedMember(tx, { workspaceId, accountId, at }) {
+      const ids = await conversations.lockAssignedTo(workspaceId, accountId, tx);
+      for (const conversationId of ids) {
+        await recordChange({ conversations, activities, signals }, tx, {
+          workspaceId,
+          conversationId,
+          kind: 'unassigned',
+          cause: 'member_deactivated',
+          actorAccountId: null,
+          previousAssignee: accountId,
+          newAssignee: null,
+          now: at,
+        });
+      }
     },
 
     // An edit of a message not captured adds nothing and is not kept for later (AC-10).

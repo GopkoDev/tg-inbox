@@ -16,6 +16,12 @@ import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js'
 import { KyselyUnitOfWork } from '../infra/unit-of-work.js';
 import { publish } from '../../../platform/realtime.js';
 import { createTeam } from './team.js';
+import { createConversations } from '../../conversations/app/conversations.js';
+import { createActivityRepo } from '../../conversations/infra/activity-repo.js';
+import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
+import { createConversationSignals } from '../../conversations/infra/conversation-signals.js';
+import { insertContact } from '../../../test/fixtures/contacts.js';
+import { insertConversation } from '../../../test/fixtures/conversations.js';
 
 describe('team use cases (Postgres)', () => {
   let database: TestDatabase;
@@ -189,5 +195,92 @@ describe('team use cases (Postgres)', () => {
     await expect(team.revokeInvitation(a, inv.id)).rejects.toBeInstanceOf(NotFoundError);
     expect((await team.listMemberships(a, { limit: 10 })).items).toHaveLength(0);
     expect((await team.listPendingInvitations(a, { limit: 10 })).items).toHaveLength(0);
+  });
+
+  describe('with the real conversations port (AC-10)', () => {
+    let wired: ReturnType<typeof createTeam>;
+    let fail = false;
+    let nextUser = 500000n;
+    beforeAll(() => {
+      const conversations = createConversations({
+        transaction: (fn) => db.transaction().execute(fn),
+        conversations: createConversationRepo(db),
+        messages: {} as never,
+        activities: createActivityRepo(db),
+        contacts: {} as never,
+        signals: createConversationSignals(),
+        clock: systemClock,
+      });
+      wired = createTeam({
+        uow: new KyselyUnitOfWork(db),
+        clock: systemClock,
+        publish,
+        publicWebUrl: 'http://web.test',
+        accounts: {
+          findAccountIdByEmail: async () => undefined,
+          getAccountsByIds: async (ids) =>
+            (
+              await db
+                .selectFrom('accounts')
+                .select(['id', 'email', 'display_name'])
+                .where('id', 'in', [...ids])
+                .execute()
+            ).map((x) => ({ id: x.id, email: x.email, displayName: x.display_name })),
+        },
+        onMembershipDeactivated: async (tx, event) => {
+          await conversations.unassignDeactivatedMember(tx, event);
+          if (fail) throw new Error('late failure');
+        },
+      });
+    });
+    const assigned = async (workspaceId: string, accountId: string, status: 'open' | 'closed') =>
+      insertConversation(db, {
+        workspaceId,
+        contactId: await insertContact(db, { workspaceId, telegramUserId: nextUser++ }),
+        assigneeAccountId: accountId,
+        status,
+      });
+    const assignee = async (id: string) =>
+      (
+        await db
+          .selectFrom('conversations')
+          .select('assignee_account_id')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).assignee_account_id;
+
+    it('unassigns in the deactivation transaction, leaves other workspaces, rolls back with it, and reactivation gives nothing back', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const m = await insertMembership(db, a);
+      await insertMembership(db, b, { accountId: m.accountId });
+      const open = await assigned(a, m.accountId, 'open');
+      const closed = await assigned(a, m.accountId, 'closed');
+      const other = await assigned(b, m.accountId, 'open');
+
+      fail = true;
+      await expect(wired.deactivateMembership(a, m.id)).rejects.toThrow('late failure');
+      expect(await assignee(open)).toBe(m.accountId);
+      expect(await assignee(closed)).toBe(m.accountId);
+      fail = false;
+
+      await wired.deactivateMembership(a, m.id);
+      expect(await assignee(open)).toBeNull();
+      expect(await assignee(closed)).toBeNull();
+      expect(await assignee(other)).toBe(m.accountId);
+
+      await wired.reactivateMembership(a, m.id);
+      expect(await assignee(open)).toBeNull();
+      expect(await assignee(closed)).toBeNull();
+    });
+
+    it('a refused deactivation (last active owner) unassigns nothing', async () => {
+      const ws = await insertWorkspace(db);
+      const owner = await insertMembership(db, ws, { role: 'owner' });
+      const id = await assigned(ws, owner.accountId, 'open');
+      await expect(wired.deactivateMembership(ws, owner.id)).rejects.toBeInstanceOf(
+        LastActiveOwnerError,
+      );
+      expect(await assignee(id)).toBe(owner.accountId);
+    });
   });
 });
