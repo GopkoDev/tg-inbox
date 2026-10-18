@@ -33,10 +33,16 @@ const renderIt = (ui: ReactNode) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
 describe('LinkUnavailable', () => {
   it('AC-06: ask a business owner', async () => {
-    renderIt(<LinkUnavailable reason="invitation-invalid" ask="business_owner" />);
+    const { container } = renderIt(
+      <LinkUnavailable reason="invitation-invalid" ask="business_owner" />,
+    );
     expect(
       await screen.findByText(/no longer valid.*ask a business owner for a new one/i),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 1, name: "This link can't be used" }),
+    ).toBeVisible();
+    expect(container.querySelector('svg.lucide-messages-square')).not.toBeNull();
   });
 
   it('AC-06: ask the tg-inbox team', async () => {

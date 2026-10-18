@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import type { BotSettings } from '@tg/shared';
 import { useEffect } from 'react';
-import { MemoryRouter, Route, Routes, useNavigate, type NavigateFunction } from 'react-router';
+import { Route, Routes, useNavigate, type NavigateFunction } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useBotStore } from '@/features/bot/store';
@@ -9,6 +9,8 @@ import { formatBotTime } from '@/features/bot/settings/format';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { stubRadixDom } from '@/test/radix';
+import { InDataRouter } from '@/test/router';
+import { AppShell } from '@/shared/ui/app-shell';
 
 vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
@@ -66,14 +68,16 @@ function CaptureNavigate() {
 
 function renderPage() {
   return render(
-    <MemoryRouter initialEntries={['/w/w1/bot']}>
+    <InDataRouter initialEntries={['/w/w1/bot']}>
       <CaptureNavigate />
       <Routes>
-        <Route path="/w/:workspaceId/bot" element={<BotSettingsPage />} />
-        <Route path="/w/:workspaceId" element={<p>home screen</p>} />
+        <Route path="/w/:workspaceId/bot" element={<AppShell />}>
+          <Route index element={<BotSettingsPage />} />
+        </Route>
+        <Route path="/w/:workspaceId/inbox" element={<p>home screen</p>} />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
       </Routes>
-    </MemoryRouter>,
+    </InDataRouter>,
   );
 }
 
@@ -277,13 +281,13 @@ describe('BotSettingsPage (SCR-02)', () => {
     });
   });
 
-  it('owners only: an operator gets only the refusal and Back to home (AC-03)', async () => {
+  it('owners only: an operator gets only the refusal and Back to inbox (AC-03)', async () => {
     getBotSettings.mockRejectedValue(err(403, 'OWNER_ONLY', 'Only business owners manage the bot'));
     renderPage();
     expect(await screen.findByText('Only business owners manage the bot')).toBeInTheDocument();
     expect(screen.queryByText('Acme Flowers Support')).not.toBeInTheDocument();
     expect(getBotSettings).toHaveBeenCalledTimes(1);
-    fireEvent.click(screen.getByRole('button', { name: 'Back to home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Back to inbox' }));
     expect(await screen.findByText('home screen')).toBeInTheDocument();
   });
 
@@ -498,7 +502,7 @@ describe('BotSettingsPage (SCR-02)', () => {
       const dialog = screen.getByRole('alertdialog');
       fireEvent.click(within(dialog).getByRole('button', { name: 'Disconnect' }));
       expect(await screen.findByText('Only business owners manage the bot')).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'Back to home' })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Back to inbox' })).toBeInTheDocument();
     });
   });
 });

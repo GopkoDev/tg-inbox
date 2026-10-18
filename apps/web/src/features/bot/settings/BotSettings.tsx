@@ -107,7 +107,7 @@ export function BotSettings({
       <Card className="max-w-xl">
         <CardContent className="space-y-3">
           <p>Only business owners manage the bot</p>
-          <Button onClick={() => void navigate(`/w/${workspaceId}`)}>Back to home</Button>
+          <Button onClick={() => void navigate(`/w/${workspaceId}/inbox`)}>Back to inbox</Button>
         </CardContent>
       </Card>
     );

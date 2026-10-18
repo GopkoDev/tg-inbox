@@ -1,0 +1,175 @@
+{
+  "slug": "ui-redesign",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add the canon's shadcn primitives and the shared preview/list parts",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-17"
+      ],
+      "dod": "The 13 shadcn primitives and SampleDataBadge / DataTableToolbar / EmptyFilterState exist under apps/web/src/shared/ui with passing component tests, and build + lint stay green.",
+      "files_hint": [
+        "apps/web/src/shared/ui/",
+        "apps/web/package.json",
+        "pnpm-lock.yaml",
+        "apps/web/src/shared/hooks/"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t1-add-shadcn-primitives-and-shared-parts.md"
+    },
+    {
+      "id": "T2",
+      "title": "Move the entry screens onto the centred auth layout",
+      "layer": "ui",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "All six entry screens render on AuthLayout and the existing auth/picker tests pass with unchanged assertions (AC-04, AC-05, AC-06).",
+      "files_hint": [
+        "apps/web/src/shared/ui/auth-layout.tsx",
+        "apps/web/src/features/auth/",
+        "apps/web/src/features/workspaces/picker/WorkspacePicker.tsx",
+        "apps/web/src/pages/SignInPage.tsx",
+        "apps/web/src/pages/AcceptInvitationPage.tsx",
+        "apps/web/src/pages/ResetPasswordPage.tsx",
+        "apps/web/src/pages/WorkspacesPage.tsx",
+        "apps/web/src/pages/NoAccessPage.tsx"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t2-move-entry-screens-onto-the-centred-auth-layout.md"
+    },
+    {
+      "id": "T3",
+      "title": "Render workspace screens inside one layout route with the sidebar frame",
+      "layer": "ui",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-11",
+        "AC-18",
+        "AC-20"
+      ],
+      "dod": "Every workspace route renders inside the sidebar frame with redirects for old team/bot addresses, and the existing component and e2e suites pass with assertion diffs limited to locators (AC-01, AC-02, AC-03, AC-11, AC-18, AC-20).",
+      "files_hint": [
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell-context.ts",
+        "apps/web/src/features/workspaces/picker/WorkspaceSwitcher.tsx",
+        "apps/web/src/pages/",
+        "apps/web/e2e/"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t3-render-workspace-screens-in-one-layout-route-with-the-sidebar-frame.md"
+    },
+    {
+      "id": "T4",
+      "title": "Build the Settings layout and move bot settings into its Bot section",
+      "layer": "ui",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-10",
+        "AC-19"
+      ],
+      "dod": "Settings renders with its section menu and the Bot section carrying every existing bot state and dialog; operators get the owners-only refusal leading back to the inbox (AC-07, AC-10, AC-19).",
+      "files_hint": [
+        "apps/web/src/features/settings/",
+        "apps/web/src/pages/SettingsPage.tsx",
+        "apps/web/src/pages/BotSettingsPage.tsx",
+        "apps/web/src/features/bot/settings/"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t4-build-the-settings-layout-and-the-bot-section.md"
+    },
+    {
+      "id": "T5",
+      "title": "Move the team page into the Settings Team section with search and filters",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-19"
+      ],
+      "dod": "The Team section filters loaded members and invitations by search, role and state with Show more preserved, and every existing team action and test keeps its behaviour (AC-08, AC-09, AC-10, AC-19).",
+      "files_hint": [
+        "apps/web/src/features/workspaces/team/",
+        "apps/web/src/pages/TeamPage.tsx",
+        "apps/web/src/features/workspaces/invite/"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t5-move-the-team-page-into-settings-with-search-and-filters.md"
+    },
+    {
+      "id": "T6",
+      "title": "Build the inbox preview on a swappable sample-data source",
+      "layer": "ui",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-12b",
+        "AC-13",
+        "AC-14",
+        "AC-17"
+      ],
+      "dod": "The inbox preview lists sample conversations, opens threads by address, validates and locally appends replies that reset as specified, works at phone width and never calls the API (AC-12, AC-12b, AC-13, AC-14, AC-17).",
+      "files_hint": [
+        "apps/web/src/features/inbox/",
+        "apps/web/src/pages/InboxPage.tsx"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t6-build-the-inbox-preview-on-a-sample-data-source.md"
+    },
+    {
+      "id": "T7",
+      "title": "Build the contacts and contact-profile previews on a sample-data source",
+      "layer": "ui",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-15",
+        "AC-16",
+        "AC-17"
+      ],
+      "dod": "Contacts and contact-profile previews filter, open by address and show only labelled sample data without calling the API (AC-15, AC-16, AC-17).",
+      "files_hint": [
+        "apps/web/src/features/contacts/",
+        "apps/web/src/pages/ContactsPage.tsx",
+        "apps/web/src/pages/ContactProfilePage.tsx"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t7-build-the-contacts-and-contact-profile-previews.md"
+    },
+    {
+      "id": "T8",
+      "title": "Register the new components in the canon and remove the reference markup",
+      "layer": "docs",
+      "deps": [
+        "T2",
+        "T5",
+        "T6",
+        "T7"
+      ],
+      "acs": [],
+      "dod": "The canon inventory lists every primitive and part this feature added, docs/design-refs and every mention of it are gone, and the first-load size delta vs main is measured and within +120 KB gzipped.",
+      "files_hint": [
+        "docs/design-system.md",
+        "docs/design-refs/",
+        ".gitignore"
+      ],
+      "file": "docs/features/ui-redesign/tasks/t8-register-components-in-the-canon-and-remove-the-reference-markup.md"
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: "2026-10-12"
+updated_at: "2026-10-18"
 ---
 
 # Roadmap — tg-inbox
@@ -30,6 +30,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
 | 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | idea |
 | 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
+| 12 | UI redesign — every shipped screen moves onto the design canon (side-navigation frame, owner Settings with Bot + Team), plus inbox / contacts / contact-profile preview screens on labelled sample data | [design-system.md](design-system.md) § Visual direction | S | shipped → [`features/ui-redesign`](features/ui-redesign/spec.md) |
 
 ## Not yet specified
 
@@ -100,3 +101,4 @@ flowchart LR
 |---|---|---|
 | 2 · Workspace & operator accounts | 2026-10-11 | [changelog](features/workspace-operators/_ship/changelog.md) · [PR #1](https://github.com/GopkoDev/tg-inbox/pull/1) |
 | 3 · Bot connection & inbound capture | 2026-10-12 | [changelog](features/bot-connection/_ship/changelog.md) · [PR #2](https://github.com/GopkoDev/tg-inbox/pull/2) |
+| 12 · UI redesign | 2026-10-18 | [changelog](features/ui-redesign/_ship/changelog.md) · PR pending |

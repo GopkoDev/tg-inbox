@@ -1,10 +1,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router';
+import { Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { openMenu, stubRadixDom } from '@/test/radix';
+import { InDataRouter } from '@/test/router';
 
 const signOut = vi.fn();
 const getMe = vi.fn();
@@ -23,28 +24,16 @@ const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'operator' as const };
 
 function renderShell(path = '/w/w1') {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <InDataRouter initialEntries={[path]}>
       <Routes>
-        <Route
-          path="/w/:workspaceId"
-          element={
-            <AppShell>
-              <p>shell body</p>
-            </AppShell>
-          }
-        />
-        <Route path="/w/:workspaceId/team" element={<p>team screen</p>} />
-        <Route
-          path="/w/:workspaceId/bot"
-          element={
-            <AppShell>
-              <p>bot body</p>
-            </AppShell>
-          }
-        />
+        <Route path="/w/:workspaceId" element={<AppShell />}>
+          <Route index element={<p>shell body</p>} />
+          <Route path="inbox" element={<p>inbox body</p>} />
+          <Route path="settings/*" element={<p>bot body</p>} />
+        </Route>
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
       </Routes>
-    </MemoryRouter>,
+    </InDataRouter>,
   );
 }
 
@@ -83,27 +72,20 @@ describe('AppShell', () => {
     expect(screen.queryByText('shell body')).not.toBeInTheDocument();
   });
 
-  it('owner sees the Team link (AC-15 UI half)', () => {
+  it('owner sees the Settings link (AC-15 UI half)', () => {
     useWorkspaceStore.getState().setCurrent(acme);
     renderShell();
-    const links = screen.getAllByRole('link', { name: 'Team' });
-    expect(links[0]).toHaveAttribute('href', '/w/w1/team');
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/w/w1/settings',
+    );
   });
 
-  it('operator sees no Team entry, also not in the phone menu (AC-15 UI half)', () => {
+  it('operator sees no Settings entry (AC-15 UI half)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
     renderShell('/w/w2');
-    expect(screen.queryByRole('link', { name: 'Team' })).not.toBeInTheDocument();
-    openMenu('Menu');
-    expect(screen.queryByRole('menuitem', { name: 'Team' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument();
-  });
-
-  it('phone menu offers Team to owners', () => {
-    useWorkspaceStore.getState().setCurrent(acme);
-    renderShell();
-    openMenu('Menu');
-    expect(screen.getByRole('menuitem', { name: 'Team' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'o@x.io' })).toBeInTheDocument();
   });
 
   it('account menu shows the email and signs out clearing stores (AC-11)', async () => {
@@ -139,44 +121,59 @@ describe('AppShell', () => {
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
   });
 
-  it('owner sees Bot right after Team in the desktop nav (SCR-01)', () => {
+  it('owner sees Inbox, Contacts and Settings in the nav (SCR-01)', () => {
     useWorkspaceStore.getState().setCurrent(acme);
     renderShell();
-    const nav = screen.getByRole('navigation');
+    const nav = screen.getByRole('navigation', { name: 'Workspace' });
     const names = within(nav)
       .getAllByRole('link')
       .map((l) => l.textContent);
-    expect(names).toEqual(['Team', 'Bot']);
-    expect(within(nav).getByRole('link', { name: 'Bot' })).toHaveAttribute('href', '/w/w1/bot');
-    expect(within(nav).getByRole('link', { name: 'Bot' })).not.toHaveAttribute('aria-current');
+    expect(names).toEqual(['Inbox', 'Contacts', 'Settings']);
+    expect(within(nav).getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current');
   });
 
-  it('phone menu offers Bot after Team to owners', () => {
-    useWorkspaceStore.getState().setCurrent(acme);
-    renderShell();
-    openMenu('Menu');
-    const items = screen.getAllByRole('menuitem').map((i) => i.textContent);
-    expect(items.indexOf('Bot')).toBe(items.indexOf('Team') + 1);
-    expect(screen.getByRole('menuitem', { name: 'Bot' })).toHaveAttribute('href', '/w/w1/bot');
-  });
-
-  it('operator sees no Bot entry, also not in the phone menu (AC-03)', () => {
+  it('operator sees no Settings entry (AC-03)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
     renderShell('/w/w2');
-    expect(screen.queryByRole('link', { name: 'Bot' })).not.toBeInTheDocument();
-    openMenu('Menu');
-    expect(screen.queryByRole('menuitem', { name: 'Bot' })).not.toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Workspace' });
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((l) => l.textContent),
+    ).toEqual(['Inbox', 'Contacts']);
   });
 
-  it('the Bot link is marked current on the bot settings page', () => {
+  it('the Settings link is marked current on a settings page', () => {
     useWorkspaceStore.getState().setCurrent(acme);
-    renderShell('/w/w1/bot');
-    const nav = screen.getByRole('navigation');
-    expect(within(nav).getByRole('link', { name: 'Bot' })).toHaveAttribute('aria-current', 'page');
-    expect(within(nav).getByRole('link', { name: 'Team' })).not.toHaveAttribute('aria-current');
-    // Marked visibly too, not only for assistive technology.
-    expect(within(nav).getByRole('link', { name: 'Bot' }).className).toMatch(
-      /aria-\[current=page\]:bg-accent/,
+    renderShell('/w/w1/settings/bot');
+    const nav = screen.getByRole('navigation', { name: 'Workspace' });
+    expect(within(nav).getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'aria-current',
+      'page',
     );
+    expect(within(nav).getByRole('link', { name: 'Inbox' })).not.toHaveAttribute('aria-current');
+    // Marked visibly too, not only for assistive technology.
+    expect(within(nav).getByRole('link', { name: 'Settings' }).className).toMatch(
+      /aria-\[current=page\]:bg-sidebar-accent/,
+    );
+  });
+
+  it('S2-6: the sidebar starts expanded, and collapsed when the saved cookie says so', () => {
+    useWorkspaceStore.getState().setCurrent(acme);
+    document.cookie = 'sidebar_state=; path=/; max-age=0';
+    const { container, unmount } = renderShell();
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      'data-state',
+      'expanded',
+    );
+    unmount();
+
+    document.cookie = 'sidebar_state=false; path=/';
+    const again = renderShell();
+    expect(again.container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      'data-state',
+      'collapsed',
+    );
+    document.cookie = 'sidebar_state=; path=/; max-age=0';
   });
 });

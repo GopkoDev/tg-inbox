@@ -13,7 +13,7 @@ import {
 } from '@/features/bot/paste-token/PasteTokenDialog';
 import { BotSettings } from '@/features/bot/settings/BotSettings';
 import { useBotStore } from '@/features/bot/store';
-import { AppShell } from '@/shared/ui/app-shell';
+import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 
 interface PasteState {
   /** The workspace the dialog was opened for; a switch elsewhere closes it (and drops the token). */
@@ -96,15 +96,23 @@ export function BotSettingsPage() {
   };
 
   return (
-    <AppShell>
-      <h1 className="mb-3 text-xl font-semibold">Bot</h1>
-      <BotSettings
-        key={workspaceId}
-        workspaceId={workspaceId}
-        onPasteToken={openPaste}
-        onDisconnect={(bot) => setDisconnect({ workspaceId, value: bot })}
-        onTakeoverWarning={onReconnectTakeover}
-      />
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>
+            <h2>Bot</h2>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BotSettings
+            key={workspaceId}
+            workspaceId={workspaceId}
+            onPasteToken={openPaste}
+            onDisconnect={(bot) => setDisconnect({ workspaceId, value: bot })}
+            onTakeoverWarning={onReconnectTakeover}
+          />
+        </CardContent>
+      </Card>
       <PasteTokenDialog
         workspaceId={workspaceId}
         open={openPasteState !== null}
@@ -124,6 +132,6 @@ export function BotSettingsPage() {
         bot={here(disconnect)?.value ?? null}
         onClose={() => setDisconnect((d) => (d?.workspaceId === workspaceId ? null : d))}
       />
-    </AppShell>
+    </>
   );
 }

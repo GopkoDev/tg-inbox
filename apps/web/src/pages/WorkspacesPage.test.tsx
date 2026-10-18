@@ -119,3 +119,17 @@ describe('WorkspacesPage (SCR-04)', () => {
     expect(useAuthStore.getState().account).toBeNull();
   });
 });
+
+describe('WorkspacesPage on the centred auth layout (AC-06)', () => {
+  it('has the product mark, the level-1 heading «Your workspaces» and one button per workspace with a role badge', async () => {
+    const { container } = renderPage();
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Your workspaces' }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Acme Flowers/ })).toHaveTextContent(
+      'Business owner',
+    );
+    expect(screen.getByRole('button', { name: /Bolt Bikes/ })).toHaveTextContent('Operator');
+    expect(container.querySelector('svg.lucide-messages-square')).not.toBeNull();
+  });
+});

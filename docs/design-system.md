@@ -1,12 +1,101 @@
-# Design system
+---
+status: Living
+tool: code               # figma | pencil | code — the single committed source of the design-tool choice (never sdd.local.md: that file is per-developer + gitignored)
+figma_file: ""           # tool: figma → the Figma file URL/key the canon lives in; else ""
+pen_file: ""             # tool: pencil → the .pen library path (e.g. docs/design/library.pen); else ""
+updated_at: "2026-10-18"
+---
 
-Tool: code (no design-tool MCP). Components are shadcn/ui primitives in `apps/web/src/shared/ui`;
-Tailwind only.
+# Design system — tg-inbox
+
+> The project's **design canon**, produced once per repo by `design-system` and read by
+> `ux-flows` / `screens` / `implement` / `review`. Committed — the tool choice and the inventory
+> are team-wide, not per-developer. `architecture-map.md` §Frontend / UI foundation stays the
+> inventory of the **code**; this file is the **design-side** canon (tool, posture, tokens,
+> component inventory, cross-screen conventions). Refresh via `/sdd:design-system` when the
+> foundation changes.
+
+## Platform posture
+
+- **Posture:** desktop-first — operators work a shared inbox from a laptop/desktop; every screen is designed at desktop width first and must stay usable at phone width (navigation collapses into a menu/drawer, tables and the chat list stack).
+- **Breakpoints / device classes:** Tailwind defaults — `md` (768px) is the collapse point for the shell navigation; `lg` / `xl` widen page bodies. Phone width (≥360px, 16px gutter) must never scroll horizontally.
+
+## Design tool
+
+- **Tool:** code — no Figma/Pencil MCP in use; `screens.md` carries inline markdown wireframes and the in-repo shadcn/ui components are the source of truth for how things look.
+- **Library location:** the in-repo components are the library — `apps/web/src/shared/ui/` (shadcn/ui `new-york` style, `neutral` base colour, `lucide` icons; `apps/web/components.json`).
+
+## Visual direction
+
+Target layout patterns for the operator panel. They follow public shadcn/ui blocks, composed onto
+the primitives below.
+
+- **Auth screens** (sign-in, invite, reset): one centred column `max-w-sm`, `min-h-svh`, logo mark + `text-xl font-bold` heading + short description above the form; form fields stacked with `gap-6`. Source pattern: shadcn login blocks — https://ui.shadcn.com/blocks/login
+- **Workspace shell:** collapsible left sidebar in the `inset` variant (workspace switcher in the header, primary nav, secondary nav, account menu in the footer) + an inset body with a `h-16` header row (sidebar trigger, vertical separator, breadcrumb). Source pattern: shadcn sidebar blocks — https://ui.shadcn.com/blocks/sidebar
+- **Page body:** page title row (`text-2xl font-bold tracking-tight`, primary action right-aligned), then `space-y-4 lg:space-y-6` content composed of `Card`s.
+- **List pages** (team, contacts): card-wrapped `Table` with a toolbar row (search `Input`, filter popover) above it; rows carry `Avatar` + name, `Badge` for status, a row-actions `DropdownMenu`.
+- **Inbox / chat:** two panes inside one full-height card — conversation list (`ScrollArea`; avatar, name, relative time, last-message preview, unread count `Badge`) and the thread (header with contact + actions, message bubbles grouped by sender, composer = `Textarea` in an input group with send `Button`). At phone width the panes become list → thread navigation.
+- **Contact profile:** header card (avatar, name, key facts) + `Tabs` for sections; details as `Card`s, history as a `Table`.
+- **Settings:** title + description, then a left section nav (stacks above the form below `lg`) and a form in a `Card`.
+
+## Token source
+
+- **Colors:** shadcn CSS variables (oklch, light `:root` + `.dark`) mapped into Tailwind via `@theme inline` — `apps/web/src/index.css:6` (light), `:28` (dark), `:49` (theme map). Screens use the semantic utilities (`bg-background`, `text-muted-foreground`, `bg-primary`, `text-destructive`, …), never raw colour values.
+- **Spacing / sizing:** Tailwind's default spacing scale; radius from `--radius` (`apps/web/src/index.css:7`) via `rounded-sm|md|lg|xl` (`:50`–`:53`).
+- **Typography:** Tailwind defaults (system font stack, `text-*` scale); no custom font is loaded.
 
 ## Component inventory
 
-New components that no shadcn/ui primitive covers.
+The reusable primitives screens compose. `screens.md` may only use these names, or declare
+`NEW: <name>` with a why-no-primitive-fits justification (then registered back here).
 
-| Component | Path | Purpose | Composes |
-| --- | --- | --- | --- |
-| AppShell | `apps/web/src/shared/ui/app-shell.tsx` | Workspace-area frame shared by SCR-06/07/08: enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only when entered (body skeleton before; in-shell SCR-10 `NotFoundCard` and error/Retry slots on failure); workspace switcher, owner-only Team and Bot links (Bot → `/w/:id/bot`, bot-connection SCR-01), account menu with sign-out (collapsing into a menu at phone width), dismissible `access-removed` notice slot; wires the shared guard handler for its screens (`useShellGuard`). | dropdown-menu, Button, alert, skeleton |
+| Component | Source (`file:line` / node / URL) | States it supports | Notes |
+|---|---|---|---|
+| AppShell | `apps/web/src/shared/ui/app-shell.tsx:168` | body skeleton (entering) / entered / not found (in-shell `NotFoundCard`) / error + Retry / access-removed notice | Layout-route frame shared by every `/w/:id/*` screen: inset Sidebar with the workspace switcher in the header, Inbox / Contacts / owner-only Settings nav, account menu with sign-out in the footer, Breadcrumb in the header row, drawer at phone width. Enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only once entered; wires the shared guard handler (`useShellGuard`). Composes Sidebar, Breadcrumb, DropdownMenu, Button, Alert, Skeleton. |
+| NotFoundCard | `apps/web/src/pages/NotFoundPage.tsx:9` | default | «Not found» card used both as a page and inside AppShell (`headingLevel`). |
+| Button | `apps/web/src/shared/ui/button.tsx:38` | variants default / destructive / outline / secondary / ghost / link; sizes default / xs / sm / lg / icon; disabled | Async actions disable the button while pending. |
+| Input | `apps/web/src/shared/ui/input.tsx:4` | default / focus / disabled / invalid (`aria-invalid`) | |
+| Label | `apps/web/src/shared/ui/label.tsx:5` | default / disabled | |
+| RadioGroup | `apps/web/src/shared/ui/radio-group.tsx:6` | default / checked / disabled | |
+| Card | `apps/web/src/shared/ui/card.tsx:4` | default | Header / title / description / content / footer slots. |
+| Alert | `apps/web/src/shared/ui/alert.tsx:21` | default / destructive | Form-level and page-level messages. |
+| Badge | `apps/web/src/shared/ui/badge.tsx:27` | default / secondary / destructive / outline / ghost / link | Statuses (role, bot state, unread count). |
+| Dialog | `apps/web/src/shared/ui/dialog.tsx:10` | open / closed | Forms layered over a page (e.g. paste token). |
+| AlertDialog | `apps/web/src/shared/ui/alert-dialog.tsx:7` | open / closed | Confirmation of destructive or irreversible actions. |
+| DropdownMenu | `apps/web/src/shared/ui/dropdown-menu.tsx:8` | open / closed / item disabled | Switchers, account menu, row actions. |
+| Table | `apps/web/src/shared/ui/table.tsx:4` | default | Lists of members / invitations; wrap in a Card. |
+| Skeleton | `apps/web/src/shared/ui/skeleton.tsx:3` | loading | The one loading pattern. |
+| Sidebar | `apps/web/src/shared/ui/sidebar.tsx:138` | expanded / collapsed (`SidebarProvider` state, cookie-persisted) / mobile drawer / menu button active | Family: `SidebarProvider` (`:43`), `SidebarInset` (`:287`), header / content / footer / group / menu parts. Used by AppShell in the `inset` variant; pulls in Separator, Sheet, Tooltip. |
+| Separator | `apps/web/src/shared/ui/separator.tsx:5` | horizontal / vertical | Header row divider, Field and Sidebar separators. |
+| Sheet | `apps/web/src/shared/ui/sheet.tsx:8` | open / closed; sides top / right / bottom / left | Side drawer; the Sidebar uses it at phone width. |
+| Tooltip | `apps/web/src/shared/ui/tooltip.tsx:18` | open / closed | Used by Sidebar menu buttons (collapsed state); `TooltipProvider` at `:5`. |
+| Breadcrumb | `apps/web/src/shared/ui/breadcrumb.tsx:6` | link / current page / separator / ellipsis | Location trail in the AppShell header row. |
+| Avatar | `apps/web/src/shared/ui/avatar.tsx:7` | image / fallback initials; sizes; badge / group | Contact and member identity in lists, conversation rows and the account menu. |
+| ScrollArea | `apps/web/src/shared/ui/scroll-area.tsx:5` | default | Conversation list and message thread scrolling. |
+| Textarea | `apps/web/src/shared/ui/textarea.tsx:4` | default / focus / disabled / invalid | Reply composer input. |
+| Tabs | `apps/web/src/shared/ui/tabs.tsx:8` | active / inactive trigger; content | Contact profile sections. |
+| Field | `apps/web/src/shared/ui/field.tsx:78` | default / invalid (`FieldError`) / disabled | Family: `FieldGroup` (`:44`), `FieldLabel`, `FieldDescription`, `FieldError`; form-field layout in the auth forms. |
+| Checkbox | `apps/web/src/shared/ui/checkbox.tsx:6` | unchecked / checked / disabled | Tag filter in the contacts toolbar. |
+| Select | `apps/web/src/shared/ui/select.tsx:8` | open / closed / item disabled / placeholder | Filter and role selects (team). |
+| Popover | `apps/web/src/shared/ui/popover.tsx:5` | open / closed | Contacts tag filter. |
+| SampleDataBadge | `apps/web/src/shared/ui/sample-data-badge.tsx:3` | default | NEW: «Sample data» label on screens backed by the swappable sample source (inbox, contacts, contact profile). No primitive fits: a fixed-copy Badge. |
+| DataTableToolbar | `apps/web/src/shared/ui/data-table-toolbar.tsx:3` | with / without search; with / without filters | NEW: toolbar row (search slot + filters slot) above a card-wrapped Table; used by Team and Contacts. |
+| EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |
+| AuthLayout | `apps/web/src/shared/ui/auth-layout.tsx:14` | default (title + description + children) | NEW: centred `max-w-sm` auth column; used by sign-in, invite, reset, link-unavailable, no-access and workspace-picker screens. |
+| SettingsLayout | `apps/web/src/features/settings/SettingsLayout.tsx:11` | section nav (stacks above the form below `lg`) + routed section outlet | NEW: Settings frame — title, description, left section nav (Bot, Team), section in a Card. |
+| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:8` | empty / items / selected item / unread badge | NEW: inbox left pane — Avatar, name, relative time, preview, unread Badge, in a ScrollArea. |
+| MessageBubble | `apps/web/src/features/inbox/MessageBubble.tsx:3` | inbound / outbound | NEW: chat message bubble; no shadcn primitive exists. |
+| ReplyComposer | `apps/web/src/features/inbox/ReplyComposer.tsx:6` | empty (send disabled) / filled / sending via `onSend` | NEW: Textarea + send Button for the thread. |
+
+**Not yet in the repo** — shadcn/ui primitives the visual direction may still use; add each with
+`pnpm dlx shadcn@latest add <name>` inside `apps/web` when the first screen needs it, check the import
+points at `@/shared/lib/utils`, then move its row into the table above with its `file:line`:
+`input-group`, `sonner` (toast) — catalogue: https://ui.shadcn.com/docs/components.
+
+## Interaction & writing conventions
+
+- **Errors:** form-level and page-level failures render as a destructive `Alert` in place (`apps/web/src/features/auth/sign-in/SignInForm.tsx:97`); guard errors (401/403/404) go through the shell's shared handler; a transient result of a background action may use a toast once `sonner` is added — never for errors that block the screen.
+- **Empty states:** plain text inside the Card — one sentence saying what is missing + the primary action as a Button (e.g. bot «No bot is connected» + **Connect bot**); no illustrations.
+- **Loading:** `Skeleton` shaped like the content (the shell renders a body skeleton until the workspace is entered); no full-page spinners.
+- **Validation:** on submit (`noValidate` forms); field errors attach below the field and set `aria-invalid` on the input (`apps/web/src/features/auth/sign-in/SignInForm.tsx:110`); server validation errors map to the same field slots.
+- **Microcopy tone:** plain, short, operator-facing English; say what happened and what to do next; never expose secrets (bot tokens) or internal codes.

@@ -183,3 +183,16 @@ describe('client rules come from the shared schemas (fix 2026-10-11-shared-form-
     expect(signIn).not.toHaveBeenCalled();
   });
 });
+
+describe('SignInPage on the centred auth layout (AC-04)', () => {
+  it('shows the product heading and description, no sign-up or social options', async () => {
+    renderPage();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument();
+    expect(
+      screen.getByText("Answer your customers' Telegram messages together"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /sign up|create account|register/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /sign up|apple|google/i })).toBeNull();
+    expect(screen.queryByRole('link', { name: /apple|google/i })).toBeNull();
+  });
+});

@@ -86,8 +86,10 @@ describe('malformed invitation tokens (review #16)', () => {
 
   it('SCR-02 copy: Join <workspace> heading, invited-as line and button names', async () => {
     lookUpInvitation.mockResolvedValue(preview(false));
-    renderPage();
+    const { container } = renderPage();
     expect(await screen.findByRole('heading', { name: 'Join Acme' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Join Acme');
+    expect(container.querySelector('svg.lucide-messages-square')).not.toBeNull();
     expect(screen.getByText('You are invited as')).toBeInTheDocument();
     expect(screen.getByText('Operator')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Create account and join' })).toBeInTheDocument();
