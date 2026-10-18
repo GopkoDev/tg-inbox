@@ -280,6 +280,9 @@ export function fakeReplyRepo(o: {
         .sort(order)
         .map(strip);
     },
+    async chatIdOf(w, c) {
+      return o.conversations.some(([ws, id]) => ws === w && id === c) ? 1n : null;
+    },
     async lastStartedAt(w, c) {
       const times = attempts
         .filter((a) => a.workspaceId === w && a.conversationId === c && a.startedAt)
@@ -289,6 +292,12 @@ export function fakeReplyRepo(o: {
     async startAttempt(w, c, replyId, attemptId, startedAt) {
       const r = own(w, c).find((x) => x.id === replyId);
       if (r?.state !== 'sending') return null;
+      if (
+        attempts.some(
+          (a) => a.workspaceId === w && a.replyId === replyId && a.startedAt && !a.finishedAt,
+        )
+      )
+        return null;
       const open = attempts
         .filter(
           (a) => a.workspaceId === w && a.replyId === replyId && !a.startedAt && !a.finishedAt,
@@ -354,6 +363,14 @@ export function fakeReplyRepo(o: {
         finishedAt,
         outcome: 'skipped',
       });
+    },
+    async oldestInFlightStart(w, c) {
+      const times = attempts
+        .filter(
+          (a) => a.workspaceId === w && a.conversationId === c && a.startedAt && !a.finishedAt,
+        )
+        .map((a) => a.startedAt!.getTime());
+      return times.length ? new Date(Math.min(...times)) : null;
     },
     async inFlightAttempts(w, c, olderThan) {
       return attempts

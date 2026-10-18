@@ -326,6 +326,8 @@ export interface ReplyRepo {
 
   /** The conversation's `sending` replies, oldest position first. */
   pendingReplies(workspaceId: string, conversationId: string, tx?: Executor): Promise<ReplyView[]>;
+  /** The Telegram chat the conversation talks to; null when the conversation is not in the workspace. */
+  chatIdOf(workspaceId: string, conversationId: string, tx?: Executor): Promise<bigint | null>;
   /** Start of the newest started attempt of the conversation (pacing); null when none. */
   lastStartedAt(workspaceId: string, conversationId: string, tx?: Executor): Promise<Date | null>;
   /**
@@ -376,6 +378,12 @@ export interface ReplyRepo {
     finishedAt: Date,
     tx?: Executor,
   ): Promise<void>;
+  /** Start of the oldest started-and-unfinished attempt of the conversation; null when none. */
+  oldestInFlightStart(
+    workspaceId: string,
+    conversationId: string,
+    tx?: Executor,
+  ): Promise<Date | null>;
   /** Attempts started and unfinished, started before `olderThan` when given; locked for the transaction. */
   inFlightAttempts(
     workspaceId: string,

@@ -37,7 +37,7 @@ import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
-import { createReplies } from './modules/conversations/app/replies.js';
+import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
 import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
 import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
@@ -178,12 +178,14 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   };
   // --- end bots dependencies ---
 
-  const conversationReplies = createReplies({
+  const replyDeps = {
     transaction,
     replies: createReplyRepo(db),
     signals: createConversationSignals(),
     clock,
-  });
+  };
+  const conversationReplies = createReplies(replyDeps);
+  const replyDelivery = createReplyDelivery(replyDeps);
 
   // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
   const inboxReads = createInboxReadUseCases({
@@ -221,6 +223,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     bots,
     inboxReads,
     conversationReplies,
+    replyDelivery,
     /** Releases the database pool. */
     destroy: () => db.destroy(),
   };

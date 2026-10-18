@@ -7,8 +7,14 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
+import { createDeliver } from './modules/inbox/app/deliver.js';
 import { createSendReply } from './modules/inbox/app/send-reply.js';
-import { createEnqueueDrain, createInboxQueues } from './modules/inbox/infra/jobs.js';
+import {
+  createEnqueueDelayed,
+  createEnqueueDrain,
+  createInboxQueues,
+  registerInboxJobs,
+} from './modules/inbox/infra/jobs.js';
 import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
@@ -61,6 +67,7 @@ export async function buildApp(
     bots,
     inboxReads,
     conversationReplies,
+    replyDelivery,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
   app.addHook('onClose', async () => {
@@ -74,6 +81,18 @@ export async function buildApp(
   });
 
   await createInboxQueues(jobs);
+  await registerInboxJobs(jobs, {
+    deliver: createDeliver({
+      delivery: replyDelivery,
+      workspaces: workspaceAccess,
+      bots: { canCarryReplies: bots.inboxStatus.canCarryReplies, sendText: bots.sendText },
+      enqueueDelayed: createEnqueueDelayed(jobs),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      clock: deps.clock,
+    }),
+    delivery: replyDelivery,
+    logger: app.log,
+  });
   const inboxReplies = createSendReply({
     replies: conversationReplies,
     bots: bots.inboxStatus,

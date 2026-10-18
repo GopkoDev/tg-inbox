@@ -171,6 +171,16 @@ export function createReplyRepo(db: Db): ReplyRepo {
       return rows.map(toReplyView);
     },
 
+    async chatIdOf(workspaceId, conversationId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('conversations')
+        .select('telegram_chat_id')
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .executeTakeFirst();
+      return row ? BigInt(row.telegram_chat_id) : null;
+    },
+
     async lastStartedAt(workspaceId, conversationId, tx) {
       const row = await (tx ?? db)
         .selectFrom('reply_attempts')
@@ -196,6 +206,18 @@ export function createReplyRepo(db: Db): ReplyRepo {
         .forUpdate()
         .executeTakeFirst();
       if (!reply) return null;
+      // A started attempt without an outcome may have reached Telegram: never start another (ADR-0004).
+      const inFlight = await exec
+        .selectFrom('reply_attempts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('reply_id', '=', replyId)
+        .where('started_at', 'is not', null)
+        .where('finished_at', 'is', null)
+        .limit(1)
+        .executeTakeFirst();
+      if (inFlight) return null;
       const unstarted = await exec
         .updateTable('reply_attempts')
         .set({ started_at: startedAt })
@@ -311,6 +333,20 @@ export function createReplyRepo(db: Db): ReplyRepo {
           finished_at: finishedAt,
         })
         .execute();
+    },
+
+    async oldestInFlightStart(workspaceId, conversationId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('reply_attempts')
+        .select('started_at')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('started_at', 'is not', null)
+        .where('finished_at', 'is', null)
+        .orderBy('started_at')
+        .limit(1)
+        .executeTakeFirst();
+      return row?.started_at ?? null;
     },
 
     async inFlightAttempts(workspaceId, conversationId, olderThan, tx) {

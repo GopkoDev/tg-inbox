@@ -202,6 +202,10 @@ export interface FinishAttemptInput {
 export interface ReplyDelivery {
   pendingReplies(workspaceId: string, conversationId: string): Promise<ReplyView[]>;
   lastStartedAt(workspaceId: string, conversationId: string): Promise<Date | null>;
+  /** Start of the oldest attempt that started and has no outcome (in flight); null when none. */
+  inFlightSince(workspaceId: string, conversationId: string): Promise<Date | null>;
+  /** The Telegram chat to send to; null when the conversation is not in the workspace. */
+  chatIdOf(workspaceId: string, conversationId: string): Promise<bigint | null>;
   /** Commits the attempt's `started_at` (in flight); null when the reply is no longer `sending`. */
   startAttempt(input: {
     workspaceId: string;
@@ -257,6 +261,9 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
       replies.pendingReplies(workspaceId, conversationId),
     lastStartedAt: (workspaceId, conversationId) =>
       replies.lastStartedAt(workspaceId, conversationId),
+    inFlightSince: (workspaceId, conversationId) =>
+      replies.oldestInFlightStart(workspaceId, conversationId),
+    chatIdOf: (workspaceId, conversationId) => replies.chatIdOf(workspaceId, conversationId),
 
     startAttempt({ workspaceId, conversationId, replyId }) {
       return transaction(async (tx) => {
