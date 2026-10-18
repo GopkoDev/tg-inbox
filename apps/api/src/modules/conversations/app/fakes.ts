@@ -355,6 +355,15 @@ export function fakeReplyRepo(o: {
       }
       return strip(r);
     },
+    async settleIdleReply(w, c, replyId, settlement) {
+      if (
+        attempts.some(
+          (a) => a.workspaceId === w && a.replyId === replyId && a.startedAt && !a.finishedAt,
+        )
+      )
+        return null;
+      return this.settleReply(w, c, replyId, settlement);
+    },
     async raiseReplySent(_w, _c, sentAt) {
       raised.push(sentAt);
     },

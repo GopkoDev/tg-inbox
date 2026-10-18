@@ -358,6 +358,39 @@ describe('SCR-01 paging', () => {
     expect(screen.queryAllByTestId('conversation-skeleton')).toHaveLength(0);
   });
 
+  it('a row fetched again by a later page replaces its stale copy (R1)', async () => {
+    seed({ conversations: [conv(1)], hasNext: true, nextCursor: 'abc' });
+    renderList();
+    const page = (items: Conversation[], next: string | null) => ({
+      workspace_id: WS,
+      items,
+      has_prev: false,
+      has_next: next !== null,
+      next_cursor: next,
+    });
+    api.listConversations.mockResolvedValueOnce(page([conv(5)], 'def'));
+    await reach();
+    expect(screen.getByRole('link', { name: /hello 5/ })).toBeInTheDocument();
+    const reachLast = () =>
+      act(async () => {
+        observers
+          .at(-1)
+          ?.cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+      });
+    api.listConversations.mockResolvedValueOnce(
+      page(
+        [
+          conv(5, { last_item: { type: 'message', id: cid(399), kind: 'text', body: 'fresh 5' } }),
+          conv(6),
+        ],
+        null,
+      ),
+    );
+    await reachLast();
+    expect(screen.getByRole('link', { name: /fresh 5/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /hello 5/ })).not.toBeInTheDocument();
+  });
+
   it('error while loading more: message with Retry', async () => {
     api.listConversations.mockRejectedValueOnce(new Error('net'));
     seed({ conversations: [conv(1)], hasNext: true, nextCursor: 'abc' });

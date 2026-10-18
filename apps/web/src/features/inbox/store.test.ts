@@ -520,6 +520,58 @@ describe('inbox store: background re-reads merge (W7)', () => {
     expect(open.hasPrev).toBe(false);
   });
 
+  it('a re-read latest page that does not overlap the shown items replaces them (R1, no hole)', async () => {
+    const at = (n: number) => `2026-10-18T10:${String(n).padStart(2, '0')}:00.000Z`;
+    api.listThreadItems.mockResolvedValueOnce(
+      threadPage(A, C1, [message(A, C1, id(501), at(1)), message(A, C1, id(502), at(2))]),
+    );
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    // A live item placed after the shown page; the gap between 502 and it was missed offline.
+    api.getThreadMessage.mockResolvedValue(message(A, C1, id(540), at(40)));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'created', { type: 'message', id: id(540) }));
+    await flush();
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(536), at(36)), message(A, C1, id(540), at(40))]),
+      has_prev: true,
+      prev_cursor: 'cur-36',
+    });
+    sockets[0]!.handlers.onReconnected();
+    await flush();
+    const open = useInboxStore.getState().thread!;
+    expect(open.items.map((i) => i.id)).toEqual([id(536), id(540)]);
+    expect(open.hasPrev).toBe(true);
+    expect(open.prevCursor).toBe('cur-36');
+  });
+
+  it('a re-read first list page drops shown rows that now sort below its last row (R1)', async () => {
+    const C3 = id(103);
+    api.listConversations.mockResolvedValueOnce({
+      ...listPage(A, [
+        conv(A, C1, '2026-10-18T12:00:00.000Z'),
+        conv(A, C2, '2026-10-18T11:00:00.000Z'),
+        conv(A, C3, '2026-10-18T10:00:00.000Z'),
+      ]),
+      has_next: true,
+      next_cursor: 'n-1',
+    });
+    await useInboxStore.getState().enter(A);
+    // Offline, other conversations got busier and C3 slid off the first page.
+    api.listConversations.mockResolvedValueOnce({
+      ...listPage(A, [
+        conv(A, C2, '2026-10-18T13:00:00.000Z'),
+        conv(A, C1, '2026-10-18T12:00:00.000Z'),
+      ]),
+      has_next: true,
+      next_cursor: 'n-2',
+    });
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    await flush();
+    const state = useInboxStore.getState();
+    expect(state.conversations.map((c) => c.id)).toEqual([C2, C1]);
+    expect(state.nextCursor).toBe('n-2');
+  });
+
   it('a resync keeps list rows that are not on the re-read first page and updates the rest', async () => {
     api.listConversations.mockResolvedValueOnce(
       listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z')]),

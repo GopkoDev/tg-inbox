@@ -455,6 +455,27 @@ describe('reply delivery (Postgres)', () => {
     });
   });
 
+  it('an attempt a lagging drain commits after the in-flight snapshot keeps its reply sending (R2)', async () => {
+    const s = await setup();
+    const late = await pending(s, at(10));
+    const result = await delivery().resolveDeadLetter(
+      s.workspaceId,
+      s.conversationId,
+      dead({
+        // Runs after the young/busy snapshot, before the settle loop: another connection commits.
+        drainQueued: async () => {
+          expect(await delivery().startAttempt({ ...ids(s), replyId: late.replyId })).toEqual({
+            attemptId: late.attemptId,
+          });
+          return false;
+        },
+      }),
+    );
+    expect(result).toEqual({ notConfirmed: [], interrupted: [], inFlightSince: at(1000) });
+    expect(await reply(late.replyId)).toMatchObject({ state: 'sending', failure_reason: null });
+    expect(await attempt(late.attemptId)).toMatchObject({ outcome: null, finished_at: null });
+  });
+
   it('isolates every method by workspace', async () => {
     const a = await setup();
     const b = await setup();

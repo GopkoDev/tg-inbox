@@ -273,15 +273,21 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
   const { transaction, replies, signals, clock } = deps;
   type Tx = Parameters<Parameters<Transaction>[0]>[0];
 
-  /** Settles a `sending` reply and publishes its `state` signal; null when it was not `sending`. */
+  /**
+   * Settles a `sending` reply and publishes its `state` signal; null when it was not `sending`
+   * (or, with `idleOnly`, when an attempt of it is in flight).
+   */
   async function settle(
     tx: Tx,
     workspaceId: string,
     conversationId: string,
     replyId: string,
     settlement: ReplySettlement,
+    idleOnly = false,
   ): Promise<ReplyView | null> {
-    const reply = await replies.settleReply(workspaceId, conversationId, replyId, settlement, tx);
+    const reply = idleOnly
+      ? await replies.settleIdleReply(workspaceId, conversationId, replyId, settlement, tx)
+      : await replies.settleReply(workspaceId, conversationId, replyId, settlement, tx);
     if (!reply) return null;
     if (settlement.state === 'sent') {
       await replies.raiseReplySent(workspaceId, conversationId, settlement.sentAt, tx);
@@ -384,19 +390,22 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
         await replies.lockDrain(workspaceId, conversationId, tx);
         const stale = await replies.inFlightAttempts(workspaceId, conversationId, staleBefore, tx);
         const notConfirmed = await resolveUnknown(tx, workspaceId, conversationId, stale);
-        const young = await replies.inFlightAttempts(workspaceId, conversationId, null, tx);
-        const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
         const interrupted: string[] = [];
         if (await drainQueued(tx, workspaceId, conversationId)) {
+          const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
           return { notConfirmed, interrupted, inFlightSince };
         }
-        const busy = new Set(young.map((a) => a.replyId));
         for (const reply of await replies.pendingReplies(workspaceId, conversationId, tx)) {
-          if (busy.has(reply.id)) continue;
-          const settled = await settle(tx, workspaceId, conversationId, reply.id, {
-            state: 'not_delivered',
-            failureReason: 'delivery_interrupted',
-          });
+          // Atomic with the settle: an attempt a lagging drain started (even after a snapshot
+          // taken here) leaves the reply to that drain, never `delivery_interrupted` mid-send.
+          const settled = await settle(
+            tx,
+            workspaceId,
+            conversationId,
+            reply.id,
+            { state: 'not_delivered', failureReason: 'delivery_interrupted' },
+            true,
+          );
           if (!settled) continue;
           await replies.skipAttempt(
             workspaceId,
@@ -408,6 +417,9 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
           );
           interrupted.push(reply.id);
         }
+        // Read after the loop: a reply skipped for an attempt started meanwhile still gets the
+        // delayed drain that resolves it once that attempt is stale.
+        const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
         return { notConfirmed, interrupted, inFlightSince };
       });
     },

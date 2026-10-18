@@ -28,6 +28,12 @@ const merge = (base: Conversation[], more: Conversation[]) => {
   return [...base, ...more.filter((c) => !seen.has(c.id))];
 };
 
+/** A later page's copy of a row is the fresh one: it replaces the copy loaded before. */
+const appendPage = (loaded: Conversation[], page: Conversation[]) => {
+  const fresh = new Set(page.map((c) => c.id));
+  return [...loaded.filter((c) => !fresh.has(c.id)), ...page];
+};
+
 /** SCR-01: the list pane (search, notice, rows, states) and the right-pane placeholder. */
 export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
@@ -100,7 +106,7 @@ export function InboxList() {
       .then((page) => {
         if (pageRequest.current !== id || page.workspace_id !== workspaceId) return;
         const next = (prev: Extra | null): Extra => ({
-          rows: merge(prev?.rows ?? [], page.items),
+          rows: appendPage(prev?.rows ?? [], page.items),
           hasNext: page.has_next,
           cursor: page.next_cursor,
         });

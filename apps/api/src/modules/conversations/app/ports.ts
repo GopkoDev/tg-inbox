@@ -386,6 +386,17 @@ export interface ReplyRepo {
     settlement: ReplySettlement,
     tx?: Executor,
   ): Promise<ReplyView | null>;
+  /**
+   * Like `settleReply`, but only while the reply has no attempt in flight (started, unfinished).
+   * Locks the reply row first, so an attempt committed by a concurrent `startAttempt` is seen.
+   */
+  settleIdleReply(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    settlement: ReplySettlement,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
   /** A reply was sent at `sentAt`: raises the reply and activity columns in one UPDATE (GREATEST). */
   raiseReplySent(
     workspaceId: string,

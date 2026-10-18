@@ -1,7 +1,7 @@
 import { sql, type Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import type { Replies } from '../../../platform/db.types.gen.js';
-import type { ReplyRepo, ReplyStateValue, ReplyView } from '../app/ports.js';
+import type { ReplyRepo, ReplySettlement, ReplyStateValue, ReplyView } from '../app/ports.js';
 
 type ReplyRow = Selectable<Replies>;
 
@@ -18,6 +18,53 @@ export function toReplyView(row: ReplyRow): ReplyView {
     sentAt: row.sent_at,
     createdAt: row.created_at,
   };
+}
+
+/** `sending` -> a final state; with `idleOnly`, not while an attempt of the reply is in flight. */
+async function settle(
+  exec: Db,
+  workspaceId: string,
+  conversationId: string,
+  replyId: string,
+  settlement: ReplySettlement,
+  idleOnly: boolean,
+): Promise<ReplyView | null> {
+  const values =
+    settlement.state === 'sent'
+      ? {
+          state: 'sent',
+          failure_reason: null,
+          sent_at: settlement.sentAt,
+          telegram_message_id: settlement.telegramMessageId,
+        }
+      : {
+          state: settlement.state,
+          failure_reason: settlement.state === 'not_delivered' ? settlement.failureReason : null,
+        };
+  const row = await exec
+    .updateTable('replies')
+    .set(values)
+    .where('workspace_id', '=', workspaceId)
+    .where('conversation_id', '=', conversationId)
+    .where('id', '=', replyId)
+    .where('state', '=', 'sending')
+    .$if(idleOnly, (qb) =>
+      qb.where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('reply_attempts')
+              .select('reply_attempts.id')
+              .where('reply_attempts.workspace_id', '=', workspaceId)
+              .where('reply_attempts.reply_id', '=', replyId)
+              .where('reply_attempts.started_at', 'is not', null)
+              .where('reply_attempts.finished_at', 'is', null),
+          ),
+        ),
+      ),
+    )
+    .returningAll()
+    .executeTakeFirst();
+  return row ? toReplyView(row) : null;
 }
 
 export function createReplyRepo(db: Db): ReplyRepo {
@@ -289,29 +336,22 @@ export function createReplyRepo(db: Db): ReplyRepo {
     },
 
     async settleReply(workspaceId, conversationId, replyId, settlement, tx) {
-      const values =
-        settlement.state === 'sent'
-          ? {
-              state: 'sent',
-              failure_reason: null,
-              sent_at: settlement.sentAt,
-              telegram_message_id: settlement.telegramMessageId,
-            }
-          : {
-              state: settlement.state,
-              failure_reason:
-                settlement.state === 'not_delivered' ? settlement.failureReason : null,
-            };
-      const row = await (tx ?? db)
-        .updateTable('replies')
-        .set(values)
+      return settle(tx ?? db, workspaceId, conversationId, replyId, settlement, false);
+    },
+
+    async settleIdleReply(workspaceId, conversationId, replyId, settlement, tx) {
+      const exec = tx ?? db;
+      // The row lock waits for a `startAttempt` holding it; the UPDATE below, a later statement,
+      // then sees the attempt it committed (READ COMMITTED takes a snapshot per statement).
+      await exec
+        .selectFrom('replies')
+        .select('id')
         .where('workspace_id', '=', workspaceId)
         .where('conversation_id', '=', conversationId)
         .where('id', '=', replyId)
-        .where('state', '=', 'sending')
-        .returningAll()
+        .forUpdate()
         .executeTakeFirst();
-      return row ? toReplyView(row) : null;
+      return settle(exec, workspaceId, conversationId, replyId, settlement, true);
     },
 
     async raiseReplySent(workspaceId, conversationId, sentAt, tx) {

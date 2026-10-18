@@ -45,6 +45,11 @@ export interface OpenThread {
    * which may sit on a page not loaded yet; `undefined` = unknown, the loaded items decide.
    */
   newestReplyId?: string | null;
+  /**
+   * The newest item shown that came from a thread page (not placed live); a background re-read
+   * of the latest page merges only when it reaches back to it, so no gap is left unloadable.
+   */
+  pagedNewest?: ThreadItem | null;
 }
 
 /** What the reply box of one conversation keeps for this tab (sad.md §4). */
@@ -173,9 +178,14 @@ function upsertConversation(list: Conversation[], row: Conversation): Conversati
   return [...list.filter((c) => c.id !== row.id), row].sort(byActivity);
 }
 
-/** A re-read page merged into what is shown: page rows win unless the shown row is newer. */
+/**
+ * A re-read first page merged into what is shown: page rows win unless the shown row is newer;
+ * a shown row sorting below the page's last row is a stale copy (later pages load it afresh).
+ */
 function mergeConversations(list: Conversation[], page: readonly Conversation[]): Conversation[] {
-  const byId = new Map(list.map((c) => [c.id, c]));
+  const last = [...page].sort(byActivity).at(-1);
+  const kept = last ? list.filter((c) => byActivity(c, last) <= 0) : list;
+  const byId = new Map(kept.map((c) => [c.id, c]));
   for (const row of page) {
     const shown = byId.get(row.id);
     if (!shown || shown.last_activity_at <= row.last_activity_at) byId.set(row.id, row);
@@ -293,14 +303,35 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       )
         return;
       const fresh = [...page.items].sort(byPosition);
-      // A background re-read merges: earlier loaded pages and newer live items stay.
-      const items = options.background
+      const freshNewest = fresh.at(-1) ?? null;
+      const paged = open.pagedNewest ?? null;
+      // A background re-read merges only when it reaches back to what pages already loaded:
+      // earlier loaded pages and newer live items stay. Otherwise the items between would be a
+      // hole no cursor reaches, so the page replaces them (keeping only items newer than it).
+      const overlaps =
+        !page.has_prev || (fresh[0] !== undefined && paged && byPosition(fresh[0], paged) <= 0);
+      const merges = options.background && Boolean(overlaps);
+      const items = merges
         ? fresh.reduce((all, item) => upsertItem(all, item), open.items)
-        : fresh;
+        : options.background
+          ? [
+              ...fresh,
+              ...open.items.filter(
+                (i) =>
+                  freshNewest !== null &&
+                  byPosition(i, freshNewest) > 0 &&
+                  !fresh.some((f) => f.id === i.id),
+              ),
+            ]
+          : fresh;
       const keepsEarlier =
-        options.background &&
+        merges &&
         open.items[0] !== undefined &&
         (fresh[0] === undefined || byPosition(open.items[0], fresh[0]) < 0);
+      const pagedNewest =
+        merges && paged && (!freshNewest || byPosition(paged, freshNewest) > 0)
+          ? paged
+          : freshNewest;
       const pageNewest =
         page.newest_reply_id !== undefined ? page.newest_reply_id : newestReplyId(fresh);
       set({
@@ -318,6 +349,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           prevCursor: keepsEarlier ? open.prevCursor : page.prev_cursor,
           readThroughAt: page.read_through_at,
           newestReplyId: newestOfMerge(pageNewest, open, items),
+          pagedNewest,
         },
       });
     } catch (error) {
@@ -626,6 +658,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           prevCursor: null,
           readThroughAt: null,
           newestReplyId: undefined,
+          pagedNewest: null,
         },
       });
       const startedAt = epoch;
@@ -688,6 +721,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
             items: [...page.items.filter((i) => !known.has(i.id)), ...now.items].sort(byPosition),
             hasPrev: page.has_prev,
             prevCursor: page.prev_cursor,
+            pagedNewest: now.pagedNewest ?? page.items.at(-1) ?? null,
             newestReplyId:
               page.newest_reply_id !== undefined && now.newestReplyId === undefined
                 ? page.newest_reply_id
