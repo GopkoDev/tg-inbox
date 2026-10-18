@@ -1,6 +1,6 @@
 import type { Conversation } from '@tg/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
@@ -9,9 +9,13 @@ import { Card } from '@/shared/ui/card';
 import { EmptyFilterState } from '@/shared/ui/empty-filter-state';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import * as source from './api-source';
 import { ConversationList, ConversationSkeletons } from './ConversationList';
 import { Thread } from './Thread';
+import { AssigneeLens, StatusLens } from '@tg/shared';
+import { withLens, type InboxLens } from './lens';
 import { useInboxStore } from './store';
 
 const PAGE_SIZE = 30;
@@ -34,6 +38,19 @@ const appendPage = (loaded: Conversation[], page: Conversation[]) => {
   return [...loaded.filter((c) => !fresh.has(c.id)), ...page];
 };
 
+const EMPTY_LENS: Record<InboxLens['status'], Record<InboxLens['assignee'], string>> = {
+  open: {
+    all: 'No open conversations. New ones appear here when customers write to your bot.',
+    mine: 'No open conversations are assigned to you.',
+    unassigned: 'Every open conversation has an assignee.',
+  },
+  closed: {
+    all: 'No closed conversations.',
+    mine: 'No closed conversations are assigned to you.',
+    unassigned: 'No closed conversations without an assignee.',
+  },
+};
+
 /** SCR-01: the list pane (search, notice, rows, states) and the right-pane placeholder. */
 export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
@@ -42,6 +59,10 @@ export function InboxList() {
   const { listStatus, conversations, hasNext, nextCursor, listVersion, bot, lens } =
     useInboxStore();
   const isOwner = role === 'owner';
+  const [searchParams, setSearchParams] = useSearchParams();
+  /** The lenses live in the address; the page follows it into the store. */
+  const chooseLens = (next: Partial<InboxLens>) =>
+    setSearchParams(withLens(searchParams, { ...lens, ...next }));
 
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
@@ -240,8 +261,8 @@ export function InboxList() {
   else if (rows.length === 0 && q === '')
     body = (
       <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-sm text-muted-foreground">
-        <p>No conversations yet. They appear here when customers write to your bot.</p>
-        {noBot ? (
+        <p>{EMPTY_LENS[lens.status][lens.assignee]}</p>
+        {noBot && lens.status === 'open' && lens.assignee === 'all' ? (
           isOwner ? (
             <>
               <p>Connect the bot to start receiving messages.</p>
@@ -260,6 +281,7 @@ export function InboxList() {
           conversations={rows}
           workspaceId={workspaceId}
           selectedId={conversationId}
+          markClosed={q !== ''}
         />
         {moreState === 'loading' ? <ConversationSkeletons count={2} /> : null}
         {moreState === 'error' ? (
@@ -303,6 +325,38 @@ export function InboxList() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
+      </div>
+      <div data-testid="lens-controls" className="flex items-start gap-2 border-b p-3">
+        <Tabs
+          value={lens.status}
+          onValueChange={(v) => chooseLens({ status: StatusLens.parse(v) })}
+          className="flex-1 gap-1"
+        >
+          <TabsList className="w-full">
+            <TabsTrigger value="open" disabled={q !== ''}>
+              Open
+            </TabsTrigger>
+            <TabsTrigger value="closed" disabled={q !== ''}>
+              Closed
+            </TabsTrigger>
+          </TabsList>
+          {q !== '' ? (
+            <p className="text-xs text-muted-foreground">Searching open and closed</p>
+          ) : null}
+        </Tabs>
+        <Select
+          value={lens.assignee}
+          onValueChange={(v) => chooseLens({ assignee: AssigneeLens.parse(v) })}
+        >
+          <SelectTrigger aria-label="Assignee" className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="mine">Mine</SelectItem>
+            <SelectItem value="unassigned">Unassigned</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <ScrollArea className="min-h-0 flex-1">{body}</ScrollArea>
     </div>

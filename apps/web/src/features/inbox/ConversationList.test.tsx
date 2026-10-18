@@ -224,7 +224,9 @@ describe('SCR-01 empty states (AC-02)', () => {
     seed({ bot: bot('connected') });
     renderList();
     expect(
-      screen.getByText('No conversations yet. They appear here when customers write to your bot.'),
+      screen.getByText(
+        'No open conversations. New ones appear here when customers write to your bot.',
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText('Open bot settings')).toBeNull();
   });
@@ -560,5 +562,49 @@ describe('InboxPage', () => {
     );
     expect(screen.getByRole('heading', { name: 'Inbox' })).toBeInTheDocument();
     expect(screen.queryByText('Sample data')).toBeNull();
+  });
+});
+
+describe('SCR-01 row assignee line and Closed mark (AC-01)', () => {
+  const OLENA = { account_id: cid(900), display_name: 'Olena Kravets' };
+
+  it('shows the assignee name or Unassigned with the user icon, muted', () => {
+    seed({ conversations: [conv(1, { assignee: OLENA }), conv(2)] });
+    renderList();
+    const named = screen.getByRole('link', { name: /Name1/ });
+    expect(within(named).getByText('Olena Kravets')).toBeInTheDocument();
+    expect(named.querySelector('svg.lucide-user-round')).not.toBeNull();
+    const none = screen.getByRole('link', { name: /Name2/ });
+    expect(within(none).getByText('Unassigned').closest('p')).toHaveClass('text-muted-foreground');
+  });
+
+  it('a change of assignee or status never becomes the preview or the time', () => {
+    seed({ conversations: [conv(3, { assignee: OLENA })] });
+    renderList();
+    const row = screen.getByRole('link', { name: /Name3/ });
+    expect(within(row).getByText('hello 3')).toBeInTheDocument();
+    expect(within(row).getByText('3m')).toBeInTheDocument();
+  });
+
+  it('marks closed rows with an outline Closed badge only while searching', async () => {
+    const closed = conv(1, { status: 'closed' });
+    api.listConversations.mockResolvedValue({
+      workspace_id: WS,
+      lens: SEARCHING,
+      items: [closed, conv(2)],
+      has_prev: false,
+      has_next: false,
+      next_cursor: null,
+    });
+    seed({ conversations: [conv(2)], lens: { status: 'open', assignee: 'all' } });
+    renderList();
+    expect(screen.queryByText('Closed', { selector: '[data-slot="badge"]' })).toBeNull();
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'na' } });
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    const badge = within(screen.getByRole('link', { name: /Name1/ })).getByText('Closed');
+    expect(badge).toHaveAttribute('data-variant', 'outline');
+    expect(within(screen.getByRole('link', { name: /Name2/ })).queryByText('Closed')).toBeNull();
   });
 });
