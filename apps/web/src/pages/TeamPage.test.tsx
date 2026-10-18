@@ -1,5 +1,12 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Route, Routes, useLocation, useNavigate } from 'react-router';
+import { act as rtlAct, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import {
+  RouterProvider,
+  Route,
+  Routes,
+  createMemoryRouter,
+  useLocation,
+  useNavigate,
+} from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -7,8 +14,10 @@ import { ApiError } from '@/shared/api/client';
 import { openMenu, stubRadixDom } from '@/test/radix';
 import { InDataRouter } from '@/test/router';
 import { AppShell } from '@/shared/ui/app-shell';
+import { routes } from '@/app/routes';
 
-vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
+const getMe = vi.fn();
+vi.mock('@/features/auth/api', () => ({ getMe: () => getMe(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
 const listMemberships = vi.fn();
 const listPendingInvitations = vi.fn();
@@ -33,7 +42,6 @@ vi.mock('@/features/workspaces/resolve', () => ({
 }));
 
 import { TeamPage } from './TeamPage';
-import { WorkspaceHomePage } from './WorkspaceHomePage';
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
 const mem = (id: string, name: string, over: Record<string, unknown> = {}) => ({
@@ -76,6 +84,12 @@ function renderPage(path = '/w/w1/team') {
       </Routes>
     </InDataRouter>,
   );
+}
+/** The real route table (`app/routes.tsx`): settings/team and the inbox share one shell. */
+function renderRoutes(path = '/w/w1/settings/team') {
+  const router = createMemoryRouter(routes, { initialEntries: [path] });
+  render(<RouterProvider router={router} />);
+  return router;
 }
 function Jump({ to }: { to: string }) {
   const navigate = useNavigate();
@@ -408,12 +422,25 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.getAllByText('Bob')).toHaveLength(1);
   });
 
-  it('not-found in place: one main and one h1 inside the shell (AC-13)', async () => {
+  it('not-found in place: one main, and the page h1 stays the only h1 inside Settings (AC-13)', async () => {
     listMemberships.mockRejectedValue(err(404, 'NOT_FOUND'));
     listPendingInvitations.mockRejectedValue(err(404, 'NOT_FOUND'));
-    renderPage();
-    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    renderRoutes();
+    expect(await screen.findByRole('heading', { level: 2, name: 'Page not found' })).toBeVisible();
     expect(screen.getAllByRole('main')).toHaveLength(1);
+    const h1 = screen.getAllByRole('heading', { level: 1 });
+    expect(h1).toHaveLength(1);
+    expect(h1[0]).toHaveTextContent('Settings');
+  });
+
+  it('heading outline inside Settings: Team is h2, its sub-sections h3', async () => {
+    renderRoutes();
+    await screen.findByText('Bob');
+    expect(screen.getByRole('heading', { level: 2, name: 'Team' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 3, name: 'Members' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { level: 3, name: 'Pending invitations' }),
+    ).toBeInTheDocument();
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
   });
 
@@ -441,42 +468,26 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
   const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'owner' as const };
   let failLate: (e: unknown) => void = () => undefined;
 
-  /** Both workspace routes render their own shell, as in `app/routes.tsx`. */
-  function renderBoth(to: string) {
-    return render(
-      <InDataRouter initialEntries={['/w/w1/team']}>
-        <Routes>
-          <Route path="/w/:workspaceId/team" element={<AppShell />}>
-            <Route index element={<TeamPage />} />
-          </Route>
-          <Route path="/w/:workspaceId" element={<AppShell />}>
-            <Route index element={<WorkspaceHomePage />} />
-          </Route>
-          <Route path="/sign-in" element={<p>sign-in screen</p>} />
-          <Route path="*" element={<p>other</p>} />
-        </Routes>
-        <Jump to={to} />
-        <Where />
-      </InDataRouter>,
-    );
-  }
+  const where = (router: ReturnType<typeof renderRoutes>) => router.state.location.pathname;
   async function startDeactivate() {
     await screen.findByText('Bob');
     await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
   }
+  const inboxHeading = () => screen.findByRole('heading', { level: 1, name: 'Inbox' });
 
   beforeEach(() => {
+    getMe.mockReturnValue(new Promise(() => undefined));
     deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
     resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w9'));
     enterWorkspace.mockReturnValue(new Promise(() => undefined));
   });
 
-  it('/w/w1/team -> /w/w2 (SCR-10), late 403 for w1: no notice, no resolution, stays on /w/w2', async () => {
+  it('settings/team -> /w/w2/inbox (not found), late 403 for w1: no notice, no resolution, stays', async () => {
     enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
-    renderBoth('/w/w2');
+    const router = renderRoutes();
     await startDeactivate();
-    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
+    await rtlAct(() => router.navigate('/w/w2/inbox'));
     expect(await screen.findByText('Page not found')).toBeInTheDocument();
     failLate(err(403, 'ACCESS_REMOVED'));
     await new Promise((r) => setTimeout(r, 30));
@@ -484,19 +495,19 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
     expect(screen.queryByText(/was removed/)).not.toBeInTheDocument();
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
     expect(resolveWorkspace).not.toHaveBeenCalled();
-    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2');
+    expect(where(router)).toBe('/w/w2/inbox');
   });
 
-  it('/w/w1/team -> /w/w2 (entered), late 403 for w1: no notice, no resolution, stays on /w/w2', async () => {
+  it('settings/team -> /w/w2/inbox (entered), late 403 for w1: no notice, no resolution, stays', async () => {
     enterWorkspace.mockResolvedValue(bolt);
-    renderBoth('/w/w2');
+    const router = renderRoutes();
     await startDeactivate();
-    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
-    expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
+    await rtlAct(() => router.navigate('/w/w2/inbox'));
+    await inboxHeading();
     await waitFor(() => expect(useWorkspaceStore.getState().current).toEqual(bolt));
     failLate(err(403, 'ACCESS_REMOVED'));
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.getByTestId('where')).toHaveTextContent('/w/w2');
+    expect(where(router)).toBe('/w/w2/inbox');
     expect(resolveWorkspace).not.toHaveBeenCalled();
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
     expect(useWorkspaceStore.getState().current).toEqual(bolt);
@@ -505,40 +516,40 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
   });
 
   it('sign-out while the action is pending, then a late 403: no notice survives, stays on sign-in', async () => {
-    renderBoth('/w/w2');
+    const router = renderRoutes();
     await startDeactivate();
     openMenu('o@x.io');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
-    expect(await screen.findByText('sign-in screen')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument();
     failLate(err(403, 'ACCESS_REMOVED'));
     await new Promise((r) => setTimeout(r, 30));
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
     expect(resolveWorkspace).not.toHaveBeenCalled();
-    expect(screen.getByTestId('where')).toHaveTextContent('/sign-in');
+    expect(where(router)).toBe('/sign-in');
   });
 
-  it('/w/w1/team -> a page without a shell, late 403 for w1: no notice, no resolution, stays', async () => {
-    renderBoth('/workspaces');
+  it('settings/team -> a page without a shell, late 403 for w1: no notice, no resolution, stays', async () => {
+    const router = renderRoutes();
     await startDeactivate();
-    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
-    expect(await screen.findByText('other')).toBeInTheDocument();
+    await rtlAct(() => router.navigate('/nope/never'));
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
     failLate(err(403, 'ACCESS_REMOVED'));
     await new Promise((r) => setTimeout(r, 30));
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
     expect(resolveWorkspace).not.toHaveBeenCalled();
-    expect(screen.getByTestId('where')).toHaveTextContent('/workspaces');
+    expect(where(router)).toBe('/nope/never');
   });
 
-  it('/w/w1/team -> /w/w1, late 403 for w1: notice and resolution still happen (AC-17)', async () => {
-    renderBoth('/w/w1');
+  it('settings/team -> /w/w1/inbox, late 403 for w1: notice and resolution still happen (AC-17)', async () => {
+    const router = renderRoutes();
     await startDeactivate();
-    fireEvent.click(screen.getByRole('button', { name: 'jump' }));
-    expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
+    await rtlAct(() => router.navigate('/w/w1/inbox'));
+    await inboxHeading();
     failLate(err(403, 'ACCESS_REMOVED'));
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalledTimes(1));
     expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('Acme Flowers');
-    expect(screen.queryByText('Your inbox arrives here')).not.toBeInTheDocument();
-    await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/w/w9'));
+    expect(screen.queryByRole('heading', { level: 1, name: 'Inbox' })).not.toBeInTheDocument();
+    await waitFor(() => expect(where(router)).toBe('/w/w9/inbox'));
   });
 });
 

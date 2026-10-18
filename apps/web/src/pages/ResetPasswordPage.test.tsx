@@ -79,8 +79,10 @@ describe('ResetPasswordPage', () => {
   });
 
   it('default: password field with hint and footer', async () => {
-    renderPage();
+    const { container } = renderPage();
     expect(await screen.findByLabelText('New password')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1 })).toBeInTheDocument();
+    expect(container.querySelector('svg.lucide-messages-square')).not.toBeNull();
     expect(screen.getByText(/at least 10 characters/i)).toBeInTheDocument();
     expect(screen.getByText('Every other device will be signed out.')).toBeInTheDocument();
   });

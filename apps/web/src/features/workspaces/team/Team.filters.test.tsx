@@ -122,6 +122,15 @@ describe('Team filters (SCR-12, AC-08)', () => {
     expect(within(pending()).getByText('chief@y.test')).toBeInTheDocument();
   });
 
+  it('the role filter offers «Business owner» and narrows to owners', async () => {
+    renderPage();
+    await screen.findByText('Bob');
+    await choose(/role/i, 'Business owner');
+    for (const name of ['Olga', 'Dina']) expect(screen.getByText(name)).toBeInTheDocument();
+    expect(screen.queryByText('Bob')).not.toBeInTheDocument();
+    expect(within(pending()).getByText('chief@y.test')).toBeInTheDocument();
+  });
+
   it('the search is case-insensitive over name and email', async () => {
     renderPage();
     await screen.findByText('Bob');

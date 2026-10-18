@@ -11,9 +11,9 @@ async function signIn(page: Page, email: string, password = PASSWORD) {
 const workspaceButton = (page: Page, name: string) =>
   page.getByRole('navigation', { name: 'Workspace' }).getByRole('button', { name });
 
-/** Opens SCR-07 by its address, as a bookmark or reload would — the app shell must enter the workspace itself. */
+/** Opens the Team section by the legacy `/team` address, as a bookmark or reload would — it must land on settings/team and the shell must enter the workspace itself. */
 async function openTeam(page: Page, workspaceId: string, workspaceName: string) {
-  await page.goto(`/w/${workspaceId}/settings/team`);
+  await page.goto(`/w/${workspaceId}/team`);
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/settings/team$`));
   await expect(workspaceButton(page, workspaceName)).toBeVisible();
 }
@@ -98,8 +98,13 @@ test('switch workspace shows only the picked workspace name (AC-12)', async ({ p
 
   await expect(page).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
+  await expect(page.getByText('Acme Flowers')).toHaveCount(0);
+  // owner in Acme, operator in Bolt: the Settings entry is gone after the switch
   await expect(
-    page.getByRole('navigation', { name: 'Workspace' }).getByText('Acme Flowers'),
+    page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Inbox' }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Settings' }),
   ).toHaveCount(0);
 });
 
@@ -122,9 +127,7 @@ test('sign in opens the last-used workspace, not the picker (AC-07, AC-12)', asy
 
   await expect(page).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
-  await expect(
-    page.getByRole('navigation', { name: 'Workspace' }).getByText('Acme Flowers'),
-  ).toHaveCount(0);
+  await expect(page.getByText('Acme Flowers')).toHaveCount(0);
 });
 
 test('invite a teammate: link shown once, then a pending row without it (AC-14)', async ({

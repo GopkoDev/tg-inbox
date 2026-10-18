@@ -26,7 +26,7 @@ const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'operator' as const };
  *             the unread count is the exact text of an element inside the item (absent when 0)
  *  - thread:  role=region, aria-label="Conversation"; contains the contact name, `@username`
  *             and the messages as plain text
- *  - back (phone): button "Back to conversations"
+ *  - back (phone): link "Back to conversations"
  *  - reply:   textbox name "Reply", placeholder "Write a reply…"; button "Send" (disabled when invalid)
  *  - texts:   "Sample data", "Replies are limited to 4096 characters" (only when over),
  *             "Preview — nothing is sent to customers" (always, with the thread open)
@@ -36,8 +36,8 @@ const fetchSpy = vi.fn();
 
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  render(<RouterProvider router={router} />);
-  return router;
+  const view = render(<RouterProvider router={router} />);
+  return Object.assign(router, { unmount: view.unmount });
 }
 
 function setMobile(mobile: boolean) {
@@ -156,6 +156,20 @@ describe('inbox preview (T6)', () => {
     expect(screen.queryByText('Replies are limited to 4096 characters')).not.toBeInTheDocument();
   });
 
+  it('AC-13: the limit message is tied to the textarea while the reply is too long', async () => {
+    renderAt(`/w/w1/inbox/${convos()[0]!.id}`);
+    await thread();
+    expect(box()).not.toHaveAttribute('aria-describedby');
+    type('a'.repeat(4097));
+    const id = box().getAttribute('aria-describedby');
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id!)).toHaveTextContent(
+      'Replies are limited to 4096 characters',
+    );
+    type('ok');
+    expect(box()).not.toHaveAttribute('aria-describedby');
+  });
+
   it('AC-13: Shift+Enter does not send; Enter sends a valid reply', async () => {
     renderAt(`/w/w1/inbox/${convos()[0]!.id}`);
     const t = await thread();
@@ -199,6 +213,36 @@ describe('inbox preview (T6)', () => {
     expect(screen.getByText('Preview — nothing is sent to customers')).toBeInTheDocument();
   });
 
+  it('AC-14: a sent reply is gone after switching to another workspace', async () => {
+    const c = convos()[3]!;
+    const router = renderAt(`/w/w1/inbox/${c.id}`);
+    const t = await thread();
+    type('Only for Acme');
+    fireEvent.click(send());
+    expect(await within(t).findByText('Only for Acme')).toBeInTheDocument();
+
+    await act(() => router.navigate(`/w/w2/inbox/${c.id}`));
+    expect(await screen.findByRole('button', { name: /Bolt Bikes/ })).toBeInTheDocument();
+    await thread();
+    expect(screen.queryByText('Only for Acme')).not.toBeInTheDocument();
+    expect(box()).toHaveValue('');
+  });
+
+  it('AC-14: a sent reply is gone after visiting contacts and coming back', async () => {
+    const c = convos()[3]!;
+    const router = renderAt(`/w/w1/inbox/${c.id}`);
+    const t = await thread();
+    type('Gone after contacts');
+    fireEvent.click(send());
+    expect(await within(t).findByText('Gone after contacts')).toBeInTheDocument();
+
+    await act(() => router.navigate('/w/w1/contacts'));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Contacts' })).toBeInTheDocument();
+    await act(() => router.navigate(`/w/w1/inbox/${c.id}`));
+    await thread();
+    expect(screen.queryByText('Gone after contacts')).not.toBeInTheDocument();
+  });
+
   it('AC-14: typed markup is shown as literal text', async () => {
     renderAt(`/w/w1/inbox/${convos()[0]!.id}`);
     const t = await thread();
@@ -219,16 +263,29 @@ describe('inbox preview (T6)', () => {
     const t = await thread();
     expect(within(t).getByText(c.username)).toBeInTheDocument();
     expect(screen.queryByRole('list', { name: 'Conversations' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Back to conversations' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Back to conversations' }));
 
     expect(await list()).toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Conversation' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Back to conversations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Back to conversations' })).not.toBeInTheDocument();
     await act(async () => undefined);
   });
 
-  it('AC-17: no API call while rendering, and every workspace shows the same data', async () => {
+  it('AC-12: a search with no match shows the empty state and Clear search restores the list', async () => {
     renderAt('/w/w1/inbox');
+    const l = await list();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search conversations' }), {
+      target: { value: 'zzzz-no-such-name' },
+    });
+    expect(screen.getByText('No conversations match')).toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Conversations' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
+    expect(items(await list())).toHaveLength(items(l).length);
+    expect(screen.queryByText('No conversations match')).not.toBeInTheDocument();
+  });
+
+  it('AC-17: no API call while rendering, and every workspace shows the same data', async () => {
+    const first = renderAt('/w/w1/inbox');
     const names1 = items(await list()).map((li) => li.textContent);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(names1.length).toBe(convos().length);
@@ -236,7 +293,7 @@ describe('inbox preview (T6)', () => {
     expect(listMyWorkspaces.mock.calls.length).toBeLessThanOrEqual(1);
     expect(enterWorkspace).toHaveBeenCalledTimes(1);
 
-    document.body.innerHTML = '';
+    first.unmount();
     renderAt('/w/w2/inbox');
     const names2 = items(await list()).map((li) => li.textContent);
     expect(names2).toEqual(names1);

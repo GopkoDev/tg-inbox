@@ -5,6 +5,8 @@ import {
   type LoaderFunctionArgs,
   type RouteObject,
 } from 'react-router';
+import { getSampleContact } from '@/features/contacts/sample-source';
+import { getSampleConversation } from '@/features/inbox/sample-source';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
 import { InboxPage } from '@/pages/InboxPage';
@@ -50,7 +52,14 @@ const workspaceRoute: RouteObject = {
       handle: { crumb: 'Inbox' },
       children: [
         { index: true, element: <InboxPage /> },
-        { path: ':conversationId', handle: { crumb: 'Conversation' }, element: <InboxPage /> },
+        {
+          path: ':conversationId',
+          handle: {
+            crumb: (p: Record<string, string | undefined>) =>
+              getSampleConversation(p.conversationId ?? '')?.name ?? 'Conversation',
+          },
+          element: <InboxPage />,
+        },
       ],
     },
     {
@@ -60,7 +69,10 @@ const workspaceRoute: RouteObject = {
         { index: true, element: lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage') },
         {
           path: ':contactId',
-          handle: { crumb: 'Contact' },
+          handle: {
+            crumb: (p: Record<string, string | undefined>) =>
+              getSampleContact(p.contactId ?? '')?.name ?? 'Contact',
+          },
           element: lazyPage(() => import('@/pages/ContactProfilePage'), 'ContactProfilePage'),
         },
       ],

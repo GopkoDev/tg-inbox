@@ -15,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/shared/ui/alert-dialog';
+import { initials } from '@/shared/lib/initials';
 import { ROLE_LABEL } from '@/shared/lib/roles';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { DataTableToolbar } from '@/shared/ui/data-table-toolbar';
@@ -66,17 +67,6 @@ function ShowMore({ onClick, disabled }: { onClick: () => void; disabled: boolea
   );
 }
 
-function initials(name: string): string {
-  return (
-    name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((w) => w[0]!.toUpperCase())
-      .join('') || '?'
-  );
-}
-
 function RowActions({
   email,
   disabled,
@@ -115,11 +105,11 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
   const [filter, setFilter] = useState<TeamFilter>(NO_FILTER);
   const { busy } = team;
 
-  if (team.status === 'not-found') return <NotFoundCard headingLevel={1} />;
+  if (team.status === 'not-found') return <NotFoundCard headingLevel={2} />;
   if (team.status === 'owner-only') {
     return (
       <>
-        <h1 className="sr-only">Team</h1>
+        <h2 className="sr-only">Team</h2>
         <Card>
           <CardContent className="space-y-4">
             <p>Only business owners manage the team</p>
@@ -132,7 +122,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
   if (team.status === 'error') {
     return (
       <>
-        <h1 className="sr-only">Team</h1>
+        <h2 className="sr-only">Team</h2>
         <Alert variant="destructive">
           <AlertDescription className="flex items-center justify-between gap-2">
             Something went wrong
@@ -161,7 +151,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
       )}
 
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-lg font-semibold">Team</h1>
+        <h2 className="text-lg font-semibold">Team</h2>
         <Button
           onClick={() => {
             onInvite?.();
@@ -192,7 +182,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all">All roles</SelectItem>
-                <SelectItem value="owner">Owner</SelectItem>
+                <SelectItem value="owner">Business owner</SelectItem>
                 <SelectItem value="operator">Operator</SelectItem>
               </SelectContent>
             </Select>
@@ -216,7 +206,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
       />
 
       <section className="space-y-3">
-        <h2 className="text-base font-semibold">Members</h2>
+        <h3 className="text-base font-semibold">Members</h3>
         {loading ? (
           <SkeletonRows />
         ) : (
@@ -297,7 +287,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
       </section>
 
       <section className="space-y-3" data-testid="pending-invitations">
-        <h2 className="text-base font-semibold">Pending invitations</h2>
+        <h3 className="text-base font-semibold">Pending invitations</h3>
         {loading ? (
           <SkeletonRows />
         ) : (

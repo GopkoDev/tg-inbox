@@ -1,10 +1,11 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { RouterProvider, createMemoryRouter } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
-import { stubRadixDom } from '@/test/radix';
+import { openMenu, stubRadixDom } from '@/test/radix';
 
 vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
@@ -18,6 +19,9 @@ vi.mock('@/features/workspaces/resolve', () => ({ resolveWorkspace: vi.fn() }));
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
 
+import { getSampleContact } from '@/features/contacts/sample-source';
+import { listSampleConversations } from '@/features/inbox/sample-source';
+import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { routes } from './routes';
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
@@ -151,6 +155,145 @@ describe('workspace frame (T3)', () => {
     await waitFor(() =>
       expect(screen.queryByRole('link', { name: 'Contacts' })).not.toBeInTheDocument(),
     );
+    await act(async () => undefined);
+  });
+});
+
+describe('breadcrumb (review fixes)', () => {
+  const crumbNav = () => screen.getByRole('navigation', { name: 'breadcrumb' });
+
+  it('S2-1: only the last crumb is the current page (settings/bot)', async () => {
+    renderAt('/w/w1/settings/bot');
+    await screen.findByText('bot body');
+    const current = crumbNav().querySelectorAll('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent('Bot');
+    expect(within(crumbNav()).getByRole('link', { name: 'Settings' })).not.toHaveAttribute(
+      'aria-current',
+    );
+  });
+
+  it('S2-1: only the last crumb is the current page (inbox/<id>)', async () => {
+    const c = listSampleConversations()[0]!;
+    renderAt(`/w/w1/inbox/${c.id}`);
+    await screen.findByRole('region', { name: 'Conversation' });
+    const current = crumbNav().querySelectorAll('[aria-current="page"]');
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent(c.name);
+  });
+
+  it('S1-6a: the conversation crumb carries the contact name', async () => {
+    const c = listSampleConversations()[1]!;
+    renderAt(`/w/w1/inbox/${c.id}`);
+    await screen.findByRole('region', { name: 'Conversation' });
+    expect(within(crumbNav()).getByText(c.name)).toBeInTheDocument();
+    expect(within(crumbNav()).queryByText('Conversation')).not.toBeInTheDocument();
+  });
+
+  it('S1-6a: the contact crumb carries the contact name', async () => {
+    const c = getSampleContact('ct-01')!;
+    renderAt('/w/w1/contacts/ct-01');
+    await waitFor(() => expect(within(crumbNav()).getByText(c.name)).toBeInTheDocument());
+    expect(within(crumbNav()).getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
+    expect(within(crumbNav()).queryByText('Contact')).not.toBeInTheDocument();
+  });
+
+  it('S1-6a: an unknown id keeps a generic label', async () => {
+    renderAt('/w/w1/contacts/nope');
+    await waitFor(() => expect(within(crumbNav()).getByText('Contact')).toBeInTheDocument());
+  });
+});
+
+describe('shell on the inbox route (moved from the former workspace home page)', () => {
+  const inboxH1 = () => screen.findByRole('heading', { level: 1, name: 'Inbox' });
+
+  it('owner: enters the workspace of the URL and shows its inbox', async () => {
+    renderAt('/w/w1/inbox');
+    await inboxH1();
+    expect(enterWorkspace).toHaveBeenCalledWith('w1');
+    expect(useWorkspaceStore.getState().current).toEqual(acme);
+  });
+
+  it('the access-removed notice is shown inside the inset, under the header (AC-17)', async () => {
+    useWorkspaceStore
+      .getState()
+      .setAccessRemovedNotice({ workspaceId: 'w1', name: 'Acme Flowers' });
+    renderAt('/w/w2/inbox');
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Your access to Acme Flowers was removed');
+    const header = document.querySelector('header') as HTMLElement;
+    expect(header.compareDocumentPosition(alert) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(header).not.toContainElement(alert);
+  });
+
+  it('guard 403 ACCESS_REMOVED: clears data, notice set, resolution re-run (AC-17)', async () => {
+    enterWorkspace.mockRejectedValue(new ApiError(403, 'ACCESS_REMOVED' as never, 'gone'));
+    vi.mocked(resolveWorkspace).mockResolvedValue(undefined);
+    renderAt('/w/w1/inbox');
+    await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
+    expect(useWorkspaceStore.getState().current).toBeNull();
+    expect(useWorkspaceStore.getState().accessRemovedNotice?.name).toBe('this workspace');
+  });
+
+  it('guard 401: goes to sign-in', async () => {
+    vi.mocked(getMe).mockReturnValue(new Promise(() => undefined));
+    enterWorkspace.mockRejectedValue(new ApiError(401, 'UNAUTHENTICATED' as never, 'no'));
+    const router = renderAt('/w/w1/inbox');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Sign in' })).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe('/sign-in');
+  });
+
+  it('a late response for A after moving to B changes nothing', async () => {
+    let resolveA!: (w: typeof acme) => void;
+    enterWorkspace.mockImplementation((id: string) =>
+      id === 'w1' ? new Promise((r) => (resolveA = r)) : Promise.resolve(bolt),
+    );
+    const router = renderAt('/w/w1/inbox');
+    await act(() => router.navigate('/w/w2/inbox'));
+    await screen.findByRole('button', { name: /Bolt Bikes/ });
+    resolveA(acme);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
+  });
+
+  it('a late 403 for A after moving to B is ignored', async () => {
+    let rejectA!: (e: unknown) => void;
+    enterWorkspace.mockImplementation((id: string) =>
+      id === 'w1' ? new Promise((_, r) => (rejectA = r)) : Promise.resolve(bolt),
+    );
+    const router = renderAt('/w/w1/inbox');
+    await act(() => router.navigate('/w/w2/inbox'));
+    await screen.findByRole('button', { name: /Bolt Bikes/ });
+    rejectA(new ApiError(403, 'ACCESS_REMOVED' as never, 'gone'));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolveWorkspace).not.toHaveBeenCalled();
+    expect(useWorkspaceStore.getState().current).toEqual(bolt);
+    expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
+  });
+
+  it('A -> B: the previous workspace name leaves the page at once (no residue)', async () => {
+    const router = renderAt('/w/w1/inbox');
+    await inboxH1();
+    expect(screen.getByRole('button', { name: /Acme Flowers/ })).toBeInTheDocument();
+    enterWorkspace.mockReturnValue(new Promise(() => undefined));
+    await act(() => router.navigate('/w/w2/inbox'));
+    expect(screen.queryByText('Acme Flowers')).not.toBeInTheDocument();
+  });
+});
+
+describe('phone drawer for an operator workspace (S1-7)', () => {
+  it('has Inbox and Contacts but no Settings, and the account menu reaches Sign out', async () => {
+    setMobile(true);
+    renderAt('/w/w2/inbox');
+    fireEvent.click(await screen.findByRole('button', { name: 'Toggle Sidebar' }));
+    const drawer = await screen.findByRole('dialog');
+    expect(within(drawer).getByRole('link', { name: 'Inbox' })).toBeInTheDocument();
+    expect(within(drawer).getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
+    expect(within(drawer).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+
+    openMenu(/o@x\.io/);
+    expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument();
     await act(async () => undefined);
   });
 });

@@ -157,4 +157,23 @@ describe('AppShell', () => {
       /aria-\[current=page\]:bg-sidebar-accent/,
     );
   });
+
+  it('S2-6: the sidebar starts expanded, and collapsed when the saved cookie says so', () => {
+    useWorkspaceStore.getState().setCurrent(acme);
+    document.cookie = 'sidebar_state=; path=/; max-age=0';
+    const { container, unmount } = renderShell();
+    expect(container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      'data-state',
+      'expanded',
+    );
+    unmount();
+
+    document.cookie = 'sidebar_state=false; path=/';
+    const again = renderShell();
+    expect(again.container.querySelector('[data-slot="sidebar"][data-state]')).toHaveAttribute(
+      'data-state',
+      'collapsed',
+    );
+    document.cookie = 'sidebar_state=; path=/; max-age=0';
+  });
 });

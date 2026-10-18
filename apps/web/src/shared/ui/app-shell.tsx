@@ -1,6 +1,6 @@
 import { ChevronsUpDown, Contact, Inbox, LogOut, Settings, X } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect } from 'react';
-import { NavLink, Outlet, useLocation, useMatches, useParams } from 'react-router';
+import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import { Link, NavLink, Outlet, useLocation, useMatches, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAuthStore } from '@/features/auth/store';
@@ -9,6 +9,7 @@ import { useGuard, type GuardFn } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
+import { initials } from '@/shared/lib/initials';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { Button } from '@/shared/ui/button';
@@ -49,7 +50,8 @@ import { ShellGuardContext } from './app-shell-context';
 
 /** A route's `handle` may carry the breadcrumb label of its section. */
 export interface CrumbHandle {
-  crumb?: string;
+  /** A fixed label, or one derived from the route params (e.g. the item's name). */
+  crumb?: string | ((params: Readonly<Record<string, string | undefined>>) => string);
 }
 
 const ACTIVE = 'aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium';
@@ -62,8 +64,9 @@ function CloseDrawerOnNavigate() {
   return null;
 }
 
-function initials(source: string) {
-  return source.slice(0, 2).toUpperCase();
+/** The sidebar's saved open state (the cookie `SidebarProvider` writes); open unless it says `false`. */
+function readSidebarOpen(): boolean {
+  return !/(?:^|;\s*)sidebar_state=false(?:;|$)/.test(document.cookie);
 }
 
 function AccountMenu() {
@@ -113,7 +116,8 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
   const name = useWorkspaceStore((s) => s.current?.name);
   const crumbs = useMatches().flatMap((m) => {
     const crumb = (m.handle as CrumbHandle | undefined)?.crumb;
-    return crumb ? [{ label: crumb, to: m.pathname }] : [];
+    const label = typeof crumb === 'function' ? crumb(m.params) : crumb;
+    return label ? [{ label, to: m.pathname }] : [];
   });
   return (
     <Breadcrumb>
@@ -126,7 +130,7 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
               </BreadcrumbPage>
             ) : (
               <BreadcrumbLink asChild>
-                <NavLink to={`/w/${workspaceId}`}>{name}</NavLink>
+                <Link to={`/w/${workspaceId}`}>{name}</Link>
               </BreadcrumbLink>
             )}
           </BreadcrumbItem>
@@ -141,7 +145,7 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
                 </BreadcrumbPage>
               ) : (
                 <BreadcrumbLink asChild>
-                  <NavLink to={c.to}>{c.label}</NavLink>
+                  <Link to={c.to}>{c.label}</Link>
                 </BreadcrumbLink>
               )}
             </BreadcrumbItem>
@@ -163,6 +167,7 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
  */
 export function AppShell() {
   const guard = useGuard();
+  const [sidebarOpen] = useState(readSidebarOpen);
   const { workspaceId = '' } = useParams();
   const entry = useWorkspaceFromUrl(workspaceId, guard);
   const { markError } = entry;
@@ -211,7 +216,7 @@ export function AppShell() {
 
   return (
     <ShellGuardContext.Provider value={shellGuard}>
-      <SidebarProvider>
+      <SidebarProvider defaultOpen={sidebarOpen}>
         <CloseDrawerOnNavigate />
         <Sidebar variant="inset">
           <nav aria-label="Workspace" className="flex min-h-0 flex-1 flex-col">

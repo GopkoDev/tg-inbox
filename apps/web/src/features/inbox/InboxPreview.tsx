@@ -1,12 +1,13 @@
 import { useState } from 'react';
-import { useNavigate, useParams } from 'react-router';
+import { Link, useParams } from 'react-router';
+import { initials } from '@/shared/lib/initials';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { Button } from '@/shared/ui/button';
 import { Card } from '@/shared/ui/card';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import { ConversationList, initials } from './ConversationList';
+import { ConversationList } from './ConversationList';
 import { MessageBubble } from './MessageBubble';
 import { ReplyComposer } from './ReplyComposer';
 import { getSampleConversation, listSampleConversations } from './sample-source';
@@ -16,7 +17,6 @@ type Sent = { id: string; texts: string[] };
 /** Reads the sample source only; sent replies live in this component's state (ADR-0002). */
 export function InboxPreview() {
   const { workspaceId = '', conversationId } = useParams();
-  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [query, setQuery] = useState('');
   const [opened, setOpened] = useState<ReadonlySet<string>>(new Set());
@@ -79,13 +79,8 @@ export function InboxPreview() {
       <section aria-label="Conversation" className="flex min-h-0 flex-1 flex-col">
         <header className="flex items-center gap-3 border-b p-3">
           {isMobile ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              onClick={() => void navigate(`/w/${workspaceId}/inbox`)}
-            >
-              Back to conversations
+            <Button asChild variant="ghost" size="sm">
+              <Link to={`/w/${workspaceId}/inbox`}>Back to conversations</Link>
             </Button>
           ) : null}
           <Avatar>

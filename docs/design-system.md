@@ -33,7 +33,7 @@ the primitives below.
 - **Auth screens** (sign-in, invite, reset): one centred column `max-w-sm`, `min-h-svh`, logo mark + `text-xl font-bold` heading + short description above the form; form fields stacked with `gap-6`. Source pattern: shadcn login blocks — https://ui.shadcn.com/blocks/login
 - **Workspace shell:** collapsible left sidebar in the `inset` variant (workspace switcher in the header, primary nav, secondary nav, account menu in the footer) + an inset body with a `h-16` header row (sidebar trigger, vertical separator, breadcrumb). Source pattern: shadcn sidebar blocks — https://ui.shadcn.com/blocks/sidebar
 - **Page body:** page title row (`text-2xl font-bold tracking-tight`, primary action right-aligned), then `space-y-4 lg:space-y-6` content composed of `Card`s.
-- **List pages** (team, contacts): card-wrapped `Table` with a toolbar row (search `Input`, filter popover, column toggle) above it; rows carry `Avatar` + name, `Badge` for status, a row-actions `DropdownMenu`.
+- **List pages** (team, contacts): card-wrapped `Table` with a toolbar row (search `Input`, filter popover) above it; rows carry `Avatar` + name, `Badge` for status, a row-actions `DropdownMenu`.
 - **Inbox / chat:** two panes inside one full-height card — conversation list (`ScrollArea`; avatar, name, relative time, last-message preview, unread count `Badge`) and the thread (header with contact + actions, message bubbles grouped by sender, composer = `Textarea` in an input group with send `Button`). At phone width the panes become list → thread navigation.
 - **Contact profile:** header card (avatar, name, key facts) + `Tabs` for sections; details as `Card`s, history as a `Table`.
 - **Settings:** title + description, then a left section nav (stacks above the form below `lg`) and a form in a `Card`.
@@ -75,9 +75,9 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 | Textarea | `apps/web/src/shared/ui/textarea.tsx:4` | default / focus / disabled / invalid | Reply composer input. |
 | Tabs | `apps/web/src/shared/ui/tabs.tsx:8` | active / inactive trigger; content | Contact profile sections. |
 | Field | `apps/web/src/shared/ui/field.tsx:78` | default / invalid (`FieldError`) / disabled | Family: `FieldGroup` (`:44`), `FieldLabel`, `FieldDescription`, `FieldError`; form-field layout in the auth forms. |
-| Checkbox | `apps/web/src/shared/ui/checkbox.tsx:6` | unchecked / checked / disabled | Column toggles in the contacts toolbar. |
+| Checkbox | `apps/web/src/shared/ui/checkbox.tsx:6` | unchecked / checked / disabled | Tag filter in the contacts toolbar. |
 | Select | `apps/web/src/shared/ui/select.tsx:8` | open / closed / item disabled / placeholder | Filter and role selects (team). |
-| Popover | `apps/web/src/shared/ui/popover.tsx:5` | open / closed | Filter and column-toggle popovers in list toolbars. |
+| Popover | `apps/web/src/shared/ui/popover.tsx:5` | open / closed | Contacts tag filter. |
 | SampleDataBadge | `apps/web/src/shared/ui/sample-data-badge.tsx:3` | default | NEW: «Sample data» label on screens backed by the swappable sample source (inbox, contacts, contact profile). No primitive fits: a fixed-copy Badge. |
 | DataTableToolbar | `apps/web/src/shared/ui/data-table-toolbar.tsx:3` | with / without search; with / without filters | NEW: toolbar row (search slot + filters slot) above a card-wrapped Table; used by Team and Contacts. |
 | EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |

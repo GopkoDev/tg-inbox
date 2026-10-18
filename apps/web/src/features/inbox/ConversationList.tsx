@@ -1,17 +1,9 @@
 import { Link } from 'react-router';
+import { initials } from '@/shared/lib/initials';
 import { cn } from '@/shared/lib/utils';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { Badge } from '@/shared/ui/badge';
 import type { SampleConversation } from './sample-source';
-
-export function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
-}
 
 export function ConversationList({
   conversations,
