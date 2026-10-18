@@ -1,0 +1,687 @@
+{
+  "slug": "shared-inbox",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Promote the expand, backfill and new-table migrations 01–08, regenerate DB types and add the inbox test fixtures",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-11",
+        "AC-18"
+      ],
+      "dod": "Migrations 01–08 are promoted, apply and revert cleanly, the regenerated db.types.gen.ts is committed, the migrations integration test rejects every listed constraint violation, and the new inbox fixtures exist.",
+      "files_hint": [
+        "docs/features/shared-inbox/migrations/",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/conversations.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t01-promote-expand-migrations.md"
+    },
+    {
+      "id": "T2",
+      "title": "Define the inbox zod contracts, the live-frame schemas and the six new error codes",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-05",
+        "AC-07",
+        "AC-11",
+        "AC-12b",
+        "AC-13",
+        "AC-16"
+      ],
+      "dod": "Unit tests prove every openapi.yaml inbox example parses with the new zod schemas, the listed invalid inputs are rejected, live frames parse with unknown fields ignored, and the six new error codes map to their statuses and details.",
+      "files_hint": [
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/inbox.test.ts",
+        "packages/shared/src/index.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/errors.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t02-shared-inbox-contracts.md"
+    },
+    {
+      "id": "T3",
+      "title": "Build platform/realtime: an in-transaction pg_notify publisher and a dedicated-connection listener with reconnect and gap resync",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-09",
+        "AC-15"
+      ],
+      "dod": "Integration tests prove a signal published in a transaction is delivered only on commit, the listener reconnects after a dropped connection and reports a gap, and an invalid payload is dropped and logged by type only.",
+      "files_hint": [
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/platform/realtime.int.test.ts",
+        "apps/api/src/platform/realtime.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t03-platform-realtime.md"
+    },
+    {
+      "id": "T4",
+      "title": "Extend the fake Bot API with sendMessage, getFile and the file download, scriptable per call",
+      "layer": "tests",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-10",
+        "AC-11",
+        "AC-12"
+      ],
+      "dod": "Fake Bot API self-tests pass for every scripted sendMessage answer (ok, 403, 400, 401, 429, 5xx, hang, reset), getFile outcomes and a ranged 5 MB download, and existing bot-connection tests stay green.",
+      "files_hint": [
+        "apps/api/src/test/fake-telegram.ts",
+        "apps/api/src/test/fake-telegram.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t04-fake-telegram-send-and-files.md"
+    },
+    {
+      "id": "T5",
+      "title": "Add the conversations domain rules: reply states and transitions, thread position order and cursors, the arrival-watermark rule",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-03",
+        "AC-11",
+        "AC-12",
+        "AC-15"
+      ],
+      "dod": "Unit tests prove the reply state transitions, the thread order with the same-second message-before-reply rule, cursor encode/decode with malformed input rejected, and the never-lower, clamped arrival watermark.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/domain/reply.ts",
+        "apps/api/src/modules/conversations/domain/reply.test.ts",
+        "apps/api/src/modules/conversations/domain/thread.ts",
+        "apps/api/src/modules/conversations/domain/thread.test.ts",
+        "apps/api/src/modules/conversations/domain/read-state.ts",
+        "apps/api/src/modules/conversations/domain/read-state.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t05-conversations-domain.md"
+    },
+    {
+      "id": "T6",
+      "title": "Add the inbox domain rules: reply text check, delivery outcome to reply state, retry window, per-member limit window",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-07",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-12b",
+        "AC-13"
+      ],
+      "dod": "Unit tests prove the UTF-16 4096 and blank-text rule, every row of the delivery outcome table on both sides of the 5-minute retry window, and the 30-per-60-s limit with its retry time.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/domain/"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t06-inbox-domain.md"
+    },
+    {
+      "id": "T7",
+      "title": "Give workspaces an active-since time, a richer guard result, active-member and display-name lookups and a deactivation signal; promote migration 09",
+      "layer": "app",
+      "deps": [
+        "T1",
+        "T3"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Tests prove active_since is written on join, reactivation and the owner CLI, the guard returns role and active_since, activeMembersAmong and displayNames are workspace-isolated, deactivation publishes membership.deactivated only on commit, and migration 09 applies and reverts.",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/",
+        "apps/api/src/cli/commands/workspace-create.ts",
+        "apps/api/migrations/",
+        "docs/features/shared-inbox/migrations/09_contract_memberships_active_since.up.sql",
+        "apps/api/src/test/fixtures/workspaces.ts",
+        "apps/api/src/platform/db.types.gen.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t07-workspaces-inbox-support.md"
+    },
+    {
+      "id": "T8",
+      "title": "Maintain the conversation list columns on capture and edit, publish conversation.changed, and promote migration 10",
+      "layer": "app",
+      "deps": [
+        "T1",
+        "T3",
+        "T7"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-15"
+      ],
+      "dod": "Integration tests prove capture raises last_message_received_at and last_activity_at, edits move neither, a late redelivery moves the row, conversation.changed is published only on commit, and migration 10 applies and reverts.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/conversations.ts",
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "apps/api/src/modules/conversations/infra/message-repo.ts",
+        "apps/api/migrations/",
+        "docs/features/shared-inbox/migrations/10_contract_conversations_list_columns.up.sql",
+        "apps/api/src/test/fixtures/conversations.ts",
+        "apps/api/src/platform/db.types.gen.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t08-capture-list-columns-and-signals.md"
+    },
+    {
+      "id": "T9",
+      "title": "Build the conversations read side: list page with unread counts, summary, thread page, single items, media reference and mark read",
+      "layer": "infra",
+      "deps": [
+        "T5",
+        "T8"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-03",
+        "AC-15",
+        "AC-18"
+      ],
+      "dod": "Integration tests prove per-member unread counts by arrival and active-since, the waiting marker and last item, merged thread paging, read-mark raise and clamp with a read signal, cross-workspace isolation for every new method, and the 1 000-conversation and 5 000-message reads under 500 ms.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts",
+        "apps/api/src/modules/conversations/app/inbox-reads.ts",
+        "apps/api/src/modules/conversations/infra/list-queries.ts",
+        "apps/api/src/modules/conversations/infra/thread-queries.ts",
+        "apps/api/src/modules/conversations/infra/read-mark-repo.ts",
+        "apps/api/src/modules/conversations/infra/"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t09-conversations-read-side.md"
+    },
+    {
+      "id": "T10",
+      "title": "Build reply creation and re-queueing in conversations: idempotent client key, per-member limit under an advisory lock, teammate check, attempt row and drain job in one transaction",
+      "layer": "infra",
+      "deps": [
+        "T5",
+        "T8"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-12b",
+        "AC-16"
+      ],
+      "dod": "Integration tests prove a repeated client key returns the same reply, 31 concurrent sends by one member store exactly 30 with retry_at for the refusal, the teammate check and its confirmation, re-queue state rules, and that reply, attempt and drain job commit in one transaction.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts",
+        "apps/api/src/modules/conversations/app/replies.ts",
+        "apps/api/src/modules/conversations/infra/reply-repo.ts",
+        "apps/api/src/modules/conversations/infra/reply-repo.int.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t10-conversations-reply-requests.md"
+    },
+    {
+      "id": "T11",
+      "title": "Build the delivery side in conversations: pending replies, in-flight mark, outcome recording, mark sent, stale in-flight and dead-letter resolution",
+      "layer": "infra",
+      "deps": [
+        "T10"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "Integration tests prove pending order, the in-flight mark, every outcome transition with its state signal, the conversation activity and waiting columns updated only on sent, stale in-flight resolution to not_confirmed and idempotent dead-letter resolution.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts",
+        "apps/api/src/modules/conversations/app/replies.ts",
+        "apps/api/src/modules/conversations/infra/reply-repo.ts",
+        "apps/api/src/modules/conversations/infra/delivery.int.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t11-conversations-delivery-side.md"
+    },
+    {
+      "id": "T12",
+      "title": "Add contact search ids and contacts by ids to the contacts module",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-02"
+      ],
+      "dod": "Integration tests prove contact search trims, drops a leading @, matches full name or username case-insensitively in Cyrillic and Latin, escapes wildcards and never returns another workspace's contacts.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/contacts.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/app/fakes.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.int.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t12-contacts-search.md"
+    },
+    {
+      "id": "T13",
+      "title": "Expose the inbox bot status to every member and publish bot.changed on every bot state transition",
+      "layer": "app",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-14"
+      ],
+      "dod": "Unit tests prove the connected, taken_over, needs_token and not_connected mapping to can_reply and receiving, and integration tests prove every bot state transition publishes bot.changed once on commit with no token or name in the status.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/inbox-status.ts",
+        "apps/api/src/modules/bots/app/inbox-status.test.ts",
+        "apps/api/src/modules/bots/app/paste-token.ts",
+        "apps/api/src/modules/bots/app/reconnect.ts",
+        "apps/api/src/modules/bots/app/disconnect.ts",
+        "apps/api/src/modules/bots/app/health-check.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/fakes.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t13-bots-inbox-status.md"
+    },
+    {
+      "id": "T14",
+      "title": "Add sendMessage to the bots gateway as send text, classifying every answer into a typed outcome",
+      "layer": "infra",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-17"
+      ],
+      "dod": "Integration tests against the fake Bot API prove sendText classifies accepted, blocked, account gone, chat not found, 401, 429 with retry_after, 5xx, refused-before-write and timeout correctly, sends plain text with line breaks and logs no token or text.",
+      "files_hint": [
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.int.test.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/fakes.ts",
+        "apps/api/src/modules/bots/app/send-text.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t14-bots-send-text.md"
+    },
+    {
+      "id": "T15",
+      "title": "Add the media stream to the bots gateway: getFile, size check and a ranged byte stream with typed unavailability",
+      "layer": "infra",
+      "deps": [
+        "T4",
+        "T14"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05"
+      ],
+      "dod": "Integration tests against the fake Bot API prove openMedia streams a 5 MB file, forwards a byte range as 206, maps disconnected, needs-token, over-20-MB and gone files to typed reasons and Telegram failures to telegram_unavailable, with no token or download URL in any output or log.",
+      "files_hint": [
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/modules/bots/infra/media.int.test.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/fakes.ts",
+        "apps/api/src/modules/bots/app/open-media.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t15-bots-media-stream.md"
+    },
+    {
+      "id": "T16",
+      "title": "Create the inbox module with its read use cases and routes (list, search, conversation, thread, items, mark read, bot status) and wire it into buildDeps and buildApp",
+      "layer": "ports",
+      "deps": [
+        "T2",
+        "T7",
+        "T9",
+        "T12",
+        "T13"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-08",
+        "AC-18"
+      ],
+      "dod": "app.inject integration tests prove the seven inbox read routes return their contract shapes for both roles, refuse signed-out, foreign and deactivated callers as 401/404/403, answer 404 for foreign ids, keep two workspaces apart for one Telegram user, and the module is wired only through buildDeps and buildApp.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/reads.int.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t16-inbox-reads-and-wiring.md"
+    },
+    {
+      "id": "T17",
+      "title": "Add the sendReply and resendReply use cases and routes with the flow-1 check order and the drain-job hook",
+      "layer": "ports",
+      "deps": [
+        "T6",
+        "T10",
+        "T16"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-11",
+        "AC-12b",
+        "AC-13",
+        "AC-16",
+        "AC-18"
+      ],
+      "dod": "Unit and app.inject tests prove sendReply and resendReply apply the contract's check order, return 201/200 and every typed refusal with its details, store reply, attempt and drain job together, and store nothing on a refusal.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/send-reply.ts",
+        "apps/api/src/modules/inbox/app/send-reply.test.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/replies.int.test.ts",
+        "apps/api/src/modules/inbox/infra/jobs.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t17-inbox-send-and-resend.md"
+    },
+    {
+      "id": "T18",
+      "title": "Build the inbox.deliver-replies drain worker with pre-checks, pacing, outcome handling, back-off jobs and the dead-letter handler",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T11",
+        "T14",
+        "T17"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-13",
+        "AC-17"
+      ],
+      "dod": "Unit and pg-boss integration tests prove the drain delivers per conversation in order without blocking others, never re-sends on timeout or crash, applies the author and bot pre-checks, ends replies after the 5-minute window, resolves dead-lettered jobs, reaches sent within 2 s p95, and leaves zero duplicate deliveries.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/deliver.ts",
+        "apps/api/src/modules/inbox/app/deliver.test.ts",
+        "apps/api/src/modules/inbox/infra/jobs.ts",
+        "apps/api/src/modules/inbox/infra/jobs.int.test.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t18-delivery-drain-worker.md"
+    },
+    {
+      "id": "T19",
+      "title": "Add the openMessageMedia route that streams a customer's media with forced safe headers and typed unavailability",
+      "layer": "ports",
+      "deps": [
+        "T9",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-08"
+      ],
+      "dod": "app.inject tests prove openMessageMedia streams media with allow-listed Content-Type, inline or attachment disposition, nosniff, sandbox CSP and no-store, forwards ranges, answers each MEDIA_UNAVAILABLE reason, 404s foreign or file-less messages, and never exposes the token or a Telegram URL.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/open-media.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/media.int.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t19-media-route.md"
+    },
+    {
+      "id": "T20",
+      "title": "Add the live socket endpoint and hub: guarded upgrade with origin check, per-workspace dispatch, deactivation close, 5 s re-validation, ping and resync",
+      "layer": "ports",
+      "deps": [
+        "T3",
+        "T16"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-15"
+      ],
+      "dod": "Socket integration tests prove the upgrade is guarded and origin-checked, frames reach only their workspace's sockets within 3 s, read frames only the reader, deactivation closes with 4403 at once and within 5 s even without the signal, session end closes with 4401, and a listener gap sends resync.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/infra/hub.ts",
+        "apps/api/src/modules/inbox/infra/hub.test.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/live.int.test.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t20-live-socket-hub.md"
+    },
+    {
+      "id": "T21",
+      "title": "Add the API end-to-end inbox stories and extend the token-secrecy suite to inbox responses, media, socket frames and logs",
+      "layer": "tests",
+      "deps": [
+        "T17",
+        "T18",
+        "T19",
+        "T20"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10",
+        "AC-11",
+        "AC-17",
+        "AC-18"
+      ],
+      "dod": "API end-to-end stories prove capture to reply to customer answer, two-workspace isolation for one Telegram user, blocked-customer handling and at-most-once on double submit, and the extended secrecy suite finds no token or Telegram file URL in any inbox response, media answer, socket frame or log.",
+      "files_hint": [
+        "apps/api/src/e2e/inbox-flows.int.test.ts",
+        "apps/api/src/e2e/helpers.ts",
+        "apps/api/src/modules/bots/http/secrecy.int.test.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t21-api-e2e-and-secrecy.md"
+    },
+    {
+      "id": "T22",
+      "title": "Update CLAUDE.md, the architecture map and the design-system canon for the inbox module, platform/realtime, the delivery queue and the new components",
+      "layer": "docs",
+      "deps": [
+        "T18",
+        "T20",
+        "T26",
+        "T27",
+        "T28"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-15"
+      ],
+      "dod": "CLAUDE.md, docs/architecture-map.md, docs/design-system.md and CONTEXT.md describe the inbox module, platform/realtime, the delivery queue, the new dependency line, the six new or extended components and the nine new glossary terms as built.",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md",
+        "CONTEXT.md"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t22-docs-and-canon.md"
+    },
+    {
+      "id": "T23",
+      "title": "Replace the inbox sample source with the API source, a workspace-keyed store and the realtime client",
+      "layer": "ui",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-15",
+        "AC-18"
+      ],
+      "dod": "Testing Library and unit tests prove the workspace-keyed store resets and closes the socket before rendering on a switch, drops foreign-tagged answers and frames, maps each frame to its refetch, re-reads after reconnect or resync, and stops reconnecting on 4401 and 4403.",
+      "files_hint": [
+        "apps/web/src/features/inbox/api-source.ts",
+        "apps/web/src/features/inbox/store.ts",
+        "apps/web/src/features/inbox/store.test.ts",
+        "apps/web/src/features/inbox/sample-source.ts",
+        "apps/web/src/features/inbox/sample-data.ts",
+        "apps/web/src/shared/api/realtime.ts",
+        "apps/web/src/shared/api/realtime.test.ts",
+        "apps/web/src/shared/api/client.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t23-web-inbox-foundation.md"
+    },
+    {
+      "id": "T24",
+      "title": "Build SCR-01, the conversation list, on real data: rows, search, empty states, the not-receiving notice and live updates",
+      "layer": "ui",
+      "deps": [
+        "T23"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-14"
+      ],
+      "dod": "Testing Library tests prove SCR-01 renders real rows with last item by kind, unread badge and waiting marker newest first, search with no-match and clear, every empty state by bot status and role, the taken-over notice, loading, error and phone states, and no Sample data label.",
+      "files_hint": [
+        "apps/web/src/features/inbox/ConversationList.tsx",
+        "apps/web/src/features/inbox/ConversationList.test.tsx",
+        "apps/web/src/features/inbox/InboxList.tsx",
+        "apps/web/src/pages/InboxPage.tsx",
+        "apps/web/src/shared/ui/empty-filter-state.tsx",
+        "apps/web/src/features/inbox/InboxPreview.tsx"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t24-inbox-list-screen.md"
+    },
+    {
+      "id": "T25",
+      "title": "Build SCR-02's reading side: thread header, paged history, mark read when visible, live items, edits, late redeliveries and phone layout",
+      "layer": "ui",
+      "deps": [
+        "T23"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-15"
+      ],
+      "dod": "Testing Library tests prove SCR-02 shows the header and paged history oldest first with authors, loads older pages keeping the scroll anchor, marks read only in a visible tab, places live, edited and late-redelivered items correctly, shows the not-found card and the phone layout with back.",
+      "files_hint": [
+        "apps/web/src/features/inbox/Thread.tsx",
+        "apps/web/src/features/inbox/Thread.test.tsx",
+        "apps/web/src/features/inbox/MessageBubble.tsx",
+        "apps/web/src/pages/InboxPage.tsx"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t25-inbox-thread-screen.md"
+    },
+    {
+      "id": "T26",
+      "title": "Build MessageContent for every message kind with media fetched through the API client, and SCR-03, the media viewer",
+      "layer": "ui",
+      "deps": [
+        "T25"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05"
+      ],
+      "dod": "Testing Library tests prove MessageContent renders all fifteen kinds with captions, fetches media only through the API media route, shows each content-unavailable reason and the Telegram-not-responding retry, builds the map link only on click, and SCR-03 opens, plays and closes photos and videos.",
+      "files_hint": [
+        "apps/web/src/features/inbox/MessageContent.tsx",
+        "apps/web/src/features/inbox/MessageContent.test.tsx",
+        "apps/web/src/features/inbox/MediaViewer.tsx",
+        "apps/web/src/features/inbox/MediaViewer.test.tsx",
+        "apps/web/src/features/inbox/media.ts",
+        "apps/web/src/features/inbox/MessageBubble.tsx"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t26-message-content-and-viewer.md"
+    },
+    {
+      "id": "T27",
+      "title": "Build the real reply composer and SCR-04: client key and drafts, sending lock, validation, rate limit, bot-unavailable states and the teammate confirmation",
+      "layer": "ui",
+      "deps": [
+        "T25"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07",
+        "AC-12b",
+        "AC-13",
+        "AC-16"
+      ],
+      "dod": "Testing Library tests prove the composer blocks blank and over-4096-UTF-16 text, sends once per Enter with a per-draft client key reused on retry, shows the rate-limit countdown and the role-specific bot-unavailable states, recovers without reload, and SCR-04 keeps editing or sends anyway with the confirmation flag.",
+      "files_hint": [
+        "apps/web/src/features/inbox/ReplyComposer.tsx",
+        "apps/web/src/features/inbox/ReplyComposer.test.tsx",
+        "apps/web/src/features/inbox/reply.ts",
+        "apps/web/src/features/inbox/TeammateRepliedDialog.tsx",
+        "apps/web/src/features/inbox/TeammateRepliedDialog.test.tsx",
+        "apps/web/src/features/inbox/store.ts",
+        "apps/web/src/features/inbox/Thread.tsx"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t27-reply-composer-and-teammate-dialog.md"
+    },
+    {
+      "id": "T28",
+      "title": "Build ReplyDeliveryState with Try again and Send again, and SCR-05, the duplicate-risk confirmation",
+      "layer": "ui",
+      "deps": [
+        "T26",
+        "T27"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-14"
+      ],
+      "dod": "Testing Library tests prove ReplyDeliveryState shows sending, sent, each not-delivered reason with Try again only for telegram_not_accepted and delivery_interrupted, not confirmed with Send again through SCR-05, the taken-over note, resend pending and every resend refusal.",
+      "files_hint": [
+        "apps/web/src/features/inbox/ReplyDeliveryState.tsx",
+        "apps/web/src/features/inbox/ReplyDeliveryState.test.tsx",
+        "apps/web/src/features/inbox/SendAgainDialog.tsx",
+        "apps/web/src/features/inbox/SendAgainDialog.test.tsx",
+        "apps/web/src/features/inbox/MessageBubble.tsx",
+        "apps/web/src/features/inbox/store.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t28-delivery-state-and-resend.md"
+    },
+    {
+      "id": "T29",
+      "title": "Add browser end-to-end inbox flows against the real API and the fake Bot API",
+      "layer": "tests",
+      "deps": [
+        "T21",
+        "T24",
+        "T28"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-06",
+        "AC-09",
+        "AC-13",
+        "AC-15",
+        "AC-16"
+      ],
+      "dod": "Playwright flows prove live arrival across two members, a reply going from Sending to Sent once, the teammate confirmation, bot-unavailable recovery without reload, and the access-removed landing within 5 s of deactivation.",
+      "files_hint": [
+        "apps/web/e2e/inbox.spec.ts",
+        "apps/web/e2e/support/",
+        "apps/web/e2e/global-setup.ts"
+      ],
+      "file": "docs/features/shared-inbox/tasks/t29-inbox-browser-e2e.md"
+    }
+  ]
+}

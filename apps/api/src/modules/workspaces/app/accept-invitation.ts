@@ -154,6 +154,7 @@ export function createAcceptInvitation(deps: AcceptInvitationDeps) {
             lastUsedAt: null,
             deactivatedAt: null,
             createdAt: now,
+            activeSince: now,
           });
           const sessionToken = await sessions.openSession(accountId, tx);
           return {

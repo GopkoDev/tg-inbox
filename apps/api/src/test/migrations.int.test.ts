@@ -87,8 +87,8 @@ describe('workspace-operators migrations', () => {
     await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
               VALUES (${account}, 'm@x.com', 'M', 'h', ${now})`.execute(db);
     const insert = (workspaceId: string, state: string) =>
-      sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at)
-          VALUES (${newId()}, ${workspaceId}, ${account}, 'operator', ${state}, ${now})`.execute(
+      sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+          VALUES (${newId()}, ${workspaceId}, ${account}, 'operator', ${state}, ${now}, ${now})`.execute(
         db,
       );
     await insert(ws, 'active');
@@ -148,8 +148,11 @@ describe('bot-connection migrations', () => {
     const conversationId = newId();
     await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
       VALUES (${contactId}, ${workspaceId}, 1, 'Test User', ${now}, ${now})`.execute(db);
-    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
-      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now})`.execute(db);
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at)
+      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now}, ${now}, ${now})`.execute(
+      db,
+    );
     return conversationId;
   }
 
@@ -244,10 +247,8 @@ describe('bot-connection migrations', () => {
             freshDb,
           )
         ).rows.map((r) => r.table_name);
-      for (let i = 0; i < 4; i++) {
-        const { error } = await migrator.migrateDown();
-        expect(error).toBeUndefined();
-      }
+      const down = await migrator.migrateTo('1791681109978_create_invitations');
+      expect(down.error).toBeUndefined();
       const after = await tables();
       for (const table of BOT_CONNECTION_TABLES) expect(after).not.toContain(table);
       expect(after).toContain('invitations');
@@ -255,6 +256,288 @@ describe('bot-connection migrations', () => {
       expect(error).toBeUndefined();
       const reapplied = await tables();
       for (const table of BOT_CONNECTION_TABLES) expect(reapplied).toContain(table);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const INBOX_TABLES = ['replies', 'reply_attempts', 'read_marks'];
+const LAST_PRE_INBOX = '1791681109982_create_messages';
+
+describe('shared-inbox migrations 01-08', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const now = new Date('2026-01-01T00:00:00Z');
+  const later = new Date('2026-01-02T00:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  /** `listColumns: false` seeds a database migrated down before the list columns exist. */
+  async function seed(handle: Kysely<unknown>, listColumns = true) {
+    const ws = newId();
+    const account = newId();
+    const contact = newId();
+    const conversation = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${now})`.execute(
+      handle,
+    );
+    await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
+      VALUES (${account}, ${`${account}@example.test`}, 'Test User', 'h', ${now})`.execute(handle);
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, 1, 'Test User', ${now}, ${now})`.execute(handle);
+    if (listColumns) {
+      await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+          last_activity_at, last_message_received_at)
+        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now}, ${now}, ${now})`.execute(handle);
+    } else {
+      await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
+        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now})`.execute(handle);
+    }
+    return { ws, account, conversation };
+  }
+
+  async function columns(handle: Kysely<unknown>, table: string): Promise<string[]> {
+    const { rows } = await sql<{ column_name: string }>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = ${table}`.execute(handle);
+    return rows.map((r) => r.column_name);
+  }
+
+  async function tables(handle: Kysely<unknown>): Promise<string[]> {
+    const { rows } = await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`.execute(
+      handle,
+    );
+    return rows.map((r) => r.table_name);
+  }
+
+  function insertReply(
+    s: { ws: string; account: string; conversation: string },
+    o: {
+      clientKey?: string;
+      body?: string;
+      state?: string;
+      reason?: string | null;
+      sentAt?: Date | null;
+      tgId?: number | null;
+    } = {},
+  ) {
+    const state = o.state ?? 'sending';
+    return sql`INSERT INTO replies (id, workspace_id, conversation_id, author_account_id, client_key, body,
+        state, failure_reason, position_at, sent_at, telegram_message_id, created_at)
+      VALUES (${newId()}, ${s.ws}, ${s.conversation}, ${s.account}, ${o.clientKey ?? newId()},
+        ${o.body ?? 'Hello'}, ${state}, ${o.reason ?? null}, ${now}, ${o.sentAt ?? null},
+        ${o.tgId ?? null}, ${now})`.execute(db);
+  }
+
+  async function insertAttempt(
+    s: { ws: string; account: string; conversation: string },
+    kind: string,
+    initiator: string | null,
+  ) {
+    const reply = newId();
+    await sql`INSERT INTO replies (id, workspace_id, conversation_id, author_account_id, client_key, body,
+        state, position_at, created_at)
+      VALUES (${reply}, ${s.ws}, ${s.conversation}, ${s.account}, ${newId()}, 'Hello', 'sending', ${now}, ${now})`.execute(
+      db,
+    );
+    return sql`INSERT INTO reply_attempts (id, workspace_id, conversation_id, reply_id, kind,
+        initiated_by_account_id, created_at)
+      VALUES (${newId()}, ${s.ws}, ${s.conversation}, ${reply}, ${kind}, ${initiator}, ${now})`.execute(
+      db,
+    );
+  }
+
+  it('adds the expand columns and the three new tables', async () => {
+    expect(await columns(db, 'memberships')).toContain('active_since');
+    const conv = await columns(db, 'conversations');
+    for (const c of ['last_activity_at', 'last_message_received_at', 'last_reply_sent_at'])
+      expect(conv).toContain(c);
+    const names = await tables(db);
+    for (const t of INBOX_TABLES) expect(names).toContain(t);
+    const { rows } = await sql<{ indexname: string }>`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public'`.execute(db);
+    const idx = rows.map((r) => r.indexname);
+    for (const i of [
+      'replies_pending_idx',
+      'replies_conversation_id_position_at_idx',
+      'replies_workspace_id_sent_at_idx',
+      'replies_author_account_id_idx',
+      'messages_conversation_id_received_at_idx',
+      'messages_conversation_id_sent_at_idx',
+    ])
+      expect(idx).toContain(i);
+  });
+
+  it('rejects a second reply with the same client key in a conversation (AC-11)', async () => {
+    const s = await seed(db);
+    const clientKey = newId();
+    await insertReply(s, { clientKey });
+    await expect(insertReply(s, { clientKey })).rejects.toThrow(
+      /replies_conversation_id_client_key_key/,
+    );
+    await insertReply(s, { body: 'Hello' });
+    await insertReply(s, { body: 'Hello' });
+  });
+
+  it('rejects a blank and an over-long reply body', async () => {
+    const s = await seed(db);
+    await expect(insertReply(s, { body: '  \n' })).rejects.toThrow(/replies_body_check/);
+    await expect(insertReply(s, { body: 'x'.repeat(4097) })).rejects.toThrow(/replies_body_check/);
+    await insertReply(s, { body: 'x'.repeat(4096) });
+  });
+
+  it('rejects inconsistent reply state columns', async () => {
+    const s = await seed(db);
+    await expect(insertReply(s, { state: 'sent', tgId: 5 })).rejects.toThrow(
+      /replies_sent_at_state_check/,
+    );
+    await expect(insertReply(s, { state: 'sent', sentAt: later })).rejects.toThrow(
+      /replies_telegram_message_id_state_check/,
+    );
+    await expect(insertReply(s, { state: 'not_delivered' })).rejects.toThrow(
+      /replies_failure_reason_state_check/,
+    );
+    await expect(insertReply(s, { state: 'sending', reason: 'customer_blocked' })).rejects.toThrow(
+      /replies_failure_reason_state_check/,
+    );
+    await expect(insertReply(s, { state: 'dancing' })).rejects.toThrow(/replies_state_check/);
+    await expect(insertReply(s, { state: 'not_delivered', reason: 'because' })).rejects.toThrow(
+      /replies_failure_reason_check/,
+    );
+    await insertReply(s, { state: 'sent', sentAt: later, tgId: 5 });
+    await insertReply(s, { state: 'not_delivered', reason: 'delivery_interrupted' });
+  });
+
+  it('ties reply_attempts.initiated_by_account_id to kind', async () => {
+    const s = await seed(db);
+    await expect(insertAttempt(s, 'retry', s.account)).rejects.toThrow(
+      /reply_attempts_initiator_check/,
+    );
+    await expect(insertAttempt(s, 'send', null)).rejects.toThrow(/reply_attempts_initiator_check/);
+    await insertAttempt(s, 'send', s.account);
+    await insertAttempt(s, 'retry', null);
+  });
+
+  it('constrains reply_attempts outcome and skipped', async () => {
+    const s = await seed(db);
+    await insertAttempt(s, 'send', s.account);
+    const { rows } = await sql<{
+      id: string;
+    }>`SELECT id FROM reply_attempts WHERE conversation_id = ${s.conversation}`.execute(db);
+    const id = rows[0]!.id;
+    await expect(
+      sql`UPDATE reply_attempts SET outcome = 'bogus', finished_at = ${later} WHERE id = ${id}`.execute(
+        db,
+      ),
+    ).rejects.toThrow(/reply_attempts_outcome_check/);
+    await expect(
+      sql`UPDATE reply_attempts SET outcome = 'accepted', finished_at = ${later} WHERE id = ${id}`.execute(
+        db,
+      ),
+    ).rejects.toThrow(/reply_attempts_skipped_check/);
+    await expect(
+      sql`UPDATE reply_attempts SET outcome = 'skipped', started_at = ${now}, finished_at = ${later} WHERE id = ${id}`.execute(
+        db,
+      ),
+    ).rejects.toThrow(/reply_attempts_skipped_check/);
+    await sql`UPDATE reply_attempts SET outcome = 'skipped', finished_at = ${later} WHERE id = ${id}`.execute(
+      db,
+    );
+  });
+
+  it('rejects a second read mark for one conversation and account', async () => {
+    const s = await seed(db);
+    const insert = () =>
+      sql`INSERT INTO read_marks (id, workspace_id, conversation_id, account_id, read_through_at, created_at)
+        VALUES (${newId()}, ${s.ws}, ${s.conversation}, ${s.account}, ${now}, ${now})`.execute(db);
+    await insert();
+    await expect(insert()).rejects.toThrow(/read_marks_conversation_id_account_id_key/);
+  });
+
+  it('backfills active_since and the conversation list columns on existing rows', async () => {
+    const fresh = await startTestDatabase({
+      migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+    });
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const downTo = await migrator.migrateTo(LAST_PRE_INBOX);
+      expect(downTo.error).toBeUndefined();
+      expect(await columns(freshDb, 'memberships')).not.toContain('active_since');
+      const s = await seed(freshDb, false);
+      await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at)
+        VALUES (${newId()}, ${s.ws}, ${s.account}, 'operator', 'active', ${now})`.execute(freshDb);
+      for (const [n, at] of [
+        [1, now],
+        [2, later],
+      ] as const)
+        await sql`INSERT INTO messages (id, workspace_id, conversation_id, telegram_message_id, kind, body,
+            telegram_message, sent_at, received_at)
+          VALUES (${newId()}, ${s.ws}, ${s.conversation}, ${n}, 'text', 'hi',
+            ${JSON.stringify({ message_id: n })}::jsonb, ${at}, ${at})`.execute(freshDb);
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      const m = await sql<{ active_since: Date }>`SELECT active_since FROM memberships`.execute(
+        freshDb,
+      );
+      expect(m.rows[0]?.active_since).toEqual(now);
+      const c = await sql<{
+        last_activity_at: Date;
+        last_message_received_at: Date;
+        last_reply_sent_at: Date | null;
+      }>`SELECT last_activity_at, last_message_received_at, last_reply_sent_at FROM conversations`.execute(
+        freshDb,
+      );
+      expect(c.rows[0]?.last_activity_at).toEqual(later);
+      expect(c.rows[0]?.last_message_received_at).toEqual(later);
+      expect(c.rows[0]?.last_reply_sent_at).toBeNull();
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('reverts and re-applies the inbox migrations', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const down = await migrator.migrateTo(LAST_PRE_INBOX);
+      expect(down.error).toBeUndefined();
+      const after = await tables(freshDb);
+      for (const t of INBOX_TABLES) expect(after).not.toContain(t);
+      expect(await columns(freshDb, 'memberships')).not.toContain('active_since');
+      expect(await columns(freshDb, 'conversations')).not.toContain('last_activity_at');
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      for (const t of INBOX_TABLES) expect(await tables(freshDb)).toContain(t);
     } finally {
       await freshDb.destroy();
       await fresh.stop();

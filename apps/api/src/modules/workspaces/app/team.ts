@@ -1,3 +1,6 @@
+import type { Transaction } from 'kysely';
+import type { DB } from '../../../platform/db.types.gen.js';
+import type { RealtimeSignal } from '../../../platform/realtime.js';
 import type { Clock } from '../../../platform/clock.js';
 import {
   AlreadyAMemberError as AlreadyAMemberConflict,
@@ -30,6 +33,8 @@ export interface TeamDeps {
   uow: UnitOfWork;
   clock: Clock;
   accounts: TeamAccounts;
+  /** `platform/realtime` publish: emits in the caller's transaction (injected by the composition root). */
+  publish: (tx: Transaction<DB>, signal: RealtimeSignal) => Promise<void>;
   /** PUBLIC_WEB_URL from config, injected by the composition root. */
   publicWebUrl: string;
 }
@@ -229,12 +234,18 @@ export function createTeam(deps: TeamDeps) {
     },
 
     async deactivateMembership(workspaceId: string, membershipId: string): Promise<MemberView> {
-      return uow.run(async (repos) => {
+      return uow.run(async (repos, tx) => {
         const m = await lockedMembership(repos, workspaceId, membershipId);
         if (m.state === 'active') {
           if (m.role === 'owner') await assertAnotherActiveOwner(repos, workspaceId, m);
           const next = deactivate(m, clock.now());
           await repos.memberships.setState(workspaceId, m.id, next.state, next.deactivatedAt);
+          await deps.publish(tx, {
+            type: 'membership.deactivated',
+            v: 1,
+            workspace_id: workspaceId,
+            account_id: m.accountId,
+          });
         }
         return reload(repos, workspaceId, m);
       });
@@ -245,7 +256,13 @@ export function createTeam(deps: TeamDeps) {
         const m = await lockedMembership(repos, workspaceId, membershipId);
         if (m.state === 'deactivated') {
           const next = reactivate(m);
-          await repos.memberships.setState(workspaceId, m.id, next.state, next.deactivatedAt);
+          await repos.memberships.setState(
+            workspaceId,
+            m.id,
+            next.state,
+            next.deactivatedAt,
+            clock.now(),
+          );
         }
         return reload(repos, workspaceId, m);
       });

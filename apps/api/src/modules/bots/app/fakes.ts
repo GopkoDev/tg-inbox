@@ -4,10 +4,13 @@ import type {
   LiveRowGuard,
   BotRecord,
   BotRepo,
+  BotSignals,
   ContactsApi,
+  FileFetch,
   ConversationsApi,
   GetMeResult,
   NewBot,
+  SendOutcome,
   TelegramGateway,
   Transaction,
   WebhookTarget,
@@ -129,11 +132,15 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
 }
 
 export interface GatewayCall {
-  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook';
+  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook' | 'sendText' | 'openFile';
   token: string;
   timeoutMs: number;
   webhook?: { url: string; secret: string; dropPending: boolean };
   ourUrl?: string;
+  chatId?: bigint;
+  text?: string;
+  fileReference?: string;
+  range?: string | undefined;
 }
 
 /** Scriptable TelegramGateway for unit tests: set the next answers, read the calls made. */
@@ -143,6 +150,8 @@ export function fakeGateway(): TelegramGateway & {
   webhook: WebhookTarget;
   setResult: 'ok' | 'failed';
   deleteResult: 'ok' | 'failed';
+  sendResult: SendOutcome;
+  fileResult: FileFetch;
 } {
   const fake = {
     calls: [] as GatewayCall[],
@@ -155,6 +164,16 @@ export function fakeGateway(): TelegramGateway & {
     webhook: 'ours' as WebhookTarget,
     setResult: 'ok' as 'ok' | 'failed',
     deleteResult: 'ok' as 'ok' | 'failed',
+    sendResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as SendOutcome,
+    fileResult: { outcome: 'gone' } as FileFetch,
+    async openFile(token: string, fileReference: string, range: string | undefined) {
+      fake.calls.push({ method: 'openFile', token, timeoutMs: 0, fileReference, range });
+      return fake.fileResult;
+    },
+    async sendText(token: string, chatId: bigint, text: string, timeoutMs: number) {
+      fake.calls.push({ method: 'sendText', token, timeoutMs, chatId, text });
+      return fake.sendResult;
+    },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });
       return fake.me;
@@ -183,15 +202,32 @@ export function fakeGateway(): TelegramGateway & {
  * A fake transaction over a fake BotRepo: runs `fn` and, when it throws, restores the rows it
  * started from — the rollback the real transaction gives.
  */
-export function fakeBotTransaction(repo: { rows: FakeBotRow[] }): Transaction {
+export function fakeBotTransaction(
+  repo: { rows: FakeBotRow[] },
+  signals?: { published: string[] },
+): Transaction {
   return async (fn) => {
     const snapshot = repo.rows.map((r) => ({ ...r }));
+    const published = signals?.published.length ?? 0;
     try {
       return await fn(undefined as never);
     } catch (err) {
       repo.rows.splice(0, repo.rows.length, ...snapshot);
+      // A signal published in a rolled-back transaction is never delivered.
+      signals?.published.splice(published);
       throw err;
     }
+  };
+}
+
+/** Records the workspace of every `bot.changed` signal published. */
+export function fakeBotSignals(): BotSignals & { published: string[] } {
+  const published: string[] = [];
+  return {
+    published,
+    async botChanged(_tx, workspaceId) {
+      published.push(workspaceId);
+    },
   };
 }
 

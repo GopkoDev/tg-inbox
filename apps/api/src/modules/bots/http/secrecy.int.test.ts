@@ -1,7 +1,7 @@
 import { Writable } from 'node:stream';
 import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
 import { sql } from 'kysely';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
   BotIdentity,
@@ -13,11 +13,13 @@ import {
 } from '@tg/shared';
 import { buildApp } from '../../../app.js';
 import { buildDeps } from '../../../deps.js';
+import { newId } from '../../../platform/ids.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { startFakeTelegram, type FakeTelegram } from '../../../test/fake-telegram.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
 import { fakeBotToken } from '../../../test/fixtures/bots.js';
 import { signedDelivery, telegramEdit, telegramUpdate } from '../../../test/fixtures/telegram.js';
+import { sendAnswers } from '../../../test/fake-telegram.js';
 import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../../../test/postgres.js';
 
@@ -90,6 +92,7 @@ describe('token secrecy across every bot flow (postgres + fake Bot API)', () => 
     const bot = `/api/workspaces/${workspaceId}/bot`;
     return {
       workspaceId,
+      cookies,
       get: async () => record(await app.inject({ method: 'GET', url: bot, cookies })),
       post: async (path: string, payload?: object) =>
         record(
@@ -288,6 +291,155 @@ describe('token secrecy across every bot flow (postgres + fake Bot API)', () => 
     }
     expect(log).not.toContain(apiHost);
   });
+
+  it('inbox responses, media, socket frames and logs carry no bot token or file URL (inbox extension)', async () => {
+    const acme = await owner();
+    const botId = nextBot++;
+    const token = newToken(botId);
+    fake.bot(token).script({
+      files: { 'file-p-m': { path: 'photos/secret-path.jpg', size: 4096 } },
+      sendMessage: [sendAnswers.ok(501), sendAnswers.blocked()],
+    });
+    expect((await acme.post('/token', { token })).statusCode).toBe(200);
+    const hook = webhookOf(token);
+    const inbox = `/api/workspaces/${acme.workspaceId}/inbox`;
+    const { cookies } = acme;
+    const seen: string[] = [];
+    const read = async (url: string) => {
+      const res = await app.inject({ method: 'GET', url, cookies });
+      expect(res.statusCode, url).toBe(200);
+      bodies.push(res.body, JSON.stringify(res.headers));
+      seen.push(res.body, JSON.stringify(res.headers));
+      return res;
+    };
+    const send = async (url: string, payload: object) => {
+      const res = await app.inject({ method: 'POST', url, cookies, payload });
+      bodies.push(res.body, JSON.stringify(res.headers));
+      seen.push(res.body, JSON.stringify(res.headers));
+      return res;
+    };
+
+    // A live socket for the whole story: every frame is kept.
+    await app.ready();
+    const frames: string[] = [];
+    const socket = await app.injectWS(`${inbox}/live`, {
+      headers: { cookie: `session=${cookies.session}`, origin: 'http://localhost:5173' },
+    });
+    socket.on('message', (data: Buffer) => frames.push(String(data)));
+
+    clock.advance(MINUTE);
+    const t = Math.floor(clock.now().getTime() / 1000);
+    const from = { fromId: 940777 };
+    await deliver(
+      hook,
+      telegramUpdate({
+        ...from,
+        updateId: nextUpdate++,
+        messageId: 1,
+        date: t,
+        text: say('Inbox probe text'),
+      }),
+    );
+    await deliver(
+      hook,
+      telegramUpdate({
+        ...from,
+        updateId: nextUpdate++,
+        messageId: 2,
+        date: t,
+        kind: 'photo',
+        caption: say('Inbox probe photo'),
+      }),
+    );
+
+    const page = JSON.parse((await read(inbox + '/conversations')).body);
+    const conv = page.items[0].id as string;
+    await read(`${inbox}/conversations/${conv}`);
+    const items = JSON.parse((await read(`${inbox}/conversations/${conv}/items`)).body).items;
+    const photo = items.find((i: { kind?: string }) => i.kind === 'photo');
+    expect(photo).toBeDefined();
+    await read(`${inbox}/bot`);
+
+    // Media: headers and body, whole and ranged; no redirect to a file URL.
+    const mediaUrl = `${inbox}/conversations/${conv}/messages/${photo.id}/media`;
+    const media = await app.inject({ method: 'GET', url: mediaUrl, cookies });
+    expect(media.statusCode).toBe(200);
+    expect(media.headers.location).toBeUndefined();
+    expect(media.rawPayload.length).toBe(4096);
+    seen.push(media.rawPayload.toString('latin1'), JSON.stringify(media.headers));
+    const ranged = await app.inject({
+      method: 'GET',
+      url: mediaUrl,
+      cookies,
+      headers: { range: 'bytes=0-99' },
+    });
+    expect(ranged.statusCode).toBe(206);
+    seen.push(ranged.rawPayload.toString('latin1'), JSON.stringify(ranged.headers));
+    // A gone file answers a typed refusal that does not echo Telegram.
+    fake.bot(token).script({ files: { 'file-p-m': 'not_found' } });
+    const gone = await app.inject({ method: 'GET', url: mediaUrl, cookies });
+    seen.push(gone.body, JSON.stringify(gone.headers));
+    expect(gone.statusCode).toBeGreaterThanOrEqual(400);
+
+    // Replies: sent, then refused by Telegram (blocked); a reply may quote another bot's token.
+    fake.bot(token).script({
+      files: { 'file-p-m': { path: 'photos/secret-path.jpg', size: 4096 } },
+      sendMessage: [sendAnswers.ok(501), sendAnswers.blocked()],
+    });
+    const otherBot = fakeBotToken(777000n);
+    const replyTexts = [say('Reply one\nline two'), say(`Use this: ${otherBot}`)];
+    for (const text of replyTexts) {
+      const res = await send(`${inbox}/conversations/${conv}/replies`, {
+        client_key: newId(),
+        body: text,
+        last_seen_reply_id: null,
+      });
+      expect(res.statusCode).toBe(201);
+      const id = JSON.parse(res.body).id as string;
+      await vi.waitFor(
+        async () => {
+          const row = await deps.db
+            .selectFrom('replies')
+            .select('state')
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow();
+          expect(row.state).not.toBe('sending');
+        },
+        { timeout: 10_000, interval: 100 },
+      );
+    }
+    await read(`${inbox}/conversations/${conv}/items`);
+    await vi.waitFor(() => expect(frames.length).toBeGreaterThan(0), { timeout: 5000 });
+    socket.terminate();
+
+    // --- the assertions: this bot's token (and secret part), the webhook secret, any file URL ---
+    const forbidden = [
+      token,
+      token.slice(token.indexOf(':') + 1),
+      `/bot${token}`,
+      hook.secret,
+      'api.telegram.org/file',
+      '/file/bot',
+      'secret-path.jpg',
+      new URL(fake.apiRoot).host,
+    ];
+    const everything = [...seen, ...frames];
+    expect(seen.length).toBeGreaterThan(8);
+    const log = lines.join('\n');
+    for (const value of forbidden) {
+      for (const chunk of everything) {
+        expect(
+          chunk.includes(value),
+          `an inbox response/frame contains ${value.slice(0, 12)}…`,
+        ).toBe(false);
+      }
+      expect(log.includes(value), `the log contains ${value.slice(0, 12)}…`).toBe(false);
+    }
+    // Message and reply texts stay out of the logs as well.
+    for (const text of [...texts.slice(-4), ...replyTexts]) {
+      expect(log.includes(text), `the log contains a message text`).toBe(false);
+    }
+  }, 60_000);
 
   it('the request log of a webhook delivery carries no secret header; a logged header bag is redacted', () => {
     const webhookRequests = lines.filter(

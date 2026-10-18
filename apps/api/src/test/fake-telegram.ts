@@ -73,6 +73,37 @@ export const RECORDED = {
 export type GetMeBehaviour = 'ok' | 'unauthorized' | 'server_error' | 'rate_limited' | 'hang';
 export type CallBehaviour = 'ok' | 'fail' | 'hang';
 
+/** One scripted `sendMessage` answer — plain JSON so it crosses the control API. */
+export type SendAnswer =
+  | { kind: 'ok'; messageId: number }
+  | { kind: 'error'; status: number; body: unknown }
+  | { kind: 'hang'; ms: number }
+  | { kind: 'reset' };
+
+const failure = (status: number, description: string, parameters?: object): SendAnswer => ({
+  kind: 'error',
+  status,
+  body: { ok: false, error_code: status, description, ...(parameters && { parameters }) },
+});
+
+export const sendAnswers = {
+  ok: (messageId: number): SendAnswer => ({ kind: 'ok', messageId }),
+  blocked: () => failure(403, 'Forbidden: bot was blocked by the user'),
+  deactivated: () => failure(403, 'Forbidden: user is deactivated'),
+  chatNotFound: () => failure(400, 'Bad Request: chat not found'),
+  unauthorized: (): SendAnswer => ({ kind: 'error', status: 401, body: RECORDED.unauthorized }),
+  serverError: (): SendAnswer => ({ kind: 'error', status: 500, body: RECORDED.serverError }),
+  tooMany: (retryAfter: number) =>
+    failure(429, `Too Many Requests: retry after ${retryAfter}`, { retry_after: retryAfter }),
+  /** Holds the request for `ms`, then answers ok; released early by reset()/stop(). */
+  hang: (ms: number): SendAnswer => ({ kind: 'hang', ms }),
+  /** Records the call, then destroys the socket without an answer. */
+  resetAfterWrite: (): SendAnswer => ({ kind: 'reset' }),
+};
+
+/** A file Telegram knows (`path`, `size` bytes), or why it refuses to hand it out. */
+export type FileScript = { path: string; size: number } | 'too_big' | 'not_found';
+
 export interface BotScript {
   /** Identity returned by getMe; defaults derive from the token id (`Test Bot <id>`). */
   me?: { first_name?: string; username?: string };
@@ -82,6 +113,10 @@ export interface BotScript {
   getWebhookInfo?: CallBehaviour;
   setWebhook?: CallBehaviour;
   deleteWebhook?: CallBehaviour;
+  /** `sendMessage` answers, consumed one per call; afterwards every call is answered ok. */
+  sendMessage?: SendAnswer[];
+  /** `getFile` outcomes and downloadable files by `file_id`. */
+  files?: Record<string, FileScript>;
 }
 
 export interface RecordedCall {
@@ -103,6 +138,7 @@ export interface FakeTelegram {
 
 interface BotState extends BotScript {
   webhookUrl: string;
+  lastMessageId: number;
 }
 
 const PATH = /^\/bot([^/]+)\/([A-Za-z]+)$/;
@@ -118,6 +154,7 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
   const bots = new Map<string, BotState>();
   let recorded: RecordedCall[] = [];
   const hanging = new Set<ServerResponse>();
+  const timers = new Set<NodeJS.Timeout>();
 
   function send(res: ServerResponse, status: number, body: unknown): void {
     res.writeHead(status, { 'content-type': 'application/json' });
@@ -130,8 +167,117 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
   }
 
   function dropHanging(): void {
+    for (const timer of timers) clearTimeout(timer);
+    timers.clear();
     for (const res of hanging) res.socket?.destroy();
     hanging.clear();
+  }
+
+  function sendOk(
+    res: ServerResponse,
+    bot: BotState,
+    params: Record<string, unknown>,
+    id?: number,
+  ) {
+    bot.lastMessageId = id ?? bot.lastMessageId + 1;
+    return send(res, 200, {
+      ok: true,
+      result: {
+        message_id: bot.lastMessageId,
+        date: Math.floor(Date.now() / 1000),
+        chat: { id: params.chat_id, type: 'private' },
+        text: params.text,
+      },
+    });
+  }
+
+  function answerSend(res: ServerResponse, bot: BotState, params: Record<string, unknown>) {
+    const next = bot.sendMessage?.shift();
+    if (!next) return sendOk(res, bot, params);
+    switch (next.kind) {
+      case 'ok':
+        return sendOk(res, bot, params, next.messageId);
+      case 'error':
+        return send(res, next.status, next.body);
+      case 'reset':
+        return res.socket?.destroy();
+      case 'hang': {
+        hang(res);
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          hanging.delete(res);
+          sendOk(res, bot, params);
+        }, next.ms);
+        timers.add(timer);
+        return;
+      }
+    }
+  }
+
+  function answerGetFile(res: ServerResponse, bot: BotState, params: Record<string, unknown>) {
+    const fileId = String(params.file_id ?? '');
+    const file = bot.files?.[fileId];
+    if (file === 'too_big') {
+      return send(res, 400, {
+        ok: false,
+        error_code: 400,
+        description: 'Bad Request: file is too big',
+      });
+    }
+    if (!file || file === 'not_found') {
+      return send(res, 400, {
+        ok: false,
+        error_code: 400,
+        description: 'Bad Request: invalid file_id',
+      });
+    }
+    return send(res, 200, {
+      ok: true,
+      result: {
+        file_id: fileId,
+        file_unique_id: `unique-${fileId}`,
+        file_path: file.path,
+        file_size: file.size,
+      },
+    });
+  }
+
+  /** Deterministic bytes: the byte at offset i is the same on every request. */
+  function download(req: IncomingMessage, res: ServerResponse, url: URL): void {
+    const match = /^\/file\/bot([^/]+)\/(.+)$/.exec(url.pathname);
+    const bot = match && bots.get(match[1]!);
+    if (!match || !bot) return send(res, 401, RECORDED.unauthorized);
+    const path = decodeURIComponent(match[2]!);
+    const file = Object.values(bot.files ?? {}).find(
+      (f): f is { path: string; size: number } => typeof f === 'object' && f.path === path,
+    );
+    if (!file) return send(res, 404, { ok: false, error_code: 404, description: 'Not Found' });
+    const { size } = file;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range ?? '');
+    let start = 0;
+    let end = size - 1;
+    if (range && (range[1] || range[2])) {
+      if (range[1]) {
+        start = Number(range[1]);
+        if (range[2]) end = Math.min(Number(range[2]), size - 1);
+      } else {
+        start = Math.max(size - Number(range[2]), 0);
+      }
+      if (start >= size || start > end) {
+        res.writeHead(416, { 'content-range': `bytes */${size}` });
+        return void res.end();
+      }
+    }
+    const body = Buffer.alloc(end - start + 1);
+    for (let i = 0; i < body.length; i++) body[i] = ((start + i) * 31 + 7) & 0xff;
+    const partial = range !== null;
+    res.writeHead(partial ? 206 : 200, {
+      'content-type': 'application/octet-stream',
+      'content-length': body.length,
+      'accept-ranges': 'bytes',
+      ...(partial && { 'content-range': `bytes ${start}-${end}/${size}` }),
+    });
+    res.end(body);
   }
 
   function answer(
@@ -178,6 +324,10 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
       );
     }
     switch (method) {
+      case 'sendMessage':
+        return answerSend(res, bot, params);
+      case 'getFile':
+        return answerGetFile(res, bot, params);
       case 'getWebhookInfo':
         return send(res, 200, {
           ok: true,
@@ -229,6 +379,8 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
 
   const server = createServer((req, res) => {
     if (control(req, res)) return;
+    const url = new URL(req.url ?? '/', 'http://fake');
+    if (url.pathname.startsWith('/file/bot')) return download(req, res, url);
     const match = PATH.exec(req.url ?? '');
     if (!match) return send(res, 404, { ok: false, error_code: 404, description: 'Not Found' });
     const [, token = '', method = ''] = match;
@@ -249,7 +401,12 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
     bot(token) {
       return {
         script(script) {
-          bots.set(token, { ...script, webhookUrl: script.webhookUrl ?? '' });
+          bots.set(token, {
+            ...script,
+            sendMessage: [...(script.sendMessage ?? [])],
+            webhookUrl: script.webhookUrl ?? '',
+            lastMessageId: 0,
+          });
         },
       };
     },

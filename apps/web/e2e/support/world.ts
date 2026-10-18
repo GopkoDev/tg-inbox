@@ -44,7 +44,13 @@ export interface World {
   /** Scripts the fake Bot API for a token (identity, webhook URL, failures). */
   scriptBot(token: string, script: BotScript): Promise<void>;
   /** A customer's private message posted to the bot's webhook with the secret Telegram was given. */
-  customerWrites(token: string, fromId: number, text: string): Promise<number>;
+  customerWrites(token: string, fromId: number, text: string, firstName?: string): Promise<number>;
+  /** An owner connects the workspace's bot over HTTP (the inbox flows start from a connected bot). */
+  connectBot(ownerEmail: string, workspaceId: string, token: string): Promise<void>;
+  /** An owner deactivates the member with this email over HTTP. */
+  deactivate(ownerEmail: string, workspaceId: string, memberEmail: string): Promise<void>;
+  /** The `sendMessage` calls the fake Bot API has received for a token. */
+  sentMessages(token: string): Promise<Record<string, unknown>[]>;
   /** One health-check tick through the app layer, as if run once the bots are due (not waited for). */
   healthTick(): Promise<void>;
 }
@@ -140,7 +146,31 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
       scriptBot(token, script) {
         return fake.script(token, script);
       },
-      async customerWrites(token, fromId, text) {
+      async connectBot(ownerEmail, workspaceId, token) {
+        const device = owners.get(ownerEmail);
+        if (!device) throw new Error(`no seeded owner ${ownerEmail}`);
+        const res = await device.post(`/api/workspaces/${workspaceId}/bot/token`, { token });
+        if (res.statusCode !== 200) throw new Error(`connect bot failed: ${res.body}`);
+      },
+      async deactivate(ownerEmail, workspaceId, memberEmail) {
+        const device = owners.get(ownerEmail);
+        if (!device) throw new Error(`no seeded owner ${ownerEmail}`);
+        const list = await device.get(`/api/workspaces/${workspaceId}/memberships`);
+        const found = (list.json().items as { id: string; email: string }[]).find(
+          (m) => m.email === memberEmail,
+        );
+        if (!found) throw new Error(`no member ${memberEmail}`);
+        const res = await device.post(
+          `/api/workspaces/${workspaceId}/memberships/${found.id}/deactivate`,
+        );
+        if (res.statusCode !== 200) throw new Error(`deactivate failed: ${res.body}`);
+      },
+      async sentMessages(token) {
+        return (await fake.calls(token))
+          .filter((c) => c.method === 'sendMessage')
+          .map((c) => c.params);
+      },
+      async customerWrites(token, fromId, text, firstName) {
         const set = (await fake.calls(token)).filter((c) => c.method === 'setWebhook').at(-1);
         if (!set) throw new Error('the bot has no webhook registered');
         const url = String(set.params.url);
@@ -155,6 +185,7 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
             date: Math.floor(Date.now() / 1000),
             fromId,
             text,
+            ...(firstName && { from: { first_name: firstName } }),
           }),
         );
         return res.statusCode;

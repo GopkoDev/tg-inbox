@@ -141,3 +141,18 @@ describe('disconnect (flow 7, AC-18)', () => {
     expect(h.bots.rows[0]).toMatchObject({ state: 'disconnected', webhookSecret: null });
   });
 });
+
+describe('disconnect publishes bot.changed (AC-13)', () => {
+  it.each([true, false])('once, whether the row is kept (%s) or deleted', async (kept) => {
+    const h = createBotsHarness([botRow()]);
+    if (kept) h.conversations.withConversations.add('ws-a');
+    await h.disconnect.disconnect('ws-a');
+    expect(h.signals.published).toEqual(['ws-a']);
+  });
+
+  it('a refused disconnect signals nothing', async () => {
+    const h = createBotsHarness();
+    await refusal(h.disconnect.disconnect('ws-a'));
+    expect(h.signals.published).toEqual([]);
+  });
+});

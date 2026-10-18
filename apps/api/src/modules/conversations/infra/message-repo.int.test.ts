@@ -1,3 +1,4 @@
+import { newId } from '../../../platform/ids.js';
 import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../../platform/db.js';
@@ -41,6 +42,7 @@ describe('message repository', () => {
       .execute();
 
   const message = (conversationId: string, telegramMessageId: bigint, body = 'Hello') => ({
+    id: newId(),
     conversationId,
     telegramMessageId,
     kind: 'text' as const,
@@ -217,5 +219,15 @@ describe('message repository', () => {
     expect(plan.map((r) => String(r['QUERY PLAN'])).join('\n')).toContain(
       'messages_workspace_id_received_at_idx',
     );
+  });
+
+  it('findId returns the captured message id, only inside its own workspace', async () => {
+    const { w, conversationId } = await conversation();
+    const m = message(conversationId, 40n);
+    await repo.insertOnce(w, m, at(100));
+    expect(await repo.findId(w, conversationId, 40n)).toBe(m.id);
+    expect(await repo.findId(w, conversationId, 41n)).toBeNull();
+    const other = await conversation();
+    expect(await repo.findId(other.w, conversationId, 40n)).toBeNull();
   });
 });

@@ -18,6 +18,7 @@ function toRecord(row: Selectable<Memberships>): MembershipRecord {
     lastUsedAt: row.last_used_at,
     deactivatedAt: row.deactivated_at,
     createdAt: row.created_at,
+    activeSince: row.active_since,
   };
 }
 
@@ -36,6 +37,7 @@ export class KyselyMembershipRepo implements MembershipRepo {
         last_used_at: m.lastUsedAt,
         deactivated_at: m.deactivatedAt,
         created_at: m.createdAt,
+        active_since: m.activeSince,
       })
       .execute();
   }
@@ -101,14 +103,45 @@ export class KyselyMembershipRepo implements MembershipRepo {
     membershipId: string,
     state: MembershipState,
     deactivatedAt: Date | null,
+    activeSince?: Date,
   ): Promise<boolean> {
     const res = await this.db
       .updateTable('memberships')
-      .set({ state, deactivated_at: deactivatedAt })
+      .set({
+        state,
+        deactivated_at: deactivatedAt,
+        ...(activeSince ? { active_since: activeSince } : {}),
+      })
       .where('workspace_id', '=', workspaceId)
       .where('id', '=', membershipId)
       .executeTakeFirst();
     return Number(res.numUpdatedRows) > 0;
+  }
+
+  async accountIdsAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]> {
+    if (accountIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('memberships')
+      .select('account_id')
+      .where('workspace_id', '=', workspaceId)
+      .where('account_id', 'in', [...accountIds])
+      .execute();
+    return rows.map((r) => r.account_id);
+  }
+
+  async activeAccountIdsAmong(
+    workspaceId: string,
+    accountIds: readonly string[],
+  ): Promise<string[]> {
+    if (accountIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('memberships')
+      .select('account_id')
+      .where('workspace_id', '=', workspaceId)
+      .where('state', '=', 'active')
+      .where('account_id', 'in', [...accountIds])
+      .execute();
+    return rows.map((r) => r.account_id);
   }
 
   async touchLastUsed(workspaceId: string, accountId: string, at: Date): Promise<boolean> {

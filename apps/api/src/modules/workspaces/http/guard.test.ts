@@ -7,7 +7,7 @@ async function callAs(role: 'owner' | 'operator', message: string) {
   const app = Fastify();
   registerErrorHandler(app);
   app.addHook('onRequest', async (request) => {
-    request.workspace = { workspaceId: 'w', role };
+    request.workspace = { workspaceId: 'w', role, activeSince: new Date(0) };
   });
   app.get('/x', { preHandler: ownerOnly(message) }, () => ({ ok: true }));
   return app.inject('/x');

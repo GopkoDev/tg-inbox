@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { AccessRemovedError, NotFoundError } from '../../../platform/errors.js';
-import { insertMembership, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
+import { insertMembership, T0, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { KyselyUnitOfWork } from '../infra/unit-of-work.js';
 import { createWorkspaceAccess } from './access.js';
@@ -18,7 +18,17 @@ describe('workspace access (Postgres)', () => {
     access = createWorkspaceAccess({
       uow: new KyselyUnitOfWork(db),
       clock: systemClock,
-      auth: { getAccount: async () => undefined },
+      auth: {
+        getAccount: async () => undefined,
+        getAccountsByIds: async (ids) =>
+          (
+            await db
+              .selectFrom('accounts')
+              .select(['id', 'email', 'display_name'])
+              .where('id', 'in', [...ids])
+              .execute()
+          ).map((r) => ({ id: r.id, email: r.email, displayName: r.display_name })),
+      },
     });
   });
   afterAll(async () => {
@@ -43,6 +53,7 @@ describe('workspace access (Postgres)', () => {
     await expect(access.guardWorkspace(ma.accountId, a)).resolves.toEqual({
       workspaceId: a,
       role: 'owner',
+      activeSince: T0,
     });
     await db
       .updateTable('memberships')
@@ -71,5 +82,17 @@ describe('workspace access (Postgres)', () => {
       .where('account_id', '=', ma.accountId)
       .executeTakeFirstOrThrow();
     expect(row.last_used_at).not.toBeNull();
+  });
+
+  it('AC-09: activeMembersAmong and displayNames are isolated by workspace; names outlive deactivation', async () => {
+    const { a, b } = await twoWorkspaces(db);
+    const live = await insertMembership(db, a);
+    const off = await insertMembership(db, a, { state: 'deactivated' });
+    const stranger = await insertMembership(db, b);
+    const ids = [live.accountId, off.accountId, stranger.accountId];
+    expect(await access.activeMembersAmong(a, ids)).toEqual([live.accountId]);
+    const names = await access.displayNames(a, ids);
+    expect([...names.keys()].sort()).toEqual([live.accountId, off.accountId].sort());
+    expect(names.get(off.accountId)).toBe('Test');
   });
 });

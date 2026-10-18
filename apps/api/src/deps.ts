@@ -13,6 +13,7 @@ import { createResetLinkRepo } from './modules/auth/infra/reset-link-repo.js';
 import { createSessionRepo } from './modules/auth/infra/session-repo.js';
 import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-repo.js';
 import { createAcceptInvitation } from './modules/workspaces/app/accept-invitation.js';
+import { publish } from './platform/realtime.js';
 import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
 import { createTeam } from './modules/workspaces/app/team.js';
 import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
@@ -23,6 +24,11 @@ import { createHealthCheck } from './modules/bots/app/health-check.js';
 import { createPasteToken } from './modules/bots/app/paste-token.js';
 import { createReconnect } from './modules/bots/app/reconnect.js';
 import { createBotSettings } from './modules/bots/app/settings.js';
+import { createBotSignals } from './modules/bots/infra/bot-signals.js';
+import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
+import { createOpenMedia } from './modules/bots/app/open-media.js';
+import { createSendText } from './modules/bots/app/send-text.js';
+import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
@@ -31,6 +37,15 @@ import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
+import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
+import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
+import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
+import { createListQueries } from './modules/conversations/infra/list-queries.js';
+import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
+import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
+import { createOpenMessageMedia } from './modules/inbox/app/open-media.js';
+import { createInboxReadUseCases } from './modules/inbox/app/reads.js';
+import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
 import { createMessageRepo } from './modules/conversations/infra/message-repo.js';
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
@@ -97,6 +112,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     uow: workspaceUow,
     clock,
     accounts: accountUseCases,
+    publish,
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
   // --- end workspaces dependencies ---
@@ -115,6 +131,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations: createConversationRepo(db),
     messages: createMessageRepo(db),
     contacts,
+    signals: createConversationSignals(),
     clock,
   });
   const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
@@ -131,17 +148,67 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     secrets,
     clock,
     settings: botSettings,
+    transaction,
+    signals: createBotSignals(),
     webhookBaseUrl,
   };
+  const markNeedsToken = createMarkNeedsToken({
+    bots: botRepo,
+    clock,
+    transaction,
+    signals: botOwnerDeps.signals,
+  });
   const bots = {
     settings: botSettings,
-    paste: createPasteToken({ ...botOwnerDeps, conversations, transaction }),
+    markNeedsToken,
+    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken }).sendText,
+    openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
+    inboxStatus: createInboxBotStatus({ bots: botRepo }),
+    paste: createPasteToken({ ...botOwnerDeps, conversations }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
     acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),
-    healthCheck: createHealthCheck({ bots: botRepo, telegram, clock, webhookBaseUrl }),
+    healthCheck: createHealthCheck({
+      bots: botRepo,
+      telegram,
+      clock,
+      transaction,
+      signals: botOwnerDeps.signals,
+      webhookBaseUrl,
+    }),
   };
   // --- end bots dependencies ---
+
+  const replyDeps = {
+    transaction,
+    replies: createReplyRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  };
+  const conversationReplies = createReplies(replyDeps);
+  const replyDelivery = createReplyDelivery(replyDeps);
+
+  // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
+  const inboxConversations = createInboxReads({
+    transaction,
+    lists: createListQueries(db),
+    threads: createThreadQueries(db),
+    marks: createReadMarkRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
+  const inboxReads = createInboxReadUseCases({
+    conversations: inboxConversations,
+    contacts,
+    workspaces: workspaceAccess,
+    bots: bots.inboxStatus,
+    clock,
+  });
+  const inboxMedia = createOpenMessageMedia({
+    conversations: inboxConversations,
+    bots: { openMedia: bots.openMedia },
+  });
+  // --- end inbox dependencies ---
 
   return {
     config,
@@ -160,6 +227,10 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     contacts,
     conversations,
     bots,
+    inboxReads,
+    inboxMedia,
+    conversationReplies,
+    replyDelivery,
     /** Releases the database pool. */
     destroy: () => db.destroy(),
   };

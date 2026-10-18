@@ -144,3 +144,25 @@ describe('reconnect (flow 6, AC-16b)', () => {
     expect(h.telegram.calls).toHaveLength(0);
   });
 });
+
+describe('reconnect publishes bot.changed (AC-13)', () => {
+  it('once on success, once when the stored token is rejected', async () => {
+    const h = createBotsHarness([takenOver]);
+    h.telegram.me = ME;
+    h.telegram.webhook = 'none';
+    await h.reconnect.reconnect('ws-a', false);
+    expect(h.signals.published).toEqual(['ws-a']);
+
+    const h2 = createBotsHarness([takenOver]);
+    h2.telegram.me = 'unauthorized';
+    await refusal(h2.reconnect.reconnect('ws-a', true));
+    expect(h2.signals.published).toEqual(['ws-a']);
+  });
+
+  it('nothing when it fails before writing', async () => {
+    const h = createBotsHarness([takenOver]);
+    h.telegram.me = 'transient';
+    await refusal(h.reconnect.reconnect('ws-a', true));
+    expect(h.signals.published).toEqual([]);
+  });
+});

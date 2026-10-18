@@ -6,6 +6,9 @@ export abstract class AppError extends Error {
   abstract readonly code: ErrorCode;
   abstract readonly statusCode: number;
 
+  /** Extra response headers (e.g. `Retry-After`). */
+  readonly headers?: Record<string, string>;
+
   constructor(
     message: string,
     readonly details?: unknown,
@@ -169,6 +172,69 @@ export class NoBotConnectedError extends AppError {
   }
 }
 
+/** The bot cannot carry replies (not connected / needs a new token) — AC-13. */
+export class BotCannotReplyError extends AppError {
+  readonly code = ErrorCode.BOT_CANNOT_REPLY;
+  readonly statusCode = 409;
+
+  constructor(bot: unknown) {
+    super('Replies cannot be sent until the bot works again', { bot });
+  }
+}
+
+/** A teammate replied after the reply the operator last saw — AC-16. */
+export class TeammateRepliedError extends AppError {
+  readonly code = ErrorCode.TEAMMATE_REPLIED;
+  readonly statusCode = 409;
+
+  constructor(reply: unknown) {
+    super('A teammate has already replied to this customer', { reply });
+  }
+}
+
+/** Resending a `not_confirmed` reply needs the member to accept the duplicate risk — AC-11. */
+export class DuplicateRiskConfirmationRequiredError extends AppError {
+  readonly code = ErrorCode.DUPLICATE_RISK_CONFIRMATION_REQUIRED;
+  readonly statusCode = 409;
+
+  constructor() {
+    super('The customer may receive this reply twice — confirm to send it again');
+  }
+}
+
+export class ReplyNotResendableError extends AppError {
+  readonly code = ErrorCode.REPLY_NOT_RESENDABLE;
+  readonly statusCode = 409;
+
+  constructor(reply: unknown) {
+    super('This reply cannot be sent again', { reply });
+  }
+}
+
+export class MediaUnavailableError extends AppError {
+  readonly code = ErrorCode.MEDIA_UNAVAILABLE;
+  readonly statusCode = 409;
+
+  constructor(reason: 'bot_not_connected' | 'bot_not_working' | 'file_too_large' | 'file_gone') {
+    super('This content is unavailable', { reason });
+  }
+}
+
+/** 30 member-initiated sends per workspace per 60 s — AC-12b. */
+export class ReplyLimitReachedError extends AppError {
+  readonly code = ErrorCode.REPLY_LIMIT_REACHED;
+  readonly statusCode = 429;
+  override readonly headers: Record<string, string>;
+
+  constructor(retryAt: Date, retryAfterSeconds: number) {
+    super(
+      `Replies are limited to 30 per minute — you can send again in ${retryAfterSeconds} seconds`,
+      { limit: 30, window_seconds: 60, retry_at: retryAt.toISOString() },
+    );
+    this.headers = { 'Retry-After': String(retryAfterSeconds) };
+  }
+}
+
 /**
  * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
  * AppError. Its message never carries Telegram's error text or URL.
@@ -200,6 +266,7 @@ function sendError(
       // An expected upstream failure, not a bug: the code only — never the cause, text or URL.
       request.log.warn({ code: error.code }, 'upstream unavailable');
     }
+    if (error.headers) void reply.headers(error.headers);
     return reply.status(error.statusCode).send(envelope(error.code, error.message, error.details));
   }
   if (error.validation) {

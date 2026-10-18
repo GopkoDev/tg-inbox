@@ -19,6 +19,23 @@ export interface ContactRecord extends ContactProfile {
   createdAt: Date;
 }
 
+/** What list rows and thread headers show of a contact. */
+export interface ContactSummary {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+}
+
+/**
+ * The search text as matched: trimmed, one leading "@" dropped, trimmed again; `null` when nothing
+ * is left (no filter).
+ */
+export function normalizeSearchQuery(query: string): string | null {
+  const q = query.trim().replace(/^@/, '').trim();
+  return q === '' ? null : q;
+}
+
 export interface UpsertResult {
   contactId: string;
   created: boolean;
@@ -37,4 +54,10 @@ export interface ContactRepo {
     tx?: Executor,
   ): Promise<UpsertResult>;
   count(workspaceId: string, tx?: Executor): Promise<number>;
+  /**
+   * Ids of the workspace's contacts whose "first last" name or username contains the query,
+   * ignoring case in any alphabet and `%`/`_` as wildcards. `null` = empty query, no filter.
+   */
+  searchContactIds(workspaceId: string, query: string): Promise<string[] | null>;
+  contactsByIds(workspaceId: string, ids: readonly string[]): Promise<ContactSummary[]>;
 }

@@ -43,6 +43,9 @@ describe('conversation repository', () => {
         contact_id: contactId,
         telegram_chat_id: '5001',
         created_at: NOW,
+        last_activity_at: NOW,
+        last_message_received_at: NOW,
+        last_reply_sent_at: null,
       },
     ]);
   });
@@ -82,6 +85,48 @@ describe('conversation repository', () => {
     await insertConversation(db, { workspaceId: a, contactId });
     expect(await repo.hasAny(a)).toBe(true);
     expect(await repo.hasAny(b)).toBe(false);
+  });
+
+  it('raiseReceived raises arrival and keeps activity = GREATEST(arrival, last sent reply); never lowers', async () => {
+    const w = await insertWorkspace(db);
+    const contactId = await insertContact(db, { workspaceId: w, telegramUserId: 5006n });
+    const later = new Date(NOW.getTime() + 60_000);
+    const replyAt = new Date(NOW.getTime() + 600_000);
+    const id = await insertConversation(db, {
+      workspaceId: w,
+      contactId,
+      lastActivityAt: replyAt,
+      lastReplySentAt: replyAt,
+    });
+    const read = () =>
+      db
+        .selectFrom('conversations')
+        .select(['last_activity_at', 'last_message_received_at'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+    await repo.raiseReceived(w, id, later);
+    expect(await read()).toEqual({ last_activity_at: replyAt, last_message_received_at: later });
+    await repo.raiseReceived(w, id, NOW);
+    expect(await read()).toEqual({ last_activity_at: replyAt, last_message_received_at: later });
+    const muchLater = new Date(NOW.getTime() + 900_000);
+    await repo.raiseReceived(w, id, muchLater);
+    expect(await read()).toEqual({
+      last_activity_at: muchLater,
+      last_message_received_at: muchLater,
+    });
+  });
+
+  it('isolation: raiseReceived never touches another workspace’s conversation', async () => {
+    const { a, b } = await twoWorkspaces(db);
+    const contactId = await insertContact(db, { workspaceId: a, telegramUserId: 5007n });
+    const id = await insertConversation(db, { workspaceId: a, contactId });
+    await repo.raiseReceived(b, id, new Date(NOW.getTime() + 60_000));
+    const row = await db
+      .selectFrom('conversations')
+      .select('last_message_received_at')
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(row.last_message_received_at).toEqual(NOW);
   });
 
   it('joins a caller transaction', async () => {

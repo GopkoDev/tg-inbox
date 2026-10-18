@@ -490,3 +490,37 @@ describe("pasteToken — undoing a failed setWebhook never touches another write
     expect(h.bots.rows[0]).toMatchObject({ state: 'connected', token: SECOND });
   });
 });
+
+describe('pasteToken publishes bot.changed (AC-13)', () => {
+  it('once per successful write: connect, and rotate of a needs_token bot', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'none';
+    await h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    expect(h.signals.published).toEqual(['ws-a']);
+
+    const r = createBotsHarness([botRow({ state: 'needs_token' })]);
+    r.telegram.me = ME;
+    r.telegram.webhook = 'ours';
+    await r.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    expect(r.signals.published).toEqual(['ws-a']);
+  });
+
+  it('nothing when the paste is refused and its write rolled back', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'foreign';
+    await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false));
+    expect(h.signals.published).toEqual([]);
+  });
+
+  it('a failed setWebhook that undoes the write signals again: the committed row was visible', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'none';
+    h.telegram.setResult = 'failed';
+    await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false));
+    expect(h.bots.rows).toHaveLength(0);
+    expect(h.signals.published).toEqual(['ws-a', 'ws-a']);
+  });
+});

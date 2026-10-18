@@ -1,7 +1,7 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
-import type { ContactRepo } from '../app/ports.js';
+import { normalizeSearchQuery, type ContactRepo } from '../app/ports.js';
 
 export function createContactRepo(db: Db): ContactRepo {
   return {
@@ -55,6 +55,41 @@ export function createContactRepo(db: Db): ContactRepo {
         .where('workspace_id', '=', workspaceId)
         .executeTakeFirstOrThrow();
       return Number(n);
+    },
+
+    async searchContactIds(workspaceId, query) {
+      const q = normalizeSearchQuery(query);
+      if (q === null) return null;
+      // Escape the LIKE metacharacters so the text is matched literally; Postgres lower() folds
+      // case for Cyrillic and Latin alike.
+      const pattern = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
+      const rows = await db
+        .selectFrom('contacts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where(
+          sql<boolean>`(lower(first_name || ' ' || coalesce(last_name, '')) like lower(${pattern})
+            or lower(username) like lower(${pattern}))`,
+        )
+        .orderBy('id')
+        .execute();
+      return rows.map((r) => r.id);
+    },
+
+    async contactsByIds(workspaceId, ids) {
+      if (ids.length === 0) return [];
+      const rows = await db
+        .selectFrom('contacts')
+        .select(['id', 'first_name', 'last_name', 'username'])
+        .where('workspace_id', '=', workspaceId)
+        .where('id', 'in', [...ids])
+        .execute();
+      return rows.map((r) => ({
+        id: r.id,
+        firstName: r.first_name,
+        lastName: r.last_name,
+        username: r.username,
+      }));
     },
   };
 }

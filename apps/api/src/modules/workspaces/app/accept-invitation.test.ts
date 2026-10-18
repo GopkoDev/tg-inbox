@@ -203,6 +203,7 @@ describe('acceptInvitation', () => {
       accountId: accountRepo.rows[0]!.id,
       role: 'operator',
       state: 'active',
+      activeSince: T0,
     });
     expect(invitations[0]!.state).toBe('accepted');
     expect(sessions.rows).toHaveLength(1);

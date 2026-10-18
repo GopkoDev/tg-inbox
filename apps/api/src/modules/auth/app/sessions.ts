@@ -15,6 +15,8 @@ export interface SessionUseCases {
   /** Ends the session of this token; silent when there is none. */
   signOut(token: string): Promise<void>;
   resolveSession(token: string, options: { background: boolean }): Promise<Session>;
+  /** Of `sessionIds`, those still valid (present and not idle-expired); touches nothing. */
+  liveSessionIds(sessionIds: readonly string[]): Promise<string[]>;
 }
 
 export function createSessionUseCases({ sessions, clock }: SessionDeps): SessionUseCases {
@@ -27,6 +29,12 @@ export function createSessionUseCases({ sessions, clock }: SessionDeps): Session
 
     async signOut(token) {
       await sessions.deleteByTokenHash(hashToken(token));
+    },
+
+    async liveSessionIds(sessionIds) {
+      const now = clock.now();
+      const found = await sessions.findByIds(sessionIds);
+      return found.filter((s) => !sessionIsExpired(s.lastSeenAt, now)).map((s) => s.id);
     },
 
     async resolveSession(token, { background }) {

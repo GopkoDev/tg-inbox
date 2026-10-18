@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ErrorCode, ErrorEnvelope } from './errors.js';
 
 describe('ErrorCode', () => {
-  it('declares the 26 codes', () => {
-    expect(Object.keys(ErrorCode)).toHaveLength(26);
+  it('declares the 32 codes', () => {
+    expect(Object.keys(ErrorCode)).toHaveLength(32);
     for (const c of [
       'UNSUPPORTED_MEDIA_TYPE',
       'PAYLOAD_TOO_LARGE',
@@ -26,6 +26,12 @@ describe('ErrorCode', () => {
       'BOT_NEEDS_NEW_TOKEN',
       'NO_BOT_CONNECTED',
       'TELEGRAM_UNAVAILABLE',
+      'BOT_CANNOT_REPLY',
+      'TEAMMATE_REPLIED',
+      'DUPLICATE_RISK_CONFIRMATION_REQUIRED',
+      'REPLY_NOT_RESENDABLE',
+      'MEDIA_UNAVAILABLE',
+      'REPLY_LIMIT_REACHED',
     ]) {
       expect(ErrorCode).toHaveProperty(c, c);
     }

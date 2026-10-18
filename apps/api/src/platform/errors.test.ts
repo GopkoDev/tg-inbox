@@ -8,7 +8,13 @@ import {
   type AppError,
   BotBelongsToAnotherWorkspaceError,
   BotNeedsNewTokenError,
+  BotCannotReplyError,
   BotTokenInvalidError,
+  DuplicateRiskConfirmationRequiredError,
+  MediaUnavailableError,
+  ReplyLimitReachedError,
+  ReplyNotResendableError,
+  TeammateRepliedError,
   NoBotConnectedError,
   NothingToReconnectError,
   TakeoverConfirmationRequiredError,
@@ -71,6 +77,27 @@ const cases: [string, () => AppError, number, string][] = [
   ['needs new token', () => new BotNeedsNewTokenError({}), 409, 'BOT_NEEDS_NEW_TOKEN'],
   ['no bot connected', () => new NoBotConnectedError({}), 409, 'NO_BOT_CONNECTED'],
   ['telegram unavailable', () => new TelegramUnavailableError(), 503, 'TELEGRAM_UNAVAILABLE'],
+  [
+    'bot cannot reply',
+    () => new BotCannotReplyError({ state: 'needs_token' }),
+    409,
+    'BOT_CANNOT_REPLY',
+  ],
+  ['teammate replied', () => new TeammateRepliedError({ id: 'r' }), 409, 'TEAMMATE_REPLIED'],
+  [
+    'duplicate risk',
+    () => new DuplicateRiskConfirmationRequiredError(),
+    409,
+    'DUPLICATE_RISK_CONFIRMATION_REQUIRED',
+  ],
+  ['not resendable', () => new ReplyNotResendableError({ id: 'r' }), 409, 'REPLY_NOT_RESENDABLE'],
+  ['media unavailable', () => new MediaUnavailableError('file_gone'), 409, 'MEDIA_UNAVAILABLE'],
+  [
+    'reply limit',
+    () => new ReplyLimitReachedError(new Date('2026-10-18T10:21:12.000Z'), 12),
+    429,
+    'REPLY_LIMIT_REACHED',
+  ],
 ];
 
 async function envelopeOf(make: () => AppError) {
@@ -271,6 +298,39 @@ describe('error handler', () => {
         message: 'The password must be at least 10 characters long',
         details: { field: 'password' },
       },
+    });
+  });
+});
+
+describe('shared-inbox error details (T2)', () => {
+  it('carries the reply / bot / reason as details', async () => {
+    const bot = { state: 'needs_token' };
+    expect((await envelopeOf(() => new BotCannotReplyError(bot))).error.details).toEqual({ bot });
+    const r = { id: 'r1', position_at: 'x' };
+    expect((await envelopeOf(() => new TeammateRepliedError(r))).error.details).toEqual({
+      reply: r,
+    });
+    expect((await envelopeOf(() => new ReplyNotResendableError(r))).error.details).toEqual({
+      reply: r,
+    });
+    expect(
+      (await envelopeOf(() => new MediaUnavailableError('file_too_large'))).error.details,
+    ).toEqual({ reason: 'file_too_large' });
+  });
+
+  it('REPLY_LIMIT_REACHED has 429 details and a Retry-After header', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/e', () => {
+      throw new ReplyLimitReachedError(new Date('2026-10-18T10:21:12.000Z'), 12);
+    });
+    const res = await app.inject('/e');
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('12');
+    expect(res.json().error.details).toEqual({
+      limit: 30,
+      window_seconds: 60,
+      retry_at: '2026-10-18T10:21:12.000Z',
     });
   });
 });

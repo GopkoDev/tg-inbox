@@ -78,6 +78,12 @@ describe('accept invitation (Postgres)', () => {
     });
     expect(r.workspace).toEqual({ id: o.workspaceId, name: 'Acme', role: 'owner' });
     expect(await memberCount(o.workspaceId)).toBe(1);
+    const joined = await db
+      .selectFrom('memberships')
+      .select(['active_since', 'created_at'])
+      .where('workspace_id', '=', o.workspaceId)
+      .executeTakeFirstOrThrow();
+    expect(joined.active_since).toEqual(joined.created_at);
     const inv = await db
       .selectFrom('invitations')
       .select('state')

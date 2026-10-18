@@ -75,6 +75,9 @@ export function fakeSessionRepo(): SessionRepo & { rows: Session[]; touches: num
       rows.splice(0, rows.length, ...keep);
       return removed;
     },
+    async findByIds(ids: readonly string[]) {
+      return rows.filter((r) => ids.includes(r.id));
+    },
     async touch(sessionId: string, now: Date) {
       const s = rows.find((r) => r.id === sessionId);
       if (s) s.lastSeenAt = now;

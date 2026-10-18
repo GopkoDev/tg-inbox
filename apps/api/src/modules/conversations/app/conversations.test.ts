@@ -8,7 +8,7 @@ import {
   type InboundMessage,
   type Transaction,
 } from './conversations.js';
-import { fakeConversationRepo, fakeMessageRepo } from './fakes.js';
+import { fakeConversationRepo, fakeConversationSignals, fakeMessageRepo } from './fakes.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
@@ -46,6 +46,7 @@ function setup() {
   const contacts = createContacts({ repo: contactRepo, clock });
   const conversations = fakeConversationRepo();
   const messages = fakeMessageRepo();
+  const signals = fakeConversationSignals();
   const tx = { marker: 'tx' } as never;
   const transaction = vi.fn(<T>(fn: (t: never) => Promise<T>) => fn(tx));
   const useCases = createConversations({
@@ -53,9 +54,10 @@ function setup() {
     conversations,
     messages,
     contacts,
+    signals,
     clock,
   });
-  return { clock, contactRepo, conversations, messages, transaction, tx, useCases };
+  return { clock, contactRepo, conversations, messages, signals, transaction, tx, useCases };
 }
 
 describe('conversations use cases', () => {
@@ -71,6 +73,7 @@ describe('conversations use cases', () => {
     ]);
     expect(messages.rows).toEqual([
       {
+        id: expect.any(String),
         workspaceId: 'ws-a',
         conversationId: conversations.rows[0]!.id,
         telegramMessageId: 1n,
@@ -97,6 +100,7 @@ describe('conversations use cases', () => {
       conversations,
       messages,
       contacts: contacts as never,
+      signals: fakeConversationSignals(),
       clock: fixedClock(at(100)),
     });
     await useCases.captureInbound('ws-a', message());
@@ -184,6 +188,94 @@ describe('conversations use cases', () => {
       const { useCases } = setup();
       await useCases.captureInbound('ws-a', message());
       expect(await useCases.applyEdit('ws-b', edit())).toBe('not_found');
+    });
+  });
+
+  describe('list columns and live signals (AC-01, AC-15)', () => {
+    it('a first message stamps arrival and activity with its arrival, and signals created', async () => {
+      const { conversations, messages, signals, useCases, tx } = setup();
+      await useCases.captureInbound('ws-a', message());
+      expect(conversations.rows[0]).toMatchObject({
+        lastMessageReceivedAt: at(100),
+        lastActivityAt: at(100),
+        lastReplySentAt: null,
+      });
+      expect(signals.sent).toEqual([
+        {
+          tx,
+          workspaceId: 'ws-a',
+          conversationId: conversations.rows[0]!.id,
+          messageId: messages.rows[0]!.id,
+          change: 'created',
+        },
+      ]);
+    });
+
+    it('a later message moves arrival and activity forward; sent_at never matters', async () => {
+      const { clock, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      clock.set(at(300));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n, sentAt: at(2) }));
+      expect(conversations.rows[0]).toMatchObject({
+        lastMessageReceivedAt: at(300),
+        lastActivityAt: at(300),
+      });
+    });
+
+    it('a late redelivery (older Telegram time, new id) arrives now and moves the row', async () => {
+      const { clock, conversations, useCases, signals } = setup();
+      await useCases.captureInbound('ws-a', message({ messageId: 5n, sentAt: at(50) }));
+      clock.set(at(400));
+      await useCases.captureInbound('ws-a', message({ messageId: 3n, sentAt: at(30) }));
+      expect(conversations.rows[0]!.lastMessageReceivedAt).toEqual(at(400));
+      expect(signals.sent.map((s) => s.change)).toEqual(['created', 'created']);
+    });
+
+    it('activity is the later of arrival and the last sent reply', async () => {
+      const { clock, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      conversations.rows[0]!.lastReplySentAt = at(500);
+      conversations.rows[0]!.lastActivityAt = at(500);
+      clock.set(at(300));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      expect(conversations.rows[0]).toMatchObject({
+        lastMessageReceivedAt: at(300),
+        lastActivityAt: at(500),
+      });
+    });
+
+    it('a duplicate update changes no column and sends no signal', async () => {
+      const { clock, conversations, signals, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      clock.set(at(900));
+      await useCases.captureInbound('ws-a', message());
+      expect(conversations.rows[0]!.lastMessageReceivedAt).toEqual(at(100));
+      expect(signals.sent).toHaveLength(1);
+    });
+
+    it('an applied edit signals edited and leaves arrival and activity alone', async () => {
+      const { clock, conversations, messages, signals, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      clock.set(at(700));
+      await useCases.applyEdit('ws-a', edit());
+      expect(conversations.rows[0]).toMatchObject({
+        lastMessageReceivedAt: at(100),
+        lastActivityAt: at(100),
+      });
+      expect(signals.sent[1]).toMatchObject({
+        change: 'edited',
+        conversationId: conversations.rows[0]!.id,
+        messageId: messages.rows[0]!.id,
+      });
+    });
+
+    it('a stale edit and an edit of nothing send no signal', async () => {
+      const { signals, useCases } = setup();
+      await useCases.applyEdit('ws-a', edit());
+      await useCases.captureInbound('ws-a', message());
+      await useCases.applyEdit('ws-a', edit({ editedAt: at(70), updateId: 11n }));
+      await useCases.applyEdit('ws-a', edit());
+      expect(signals.sent.map((s) => s.change)).toEqual(['created', 'edited']);
     });
   });
 

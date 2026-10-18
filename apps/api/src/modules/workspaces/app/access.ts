@@ -10,6 +10,9 @@ import type { PageQuery, UnitOfWork, WorkspaceRepos } from './ports.js';
 /** The slice of the auth module's app layer this use case needs (passed in by the composition root). */
 export interface AccessAuthPort {
   getAccount(id: string): Promise<{ id: string; email: string; displayName: string } | undefined>;
+  getAccountsByIds(
+    ids: readonly string[],
+  ): Promise<{ id: string; email: string; displayName: string }[]>;
 }
 
 export interface WorkspaceAccessDeps {
@@ -21,6 +24,7 @@ export interface WorkspaceAccessDeps {
 export interface WorkspaceGrant {
   workspaceId: string;
   role: Role;
+  activeSince: Date;
 }
 
 export interface MyWorkspace {
@@ -54,12 +58,30 @@ export function createWorkspaceAccess(deps: WorkspaceAccessDeps) {
     if (membership.state !== 'active') {
       throw new AccessRemovedError('Your access to this workspace was removed');
     }
-    return { workspaceId, role: membership.role };
+    return { workspaceId, role: membership.role, activeSince: membership.activeSince };
   }
 
   return {
     guardWorkspace(accountId: string, workspaceId: string): Promise<WorkspaceGrant> {
       return uow.run((repos) => guard(repos, accountId, workspaceId));
+    },
+
+    /** Of `accountIds`, those with an active membership in the workspace (socket re-validation, delivery pre-check). */
+    activeMembersAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]> {
+      return uow.run((repos) => repos.memberships.activeAccountIdsAmong(workspaceId, accountIds));
+    },
+
+    /** Display names of `accountIds` that belong to the workspace; kept after a deactivation. */
+    async displayNames(
+      workspaceId: string,
+      accountIds: readonly string[],
+    ): Promise<Map<string, string>> {
+      const members = await uow.run((repos) =>
+        repos.memberships.accountIdsAmong(workspaceId, accountIds),
+      );
+      if (members.length === 0) return new Map();
+      const accounts = await auth.getAccountsByIds(members);
+      return new Map(accounts.map((a) => [a.id, a.displayName]));
     },
 
     async getMe(accountId: string) {

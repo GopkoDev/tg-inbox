@@ -34,6 +34,7 @@ function setup() {
       lastUsedAt: o.lastUsedAt ?? null,
       deactivatedAt: o.state === 'deactivated' ? T0 : null,
       createdAt: T0,
+      activeSince: T0,
     };
     rows.push(m);
     return m;
@@ -52,6 +53,14 @@ function setup() {
         rows
           .filter((r) => r.accountId === accountId && r.state === 'active')
           .map((r) => ({ ...r, workspaceName: names.get(r.workspaceId)! })),
+      accountIdsAmong: async (w: string, ids: string[]) =>
+        rows
+          .filter((r) => r.workspaceId === w && ids.includes(r.accountId))
+          .map((r) => r.accountId),
+      activeAccountIdsAmong: async (w: string, ids: string[]) =>
+        rows
+          .filter((r) => r.workspaceId === w && r.state === 'active' && ids.includes(r.accountId))
+          .map((r) => r.accountId),
       touchLastUsed: async (workspaceId: string, accountId: string, at: Date) => {
         const r = rows.find((x) => x.workspaceId === workspaceId && x.accountId === accountId);
         if (r) r.lastUsedAt = at;
@@ -67,7 +76,11 @@ function setup() {
   const access = createWorkspaceAccess({
     uow,
     clock,
-    auth: { getAccount: async (id: string) => accounts.get(id) as never },
+    auth: {
+      getAccount: async (id: string) => accounts.get(id) as never,
+      getAccountsByIds: async (ids: readonly string[]) =>
+        ids.flatMap((id) => accounts.get(id) ?? []),
+    },
   });
   return { access, addWorkspace, addMember, addAccount };
 }
@@ -95,12 +108,14 @@ describe('guardWorkspace', () => {
     await expect(s.access.guardWorkspace(acc, wa)).resolves.toEqual({
       workspaceId: wa,
       role: 'owner',
+      activeSince: T0,
     });
     ma.state = 'deactivated';
     await expect(s.access.guardWorkspace(acc, wa)).rejects.toBeInstanceOf(AccessRemovedError);
     await expect(s.access.guardWorkspace(acc, wb)).resolves.toEqual({
       workspaceId: wb,
       role: 'operator',
+      activeSince: T0,
     });
   });
 });
@@ -201,5 +216,32 @@ describe('enterWorkspace', () => {
     await expect(s.access.enterWorkspace(s.addAccount(), newId())).rejects.toBeInstanceOf(
       NotFoundError,
     );
+  });
+});
+
+describe('member lookups', () => {
+  it('activeMembersAmong returns only active members of the workspace', async () => {
+    const s = setup();
+    const wa = s.addWorkspace('Acme');
+    const wb = s.addWorkspace('Bolt');
+    const [x, y, z] = [s.addAccount(), s.addAccount(), s.addAccount()];
+    s.addMember(wa, x);
+    s.addMember(wa, y, { state: 'deactivated' });
+    s.addMember(wb, z);
+    expect(await s.access.activeMembersAmong(wa, [x, y, z])).toEqual([x]);
+    expect(await s.access.activeMembersAmong(wa, [])).toEqual([]);
+  });
+
+  it('displayNames keeps deactivated members and never names a stranger', async () => {
+    const s = setup();
+    const wa = s.addWorkspace('Acme');
+    const wb = s.addWorkspace('Bolt');
+    const [x, y, z] = [s.addAccount(), s.addAccount(), s.addAccount()];
+    s.addMember(wa, x);
+    s.addMember(wa, y, { state: 'deactivated' });
+    s.addMember(wb, z);
+    const names = await s.access.displayNames(wa, [x, y, z]);
+    expect([...names.keys()].sort()).toEqual([x, y].sort());
+    expect(names.get(y)).toBe('Ana');
   });
 });

@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
 import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
@@ -155,7 +156,56 @@ export type GetMeResult =
  */
 export type WebhookTarget = 'ours' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
 
+/** Per-call timeout of `sendMessage` (sad.md §8): past it the answer is `unknown`. */
+export const SEND_TIMEOUT = 10_000;
+
+/**
+ * The answer to sending a reply, classified. Structurally identical to inbox's `GatewayOutcome`
+ * (`bots` must not import `inbox`); `send-text.test.ts` pins that at the type level.
+ */
+export type SendOutcome =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'refused'; reason: 'blocked' | 'account_gone' | 'chat_not_found' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'not_accepted'; retryAfterMs?: number }
+  | { outcome: 'unknown' };
+
+/** `getFile` timeout (sad.md §8). */
+export const GET_FILE_TIMEOUT = 5000;
+/** A media download is aborted after this long without a byte (sad.md §8). */
+export const DOWNLOAD_IDLE_TIMEOUT = 30_000;
+/** The largest file a bot can download (20 MiB). */
+export const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The answer to fetching a customer's file, classified. No token or Telegram address in any
+ * variant. `unavailable`: 5xx, 429, timeout or network failure.
+ */
+export type FileFetch =
+  | {
+      outcome: 'stream';
+      body: Readable;
+      status: 200 | 206;
+      contentLength: number | null;
+      contentRange?: string;
+    }
+  | { outcome: 'too_large' }
+  | { outcome: 'gone' }
+  | { outcome: 'unauthorized' }
+  | { outcome: 'unavailable' }
+  | { outcome: 'range_not_satisfiable' };
+
 export interface TelegramGateway {
+  /**
+   * `getFile` (path cached in memory per file, under its one-hour validity) then a streamed
+   * download of it, forwarding a single `Range`. Never throws; the download URL stays inside.
+   */
+  openFile(token: string, fileReference: string, range: string | undefined): Promise<FileFetch>;
+  /**
+   * Plain text (no `parse_mode`). Never throws: every answer, a timeout included, is an outcome.
+   * A call that may have been written is never repeated here.
+   */
+  sendText(token: string, chatId: bigint, text: string, timeoutMs: number): Promise<SendOutcome>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
@@ -170,6 +220,14 @@ export interface TelegramGateway {
 
 /** Runs `fn` in one database transaction; a throw rolls it back. No Telegram call runs inside. */
 export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
+
+/**
+ * Tells every open inbox of the workspace that its bot changed (`bot.changed`). It runs in the
+ * transaction of the state write, so the signal is delivered only if that write commits.
+ */
+export interface BotSignals {
+  botChanged(tx: Executor, workspaceId: string): Promise<void>;
+}
 
 /** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
 export interface ConversationsApi {

@@ -9,6 +9,7 @@ import { createContacts } from '../../contacts/app/contacts.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
 import { createConversations } from '../../conversations/app/conversations.js';
 import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
+import { createConversationSignals } from '../../conversations/infra/conversation-signals.js';
 import { createMessageRepo } from '../../conversations/infra/message-repo.js';
 import { createBotRepo } from '../infra/bot-repo.js';
 import { createTokenCipher } from '../infra/token-cipher.js';
@@ -34,6 +35,7 @@ describe('acceptUpdate (Postgres)', () => {
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         contacts: createContacts({ repo: createContactRepo(db), clock }),
+        signals: createConversationSignals(),
         clock,
       }),
     });

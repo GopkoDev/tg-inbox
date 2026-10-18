@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
 import type { ConversationRepo } from '../app/ports.js';
@@ -23,6 +24,8 @@ export function createConversationRepo(db: Db): ConversationRepo {
           contact_id: contactId,
           telegram_chat_id: telegramChatId,
           created_at: now,
+          last_message_received_at: now,
+          last_activity_at: now,
         })
         .onConflict((oc) => oc.columns(['workspace_id', 'telegram_chat_id']).doNothing())
         .returning('id')
@@ -31,6 +34,14 @@ export function createConversationRepo(db: Db): ConversationRepo {
       const existing = await findByChat(workspaceId, telegramChatId, tx);
       if (existing === null) throw new Error('conversation vanished after a conflicting insert');
       return { conversationId: existing, created: false };
+    },
+
+    async raiseReceived(workspaceId, conversationId, receivedAt, tx) {
+      // One UPDATE keeps conversations_last_activity_at_check true; GREATEST ignores a null reply time.
+      await sql`UPDATE conversations
+        SET last_message_received_at = GREATEST(last_message_received_at, ${receivedAt}::timestamptz),
+            last_activity_at = GREATEST(last_message_received_at, ${receivedAt}::timestamptz, last_reply_sent_at)
+        WHERE id = ${conversationId} AND workspace_id = ${workspaceId}`.execute(tx ?? db);
     },
 
     findByChat,

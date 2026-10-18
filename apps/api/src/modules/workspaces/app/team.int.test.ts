@@ -1,3 +1,4 @@
+import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { systemClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
@@ -8,10 +9,12 @@ import {
   insertInvitation,
   insertMembership,
   insertWorkspace,
+  T0,
   twoWorkspaces,
 } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { KyselyUnitOfWork } from '../infra/unit-of-work.js';
+import { publish } from '../../../platform/realtime.js';
 import { createTeam } from './team.js';
 
 describe('team use cases (Postgres)', () => {
@@ -25,6 +28,7 @@ describe('team use cases (Postgres)', () => {
     team = createTeam({
       uow: new KyselyUnitOfWork(db),
       clock: systemClock,
+      publish,
       publicWebUrl: 'http://web.test',
       accounts: {
         findAccountIdByEmail: async (email) =>
@@ -76,6 +80,41 @@ describe('team use cases (Postgres)', () => {
     const m = await insertMembership(db, ws, { role: 'owner', state: 'deactivated' });
     const r = await team.reactivateMembership(ws, m.id);
     expect(r).toMatchObject({ state: 'active', role: 'owner', deactivatedAt: null });
+    const row = await db
+      .selectFrom('memberships')
+      .select('active_since')
+      .where('id', '=', m.id)
+      .executeTakeFirstOrThrow();
+    expect(row.active_since.getTime()).toBeGreaterThan(T0.getTime());
+  });
+
+  it('AC-09: deactivation keeps active_since and signals membership.deactivated; a refused one does not', async () => {
+    const listener = new pg.Client({ connectionString: database.url });
+    await listener.connect();
+    await listener.query('LISTEN realtime');
+    const got: unknown[] = [];
+    listener.on('notification', (n) => got.push(JSON.parse(n.payload ?? 'null')));
+    try {
+      const ws = await insertWorkspace(db);
+      const only = await insertMembership(db, ws, { role: 'owner' });
+      const op = await insertMembership(db, ws);
+      await expect(team.deactivateMembership(ws, only.id)).rejects.toBeInstanceOf(
+        LastActiveOwnerError,
+      );
+      await team.deactivateMembership(ws, op.id);
+      await new Promise((r) => setTimeout(r, 300));
+      expect(got).toEqual([
+        { type: 'membership.deactivated', v: 1, workspace_id: ws, account_id: op.accountId },
+      ]);
+      const row = await db
+        .selectFrom('memberships')
+        .select('active_since')
+        .where('id', '=', op.id)
+        .executeTakeFirstOrThrow();
+      expect(row.active_since).toEqual(T0);
+    } finally {
+      await listener.end();
+    }
   });
 
   it('AC-14/AC-20: invite supersedes, lists without a link, and a revoked invitation is not pending', async () => {

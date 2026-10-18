@@ -1,5 +1,13 @@
 import { ChevronsUpDown, Contact, Inbox, LogOut, Settings, X } from 'lucide-react';
-import { Fragment, useCallback, useEffect, useLayoutEffect, useState } from 'react';
+import {
+  Fragment,
+  type ComponentType,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useState,
+} from 'react';
 import { Link, NavLink, Outlet, useLocation, useMatches, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
@@ -52,6 +60,8 @@ import { ShellGuardContext } from './app-shell-context';
 export interface CrumbHandle {
   /** A fixed label, or one derived from the route params (e.g. the item's name). */
   crumb?: string | ((params: Readonly<Record<string, string | undefined>>) => string);
+  /** A label that must follow live state (a store): a component rendering the label text. */
+  Crumb?: ComponentType<{ params: Readonly<Record<string, string | undefined>> }>;
 }
 
 const ACTIVE = 'aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium';
@@ -114,9 +124,12 @@ function AccountMenu() {
 
 function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
   const name = useWorkspaceStore((s) => s.current?.name);
-  const crumbs = useMatches().flatMap((m) => {
-    const crumb = (m.handle as CrumbHandle | undefined)?.crumb;
+  const crumbs = useMatches().flatMap((m): { label: ReactNode; to: string }[] => {
+    const handle = m.handle as CrumbHandle | undefined;
+    const crumb = handle?.crumb;
+    const Label = handle?.Crumb;
     const label = typeof crumb === 'function' ? crumb(m.params) : crumb;
+    if (Label) return [{ label: <Label params={m.params} />, to: m.pathname }];
     return label ? [{ label, to: m.pathname }] : [];
   });
   return (

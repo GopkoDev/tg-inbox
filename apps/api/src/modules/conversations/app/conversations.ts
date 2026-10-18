@@ -1,3 +1,4 @@
+import { newId } from '../../../platform/ids.js';
 import type { Clock } from '../../../platform/clock.js';
 import type { Contacts } from '../../contacts/app/contacts.js';
 import type { ContactProfile } from '../../contacts/app/ports.js';
@@ -5,6 +6,7 @@ import type { MessageKind } from '../domain/message.js';
 import type {
   ConversationRepo,
   EditOutcome,
+  ConversationSignals,
   Executor,
   InsertOutcome,
   MessageRepo,
@@ -44,6 +46,7 @@ export interface ConversationsDeps {
   conversations: ConversationRepo;
   messages: MessageRepo;
   contacts: Pick<Contacts, 'upsertFromProfile'>;
+  signals: ConversationSignals;
   clock: Clock;
 }
 
@@ -56,7 +59,7 @@ export interface Conversations {
 }
 
 export function createConversations(deps: ConversationsDeps): Conversations {
-  const { transaction, conversations, messages, contacts, clock } = deps;
+  const { transaction, conversations, messages, contacts, signals, clock } = deps;
   return {
     // One short transaction (ADR-0003): contact, conversation, message — or nothing. Any database
     // error propagates so the webhook answers 5xx and Telegram redelivers.
@@ -70,9 +73,11 @@ export function createConversations(deps: ConversationsDeps): Conversations {
           now,
           tx,
         );
-        return messages.insertOnce(
+        const id = newId();
+        const outcome = await messages.insertOnce(
           workspaceId,
           {
+            id,
             conversationId,
             telegramMessageId: m.messageId,
             kind: m.kind,
@@ -83,6 +88,17 @@ export function createConversations(deps: ConversationsDeps): Conversations {
           now,
           tx,
         );
+        if (outcome === 'captured') {
+          // The arrival moves the row to the top of the list; a duplicate moves nothing (AC-01, AC-11).
+          await conversations.raiseReceived(workspaceId, conversationId, now, tx);
+          await signals.messageChanged(tx, {
+            workspaceId,
+            conversationId,
+            messageId: id,
+            change: 'created',
+          });
+        }
+        return outcome;
       });
     },
 
@@ -90,13 +106,32 @@ export function createConversations(deps: ConversationsDeps): Conversations {
     async applyEdit(workspaceId, e) {
       const conversationId = await conversations.findByChat(workspaceId, e.chatId);
       if (conversationId === null) return 'not_found';
-      return messages.applyEdit(workspaceId, {
-        conversationId,
-        telegramMessageId: e.messageId,
-        body: e.body,
-        telegramMessage: e.raw,
-        editedAt: e.editedAt,
-        editUpdateId: e.updateId,
+      return transaction(async (tx) => {
+        const outcome = await messages.applyEdit(
+          workspaceId,
+          {
+            conversationId,
+            telegramMessageId: e.messageId,
+            body: e.body,
+            telegramMessage: e.raw,
+            editedAt: e.editedAt,
+            editUpdateId: e.updateId,
+          },
+          tx,
+        );
+        if (outcome === 'applied') {
+          // An edit never moves arrival or activity: it only announces itself.
+          const messageId = await messages.findId(workspaceId, conversationId, e.messageId, tx);
+          if (messageId !== null) {
+            await signals.messageChanged(tx, {
+              workspaceId,
+              conversationId,
+              messageId,
+              change: 'edited',
+            });
+          }
+        }
+        return outcome;
       });
     },
 

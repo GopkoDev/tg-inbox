@@ -37,6 +37,13 @@ vi.mock('@/features/workspaces/api', () => ({
   createInvitation: (w: string, b: unknown) => createInvitation(w, b),
 }));
 const resolveWorkspace = vi.fn();
+// The inbox page's list and live socket are other tasks' business here.
+vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));
+vi.mock('@/features/inbox/store', () => ({
+  useInboxStore: Object.assign(() => undefined, {
+    getState: () => ({ enter: () => Promise.resolve(), leave: () => undefined }),
+  }),
+}));
 vi.mock('@/features/workspaces/resolve', () => ({
   resolveWorkspace: (...a: unknown[]) => resolveWorkspace(...a),
 }));

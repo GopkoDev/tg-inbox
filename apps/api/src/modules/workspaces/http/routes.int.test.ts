@@ -5,7 +5,7 @@ import { buildDeps, type Deps } from '../../../deps.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
-import { insertMembership, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
+import { insertMembership, T0, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../../../test/postgres.js';
 import { createWorkspaceAccess } from '../app/access.js';
 import { KyselyUnitOfWork } from '../infra/unit-of-work.js';
@@ -29,7 +29,7 @@ describe('workspace access routes (postgres)', () => {
     const access = createWorkspaceAccess({
       uow: new KyselyUnitOfWork(db),
       clock,
-      auth: { getAccount: async () => undefined },
+      auth: { getAccount: async () => undefined, getAccountsByIds: async () => [] },
     });
     const guard = createWorkspaceGuard(access);
     app.get(
@@ -175,6 +175,7 @@ describe('workspace access routes (postgres)', () => {
     expect((await call(owner, 'GET', `/api/workspaces/${a}/_owner-probe`)).json()).toEqual({
       workspaceId: a,
       role: 'owner',
+      activeSince: T0.toISOString(),
     });
     expect((await call(member, 'GET', `/api/workspaces/${a}/_probe`)).statusCode).toBe(200);
     const denied = await call(member, 'GET', `/api/workspaces/${a}/_owner-probe`);

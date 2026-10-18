@@ -140,4 +140,73 @@ describe('contact repository', () => {
     ).rejects.toThrow('rollback');
     expect(await repo.count(w)).toBe(0);
   });
+  describe('search and lookup (AC-02)', () => {
+    const add = (w: string, firstName: string, lastName: string | null, username: string | null) =>
+      repo
+        .upsertFromProfile(w, profile({ firstName, lastName, username }), at(1), at(1))
+        .then((r) => r.contactId);
+
+    it('trims, drops one leading @ and matches name or username', async () => {
+      const w = await insertWorkspace(db);
+      const olena = await add(w, 'Olena', 'Kravets', 'olena_k');
+      await add(w, 'Petro', null, 'petro');
+      expect(await repo.searchContactIds(w, '  @Olena ')).toEqual([olena]);
+      expect(await repo.searchContactIds(w, 'OLENA_K')).toEqual([olena]);
+      expect(await repo.searchContactIds(w, '@@olena')).toEqual([]);
+    });
+
+    it('folds case in Cyrillic as well as Latin', async () => {
+      const w = await insertWorkspace(db);
+      const id = await add(w, 'Олена', 'Коваль', null);
+      expect(await repo.searchContactIds(w, 'олена')).toEqual([id]);
+      expect(await repo.searchContactIds(w, 'КОВАЛЬ')).toEqual([id]);
+    });
+
+    it('matches across first and last name and anywhere in the text', async () => {
+      const w = await insertWorkspace(db);
+      const id = await add(w, 'Olena', 'Kravets', null);
+      const noLast = await add(w, 'Ivan', null, null);
+      expect(await repo.searchContactIds(w, 'Olena Kr')).toEqual([id]);
+      expect(await repo.searchContactIds(w, 'ena kra')).toEqual([id]);
+      expect(await repo.searchContactIds(w, 'Ivan')).toEqual([noLast]);
+    });
+
+    it('treats % _ and \\ literally', async () => {
+      const w = await insertWorkspace(db);
+      const pct = await add(w, '50% Off', null, null);
+      const us = await add(w, 'a_b', null, null);
+      await add(w, 'axb', null, null);
+      await add(w, 'Other', null, null);
+      expect(await repo.searchContactIds(w, '%')).toEqual([pct]);
+      expect(await repo.searchContactIds(w, 'a_b')).toEqual([us]);
+      expect(await repo.searchContactIds(w, '\\')).toEqual([]);
+    });
+
+    it('returns null (no filter) for an empty query, "@" or spaces', async () => {
+      const w = await insertWorkspace(db);
+      await add(w, 'Olena', null, null);
+      expect(await repo.searchContactIds(w, '')).toBeNull();
+      expect(await repo.searchContactIds(w, '  @ ')).toBeNull();
+    });
+
+    it('isolation: search and lookup never cross workspaces', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const inA = await add(a, 'Olena', 'Kravets', 'olena_k');
+      const inB = await add(b, 'Olena', 'Kravets', 'olena_k');
+      expect(await repo.searchContactIds(a, 'olena')).toEqual([inA]);
+      expect(await repo.searchContactIds(b, 'olena')).toEqual([inB]);
+      expect(await repo.contactsByIds(a, [inA, inB])).toEqual([
+        { id: inA, firstName: 'Olena', lastName: 'Kravets', username: 'olena_k' },
+      ]);
+    });
+
+    it('contactsByIds returns summaries and tolerates empty or unknown ids', async () => {
+      const w = await insertWorkspace(db);
+      const id = await add(w, 'Ivan', null, null);
+      expect(await repo.contactsByIds(w, [])).toEqual([]);
+      expect(await repo.contactsByIds(w, [id, '0199ffff-ffff-7fff-8fff-ffffffffffff'])).toEqual([
+        { id, firstName: 'Ivan', lastName: null, username: null },
+      ]);
+    });
+  });
 });
