@@ -102,4 +102,4 @@ flowchart LR
 | 2 · Workspace & operator accounts | 2026-10-11 | [changelog](features/workspace-operators/_ship/changelog.md) · [PR #1](https://github.com/GopkoDev/tg-inbox/pull/1) |
 | 3 · Bot connection & inbound capture | 2026-10-12 | [changelog](features/bot-connection/_ship/changelog.md) · [PR #2](https://github.com/GopkoDev/tg-inbox/pull/2) |
 | 12 · UI redesign | 2026-10-18 | [changelog](features/ui-redesign/_ship/changelog.md) · PR pending |
-| 4 · Shared web inbox | 2026-10-18 | [changelog](features/shared-inbox/_ship/changelog.md) · PR pending |
+| 4 · Shared web inbox | 2026-10-18 | [changelog](features/shared-inbox/_ship/changelog.md) · [PR #4](https://github.com/GopkoDev/tg-inbox/pull/4) |
