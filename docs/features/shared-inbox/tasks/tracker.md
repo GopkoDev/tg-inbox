@@ -26,7 +26,7 @@
 | T19 | [Add the openMessageMedia route that streams a customer's media with forced safe headers and typed unavailability](./t19-media-route.md) | ports | Dmytro Hopko | M | T9, T15, T16 | done |
 | T20 | [Add the live socket endpoint and hub: guarded upgrade with origin check, per-workspace dispatch, deactivation close, 5 s re-validation, ping and resync](./t20-live-socket-hub.md) | ports | Dmytro Hopko | M | T3, T16 | done |
 | T21 | [Add the API end-to-end inbox stories and extend the token-secrecy suite to inbox responses, media, socket frames and logs](./t21-api-e2e-and-secrecy.md) | tests | Dmytro Hopko | M | T17, T18, T19, T20 | done |
-| T22 | [Update CLAUDE.md, the architecture map and the design-system canon for the inbox module, platform/realtime, the delivery queue and the new components](./t22-docs-and-canon.md) | docs | Dmytro Hopko | S | T18, T20, T26, T27, T28 | todo |
+| T22 | [Update CLAUDE.md, the architecture map and the design-system canon for the inbox module, platform/realtime, the delivery queue and the new components](./t22-docs-and-canon.md) | docs | Dmytro Hopko | S | T18, T20, T26, T27, T28 | done |
 | T23 | [Replace the inbox sample source with the API source, a workspace-keyed store and the realtime client](./t23-web-inbox-foundation.md) | ui | Dmytro Hopko | M | T2 | done |
 | T24 | [Build SCR-01, the conversation list, on real data: rows, search, empty states, the not-receiving notice and live updates](./t24-inbox-list-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T25 | [Build SCR-02's reading side: thread header, paged history, mark read when visible, live items, edits, late redeliveries and phone layout](./t25-inbox-thread-screen.md) | ui | Dmytro Hopko | M | T23 | done |
