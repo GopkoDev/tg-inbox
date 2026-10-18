@@ -40,6 +40,9 @@ const conv = (n: number, over: Partial<Conversation> = {}): Conversation => ({
   last_item: { type: 'message', id: cid(300 + n), kind: 'text', body: `hello ${n}` },
   unread_count: 0,
   waiting_for_reply: false,
+  status: 'open',
+  assignee: null,
+  state_version: 0,
   ...over,
 });
 

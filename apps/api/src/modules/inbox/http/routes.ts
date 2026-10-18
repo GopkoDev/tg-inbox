@@ -2,14 +2,18 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
-  Conversation,
+  ActiveMemberList,
+  AssigneeLens,
   ConversationPage,
+  ConversationSummary,
   Cursor,
   InboxBotStatus,
   ReadMarkRequest,
   ReadState,
   ReplyResend,
   ReplySend,
+  StatusLens,
+  ThreadActivity,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
@@ -91,6 +95,8 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       schema: {
         params: z.object(workspace),
         querystring: z.object({
+          status: StatusLens.default('open'),
+          assignee: AssigneeLens.default('all'),
           q: z.string().max(200).optional(),
           after: Cursor.optional(),
           limit: Limit,
@@ -106,7 +112,7 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
     `${base}/conversations/:conversationId`,
     {
       preHandler: pre,
-      schema: { params: z.object(conversation), response: { 200: Conversation } },
+      schema: { params: z.object(conversation), response: { 200: ConversationSummary } },
     },
     async (request) =>
       reads.getConversation(
@@ -170,6 +176,33 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         request.params.conversationId,
         request.params.replyId,
       ),
+  );
+
+  r.get(
+    `${base}/conversations/:conversationId/activities/:activityId`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...conversation, activityId: z.uuid() }),
+        response: { 200: ThreadActivity },
+      },
+    },
+    async (request) =>
+      reads.getThreadActivity(
+        request.workspace.workspaceId,
+        request.params.conversationId,
+        request.params.activityId,
+      ),
+  );
+
+  // Any active member, either role: the assignee chooser (not the owner-only memberships list).
+  r.get(
+    `${base}/members`,
+    {
+      preHandler: pre,
+      schema: { params: z.object(workspace), response: { 200: ActiveMemberList } },
+    },
+    async (request) => reads.listActiveMembers(request.workspace.workspaceId),
   );
 
   r.post(

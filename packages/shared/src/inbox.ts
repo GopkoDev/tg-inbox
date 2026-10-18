@@ -129,9 +129,6 @@ export const ThreadMessage = z.strictObject({
 });
 export type ThreadMessage = z.infer<typeof ThreadMessage>;
 
-export const ThreadItem = z.discriminatedUnion('type', [ThreadMessage, ThreadReply]);
-export type ThreadItem = z.infer<typeof ThreadItem>;
-
 // ───────── assignment and status (assignment-statuses) ─────────
 
 export const StatusLens = z.enum(['open', 'closed']);
@@ -218,6 +215,13 @@ export const ThreadActivity = z
   });
 export type ThreadActivity = z.infer<typeof ThreadActivity>;
 
+export const ThreadItem = z.discriminatedUnion('type', [
+  ThreadMessage,
+  ThreadReply,
+  ThreadActivity,
+]);
+export type ThreadItem = z.infer<typeof ThreadItem>;
+
 // ───────── list ─────────
 
 export const ContactSummary = z.strictObject({
@@ -252,20 +256,22 @@ export const Conversation = z.strictObject({
   last_item: LastItem,
   unread_count: z.number().int().min(0),
   waiting_for_reply: z.boolean(),
+  status: ConversationStatus,
+  assignee: MemberRef.nullable(),
+  state_version: StateVersion,
 });
 export type Conversation = z.infer<typeof Conversation>;
 
 export const ConversationSummary = z.strictObject({
   ...Conversation.shape,
-  status: ConversationStatus,
-  assignee: MemberRef.nullable(),
-  state_version: StateVersion,
   close_snapshot: CloseSnapshot,
 });
 export type ConversationSummary = z.infer<typeof ConversationSummary>;
 
 export const ConversationPage = z.strictObject({
   workspace_id: Id,
+  /** The lenses this page answers; `status` is null while searching (the status lens is set aside). */
+  lens: z.strictObject({ status: StatusLens.nullable(), assignee: AssigneeLens }),
   items: z.array(Conversation),
   has_prev: z.boolean(),
   has_next: z.boolean(),

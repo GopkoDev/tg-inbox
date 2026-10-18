@@ -1,13 +1,15 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  ActiveMemberList,
   ConversationPage,
-  Conversation,
+  ConversationSummary,
   ErrorEnvelope,
   InboxBotStatus,
   ReadState,
   ThreadMessage,
   ThreadPage,
+  ThreadActivity,
   ThreadReply,
 } from '@tg/shared';
 import { buildApp } from '../../../app.js';
@@ -18,6 +20,7 @@ import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
 import { insertBot } from '../../../test/fixtures/bots.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
 import {
+  insertActivity,
   insertConversation,
   insertMessage,
   insertReply,
@@ -212,7 +215,197 @@ describe('inbox read routes (postgres)', () => {
     const s = await seed();
     const res = await get(s.operator, `${base(s.ws)}/conversations/${s.c1}`);
     expect(res.statusCode).toBe(200);
-    expect(Conversation.parse(res.json())).toMatchObject({ id: s.c1, unread_count: 2 });
+    expect(ConversationSummary.parse(res.json())).toMatchObject({
+      id: s.c1,
+      unread_count: 2,
+      status: 'open',
+      assignee: null,
+      state_version: 0,
+      close_snapshot: { customer_message_seq: 0, latest_reply: null },
+    });
+  });
+
+  /** Open: mine (Ann), theirs (Bea), none; closed: mine, none. Newest activity first in that order. */
+  const lensSeed = async () => {
+    const ws = await insertWorkspace(db, 'Acme Flowers');
+    const me = await member(ws, 'operator', 'active', 'Mia <b>Operator</b>');
+    const bea = await member(ws, 'owner', 'active', 'Bea Owner');
+    const mk = async (
+      name: string,
+      hhmm: string,
+      o: { status?: 'open' | 'closed'; assigneeAccountId?: string | null; stateVersion?: number },
+    ) => {
+      const contactId = await insertContact(db, { workspaceId: ws, firstName: name });
+      const conversationId = await insertConversation(db, {
+        workspaceId: ws,
+        contactId,
+        lastActivityAt: at(hhmm),
+        lastMessageReceivedAt: at(hhmm),
+        ...o,
+      });
+      await insertMessage(db, {
+        workspaceId: ws,
+        conversationId,
+        telegramMessageId: 1n,
+        sentAt: at(hhmm),
+        receivedAt: at(hhmm),
+      });
+      return conversationId;
+    };
+    const mine = await mk('Mineone', '09:50', { assigneeAccountId: me.accountId, stateVersion: 3 });
+    const theirs = await mk('Theirsone', '09:40', { assigneeAccountId: bea.accountId });
+    const none = await mk('Noneone', '09:30', {});
+    const closedMine = await mk('Closedmine', '09:20', {
+      status: 'closed',
+      assigneeAccountId: me.accountId,
+    });
+    const closedNone = await mk('Closednone', '09:10', { status: 'closed' });
+    return { ws, me, bea, mine, theirs, none, closedMine, closedNone };
+  };
+
+  it('serves the status and assignee lenses and echoes them (AC-01)', async () => {
+    const s = await lensSeed();
+    const list = async (qs: string) =>
+      ConversationPage.parse((await get(s.me, `${base(s.ws)}/conversations${qs}`)).json());
+    const all = await list('');
+    expect(all.lens).toEqual({ status: 'open', assignee: 'all' });
+    expect(all.items.map((c) => c.id)).toEqual([s.mine, s.theirs, s.none]);
+    expect(all.items[0]).toMatchObject({
+      status: 'open',
+      state_version: 3,
+      assignee: { account_id: s.me.accountId, display_name: 'Mia <b>Operator</b>' },
+    });
+    expect(all.items[2]).toMatchObject({ assignee: null });
+    const mine = await list('?assignee=mine');
+    expect(mine.lens).toEqual({ status: 'open', assignee: 'mine' });
+    expect(mine.items.map((c) => c.id)).toEqual([s.mine]);
+    const unassigned = await list('?assignee=unassigned');
+    expect(unassigned.items.map((c) => c.id)).toEqual([s.none]);
+    const closed = await list('?status=closed');
+    expect(closed.lens).toEqual({ status: 'closed', assignee: 'all' });
+    expect(closed.items.map((c) => c.id)).toEqual([s.closedMine, s.closedNone]);
+    expect(closed.items[0]?.status).toBe('closed');
+    const closedMine = await list('?status=closed&assignee=mine');
+    expect(closedMine.items.map((c) => c.id)).toEqual([s.closedMine]);
+    const empty = await list('?status=closed&assignee=unassigned&q=Mineone');
+    expect(empty.items).toEqual([]);
+  });
+
+  it('sets the status lens aside while searching and keeps the assignee lens (AC-01)', async () => {
+    const s = await lensSeed();
+    const list = async (qs: string) =>
+      ConversationPage.parse((await get(s.me, `${base(s.ws)}/conversations${qs}`)).json());
+    const found = await list('?q=one&status=closed');
+    expect(found.lens).toEqual({ status: null, assignee: 'all' });
+    expect(found.items.map((c) => c.id)).toEqual([s.mine, s.theirs, s.none, s.closedNone]);
+    const both = await list('?q=closed&assignee=mine');
+    expect(both.lens).toEqual({ status: null, assignee: 'mine' });
+    expect(both.items.map((c) => c.id)).toEqual([s.closedMine]);
+    expect(both.items[0]?.status).toBe('closed');
+    const blank = await list('?q=%20%20&status=closed');
+    expect(blank.lens).toEqual({ status: 'closed', assignee: 'all' });
+  });
+
+  it('pages within a lens and refuses a cursor from another lens and an unknown lens', async () => {
+    const s = await lensSeed();
+    const first = ConversationPage.parse(
+      (await get(s.me, `${base(s.ws)}/conversations?status=closed&limit=1`)).json(),
+    );
+    expect(first.items).toHaveLength(1);
+    const next = await get(
+      s.me,
+      `${base(s.ws)}/conversations?status=closed&limit=1&after=${first.next_cursor}`,
+    );
+    expect(ConversationPage.parse(next.json()).items.map((c) => c.id)).toEqual([s.closedNone]);
+    for (const qs of [
+      `status=open&after=${first.next_cursor}`,
+      'status=archived',
+      'assignee=everyone',
+    ]) {
+      const res = await get(s.me, `${base(s.ws)}/conversations?${qs}`);
+      expect(res.statusCode, qs).toBe(400);
+      expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+    }
+  });
+
+  it('serves the summary with the close snapshot and an activity entry in the thread (AC-09)', async () => {
+    const s = await lensSeed();
+    await insertReply(db, {
+      workspaceId: s.ws,
+      conversationId: s.mine,
+      authorAccountId: s.bea.accountId,
+      state: 'sent',
+      positionAt: at('09:55'),
+    });
+    const first = await insertActivity(db, {
+      workspaceId: s.ws,
+      conversationId: s.mine,
+      kind: 'assigned',
+      actorAccountId: s.bea.accountId,
+      newAssigneeAccountId: s.me.accountId,
+      positionAt: at('09:52'),
+    });
+    const second = await insertActivity(db, {
+      workspaceId: s.ws,
+      conversationId: s.mine,
+      kind: 'reassigned',
+      cause: 'member',
+      actorAccountId: s.me.accountId,
+      previousAssigneeAccountId: s.me.accountId,
+      newAssigneeAccountId: s.bea.accountId,
+      positionAt: at('09:58'),
+    });
+    const summary = ConversationSummary.parse(
+      (await get(s.me, `${base(s.ws)}/conversations/${s.mine}`)).json(),
+    );
+    expect(summary.close_snapshot.latest_reply).toMatchObject({ state: 'sent' });
+    const page = ThreadPage.parse(
+      (await get(s.me, `${base(s.ws)}/conversations/${s.mine}/items`)).json(),
+    );
+    expect(page.items.map((i) => i.type)).toEqual(['message', 'activity', 'reply', 'activity']);
+    expect(page.items.map((i) => i.id)).toContain(first);
+    expect(page.items[1]).toMatchObject({
+      kind: 'assigned',
+      cause: 'member',
+      actor: { account_id: s.bea.accountId, display_name: 'Bea Owner' },
+      previous_assignee: null,
+      new_assignee: { account_id: s.me.accountId, display_name: 'Mia <b>Operator</b>' },
+      position_at: at('09:52').toISOString(),
+    });
+    const one = await get(s.bea, `${base(s.ws)}/conversations/${s.mine}/activities/${second}`);
+    expect(one.statusCode).toBe(200);
+    expect(ThreadActivity.parse(one.json())).toMatchObject({
+      id: second,
+      kind: 'reassigned',
+      previous_assignee: { display_name: 'Mia <b>Operator</b>' },
+      new_assignee: { display_name: 'Bea Owner' },
+    });
+  });
+
+  it('still names the actor of an entry after that member was deactivated', async () => {
+    const s = await lensSeed();
+    const gone = await member(s.ws, 'operator', 'deactivated', 'Gone Gary');
+    const entry = await insertActivity(db, {
+      workspaceId: s.ws,
+      conversationId: s.none,
+      kind: 'assigned',
+      actorAccountId: gone.accountId,
+      newAssigneeAccountId: s.me.accountId,
+    });
+    const res = await get(s.me, `${base(s.ws)}/conversations/${s.none}/activities/${entry}`);
+    expect(ThreadActivity.parse(res.json()).actor?.display_name).toBe('Gone Gary');
+  });
+
+  it('lists the active members for any role, by name, not the deactivated (AC-04)', async () => {
+    const s = await lensSeed();
+    await member(s.ws, 'operator', 'deactivated', 'Aaron Gone');
+    for (const who of [s.me, s.bea]) {
+      const res = await get(who, `${base(s.ws)}/members`);
+      expect(res.statusCode).toBe(200);
+      const list = ActiveMemberList.parse(res.json());
+      expect(list.workspace_id).toBe(s.ws);
+      expect(list.items.map((m) => m.display_name)).toEqual(['Bea Owner', 'Mia <b>Operator</b>']);
+    }
   });
 
   it('reads the thread merged oldest first with reply authors named (AC-03)', async () => {
@@ -356,10 +549,10 @@ describe('inbox read routes (postgres)', () => {
       read_through_at: at('09:05').toISOString(),
       unread_count: 0,
     });
-    const mine = Conversation.parse(
+    const mine = ConversationSummary.parse(
       (await get(s.operator, `${base(s.ws)}/conversations/${s.c1}`)).json(),
     );
-    const theirs = Conversation.parse(
+    const theirs = ConversationSummary.parse(
       (await get(s.owner, `${base(s.ws)}/conversations/${s.c1}`)).json(),
     );
     expect(mine.unread_count).toBe(0);
@@ -401,6 +594,9 @@ describe('inbox read routes (postgres)', () => {
       `${base(a.workspaceId)}/conversations/${a.conversationId}/messages/${b.messageId}`,
       `${base(a.workspaceId)}/conversations/${a.conversationId}/replies/${b.replyId}`,
       `${base(a.workspaceId)}/conversations/${newId()}`,
+      `${base(a.workspaceId)}/conversations/${b.assignedConversationId}/activities/${b.activityId}`,
+      `${base(a.workspaceId)}/conversations/${a.assignedConversationId}/activities/${b.activityId}`,
+      `${base(a.workspaceId)}/conversations/${a.assignedConversationId}/activities/${newId()}`,
     ];
     const bodies = new Set<string>();
     for (const url of urls) {
@@ -457,6 +653,9 @@ describe('inbox read routes (postgres)', () => {
       `${c}/messages/${s.m1}`,
       `${c}/replies/${s.r2}`,
       `${base(s.ws)}/bot`,
+      `${base(s.ws)}/members`,
+      `${base(s.ws)}/conversations?status=closed&assignee=mine`,
+      `${c}/activities/${newId()}`,
     ];
     for (const url of urls) {
       const signedOut = await get(null, url);

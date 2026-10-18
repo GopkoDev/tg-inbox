@@ -95,6 +95,9 @@ const conversation = {
   last_item: { type: 'message', id: M, kind: 'photo', body: 'new bouquet?' },
   unread_count: 2,
   waiting_for_reply: true,
+  status: 'open',
+  assignee: null,
+  state_version: 0,
 };
 
 describe('Cursor', () => {
@@ -183,6 +186,7 @@ describe('pages and items', () => {
   it('ConversationPage parses a list page with both last_item kinds', () => {
     const page = {
       workspace_id: W,
+      lens: { status: 'open', assignee: 'all' },
       items: [
         conversation,
         { ...conversation, last_item: { type: 'reply', id: R, body: 'Hello' } },
@@ -194,6 +198,43 @@ describe('pages and items', () => {
     expect(ConversationPage.safeParse(page).success).toBe(true);
     expect(ConversationPage.safeParse({ ...page, next_cursor: null }).success).toBe(true);
     expect(ConversationPage.safeParse({ ...page, next_cursor: 'bad cursor' }).success).toBe(false);
+  });
+  it('ConversationPage echoes its lenses; the status lens is null while searching', () => {
+    const page = {
+      workspace_id: W,
+      lens: { status: null, assignee: 'mine' },
+      items: [{ ...conversation, status: 'closed', assignee: author }],
+      has_prev: false,
+      has_next: false,
+      next_cursor: null,
+    };
+    expect(ConversationPage.safeParse(page).success).toBe(true);
+    const without: Record<string, unknown> = { ...page };
+    delete without.lens;
+    expect(ConversationPage.safeParse(without).success).toBe(false);
+    expect(
+      ConversationPage.safeParse({ ...page, lens: { status: 'archived', assignee: 'all' } })
+        .success,
+    ).toBe(false);
+    const noStatus = { ...conversation, status: undefined };
+    expect(ConversationPage.safeParse({ ...page, items: [noStatus] }).success).toBe(false);
+  });
+  it('ThreadItem and ThreadPage carry activity entries', () => {
+    expect(ThreadItem.parse(activity()).type).toBe('activity');
+    const page = {
+      workspace_id: W,
+      conversation_id: C,
+      items: [message(), activity(), reply()],
+      has_prev: false,
+      has_next: false,
+      prev_cursor: null,
+      next_cursor: null,
+      read_through_at: null,
+    };
+    expect(ThreadPage.safeParse(page).success).toBe(true);
+    expect(ThreadPage.safeParse({ ...page, items: [activity({ actor: null })] }).success).toBe(
+      false,
+    );
   });
   it('ThreadPage has nullable read_through_at', () => {
     const page = {

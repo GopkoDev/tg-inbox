@@ -59,10 +59,14 @@ const conv = (
   last_item: { type: 'message', id: id(500), kind: 'text', body: 'hi' },
   unread_count: 1,
   waiting_for_reply: true,
+  status: 'open',
+  assignee: null,
+  state_version: 0,
   ...over,
 });
 const listPage = (ws: string, items: Conversation[]) => ({
   workspace_id: ws,
+  lens: { status: 'open' as const, assignee: 'all' as const },
   items,
   has_prev: false,
   has_next: false,

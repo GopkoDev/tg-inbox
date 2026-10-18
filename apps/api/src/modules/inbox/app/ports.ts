@@ -9,6 +9,7 @@ export interface InboxReadsDeps {
   contacts: Pick<Contacts, 'searchContactIds' | 'contactsByIds'>;
   workspaces: {
     displayNames(workspaceId: string, accountIds: readonly string[]): Promise<Map<string, string>>;
+    activeMembers(workspaceId: string): Promise<{ accountId: string; displayName: string }[]>;
   };
   bots: { inboxBotStatus(workspaceId: string): Promise<InboxBotStatus> };
   clock: Clock;

@@ -32,6 +32,8 @@ function Item({
   workspaceId: string;
   contactName: string;
 }) {
+  // Activity lines are rendered by a later task (T18).
+  if (item.type === 'activity') return null;
   if (item.type === 'reply')
     return (
       <MessageBubble

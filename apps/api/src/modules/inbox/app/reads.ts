@@ -1,15 +1,27 @@
 import type {
+  ActiveMemberList,
+  AssigneeLens,
   Conversation,
   ConversationPage,
+  ConversationSummary,
   InboxBotStatus,
+  MemberRef,
   ReadState,
+  StatusLens,
+  ThreadActivity,
   ThreadItem,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
 } from '@tg/shared';
 import { NotFoundError } from '../../../platform/errors.js';
-import type { ConversationRow, MessageView, ReplyView } from '../../conversations/app/ports.js';
+import type {
+  ActivityView,
+  ConversationRow,
+  ConversationSummaryRow,
+  MessageView,
+  ReplyView,
+} from '../../conversations/app/ports.js';
 import type { InboxReadsDeps } from './ports.js';
 
 export interface Member {
@@ -75,11 +87,53 @@ export function replyDto(
   };
 }
 
+/** A kept membership always has a name; the fallback only guards a removed account. */
+const memberRef = (names: ReadonlyMap<string, string>, accountId: string): MemberRef => ({
+  account_id: accountId,
+  display_name: names.get(accountId) ?? '?',
+});
+const orNull = (names: ReadonlyMap<string, string>, accountId: string | null) =>
+  accountId === null ? null : memberRef(names, accountId);
+
+/** The accounts an activity entry names: actor, previous and new assignee. */
+const activityAccountIds = (a: ActivityView): string[] =>
+  [a.actorAccountId, a.previousAssigneeAccountId, a.newAssigneeAccountId].filter(
+    (id): id is string => id !== null,
+  );
+
+export function activityDto(
+  workspaceId: string,
+  a: ActivityView,
+  names: ReadonlyMap<string, string>,
+): ThreadActivity {
+  return {
+    type: 'activity',
+    id: a.id,
+    workspace_id: workspaceId,
+    conversation_id: a.conversationId,
+    kind: a.kind,
+    cause: a.cause,
+    actor: orNull(names, a.actorAccountId),
+    previous_assignee: orNull(names, a.previousAssigneeAccountId),
+    new_assignee: orNull(names, a.newAssigneeAccountId),
+    position_at: iso(a.positionAt),
+  };
+}
+
 /** The inbox read use cases: guarded callers pass the workspace id and the member from the guard. */
 export function createInboxReadUseCases(deps: InboxReadsDeps) {
   const { conversations, contacts, workspaces, bots } = deps;
 
+  async function namesOf(workspaceId: string, ids: readonly string[]) {
+    const unique = [...new Set(ids)];
+    return unique.length ? workspaces.displayNames(workspaceId, unique) : new Map<string, string>();
+  }
+
   async function rowsToDtos(workspaceId: string, rows: ConversationRow[]): Promise<Conversation[]> {
+    const names = await namesOf(
+      workspaceId,
+      rows.flatMap((r) => (r.assigneeAccountId === null ? [] : [r.assigneeAccountId])),
+    );
     const found = await contacts.contactsByIds(workspaceId, [
       ...new Set(rows.map((r) => r.contactId)),
     ]);
@@ -102,6 +156,9 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
         last_item: row.lastItem,
         unread_count: row.unreadCount,
         waiting_for_reply: row.waitingForReply,
+        status: row.status,
+        assignee: orNull(names, row.assigneeAccountId),
+        state_version: row.stateVersion,
       });
     }
     return items;
@@ -111,20 +168,29 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
     async listConversations(
       workspaceId: string,
       member: Member,
-      input: { q?: string | undefined; after?: string | undefined; limit: number },
+      input: {
+        status: StatusLens;
+        assignee: AssigneeLens;
+        q?: string | undefined;
+        after?: string | undefined;
+        limit: number;
+      },
     ): Promise<ConversationPage> {
+      const search = (input.q ?? '').trim();
       const contactIds = await contacts.searchContactIds(workspaceId, input.q ?? '');
       const page = await conversations.listConversations(workspaceId, {
         ...member,
         contactIds,
-        status: 'open',
-        assignee: 'all',
-        search: (input.q ?? '').trim(),
+        status: input.status,
+        assignee: input.assignee,
+        search,
         cursor: input.after ?? null,
         limit: input.limit,
       });
       return {
         workspace_id: workspaceId,
+        // Searching sets the status lens aside (AC-01): the page says so.
+        lens: { status: search === '' ? input.status : null, assignee: input.assignee },
         items: await rowsToDtos(workspaceId, page.items),
         has_prev: page.hasPrev,
         has_next: page.hasNext,
@@ -136,11 +202,25 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       workspaceId: string,
       member: Member,
       conversationId: string,
-    ): Promise<Conversation> {
-      const row = await conversations.conversationSummary(workspaceId, conversationId, member);
+    ): Promise<ConversationSummary> {
+      const row: ConversationSummaryRow | null = await conversations.conversationSummary(
+        workspaceId,
+        conversationId,
+        member,
+      );
       const [dto] = row ? await rowsToDtos(workspaceId, [row]) : [];
-      if (!dto) throw notFound();
-      return dto;
+      if (!row || !dto) throw notFound();
+      const snapshot = row.closeSnapshot;
+      return {
+        ...dto,
+        close_snapshot: {
+          customer_message_seq: snapshot.customerMessageSeq,
+          latest_reply: snapshot.latestReply && {
+            id: snapshot.latestReply.id,
+            state: snapshot.latestReply.state,
+          },
+        },
+      };
     },
 
     async listThreadItems(
@@ -154,19 +234,19 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
         limit: input.limit,
       });
       if (!page) throw notFound();
-      // Activity entries reach the thread DTO in the inbox reads task (T12).
-      const entries = page.items.flatMap((e) => (e.type === 'activity' ? [] : [e]));
-      const authorIds = entries.flatMap((e) =>
-        e.type === 'reply' ? [e.reply.authorAccountId] : [],
+      const names = await namesOf(
+        workspaceId,
+        page.items.flatMap((e) => {
+          if (e.type === 'reply') return [e.reply.authorAccountId];
+          if (e.type === 'activity') return activityAccountIds(e.activity);
+          return [];
+        }),
       );
-      const names = authorIds.length
-        ? await workspaces.displayNames(workspaceId, [...new Set(authorIds)])
-        : new Map<string, string>();
-      const items: ThreadItem[] = entries.map((e) =>
-        e.type === 'message'
-          ? messageDto(workspaceId, e.message)
-          : replyDto(workspaceId, e.reply, names),
-      );
+      const items: ThreadItem[] = page.items.map((e) => {
+        if (e.type === 'message') return messageDto(workspaceId, e.message);
+        if (e.type === 'reply') return replyDto(workspaceId, e.reply, names);
+        return activityDto(workspaceId, e.activity, names);
+      });
       return {
         workspace_id: workspaceId,
         conversation_id: conversationId,
@@ -199,6 +279,24 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       if (!r) throw notFound();
       const names = await workspaces.displayNames(workspaceId, [r.authorAccountId]);
       return replyDto(workspaceId, r, names);
+    },
+
+    async getThreadActivity(
+      workspaceId: string,
+      conversationId: string,
+      activityId: string,
+    ): Promise<ThreadActivity> {
+      const a = await conversations.threadActivity(workspaceId, conversationId, activityId);
+      if (!a) throw notFound();
+      return activityDto(workspaceId, a, await namesOf(workspaceId, activityAccountIds(a)));
+    },
+
+    async listActiveMembers(workspaceId: string): Promise<ActiveMemberList> {
+      const members = await workspaces.activeMembers(workspaceId);
+      return {
+        workspace_id: workspaceId,
+        items: members.map((m) => ({ account_id: m.accountId, display_name: m.displayName })),
+      };
     },
 
     async markConversationRead(
