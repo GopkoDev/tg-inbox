@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import {
+  ActiveMemberList,
+  ActivityCause,
+  ActivityKind,
+  AssigneeLens,
+  AssigneeNotActiveError,
+  AssignRequest,
   BotCannotReplyError,
+  ChangeLimitReachedError,
+  CloseNeedsConfirmationError,
+  CloseReason,
+  CloseRequest,
+  CloseSnapshot,
+  ConversationChangedFrame,
+  ConversationStateChange,
+  ConversationStateChangedError,
+  ConversationStatus,
+  ConversationSummary,
+  StateChangeRequest,
+  StateVersion,
+  StatusLens,
+  ThreadActivity,
   ConversationPage,
   Cursor,
   InboxBotStatus,
@@ -314,5 +335,288 @@ describe('LiveFrame', () => {
         change: 'created',
       }).success,
     ).toBe(false);
+  });
+});
+
+// ───────── assignment-statuses ─────────
+
+const B = '0198a000-0000-7000-8000-000000000007';
+const summary = (over: Record<string, unknown> = {}) => ({
+  id: C,
+  workspace_id: W,
+  contact: { id: B, first_name: 'Test', last_name: null, username: null },
+  last_activity_at: T,
+  last_item: { type: 'message', id: M, kind: 'text', body: 'Hi' },
+  unread_count: 1,
+  waiting_for_reply: true,
+  status: 'open',
+  assignee: null,
+  state_version: 5,
+  close_snapshot: { customer_message_seq: 8, latest_reply: { id: R, state: 'sent' } },
+  ...over,
+});
+const other = { account_id: B, display_name: 'Test User 2' };
+const activity = (over: Record<string, unknown> = {}) => ({
+  type: 'activity',
+  id: R,
+  workspace_id: W,
+  conversation_id: C,
+  kind: 'assigned',
+  cause: 'member',
+  actor: author,
+  previous_assignee: null,
+  new_assignee: author,
+  position_at: T,
+  ...over,
+});
+
+describe('lens and state primitives', () => {
+  it('StatusLens, AssigneeLens, ConversationStatus, ActivityKind, ActivityCause, CloseReason', () => {
+    expect(StatusLens.options).toEqual(['open', 'closed']);
+    expect(AssigneeLens.options).toEqual(['all', 'mine', 'unassigned']);
+    expect(ConversationStatus.options).toEqual(['open', 'closed']);
+    expect(ActivityKind.options).toEqual([
+      'assigned',
+      'reassigned',
+      'unassigned',
+      'closed',
+      'reopened',
+    ]);
+    expect(ActivityCause.options).toEqual([
+      'member',
+      'customer_wrote',
+      'reply_not_delivered',
+      'member_deactivated',
+    ]);
+    expect(CloseReason.options).toHaveLength(6);
+  });
+  it('StateVersion is an integer 0…2147483647', () => {
+    expect(StateVersion.safeParse(0).success).toBe(true);
+    expect(StateVersion.safeParse(2147483647).success).toBe(true);
+    expect(StateVersion.safeParse(2147483648).success).toBe(false);
+    expect(StateVersion.safeParse(-1).success).toBe(false);
+    expect(StateVersion.safeParse(1.5).success).toBe(false);
+  });
+  it('CloseSnapshot allows a null latest reply and rejects extra keys', () => {
+    expect(CloseSnapshot.safeParse({ customer_message_seq: 0, latest_reply: null }).success).toBe(
+      true,
+    );
+    expect(
+      CloseSnapshot.safeParse({ customer_message_seq: 0, latest_reply: null, x: 1 }).success,
+    ).toBe(false);
+    expect(
+      CloseSnapshot.safeParse({ customer_message_seq: 0, latest_reply: { id: R, state: 'nope' } })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('ConversationSummary', () => {
+  it('parses the contract example and rejects extra keys or a missing snapshot', () => {
+    expect(ConversationSummary.safeParse(summary()).success).toBe(true);
+    expect(ConversationSummary.safeParse(summary({ assignee: author })).success).toBe(true);
+    expect(ConversationSummary.safeParse(summary({ x: 1 })).success).toBe(false);
+    expect(ConversationSummary.safeParse(summary({ close_snapshot: undefined })).success).toBe(
+      false,
+    );
+  });
+});
+
+describe('ThreadActivity (AC-03)', () => {
+  it('parses every kind with its pair', () => {
+    expect(ThreadActivity.safeParse(activity()).success).toBe(true);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'reassigned', previous_assignee: other, new_assignee: author }),
+      ).success,
+    ).toBe(true);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'unassigned', previous_assignee: author, new_assignee: null }),
+      ).success,
+    ).toBe(true);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'closed', previous_assignee: null, new_assignee: null }),
+      ).success,
+    ).toBe(true);
+    expect(
+      ThreadActivity.safeParse(
+        activity({
+          kind: 'reopened',
+          cause: 'customer_wrote',
+          actor: null,
+          previous_assignee: null,
+          new_assignee: null,
+        }),
+      ).success,
+    ).toBe(true);
+  });
+  it('rejects an actor without cause member and a member cause without actor', () => {
+    expect(ThreadActivity.safeParse(activity({ cause: 'customer_wrote' })).success).toBe(false);
+    expect(ThreadActivity.safeParse(activity({ actor: null })).success).toBe(false);
+  });
+  it('rejects a pair that does not fit the kind', () => {
+    expect(ThreadActivity.safeParse(activity({ new_assignee: null })).success).toBe(false);
+    expect(ThreadActivity.safeParse(activity({ previous_assignee: other })).success).toBe(false);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'reassigned', previous_assignee: null, new_assignee: author }),
+      ).success,
+    ).toBe(false);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'reassigned', previous_assignee: author, new_assignee: author }),
+      ).success,
+    ).toBe(false);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'unassigned', previous_assignee: null, new_assignee: null }),
+      ).success,
+    ).toBe(false);
+    expect(
+      ThreadActivity.safeParse(
+        activity({ kind: 'closed', previous_assignee: author, new_assignee: null }),
+      ).success,
+    ).toBe(false);
+    expect(
+      ThreadActivity.safeParse(activity({ kind: 'reopened', new_assignee: author })).success,
+    ).toBe(false);
+  });
+  it('rejects extra keys', () => {
+    expect(ThreadActivity.safeParse(activity({ x: 1 })).success).toBe(false);
+  });
+});
+
+describe('change requests and answers', () => {
+  it('ActiveMemberList', () => {
+    expect(ActiveMemberList.safeParse({ workspace_id: W, items: [author, other] }).success).toBe(
+      true,
+    );
+    expect(ActiveMemberList.safeParse({ workspace_id: W, items: [], x: 1 }).success).toBe(false);
+  });
+  it('AssignRequest and StateChangeRequest are strict', () => {
+    expect(
+      AssignRequest.safeParse({ assignee_account_id: A, expected_state_version: 4 }).success,
+    ).toBe(true);
+    expect(
+      AssignRequest.safeParse({ assignee_account_id: null, expected_state_version: 4 }).success,
+    ).toBe(false);
+    expect(StateChangeRequest.safeParse({ expected_state_version: 4 }).success).toBe(true);
+    expect(StateChangeRequest.safeParse({ expected_state_version: 4, x: 1 }).success).toBe(false);
+    expect(StateChangeRequest.safeParse({}).success).toBe(false);
+  });
+  it('CloseRequest defaults confirm_close_reasons to false and rejects extra keys', () => {
+    const snap = { customer_message_seq: 8, latest_reply: null };
+    const r = CloseRequest.parse({ expected_state_version: 4, expected_close_snapshot: snap });
+    expect(r.confirm_close_reasons).toBe(false);
+    expect(
+      CloseRequest.safeParse({
+        expected_state_version: 4,
+        expected_close_snapshot: snap,
+        confirm_close_reasons: true,
+      }).success,
+    ).toBe(true);
+    expect(
+      CloseRequest.safeParse({
+        expected_state_version: 4,
+        expected_close_snapshot: snap,
+        extra: 1,
+      }).success,
+    ).toBe(false);
+    expect(CloseRequest.safeParse({ expected_state_version: 4 }).success).toBe(false);
+  });
+  it('ConversationStateChange', () => {
+    const ok = {
+      workspace_id: W,
+      outcome: 'recorded',
+      conversation: summary(),
+      activity: activity(),
+    };
+    expect(ConversationStateChange.safeParse(ok).success).toBe(true);
+    expect(
+      ConversationStateChange.safeParse({ ...ok, outcome: 'unchanged', activity: null }).success,
+    ).toBe(true);
+    expect(ConversationStateChange.safeParse({ ...ok, outcome: 'done' }).success).toBe(false);
+  });
+});
+
+describe('assignment refusals', () => {
+  const env = (code: string, details: unknown) => ({ error: { code, message: 'm', details } });
+  it('ConversationStateChangedError', () => {
+    const d = { conversation: summary(), latest_change: activity() };
+    expect(
+      ConversationStateChangedError.safeParse(env('CONVERSATION_STATE_CHANGED', d)).success,
+    ).toBe(true);
+    expect(
+      ConversationStateChangedError.safeParse(
+        env('CONVERSATION_STATE_CHANGED', { ...d, latest_change: null }),
+      ).success,
+    ).toBe(true);
+    expect(ConversationStateChangedError.safeParse(env('NOT_FOUND', d)).success).toBe(false);
+  });
+  it('CloseNeedsConfirmationError needs unique, non-empty reasons', () => {
+    const d = {
+      reasons: ['customer_waiting', 'unread_customer_message'],
+      stale_change: null,
+      newest_unread_message: { id: M, received_at: T },
+      conversation: summary(),
+    };
+    const p = (details: unknown) =>
+      CloseNeedsConfirmationError.safeParse(env('CLOSE_NEEDS_CONFIRMATION', details)).success;
+    expect(p(d)).toBe(true);
+    expect(p({ ...d, stale_change: activity(), newest_unread_message: null })).toBe(true);
+    expect(p({ ...d, reasons: [] })).toBe(false);
+    expect(p({ ...d, reasons: ['customer_waiting', 'customer_waiting'] })).toBe(false);
+    expect(p({ ...d, reasons: ['nope'] })).toBe(false);
+  });
+  it('AssigneeNotActiveError pins details.field', () => {
+    expect(
+      AssigneeNotActiveError.safeParse(env('ASSIGNEE_NOT_ACTIVE', { field: 'assignee_account_id' }))
+        .success,
+    ).toBe(true);
+    expect(
+      AssigneeNotActiveError.safeParse(env('ASSIGNEE_NOT_ACTIVE', { field: 'other' })).success,
+    ).toBe(false);
+  });
+  it('ChangeLimitReachedError (AC-12) is fixed at 60 per 60 s', () => {
+    const ok = { limit: 60, window_seconds: 60, retry_at: T };
+    expect(ChangeLimitReachedError.safeParse(env('CHANGE_LIMIT_REACHED', ok)).success).toBe(true);
+    expect(
+      ChangeLimitReachedError.safeParse(env('CHANGE_LIMIT_REACHED', { ...ok, limit: 30 })).success,
+    ).toBe(false);
+    expect(
+      ChangeLimitReachedError.safeParse(env('CHANGE_LIMIT_REACHED', { ...ok, window_seconds: 30 }))
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe('LiveFrame activity item', () => {
+  const frame = {
+    v: 1,
+    workspace_id: W,
+    type: 'conversation.changed',
+    conversation_id: C,
+    item: { type: 'activity', id: R },
+    change: 'created',
+  };
+  // The shared-inbox frame's item enum, as an already-open old tab holds it.
+  const OldFrame = z.object({
+    v: z.literal(1),
+    workspace_id: z.uuid(),
+    type: z.literal('conversation.changed'),
+    conversation_id: z.uuid(),
+    item: z.object({ type: z.enum(['message', 'reply']), id: z.uuid() }).nullable(),
+    change: z.enum(['created', 'edited', 'state', 'read']),
+  });
+  it('parses in the new frame and is dropped by the old enum', () => {
+    expect(LiveFrame.safeParse(frame).success).toBe(true);
+    expect(ConversationChangedFrame.safeParse(frame).success).toBe(true);
+    expect(OldFrame.safeParse(frame).success).toBe(false);
+  });
+  it('allows only change created for an activity', () => {
+    expect(LiveFrame.safeParse({ ...frame, change: 'state' }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...frame, change: 'edited' }).success).toBe(false);
   });
 });

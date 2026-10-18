@@ -421,11 +421,13 @@ export const useInboxStore = create<InboxState>()((set, get) => {
   const refetchItem = (
     workspaceId: string,
     conversationId: string,
-    item: { type: 'message' | 'reply'; id: string },
+    item: { type: 'message' | 'reply' | 'activity'; id: string },
     markRead: boolean,
   ) =>
     coalesce(`item:${item.id}`, async () => {
       const startedAt = epoch;
+      // Activity entries have no read route yet (T16 adds the thread merge): nothing to refetch.
+      if (item.type === 'activity') return;
       if (item.type === 'reply') {
         const reply = await source.getThreadReply(workspaceId, conversationId, item.id, BACKGROUND);
         if (current(workspaceId, startedAt)) mergeItem(workspaceId, reply);

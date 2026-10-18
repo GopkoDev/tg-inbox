@@ -16,7 +16,7 @@ const conversationChanged = z
     v: z.literal(1),
     workspace_id: id,
     conversation_id: id,
-    item: z.object({ type: z.enum(['message', 'reply']), id }).nullable(),
+    item: z.object({ type: z.enum(['message', 'reply', 'activity']), id }).nullable(),
     change: z.enum(['created', 'edited', 'state', 'read']),
     account_id: id.optional(),
   })
@@ -27,6 +27,9 @@ const conversationChanged = z
       }
     } else if (s.item === null) {
       ctx.addIssue({ code: 'custom', path: ['item'], message: 'null only for read' });
+    }
+    if (s.item?.type === 'activity' && s.change !== 'created') {
+      ctx.addIssue({ code: 'custom', path: ['change'], message: 'activity is created only' });
     }
   });
 

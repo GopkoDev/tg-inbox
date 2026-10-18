@@ -235,6 +235,61 @@ export class ReplyLimitReachedError extends AppError {
   }
 }
 
+/** The assignee or status moved since the version the member saw — AC-03. */
+export class ConversationStateChangedError extends AppError {
+  readonly code = ErrorCode.CONVERSATION_STATE_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(conversation: unknown, latestChange: unknown) {
+    super('This conversation changed since you looked', {
+      conversation,
+      latest_change: latestChange,
+    });
+  }
+}
+
+/** A close that may be early needs the member's confirmation — AC-03, AC-06, AC-08. */
+export class CloseNeedsConfirmationError extends AppError {
+  readonly code = ErrorCode.CLOSE_NEEDS_CONFIRMATION;
+  readonly statusCode = 409;
+
+  constructor(details: {
+    reasons: string[];
+    stale_change?: unknown;
+    newest_unread_message?: unknown;
+    conversation?: unknown;
+  }) {
+    super('The customer may still need an answer — close anyway?', details);
+  }
+}
+
+/** The picked assignee is not an active member of the workspace. */
+export class AssigneeNotActiveError extends AppError {
+  readonly code = ErrorCode.ASSIGNEE_NOT_ACTIVE;
+  readonly statusCode = 400;
+
+  constructor() {
+    super('This person is no longer an active member of the workspace', {
+      field: 'assignee_account_id',
+    });
+  }
+}
+
+/** 60 recorded assignment or status changes per member per workspace per 60 s — AC-12. */
+export class ChangeLimitReachedError extends AppError {
+  readonly code = ErrorCode.CHANGE_LIMIT_REACHED;
+  readonly statusCode = 429;
+  override readonly headers: Record<string, string>;
+
+  constructor(retryAt: Date, retryAfterSeconds: number) {
+    super(
+      `Changes are limited to 60 per minute — you can continue in ${retryAfterSeconds} seconds`,
+      { limit: 60, window_seconds: 60, retry_at: retryAt.toISOString() },
+    );
+    this.headers = { 'Retry-After': String(retryAfterSeconds) };
+  }
+}
+
 /**
  * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
  * AppError. Its message never carries Telegram's error text or URL.
