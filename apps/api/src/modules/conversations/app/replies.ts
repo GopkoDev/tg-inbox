@@ -118,7 +118,12 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
           },
           tx,
         );
-        if (!reply) return { status: 'not_found' };
+        if (!reply) {
+          // Either the conversation is not in this workspace, or a concurrent request with the same
+          // client key committed first (the insert did nothing): answer with that reply.
+          const raced = await replies.findByClientKey(workspaceId, conversationId, clientKey, tx);
+          return raced ? { status: 'existing', reply: raced } : { status: 'not_found' };
+        }
         await replies.insertAttempt(
           workspaceId,
           {

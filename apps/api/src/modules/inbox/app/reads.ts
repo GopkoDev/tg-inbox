@@ -53,7 +53,7 @@ function messageDto(workspaceId: string, m: MessageView): ThreadMessage {
   };
 }
 
-function replyDto(
+export function replyDto(
   workspaceId: string,
   r: ReplyView,
   names: ReadonlyMap<string, string>,

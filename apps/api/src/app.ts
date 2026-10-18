@@ -7,6 +7,8 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
+import { createSendReply } from './modules/inbox/app/send-reply.js';
+import { createEnqueueDrain, createInboxQueues } from './modules/inbox/infra/jobs.js';
 import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
@@ -58,6 +60,7 @@ export async function buildApp(
     optionalAccount,
     bots,
     inboxReads,
+    conversationReplies,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
   app.addHook('onClose', async () => {
@@ -68,6 +71,15 @@ export async function buildApp(
   await registerBotJobs(jobs, bots.healthCheck, {
     onTick: (enqueued) =>
       app.log.info({ queue: SCHEDULE_HEALTH_CHECKS_QUEUE, enqueued }, 'bot health-check tick'),
+  });
+
+  await createInboxQueues(jobs);
+  const inboxReplies = createSendReply({
+    replies: conversationReplies,
+    bots: bots.inboxStatus,
+    workspaces: workspaceAccess,
+    enqueueDrain: createEnqueueDrain(jobs),
+    clock: deps.clock,
   });
 
   await registerHealth(app, { db });
@@ -110,7 +122,13 @@ export async function buildApp(
     { prefix: '/api' },
   );
   await app.register(
-    async (api) => registerInbox(api, { reads: inboxReads, access: workspaceAccess, authenticate }),
+    async (api) =>
+      registerInbox(api, {
+        reads: inboxReads,
+        replies: inboxReplies,
+        access: workspaceAccess,
+        authenticate,
+      }),
     { prefix: '/api' },
   );
 

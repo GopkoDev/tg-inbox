@@ -37,6 +37,8 @@ import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
+import { createReplies } from './modules/conversations/app/replies.js';
+import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
 import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
@@ -176,6 +178,13 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   };
   // --- end bots dependencies ---
 
+  const conversationReplies = createReplies({
+    transaction,
+    replies: createReplyRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
+
   // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
   const inboxReads = createInboxReadUseCases({
     conversations: createInboxReads({
@@ -211,6 +220,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations,
     bots,
     inboxReads,
+    conversationReplies,
     /** Releases the database pool. */
     destroy: () => db.destroy(),
   };

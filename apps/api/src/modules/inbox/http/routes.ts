@@ -8,15 +8,19 @@ import {
   InboxBotStatus,
   ReadMarkRequest,
   ReadState,
+  ReplyResend,
+  ReplySend,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
 } from '@tg/shared';
 import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/http/guard.js';
 import type { InboxReadUseCases } from '../app/reads.js';
+import type { SendReplyUseCases } from '../app/send-reply.js';
 
 export interface InboxDeps {
   reads: InboxReadUseCases;
+  replies: SendReplyUseCases;
   /** The workspaces guard dependency (membership check on every request). */
   access: WorkspaceGuardDeps;
   /** The auth module's session resolver (preHandler setting `request.account`). */
@@ -26,13 +30,15 @@ export interface InboxDeps {
 const Limit = z.coerce.number().int().min(1).max(100).default(50);
 const workspace = { workspaceId: z.uuid() };
 const conversation = { ...workspace, conversationId: z.uuid() };
+// The text rules (blank, 4096 UTF-16 units) are answered by the use case with their own messages.
+const SendBody = ReplySend.extend({ body: z.string() });
 
 /**
  * The inbox routes under `/workspaces/:workspaceId/inbox` (openapi.yaml); the caller supplies the
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, access, authenticate } = deps;
+  const { reads, replies, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -152,5 +158,46 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
     `${base}/bot`,
     { preHandler: pre, schema: { params: z.object(workspace), response: { 200: InboxBotStatus } } },
     async (request) => reads.getInboxBotStatus(request.workspace.workspaceId),
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/replies`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: SendBody,
+        response: { 200: ThreadReply, 201: ThreadReply },
+      },
+    },
+    async (request, reply) => {
+      const { created, reply: sent } = await replies.sendReply(
+        request.workspace.workspaceId,
+        request.account.id,
+        request.params.conversationId,
+        request.body,
+      );
+      return reply.status(created ? 201 : 200).send(sent);
+    },
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/replies/:replyId/resend`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...conversation, replyId: z.uuid() }),
+        body: ReplyResend,
+        response: { 200: ThreadReply },
+      },
+    },
+    async (request) =>
+      replies.resendReply(
+        request.workspace.workspaceId,
+        request.account.id,
+        request.params.conversationId,
+        request.params.replyId,
+        request.body,
+      ),
   );
 }
