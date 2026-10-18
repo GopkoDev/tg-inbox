@@ -53,11 +53,10 @@ describe('conversation repository', () => {
         last_activity_at: NOW,
         last_message_received_at: NOW,
         last_reply_sent_at: null,
-        // NULL until capture writes them and contract migration 05 makes them NOT NULL (T8)
-        status: null,
+        status: 'open',
         assignee_account_id: null,
-        state_version: null,
-        customer_message_seq: null,
+        state_version: 0,
+        customer_message_seq: 0,
       },
     ]);
   });
@@ -128,11 +127,34 @@ describe('conversation repository', () => {
     });
   });
 
+  it('raiseReceived raises the counter by one and returns the state under the lock', async () => {
+    const w = await insertWorkspace(db);
+    const contactId = await insertContact(db, { workspaceId: w, telegramUserId: 5008n });
+    const id = await insertConversation(db, {
+      workspaceId: w,
+      contactId,
+      status: 'closed',
+      stateVersion: 3,
+      customerMessageSeq: 4,
+    });
+    expect(await repo.raiseReceived(w, id, NOW)).toEqual({
+      status: 'closed',
+      assigneeAccountId: null,
+      stateVersion: 3,
+    });
+    const row = await db
+      .selectFrom('conversations')
+      .select('customer_message_seq')
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(row.customer_message_seq).toBe(5);
+  });
+
   it('isolation: raiseReceived never touches another workspace’s conversation', async () => {
     const { a, b } = await twoWorkspaces(db);
     const contactId = await insertContact(db, { workspaceId: a, telegramUserId: 5007n });
     const id = await insertConversation(db, { workspaceId: a, contactId });
-    await repo.raiseReceived(b, id, new Date(NOW.getTime() + 60_000));
+    await expect(repo.raiseReceived(b, id, new Date(NOW.getTime() + 60_000))).rejects.toThrow();
     const row = await db
       .selectFrom('conversations')
       .select('last_message_received_at')

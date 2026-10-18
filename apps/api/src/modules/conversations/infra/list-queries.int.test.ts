@@ -334,6 +334,9 @@ describe('list queries', () => {
       last_activity_at: at(i),
       last_message_received_at: at(i),
       last_reply_sent_at: null,
+      status: 'open' as const,
+      state_version: 0,
+      customer_message_seq: 0,
     }));
     await db.insertInto('conversations').values(convs).execute();
     await db

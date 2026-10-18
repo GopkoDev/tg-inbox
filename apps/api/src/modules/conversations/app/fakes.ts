@@ -75,13 +75,19 @@ export function fakeConversationRepo(): ConversationRepo & {
     },
     async raiseReceived(workspaceId, conversationId, receivedAt) {
       const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
-      if (!row) return;
+      if (!row) throw new Error('conversation vanished before its arrival was recorded');
+      row.customerMessageSeq += 1;
       row.lastMessageReceivedAt = new Date(
         Math.max(row.lastMessageReceivedAt.getTime(), receivedAt.getTime()),
       );
       row.lastActivityAt = new Date(
         Math.max(row.lastMessageReceivedAt.getTime(), row.lastReplySentAt?.getTime() ?? 0),
       );
+      return {
+        status: row.status,
+        assigneeAccountId: row.assigneeAccountId,
+        stateVersion: row.stateVersion,
+      };
     },
     async findByChat(workspaceId, telegramChatId) {
       return find(workspaceId, telegramChatId)?.id ?? null;

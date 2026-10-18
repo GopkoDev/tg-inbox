@@ -1,16 +1,20 @@
+import { sql } from 'kysely';
 import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { startRealtimeListener, type RealtimeSignal } from '../../../platform/realtime.js';
-import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
+import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createContacts } from '../../contacts/app/contacts.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
+import type { CloseSnapshot } from '../domain/state.js';
+import { createActivityRepo } from '../infra/activity-repo.js';
 import { createConversationRepo } from '../infra/conversation-repo.js';
 import { createConversationSignals } from '../infra/conversation-signals.js';
 import { createMessageRepo } from '../infra/message-repo.js';
 import { createConversations, type InboundMessage } from './conversations.js';
+import { createStateChanges } from './state-changes.js';
 import type { MessageRepo } from './ports.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -58,6 +62,7 @@ describe('conversations capture (Postgres)', () => {
       transaction: (fn) => db.transaction().execute(fn),
       conversations: createConversationRepo(db),
       messages,
+      activities: createActivityRepo(db),
       contacts: createContacts({ repo: createContactRepo(db), clock }),
       signals: createConversationSignals(),
       clock,
@@ -207,6 +212,233 @@ describe('conversations capture (Postgres)', () => {
     ).toBe('not_found');
   });
 
+  describe('reopen on a customer message (AC-06, AC-07, ADR-0004)', () => {
+    function at_(clockAt: Date) {
+      const clock = fixedClock(clockAt);
+      return createConversations({
+        transaction: (fn) => db.transaction().execute(fn),
+        conversations: createConversationRepo(db),
+        messages: createMessageRepo(db),
+        activities: createActivityRepo(db),
+        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        signals: createConversationSignals(),
+        clock,
+      });
+    }
+    const row = (w: string) =>
+      db
+        .selectFrom('conversations')
+        .select(['id', 'status', 'assignee_account_id', 'state_version', 'customer_message_seq'])
+        .where('workspace_id', '=', w)
+        .executeTakeFirstOrThrow();
+    const entries = (w: string) =>
+      db
+        .selectFrom('conversation_activities')
+        .select(['id', 'kind', 'cause', 'actor_account_id', 'position_at'])
+        .where('workspace_id', '=', w)
+        .orderBy('position_at')
+        .execute();
+
+    /** A captured conversation, then closed with an assignee (as a member's close would leave it). */
+    async function closed() {
+      const w = await insertWorkspace(db);
+      const { accountId } = await insertMembership(db, w);
+      const user = BigInt(nextUser++);
+      await build().captureInbound(w, message(user, 1n));
+      await db
+        .updateTable('conversations')
+        .set({ status: 'closed', assignee_account_id: accountId, state_version: 4 })
+        .where('workspace_id', '=', w)
+        .execute();
+      return { w, accountId, user };
+    }
+
+    it('reopens with the same assignee, one entry at the arrival, and signals it', async () => {
+      const { w, accountId, user } = await closed();
+      const { listener, got } = await listen();
+      try {
+        await at_(at(300)).captureInbound(w, message(user, 2n));
+        expect(await row(w)).toMatchObject({
+          status: 'open',
+          assignee_account_id: accountId,
+          state_version: 5,
+          customer_message_seq: 2,
+        });
+        expect(await entries(w)).toEqual([
+          {
+            id: expect.any(String),
+            kind: 'reopened',
+            cause: 'customer_wrote',
+            actor_account_id: null,
+            position_at: at(300),
+          },
+        ]);
+        const [entry] = await entries(w);
+        await until(() =>
+          got.some((g) => g.type === 'conversation.changed' && g.item?.type === 'activity'),
+        );
+        expect(
+          got.filter(
+            (g) =>
+              g.workspace_id === w &&
+              g.type === 'conversation.changed' &&
+              g.item?.type === 'activity',
+          ),
+        ).toEqual([
+          expect.objectContaining({
+            change: 'created',
+            item: { type: 'activity', id: entry!.id },
+          }),
+        ]);
+      } finally {
+        await listener.stop();
+      }
+    });
+
+    it('a late redelivery keeps its message place while the line sits at its arrival', async () => {
+      const { w, user } = await closed();
+      await at_(at(300)).captureInbound(w, message(user, 0n, { sentAt: at(-60) }));
+      const message0 = await db
+        .selectFrom('messages')
+        .select(['sent_at', 'received_at'])
+        .where('workspace_id', '=', w)
+        .where('telegram_message_id', '=', '0')
+        .executeTakeFirstOrThrow();
+      expect(message0.sent_at).toEqual(at(-60));
+      expect((await row(w)).status).toBe('open');
+      expect((await entries(w)).map((e) => e.position_at)).toEqual([at(300)]);
+    });
+
+    it('a duplicate redelivery and an edit do not reopen', async () => {
+      const { w, user } = await closed();
+      await at_(at(300)).captureInbound(w, message(user, 1n));
+      await at_(at(300)).applyEdit(w, {
+        chatId: user,
+        messageId: 1n,
+        body: 'edited',
+        editedAt: at(250),
+        updateId: 9n,
+        raw: { message_id: 1, text: 'edited' },
+      });
+      expect(await row(w)).toMatchObject({
+        status: 'closed',
+        state_version: 4,
+        customer_message_seq: 1,
+      });
+      expect(await entries(w)).toEqual([]);
+    });
+
+    it('a capture that fails after the reopen leaves the conversation closed', async () => {
+      const { w, user } = await closed();
+      const failing: MessageRepo = {
+        ...createMessageRepo(db),
+        insertOnce: async () => {
+          throw new Error('forced failure');
+        },
+      };
+      await build(failing)
+        .captureInbound(w, message(user, 2n))
+        .catch(() => undefined);
+      expect(await row(w)).toMatchObject({ status: 'closed', state_version: 4 });
+      expect(await entries(w)).toEqual([]);
+    });
+
+    function stateChanges() {
+      return createStateChanges({
+        conversations: createConversationRepo(db),
+        activities: createActivityRepo(db),
+        signals: createConversationSignals(),
+        clock: fixedClock(at(200)),
+      });
+    }
+    const closeAs = (
+      w: string,
+      actor: string,
+      conversationId: string,
+      snapshot: CloseSnapshot,
+      confirm: boolean,
+    ) =>
+      db.transaction().execute((tx) =>
+        stateChanges().changeStatus(tx, {
+          workspaceId: w,
+          actorAccountId: actor,
+          conversationId,
+          to: 'closed',
+          expectedStateVersion: 0,
+          expectedCloseSnapshot: snapshot,
+          confirm,
+          actorActiveSince: at(0),
+        }),
+      );
+    /** Closed conversations whose last customer arrival is later than their latest close entry. */
+    const integrityViolations = async (workspaceId: string) =>
+      (
+        await sql<{ id: string }>`SELECT c.id FROM conversations c
+          WHERE c.workspace_id = ${workspaceId} AND c.status = 'closed' AND c.last_message_received_at >
+            COALESCE((SELECT max(a.position_at) FROM conversation_activities a
+              WHERE a.conversation_id = c.id AND a.kind = 'closed'), '-infinity'::timestamptz)`.execute(
+          db,
+        )
+      ).rows;
+
+    it('QG-1 (b): a message between the refusal and close-anyway, even one not arriving later, asks again', async () => {
+      const w = await insertWorkspace(db);
+      const { accountId } = await insertMembership(db, w);
+      const user = BigInt(nextUser++);
+      await build().captureInbound(w, message(user, 1n)); // arrival at(100)
+      const id = (await row(w)).id;
+      const first = await closeAs(
+        w,
+        accountId,
+        id,
+        { customerMessageSeq: 1, latestReply: null },
+        false,
+      );
+      if (first.outcome !== 'needs_confirmation') throw new Error(first.outcome);
+      // the same arrival instant as the current one (concurrent webhook connections)
+      await build().captureInbound(w, message(user, 2n));
+      const again = await closeAs(w, accountId, id, first.snapshot, true);
+      if (again.outcome !== 'needs_confirmation') throw new Error(again.outcome);
+      expect(again.reasons).toContain('new_customer_message');
+      expect(again.snapshot.customerMessageSeq).toBe(2);
+      expect((await row(w)).status).toBe('open');
+      const final = await closeAs(w, accountId, id, again.snapshot, true);
+      expect(final.outcome).toBe('recorded');
+    });
+
+    it('QG-1 (c): a close racing a capture, many times, leaves no closed conversation with a later arrival', async () => {
+      const w = await insertWorkspace(db);
+      const { accountId } = await insertMembership(db, w);
+      const ids: string[] = [];
+      const users: bigint[] = [];
+      for (let i = 0; i < 20; i++) {
+        const user = BigInt(nextUser++);
+        users.push(user);
+        await build().captureInbound(w, message(user, 1n));
+      }
+      const rows = await db
+        .selectFrom('conversations')
+        .select('id')
+        .where('workspace_id', '=', w)
+        .execute();
+      ids.push(...rows.map((r) => r.id));
+      await Promise.all(
+        ids.flatMap((id, i) => [
+          closeAs(w, accountId, id, { customerMessageSeq: 1, latestReply: null }, true),
+          at_(at(400)).captureInbound(w, message(users[i]!, 2n)),
+        ]),
+      );
+      expect(await integrityViolations(w)).toEqual([]);
+      // at least some interleavings closed first and were reopened by the capture
+      const counts = await db
+        .selectFrom('conversations')
+        .select(['status', 'state_version', 'customer_message_seq'])
+        .where('workspace_id', '=', w)
+        .execute();
+      for (const c of counts) expect(c.customer_message_seq).toBe(2);
+    });
+  });
+
   describe('list columns and signals (AC-01, AC-15)', () => {
     it('capture stamps arrival and activity with the arrival; a later message and a late redelivery move them', async () => {
       const w = await insertWorkspace(db);
@@ -221,6 +453,7 @@ describe('conversations capture (Postgres)', () => {
         transaction: (fn) => db.transaction().execute(fn),
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
+        activities: createActivityRepo(db),
         contacts: createContacts({
           repo: createContactRepo(db),
           clock: fixedClock(at(400)),
@@ -253,6 +486,7 @@ describe('conversations capture (Postgres)', () => {
         transaction: (fn) => db.transaction().execute(fn),
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
+        activities: createActivityRepo(db),
         contacts: createContacts({ repo: createContactRepo(db), clock }),
         signals: createConversationSignals(),
         clock,

@@ -36,6 +36,7 @@ import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
 import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
+import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
 import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
 import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
@@ -132,6 +133,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     transaction,
     conversations: createConversationRepo(db),
     messages: createMessageRepo(db),
+    activities: createActivityRepo(db),
     contacts,
     signals: createConversationSignals(),
     clock,

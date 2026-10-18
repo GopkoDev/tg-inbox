@@ -11,6 +11,7 @@ import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js'
 import { createContacts } from '../../contacts/app/contacts.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
 import { createConversations } from '../../conversations/app/conversations.js';
+import { createActivityRepo } from '../../conversations/infra/activity-repo.js';
 import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
 import { createConversationSignals } from '../../conversations/infra/conversation-signals.js';
 import { createMessageRepo } from '../../conversations/infra/message-repo.js';
@@ -49,6 +50,7 @@ describe('reconnect and disconnect (Postgres + fake Bot API)', () => {
       transaction: (fn) => db.transaction().execute(fn),
       conversations: createConversationRepo(db),
       messages: createMessageRepo(db),
+      activities: createActivityRepo(db),
       contacts,
       signals: createConversationSignals(),
       clock,

@@ -149,8 +149,8 @@ describe('bot-connection migrations', () => {
     await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
       VALUES (${contactId}, ${workspaceId}, 1, 'Test User', ${now}, ${now})`.execute(db);
     await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
-        last_activity_at, last_message_received_at)
-      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now}, ${now}, ${now})`.execute(
+        last_activity_at, last_message_received_at, status, state_version, customer_message_seq)
+      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now}, ${now}, ${now}, 'open', 0, 0)`.execute(
       db,
     );
     return conversationId;
@@ -299,8 +299,10 @@ describe('shared-inbox migrations 01-08', () => {
       VALUES (${contact}, ${ws}, 1, 'Test User', ${now}, ${now})`.execute(handle);
     if (listColumns) {
       await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
-          last_activity_at, last_message_received_at)
-        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now}, ${now}, ${now})`.execute(handle);
+          last_activity_at, last_message_received_at, status, state_version, customer_message_seq)
+        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now}, ${now}, ${now}, 'open', 0, 0)`.execute(
+        handle,
+      );
     } else {
       await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
         VALUES (${conversation}, ${ws}, ${contact}, 1, ${now})`.execute(handle);
@@ -664,7 +666,48 @@ describe('assignment-statuses migrations 01-04', () => {
       /conversations_customer_message_seq_check/,
     );
     await conversation(db, ws, { status: 'closed', version: 3, seq: 2 });
-    await conversation(db, ws, { status: null, version: null, seq: null });
+  });
+
+  it('contract 05: a null status, version or counter is rejected (AC-06)', async () => {
+    const ws = await workspace(db);
+    await expect(conversation(db, ws, { status: null })).rejects.toThrow(/not-null constraint/);
+    await expect(conversation(db, ws, { version: null })).rejects.toThrow(/not-null constraint/);
+    await expect(conversation(db, ws, { seq: null })).rejects.toThrow(/not-null constraint/);
+    await conversation(db, ws);
+  });
+
+  it('contract 05 reverts alone to nullable columns and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const nullable = async () =>
+        (
+          await sql<{ column_name: string; is_nullable: string }>`
+            SELECT column_name, is_nullable FROM information_schema.columns
+            WHERE table_name = 'conversations'
+              AND column_name IN ('status', 'state_version', 'customer_message_seq')`.execute(
+            freshDb,
+          )
+        ).rows.map((r) => r.is_nullable);
+      expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
+      const down = await migrator.migrateDown();
+      expect(down.error).toBeUndefined();
+      expect(await nullable()).toEqual(['YES', 'YES', 'YES']);
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
   });
 
   it('accepts only a member of the same workspace as assignee (AC-04)', async () => {

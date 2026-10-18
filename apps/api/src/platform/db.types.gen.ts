@@ -72,13 +72,13 @@ export interface Conversations {
   assignee_account_id: string | null;
   contact_id: string;
   created_at: Timestamp;
-  customer_message_seq: number | null;
+  customer_message_seq: number;
   id: string;
   last_activity_at: Timestamp;
   last_message_received_at: Timestamp;
   last_reply_sent_at: Timestamp | null;
-  state_version: number | null;
-  status: string | null;
+  state_version: number;
+  status: string;
   telegram_chat_id: Int8;
   workspace_id: string;
 }

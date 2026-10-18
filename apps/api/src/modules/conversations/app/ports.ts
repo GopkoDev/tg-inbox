@@ -26,14 +26,16 @@ export interface ConversationRepo {
   ): Promise<UpsertedConversation>;
   /**
    * A customer message arrived at `receivedAt`: raises the arrival with GREATEST and rewrites activity
-   * as GREATEST(arrival, last sent reply) in the same UPDATE. Edits never call this.
+   * as GREATEST(arrival, last sent reply) and raises `customer_message_seq` in the same UPDATE. Edits
+   * and duplicates never call this. Returns the status and assignee read under the row lock the
+   * UPDATE takes: the only state capture may decide a reopen on.
    */
   raiseReceived(
     workspaceId: string,
     conversationId: string,
     receivedAt: Date,
     tx?: Executor,
-  ): Promise<void>;
+  ): Promise<RaisedConversation>;
   findByChat(workspaceId: string, telegramChatId: bigint, tx?: Executor): Promise<string | null>;
   hasAny(workspaceId: string, tx?: Executor): Promise<boolean>;
   /**
@@ -75,6 +77,13 @@ export interface LockedState extends ConversationState {
   lastActivityAt: Date;
   /** No reply yet, or the last customer message is newer than the last sent reply. */
   waitingForReply: boolean;
+}
+
+/** The conversation's state as the arrival-raise UPDATE left it, under its row lock. */
+export interface RaisedConversation {
+  status: ConversationState['status'];
+  assigneeAccountId: string | null;
+  stateVersion: number;
 }
 
 /** Fields to write; an absent field is left as it is. */
