@@ -520,6 +520,9 @@ async function settingsLoad(env: Env, profile: Profile): Promise<Report> {
     contact_id: c.id,
     telegram_chat_id: c.telegram_user_id,
     created_at: now,
+    // every load message arrives at `now`, so arrival and activity are `now` too
+    last_message_received_at: now,
+    last_activity_at: now,
   }));
   for (let i = 0; i < contactRows.length; i += 1000) {
     await env.db

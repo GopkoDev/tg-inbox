@@ -148,8 +148,11 @@ describe('bot-connection migrations', () => {
     const conversationId = newId();
     await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
       VALUES (${contactId}, ${workspaceId}, 1, 'Test User', ${now}, ${now})`.execute(db);
-    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
-      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now})`.execute(db);
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at)
+      VALUES (${conversationId}, ${workspaceId}, ${contactId}, 1, ${now}, ${now}, ${now})`.execute(
+      db,
+    );
     return conversationId;
   }
 
@@ -281,7 +284,8 @@ describe('shared-inbox migrations 01-08', () => {
     await database?.stop();
   });
 
-  async function seed(handle: Kysely<unknown>) {
+  /** `listColumns: false` seeds a database migrated down before the list columns exist. */
+  async function seed(handle: Kysely<unknown>, listColumns = true) {
     const ws = newId();
     const account = newId();
     const contact = newId();
@@ -293,8 +297,14 @@ describe('shared-inbox migrations 01-08', () => {
       VALUES (${account}, ${`${account}@example.test`}, 'Test User', 'h', ${now})`.execute(handle);
     await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
       VALUES (${contact}, ${ws}, 1, 'Test User', ${now}, ${now})`.execute(handle);
-    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
-      VALUES (${conversation}, ${ws}, ${contact}, 1, ${now})`.execute(handle);
+    if (listColumns) {
+      await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+          last_activity_at, last_message_received_at)
+        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now}, ${now}, ${now})`.execute(handle);
+    } else {
+      await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at)
+        VALUES (${conversation}, ${ws}, ${contact}, 1, ${now})`.execute(handle);
+    }
     return { ws, account, conversation };
   }
 
@@ -474,7 +484,7 @@ describe('shared-inbox migrations 01-08', () => {
       const downTo = await migrator.migrateTo(LAST_PRE_INBOX);
       expect(downTo.error).toBeUndefined();
       expect(await columns(freshDb, 'memberships')).not.toContain('active_since');
-      const s = await seed(freshDb);
+      const s = await seed(freshDb, false);
       await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at)
         VALUES (${newId()}, ${s.ws}, ${s.account}, 'operator', 'active', ${now})`.execute(freshDb);
       for (const [n, at] of [

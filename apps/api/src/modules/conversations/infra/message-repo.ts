@@ -1,6 +1,5 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
-import { newId } from '../../../platform/ids.js';
 import type { MessageRepo } from '../app/ports.js';
 
 /** Newest `received_at` of a workspace — a backward scan of messages_workspace_id_received_at_idx. */
@@ -45,7 +44,7 @@ export function createMessageRepo(db: Db): MessageRepo {
           eb
             .selectFrom('conversations')
             .select([
-              eb.val(newId()).as('id'),
+              eb.val(m.id).as('id'),
               'workspace_id',
               'id as conversation_id',
               eb.val(String(m.telegramMessageId)).as('telegram_message_id'),
@@ -96,6 +95,17 @@ export function createMessageRepo(db: Db): MessageRepo {
       return (await exists(ex, workspaceId, e.conversationId, e.telegramMessageId))
         ? 'not_later'
         : 'not_found';
+    },
+
+    async findId(workspaceId, conversationId, telegramMessageId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('messages')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('telegram_message_id', '=', String(telegramMessageId))
+        .executeTakeFirst();
+      return row?.id ?? null;
     },
 
     async newestReceivedAt(workspaceId, tx) {

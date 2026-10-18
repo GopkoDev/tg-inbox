@@ -36,6 +36,7 @@ import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
+import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
 import { createMessageRepo } from './modules/conversations/infra/message-repo.js';
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
@@ -121,6 +122,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations: createConversationRepo(db),
     messages: createMessageRepo(db),
     contacts,
+    signals: createConversationSignals(),
     clock,
   });
   const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));

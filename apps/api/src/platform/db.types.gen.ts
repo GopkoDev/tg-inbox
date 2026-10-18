@@ -59,8 +59,8 @@ export interface Conversations {
   contact_id: string;
   created_at: Timestamp;
   id: string;
-  last_activity_at: Timestamp | null;
-  last_message_received_at: Timestamp | null;
+  last_activity_at: Timestamp;
+  last_message_received_at: Timestamp;
   last_reply_sent_at: Timestamp | null;
   telegram_chat_id: Int8;
   workspace_id: string;

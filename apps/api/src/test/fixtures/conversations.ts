@@ -9,7 +9,15 @@ const T = new Date('2026-10-11T10:00:00Z');
 /** A conversations row; `telegramChatId` defaults to the contact's Telegram user id. */
 export async function insertConversation(
   db: Kysely<DB>,
-  o: { workspaceId: string; contactId: string; telegramChatId?: bigint },
+  o: {
+    workspaceId: string;
+    contactId: string;
+    telegramChatId?: bigint;
+    /** Must equal GREATEST(lastMessageReceivedAt, lastReplySentAt); defaults to T / T / null. */
+    lastActivityAt?: Date;
+    lastMessageReceivedAt?: Date;
+    lastReplySentAt?: Date | null;
+  },
 ): Promise<string> {
   const id = newId();
   const chatId =
@@ -29,6 +37,9 @@ export async function insertConversation(
       contact_id: o.contactId,
       telegram_chat_id: chatId,
       created_at: T,
+      last_activity_at: o.lastActivityAt ?? T,
+      last_message_received_at: o.lastMessageReceivedAt ?? T,
+      last_reply_sent_at: o.lastReplySentAt ?? null,
     })
     .execute();
   return id;

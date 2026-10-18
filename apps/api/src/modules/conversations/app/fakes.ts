@@ -1,7 +1,13 @@
 import { newId } from '../../../platform/ids.js';
 import { isLaterEdit } from '../domain/edit.js';
 import type { MessageKind } from '../domain/message.js';
-import type { ConversationRepo, MessageRepo } from './ports.js';
+import type {
+  ConversationRepo,
+  ConversationSignals,
+  Executor,
+  MessageRepo,
+  MessageSignal,
+} from './ports.js';
 
 export interface FakeConversation {
   id: string;
@@ -9,6 +15,9 @@ export interface FakeConversation {
   contactId: string;
   telegramChatId: bigint;
   createdAt: Date;
+  lastActivityAt: Date;
+  lastMessageReceivedAt: Date;
+  lastReplySentAt: Date | null;
 }
 
 /** In-memory ConversationRepo for unit tests. */
@@ -22,8 +31,27 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
       const existing = find(workspaceId, telegramChatId);
       if (existing) return { conversationId: existing.id, created: false };
       const id = newId();
-      rows.push({ id, workspaceId, contactId, telegramChatId, createdAt: now });
+      rows.push({
+        id,
+        workspaceId,
+        contactId,
+        telegramChatId,
+        createdAt: now,
+        lastActivityAt: now,
+        lastMessageReceivedAt: now,
+        lastReplySentAt: null,
+      });
       return { conversationId: id, created: true };
+    },
+    async raiseReceived(workspaceId, conversationId, receivedAt) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row) return;
+      row.lastMessageReceivedAt = new Date(
+        Math.max(row.lastMessageReceivedAt.getTime(), receivedAt.getTime()),
+      );
+      row.lastActivityAt = new Date(
+        Math.max(row.lastMessageReceivedAt.getTime(), row.lastReplySentAt?.getTime() ?? 0),
+      );
     },
     async findByChat(workspaceId, telegramChatId) {
       return find(workspaceId, telegramChatId)?.id ?? null;
@@ -35,6 +63,7 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
 }
 
 export interface FakeMessage {
+  id: string;
   workspaceId: string;
   conversationId: string;
   telegramMessageId: bigint;
@@ -77,11 +106,27 @@ export function fakeMessageRepo(): MessageRepo & { rows: FakeMessage[] } {
       });
       return 'applied';
     },
+    async findId(workspaceId, conversationId, telegramMessageId) {
+      return find(workspaceId, conversationId, telegramMessageId)?.id ?? null;
+    },
     async newestReceivedAt(workspaceId) {
       const times = rows
         .filter((r) => r.workspaceId === workspaceId)
         .map((r) => r.receivedAt.getTime());
       return times.length ? new Date(Math.max(...times)) : null;
+    },
+  };
+}
+
+/** Records every signal with the executor it was published in. */
+export function fakeConversationSignals(): ConversationSignals & {
+  sent: Array<MessageSignal & { tx: Executor }>;
+} {
+  const sent: Array<MessageSignal & { tx: Executor }> = [];
+  return {
+    sent,
+    async messageChanged(tx, signal) {
+      sent.push({ ...signal, tx });
     },
   };
 }
