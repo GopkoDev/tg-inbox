@@ -16,6 +16,8 @@ export interface LiveHandlers {
   onReconnected: () => void;
   /** The server ended the session for good (4401 session gone, 4403 access removed). */
   onClosed: (code: number) => void;
+  /** A frame that is not JSON or fails the shared schema was dropped: signals may be missed. */
+  onInvalidFrame?: () => void;
 }
 
 export interface LiveOptions {
@@ -42,7 +44,7 @@ function liveUrl(workspaceId: string): string {
 
 /**
  * One live socket for one workspace (ADR-0002). Reconnects with backoff after 1001 or any drop,
- * never after 4401/4403. Frames that fail the shared schema (unknown types) are ignored.
+ * never after 4401/4403. Frames that fail the shared schema (unknown types) are dropped and reported to `onInvalidFrame`.
  */
 export function openLiveSocket(
   workspaceId: string,
@@ -74,10 +76,12 @@ export function openLiveSocket(
       try {
         raw = JSON.parse(event.data);
       } catch {
+        handlers.onInvalidFrame?.();
         return;
       }
       const frame = LiveFrame.safeParse(raw);
       if (frame.success) handlers.onFrame(frame.data);
+      else handlers.onInvalidFrame?.();
     };
     current.onclose = (event) => {
       if (stopped) return;

@@ -18,7 +18,11 @@ vi.mock('@/features/workspaces/resolve', () => ({ resolveWorkspace: vi.fn() }));
 // The inbox reads and its live socket are other tasks' business here.
 vi.mock('@/features/inbox/store', () => ({
   useInboxStore: Object.assign(() => undefined, {
-    getState: () => ({ enter: () => Promise.resolve(), leave: () => undefined }),
+    getState: () => ({
+      enter: () => Promise.resolve(),
+      setLens: () => Promise.resolve(),
+      leave: () => undefined,
+    }),
   }),
 }));
 vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));

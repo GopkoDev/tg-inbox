@@ -79,6 +79,8 @@ function renderList(role: 'owner' | 'operator' = 'operator', path = `/w/${WS}/in
   );
 }
 
+const OPEN = { status: 'open', assignee: 'all' } as const;
+const SEARCHING = { status: null, assignee: 'all' } as const;
 const flush = () => act(async () => {});
 
 beforeEach(() => {
@@ -200,6 +202,7 @@ describe('SCR-01 loading and errors', () => {
   it('error: Something went wrong with Retry that re-enters the workspace', async () => {
     api.listConversations.mockResolvedValue({
       workspace_id: WS,
+      lens: OPEN,
       items: [conv(1)],
       has_prev: false,
       has_next: false,
@@ -302,13 +305,13 @@ describe('SCR-01 search (AC-02)', () => {
     expect(api.listConversations.mock.calls[0]![1]).toMatchObject({ q: 'Name2' });
     expect(screen.getByRole('link', { name: /Name1/ })).toBeInTheDocument();
     expect(screen.queryAllByTestId('conversation-skeleton')).toHaveLength(0);
-    await act(async () => resolve(page([conv(2)])));
+    await act(async () => resolve(page([conv(2)], { lens: SEARCHING })));
     expect(screen.queryByRole('link', { name: /Name1/ })).toBeNull();
     expect(screen.getByRole('link', { name: /Name2/ })).toBeInTheDocument();
   });
 
   it('no match: message with Clear search that resets the field and the list', async () => {
-    api.listConversations.mockResolvedValue(page([]));
+    api.listConversations.mockResolvedValue(page([], { lens: SEARCHING }));
     seed({ conversations: [conv(1)] });
     renderList();
     const input = screen.getByLabelText('Search conversations');
@@ -357,6 +360,7 @@ describe('SCR-01 paging', () => {
     await act(async () =>
       resolve({
         workspace_id: WS,
+        lens: OPEN,
         items: [conv(5)],
         has_prev: false,
         has_next: false,
@@ -372,6 +376,7 @@ describe('SCR-01 paging', () => {
     renderList();
     const page = (items: Conversation[], next: string | null) => ({
       workspace_id: WS,
+      lens: OPEN,
       items,
       has_prev: false,
       has_next: next !== null,
@@ -403,6 +408,7 @@ describe('SCR-01 paging', () => {
   it('a re-read first page restarts paging from its cursor, so a row that slid down shows again (R3)', async () => {
     const page = (items: Conversation[], next: string | null) => ({
       workspace_id: WS,
+      lens: OPEN,
       items,
       has_prev: false,
       has_next: next !== null,
@@ -440,6 +446,7 @@ describe('SCR-01 paging', () => {
     expect(screen.getByText("Couldn't load more conversations")).toBeInTheDocument();
     api.listConversations.mockResolvedValueOnce({
       workspace_id: WS,
+      lens: OPEN,
       items: [conv(5)],
       has_prev: false,
       has_next: false,
@@ -496,12 +503,12 @@ describe('SCR-01 search and paging together (W6) and guard answers (W1)', () => 
     await reach();
     expect(api.listConversations.mock.calls[0]![1]).toMatchObject({ after: 'abc' });
     api.listConversations.mockResolvedValueOnce(
-      page([conv(2)], { has_next: true, next_cursor: 'q1' }),
+      page([conv(2)], { lens: SEARCHING, has_next: true, next_cursor: 'q1' }),
     );
     await typeSearch('Name2');
     expect(screen.getByRole('link', { name: /Name2/ })).toBeInTheDocument();
     expect(screen.queryAllByTestId('conversation-skeleton')).toHaveLength(0);
-    api.listConversations.mockResolvedValueOnce(page([conv(3)]));
+    api.listConversations.mockResolvedValueOnce(page([conv(3)], { lens: SEARCHING }));
     await reach();
     expect(api.listConversations).toHaveBeenCalledTimes(3);
     expect(api.listConversations.mock.calls[2]![1]).toMatchObject({ q: 'Name2', after: 'q1' });
@@ -516,7 +523,7 @@ describe('SCR-01 search and paging together (W6) and guard answers (W1)', () => 
     await typeSearch('Name2');
     api.listConversations.mockResolvedValueOnce(page([conv(5)]));
     await reach();
-    await act(async () => resolveSearch(page([conv(2)])));
+    await act(async () => resolveSearch(page([conv(2)], { lens: SEARCHING })));
     expect(screen.getByRole('link', { name: /Name2/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /Name1/ })).toBeNull();
   });

@@ -1,17 +1,25 @@
 import type {
   ContactSummary,
   Conversation,
+  ConversationStateChange,
+  ConversationSummary,
   InboxBotStatus,
   LiveFrame,
+  ThreadActivity,
   ThreadItem,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
 } from '@tg/shared';
 import { create } from 'zustand';
+import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import {
+  AssigneeNotActiveError,
   BotCannotReplyError,
+  ChangeLimitReachedError,
+  CloseNeedsConfirmationError,
+  ConversationStateChangedError,
   ReplyLimitReachedError,
   ReplyNotResendableError,
   TeammateRepliedError,
@@ -19,6 +27,7 @@ import {
 import { ApiError } from '@/shared/api/client';
 import { openLiveSocket, type LiveClient } from '@/shared/api/realtime';
 import * as source from './api-source';
+import { belongsToLens, DEFAULT_LENS, sameLens, type InboxLens } from './lens';
 import { canSendReply } from './reply';
 
 const BACKGROUND = { background: true } as const;
@@ -35,6 +44,11 @@ export interface OpenThread {
   conversationId: string;
   status: ThreadStatus;
   contact: ContactSummary | null;
+  /**
+   * The conversation's last summary read or answered: its state version and close snapshot are
+   * what the change requests send (sad.md §4). Replaced by every later answer and refusal.
+   */
+  summary?: ConversationSummary | null;
   older: OlderStatus;
   items: ThreadItem[];
   hasPrev: boolean;
@@ -82,6 +96,26 @@ export type ResendResult =
   | { kind: 'unavailable' }
   | { kind: 'failed' };
 
+/** How a change action ended; the actions bar maps each to a state of SCR-02 / SCR-10..13. */
+export type ChangeResult =
+  | { kind: 'recorded' | 'unchanged'; change: ConversationStateChange }
+  | { kind: 'stale'; latestChange: ThreadActivity | null }
+  | {
+      kind: 'needs_confirmation';
+      reasons: CloseNeedsConfirmationReason[];
+      staleChange: ThreadActivity | null;
+      newestUnreadMessage: { id: string; received_at: string } | null;
+    }
+  | { kind: 'assignee_not_active' }
+  | { kind: 'limited'; retryAt: string }
+  | { kind: 'busy' }
+  | { kind: 'not_found' }
+  | { kind: 'access_removed' }
+  | { kind: 'failed' };
+type CloseNeedsConfirmationReason = ReturnType<
+  typeof CloseNeedsConfirmationError.parse
+>['error']['details']['reasons'][number];
+
 /**
  * The inbox of ONE workspace (`workspaceId`), shared by SCR-01..05. Entering another workspace
  * resets everything and closes the socket synchronously; every answer or frame tagged with any
@@ -91,6 +125,10 @@ interface InboxState {
   workspaceId: string | null;
   listStatus: ListStatus;
   conversations: Conversation[];
+  /** The status and assignee lenses the list shows (they mirror the page address). */
+  lens: InboxLens;
+  /** A search is on: the status lens is set aside when a row's place is re-evaluated. */
+  searching: boolean;
   hasNext: boolean;
   nextCursor: string | null;
   /**
@@ -120,7 +158,22 @@ interface InboxState {
     replyId: string,
     options?: { confirmDuplicateRisk?: boolean },
   ) => Promise<ResendResult>;
-  enter: (workspaceId: string) => Promise<void>;
+  /** Switches the list to other lenses (the address changed); an open thread stays open. */
+  setLens: (workspaceId: string, lens: InboxLens) => Promise<void>;
+  setSearching: (searching: boolean) => void;
+  assign: (
+    workspaceId: string,
+    conversationId: string,
+    assigneeAccountId: string,
+  ) => Promise<ChangeResult>;
+  unassign: (workspaceId: string, conversationId: string) => Promise<ChangeResult>;
+  close: (
+    workspaceId: string,
+    conversationId: string,
+    options?: { confirm?: boolean },
+  ) => Promise<ChangeResult>;
+  reopen: (workspaceId: string, conversationId: string) => Promise<ChangeResult>;
+  enter: (workspaceId: string, lens?: InboxLens) => Promise<void>;
   leave: () => void;
   openThread: (workspaceId: string, conversationId: string) => Promise<void>;
   loadOlder: (workspaceId: string, conversationId: string) => Promise<void>;
@@ -130,6 +183,12 @@ interface InboxState {
 const EMPTY: Omit<
   InboxState,
   | 'enter'
+  | 'setLens'
+  | 'setSearching'
+  | 'assign'
+  | 'unassign'
+  | 'close'
+  | 'reopen'
   | 'leave'
   | 'openThread'
   | 'loadOlder'
@@ -143,6 +202,8 @@ const EMPTY: Omit<
   workspaceId: null,
   listStatus: 'loading',
   conversations: [],
+  lens: DEFAULT_LENS,
+  searching: false,
   hasNext: false,
   nextCursor: null,
   listVersion: 0,
@@ -156,6 +217,10 @@ const EMPTY: Omit<
 let client: LiveClient | null = null;
 /** Conversations with a `sendReply` in flight: a second Enter is ignored. */
 const sending = new Set<string>();
+/** Conversations with a state change in flight: one at a time. */
+const changing = new Set<string>();
+/** Bumped by every foreground list load: an answer of an earlier one is stale. */
+let listSeq = 0;
 const newestReplyId = (items: ThreadItem[] | undefined): string | null =>
   items?.filter((i) => i.type === 'reply').at(-1)?.id ?? null;
 const newestSeen = (thread: OpenThread): string | null =>
@@ -189,8 +254,19 @@ function upsertConversation(list: Conversation[], row: Conversation): Conversati
  * a shown row sorting below the page's last row is a stale copy (later pages load it afresh).
  */
 function mergeConversations(list: Conversation[], page: readonly Conversation[]): Conversation[] {
-  const last = [...page].sort(byActivity).at(-1);
-  const kept = last ? list.filter((c) => byActivity(c, last) <= 0) : list;
+  const sorted = [...page].sort(byActivity);
+  const first = sorted[0];
+  const last = sorted.at(-1);
+  // A shown row inside the page's span that the page lacks has left the lenses; one newer than
+  // the page's first row arrived live after the read.
+  const kept =
+    first && last
+      ? list.filter(
+          (c) =>
+            byActivity(c, last) <= 0 &&
+            (byActivity(c, first) < 0 || page.some((p) => p.id === c.id)),
+        )
+      : list;
   const byId = new Map(kept.map((c) => [c.id, c]));
   for (const row of page) {
     const shown = byId.get(row.id);
@@ -219,6 +295,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     closeSocket();
     running.clear();
     sending.clear();
+    changing.clear();
     set({ ...EMPTY });
   };
 
@@ -257,13 +334,24 @@ export const useInboxStore = create<InboxState>()((set, get) => {
 
   const loadList = async (workspaceId: string, options: { background: boolean }) => {
     const startedAt = epoch;
+    const lens = get().lens;
+    const seq = options.background ? listSeq : ++listSeq;
     try {
       const page = await source.listConversations(
         workspaceId,
-        { limit: PAGE_SIZE },
+        { limit: PAGE_SIZE, status: lens.status, assignee: lens.assignee },
         options.background ? BACKGROUND : {},
       );
-      if (!current(workspaceId, startedAt) || page.workspace_id !== workspaceId) return;
+      if (
+        !current(workspaceId, startedAt) ||
+        page.workspace_id !== workspaceId ||
+        // a late answer for lenses already left, or a page that is not for the lenses asked
+        !sameLens(get().lens, lens) ||
+        page.lens.status !== lens.status ||
+        page.lens.assignee !== lens.assignee ||
+        (!options.background && seq !== listSeq)
+      )
+        return;
       set((s) => ({
         conversations: options.background
           ? mergeConversations(s.conversations, page.items)
@@ -275,7 +363,55 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       }));
     } catch (error) {
       noteGuard(error, workspaceId, startedAt);
-      if (current(workspaceId, startedAt) && !options.background) set({ listStatus: 'error' });
+      if (
+        current(workspaceId, startedAt) &&
+        !options.background &&
+        sameLens(get().lens, lens) &&
+        seq === listSeq
+      )
+        set({ listStatus: 'error' });
+    }
+  };
+
+  /**
+   * Takes a summary read or answered for the current workspace: the open conversation keeps its
+   * version and close snapshot (never an older version), and the row is inserted, updated or
+   * dropped by the current lenses. An open thread stays open whatever happens to its row.
+   */
+  const applySummary = (
+    workspaceId: string,
+    incoming: ConversationSummary,
+    options: { rows: boolean } = { rows: true },
+  ) => {
+    if (incoming.workspace_id !== workspaceId || get().workspaceId !== workspaceId) return;
+    const { close_snapshot: snapshot, ...row } = incoming;
+    void snapshot;
+    set((s) => {
+      const open = s.thread;
+      const thread =
+        open?.conversationId === incoming.id &&
+        (!open.summary || incoming.state_version >= open.summary.state_version)
+          ? { ...open, summary: incoming, contact: incoming.contact }
+          : open;
+      const shown = s.conversations.find((c) => c.id === incoming.id);
+      let conversations = s.conversations;
+      if (options.rows && (!shown || incoming.state_version >= shown.state_version)) {
+        const account = useAuthStore.getState().account?.id ?? null;
+        conversations = belongsToLens(row, s.lens, account, s.searching)
+          ? upsertConversation(s.conversations, row)
+          : s.conversations.filter((c) => c.id !== incoming.id);
+      }
+      return { thread, conversations };
+    });
+  };
+
+  const loadSummary = async (workspaceId: string, conversationId: string) => {
+    const startedAt = epoch;
+    try {
+      const summary = await source.getConversation(workspaceId, conversationId, BACKGROUND);
+      if (current(workspaceId, startedAt)) applySummary(workspaceId, summary);
+    } catch (error) {
+      noteGuard(error, workspaceId, startedAt);
     }
   };
 
@@ -388,7 +524,10 @@ export const useInboxStore = create<InboxState>()((set, get) => {
   const rereadAll = (workspaceId: string) => {
     void loadList(workspaceId, { background: true });
     const open = get().thread;
-    if (open) void loadThread(workspaceId, open.conversationId, { background: true });
+    if (open) {
+      void loadThread(workspaceId, open.conversationId, { background: true });
+      void loadSummary(workspaceId, open.conversationId);
+    }
     void loadBot(workspaceId);
   };
 
@@ -396,11 +535,11 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     coalesce(`row:${conversationId}`, async () => {
       const startedAt = epoch;
       const row = await source.getConversation(workspaceId, conversationId, BACKGROUND);
-      if (!current(workspaceId, startedAt) || row.workspace_id !== workspaceId) return;
-      set((s) => ({ conversations: upsertConversation(s.conversations, row) }));
+      if (!current(workspaceId, startedAt)) return;
+      applySummary(workspaceId, row);
     });
 
-  const mergeItem = (workspaceId: string, item: ThreadMessage | ThreadReply) => {
+  const mergeItem = (workspaceId: string, item: ThreadMessage | ThreadReply | ThreadActivity) => {
     const open = get().thread;
     if (!open || item.workspace_id !== workspaceId || open.conversationId !== item.conversation_id)
       return;
@@ -426,8 +565,18 @@ export const useInboxStore = create<InboxState>()((set, get) => {
   ) =>
     coalesce(`item:${item.id}`, async () => {
       const startedAt = epoch;
-      // Activity entries have no read route yet (T16 adds the thread merge): nothing to refetch.
-      if (item.type === 'activity') return;
+      if (item.type === 'activity') {
+        // An entry is immutable: one already shown needs no second read.
+        if (get().thread?.items.some((i) => i.id === item.id)) return;
+        const entry = await source.getThreadActivity(
+          workspaceId,
+          conversationId,
+          item.id,
+          BACKGROUND,
+        );
+        if (current(workspaceId, startedAt)) mergeItem(workspaceId, entry);
+        return;
+      }
       if (item.type === 'reply') {
         const reply = await source.getThreadReply(workspaceId, conversationId, item.id, BACKGROUND);
         if (current(workspaceId, startedAt)) mergeItem(workspaceId, reply);
@@ -466,12 +615,77 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         const row = get().conversations.find((c) => c.id === conversationId);
         const rowChanges =
           change === 'read' ||
-          (change === 'created' && item?.type === 'message') ||
+          (change === 'created' && (item?.type === 'message' || item?.type === 'activity')) ||
           (change === 'edited' && (!row || row.last_item.id === item?.id)) ||
           change === 'state';
         if (rowChanges) refetchRow(workspaceId, conversationId);
         return;
       }
+    }
+  };
+
+  /**
+   * One state change of the open conversation, built from the summary on screen. Every answer
+   * and every refusal that carries a summary replaces it (version + close snapshot).
+   */
+  const runChange = async (
+    workspaceId: string,
+    conversationId: string,
+    send: (summary: ConversationSummary) => Promise<ConversationStateChange>,
+  ): Promise<ChangeResult> => {
+    const open = get().thread;
+    const summary = open?.conversationId === conversationId ? open.summary : null;
+    if (get().workspaceId !== workspaceId || !summary) return { kind: 'failed' };
+    if (changing.has(conversationId)) return { kind: 'busy' };
+    changing.add(conversationId);
+    const startedAt = epoch;
+    try {
+      const change = await send(summary);
+      if (!current(workspaceId, startedAt) || change.workspace_id !== workspaceId)
+        return { kind: 'failed' };
+      applySummary(workspaceId, change.conversation);
+      if (change.activity) mergeItem(workspaceId, change.activity);
+      return { kind: change.outcome, change };
+    } catch (error) {
+      noteGuard(error, workspaceId, startedAt);
+      if (!current(workspaceId, startedAt)) return { kind: 'failed' };
+      if (!(error instanceof ApiError)) return { kind: 'failed' };
+      const envelope = (code: string) => ({ error: { code, message: '', details: error.details } });
+      if (error.status === 403) return { kind: 'access_removed' };
+      if (error.status === 404) {
+        const now = get().thread;
+        if (now?.conversationId === conversationId)
+          set({ thread: { ...now, status: 'not_found' } });
+        return { kind: 'not_found' };
+      }
+      if (error.code === 'CONVERSATION_STATE_CHANGED') {
+        const parsed = ConversationStateChangedError.safeParse(envelope(error.code));
+        if (parsed.success) {
+          applySummary(workspaceId, parsed.data.error.details.conversation);
+          return { kind: 'stale', latestChange: parsed.data.error.details.latest_change };
+        }
+      } else if (error.code === 'CLOSE_NEEDS_CONFIRMATION') {
+        const parsed = CloseNeedsConfirmationError.safeParse(envelope(error.code));
+        if (parsed.success) {
+          const details = parsed.data.error.details;
+          applySummary(workspaceId, details.conversation);
+          return {
+            kind: 'needs_confirmation',
+            reasons: details.reasons,
+            staleChange: details.stale_change,
+            newestUnreadMessage: details.newest_unread_message,
+          };
+        }
+      } else if (error.code === 'ASSIGNEE_NOT_ACTIVE') {
+        if (AssigneeNotActiveError.safeParse(envelope(error.code)).success)
+          return { kind: 'assignee_not_active' };
+      } else if (error.code === 'CHANGE_LIMIT_REACHED') {
+        const parsed = ChangeLimitReachedError.safeParse(envelope(error.code));
+        if (parsed.success) return { kind: 'limited', retryAt: parsed.data.error.details.retry_at };
+      }
+      return { kind: 'failed' };
+    } finally {
+      changing.delete(conversationId);
     }
   };
 
@@ -639,13 +853,81 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         sending.delete(replyId);
       }
     },
-    async enter(workspaceId) {
+    async setLens(workspaceId, lens) {
+      if (get().workspaceId !== workspaceId || sameLens(get().lens, lens)) return;
+      set((s) => ({
+        lens,
+        listStatus: 'loading',
+        conversations: [],
+        hasNext: false,
+        nextCursor: null,
+        listVersion: s.listVersion + 1,
+      }));
+      await loadList(workspaceId, { background: false });
+    },
+    setSearching(searching) {
+      set((s) => {
+        if (s.searching === searching) return s;
+        const account = useAuthStore.getState().account?.id ?? null;
+        return {
+          searching,
+          conversations: searching
+            ? s.conversations
+            : s.conversations.filter((c) => belongsToLens(c, s.lens, account, false)),
+        };
+      });
+    },
+    assign: (workspaceId, conversationId, assigneeAccountId) =>
+      runChange(workspaceId, conversationId, (summary) =>
+        source.assignConversation(
+          workspaceId,
+          conversationId,
+          { assignee_account_id: assigneeAccountId, expected_state_version: summary.state_version },
+          {},
+        ),
+      ),
+    unassign: (workspaceId, conversationId) =>
+      runChange(workspaceId, conversationId, (summary) =>
+        source.unassignConversation(
+          workspaceId,
+          conversationId,
+          { expected_state_version: summary.state_version },
+          {},
+        ),
+      ),
+    close: (workspaceId, conversationId, options = {}) =>
+      runChange(workspaceId, conversationId, (summary) =>
+        source.closeConversation(
+          workspaceId,
+          conversationId,
+          {
+            expected_state_version: summary.state_version,
+            expected_close_snapshot: summary.close_snapshot,
+            confirm_close_reasons: options.confirm === true,
+          },
+          {},
+        ),
+      ),
+    reopen: (workspaceId, conversationId) =>
+      runChange(workspaceId, conversationId, (summary) =>
+        source.reopenConversation(
+          workspaceId,
+          conversationId,
+          { expected_state_version: summary.state_version },
+          {},
+        ),
+      ),
+    async enter(workspaceId, lens = DEFAULT_LENS) {
       if (get().workspaceId === workspaceId) return;
       reset();
-      set({ workspaceId });
+      set({ workspaceId, lens });
       client = openLiveSocket(workspaceId, {
         onFrame: (frame) => onFrame(workspaceId, frame),
         onReconnected: () => rereadAll(workspaceId),
+        onInvalidFrame: () => {
+          if (get().workspaceId === workspaceId)
+            coalesce('resync', async () => rereadAll(workspaceId));
+        },
         onClosed: () => {
           if (get().workspaceId === workspaceId) set({ live: 'stopped' });
         },
@@ -662,6 +944,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           conversationId,
           status: 'loading',
           contact: row?.contact ?? null,
+          summary: null,
           older: 'idle',
           items: [],
           hasPrev: false,
@@ -683,7 +966,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
             open?.conversationId !== conversationId
           )
             return;
-          set({ thread: { ...open, contact: summary.contact } });
+          applySummary(workspaceId, summary, { rows: false });
         })
         .catch((error: unknown) => {
           noteGuard(error, workspaceId, startedAt);

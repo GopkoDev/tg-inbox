@@ -39,7 +39,8 @@ export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
   const isMobile = useIsMobile();
   const role = useWorkspaceStore((s) => s.current?.role);
-  const { listStatus, conversations, hasNext, nextCursor, listVersion, bot } = useInboxStore();
+  const { listStatus, conversations, hasNext, nextCursor, listVersion, bot, lens } =
+    useInboxStore();
   const isOwner = role === 'owner';
 
   const [input, setInput] = useState('');
@@ -78,13 +79,25 @@ export function InboxList() {
     return () => clearTimeout(t);
   }, [input]);
 
+  const assignee = lens.assignee;
+  useEffect(() => {
+    useInboxStore.getState().setSearching(q !== '');
+  }, [q]);
+
   const search = useCallback(
     (text: string) => {
       const id = ++searchRequest.current;
       source
-        .listConversations(workspaceId, { q: text, limit: PAGE_SIZE })
+        .listConversations(workspaceId, { q: text, assignee, limit: PAGE_SIZE })
         .then((page) => {
-          if (searchRequest.current !== id || page.workspace_id !== workspaceId) return;
+          // The status lens is set aside while searching; a page for other lenses is a late one.
+          if (
+            searchRequest.current !== id ||
+            page.workspace_id !== workspaceId ||
+            page.lens.status !== null ||
+            page.lens.assignee !== assignee
+          )
+            return;
           setSearchError(null);
           setResults({ rows: page.items, hasNext: page.has_next, cursor: page.next_cursor });
         })
@@ -93,7 +106,7 @@ export function InboxList() {
           if (searchRequest.current === id) setSearchError(text);
         });
     },
-    [workspaceId],
+    [workspaceId, assignee],
   );
 
   useEffect(() => {
@@ -108,12 +121,18 @@ export function InboxList() {
     setMoreState('loading');
     source
       .listConversations(workspaceId, {
-        ...(filtered ? { q } : {}),
+        ...(filtered ? { q, assignee: lens.assignee } : lens),
         after: cursor,
         limit: PAGE_SIZE,
       })
       .then((page) => {
-        if (pageRequest.current !== id || page.workspace_id !== workspaceId) return;
+        if (
+          pageRequest.current !== id ||
+          page.workspace_id !== workspaceId ||
+          page.lens.status !== (filtered ? null : lens.status) ||
+          page.lens.assignee !== lens.assignee
+        )
+          return;
         if (!filtered && useInboxStore.getState().listVersion !== listVersion) {
           setMoreState('idle');
           return;
@@ -135,7 +154,7 @@ export function InboxList() {
         useInboxStore.getState().reportGuard(error, workspaceId);
         if (pageRequest.current === id) setMoreState('error');
       });
-  }, [q, results, more.cursor, nextCursor, listVersion, moreState, workspaceId]);
+  }, [q, results, more.cursor, nextCursor, listVersion, moreState, workspaceId, lens]);
 
   const filtered = q !== '' && results !== null;
   const rows = filtered ? results.rows : merge(conversations, more.rows);
@@ -170,7 +189,7 @@ export function InboxList() {
   };
   const retryFirstPage = () => {
     useInboxStore.getState().leave();
-    void useInboxStore.getState().enter(workspaceId);
+    void useInboxStore.getState().enter(workspaceId, lens);
   };
 
   const botSettings = (

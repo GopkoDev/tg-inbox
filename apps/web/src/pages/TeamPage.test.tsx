@@ -41,7 +41,11 @@ const resolveWorkspace = vi.fn();
 vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));
 vi.mock('@/features/inbox/store', () => ({
   useInboxStore: Object.assign(() => undefined, {
-    getState: () => ({ enter: () => Promise.resolve(), leave: () => undefined }),
+    getState: () => ({
+      enter: () => Promise.resolve(),
+      setLens: () => Promise.resolve(),
+      leave: () => undefined,
+    }),
   }),
 }));
 vi.mock('@/features/workspaces/resolve', () => ({

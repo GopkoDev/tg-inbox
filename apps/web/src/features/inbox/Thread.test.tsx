@@ -268,6 +268,7 @@ describe('SCR-02 loading and errors', () => {
   it('a summary failure while the contact is known from the list row keeps the thread', async () => {
     api.listConversations.mockResolvedValue({
       workspace_id: WS,
+      lens: { status: 'open', assignee: 'all' },
       items: [summary()],
       has_prev: false,
       has_next: false,

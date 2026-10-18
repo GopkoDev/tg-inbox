@@ -82,6 +82,26 @@ describe('openLiveSocket', () => {
     );
   });
 
+  it('reports a dropped frame (malformed, unknown type, bad schema) to onInvalidFrame and keeps the socket', () => {
+    const onInvalidFrame = vi.fn();
+    const handlers = {
+      onFrame: vi.fn(),
+      onReconnected: vi.fn(),
+      onClosed: vi.fn(),
+      onInvalidFrame,
+    };
+    openLiveSocket(W1, handlers, { createSocket: (url) => new FakeSocket(url) });
+    const s = FakeSocket.all[0]!;
+    s.open();
+    s.send(changed);
+    expect(onInvalidFrame).not.toHaveBeenCalled();
+    s.send('not json');
+    s.send({ v: 1, workspace_id: W1, type: 'something.new' });
+    s.send({ ...changed, change: 'bogus' });
+    expect(onInvalidFrame).toHaveBeenCalledTimes(3);
+    expect(FakeSocket.all).toHaveLength(1);
+  });
+
   it('reconnects with growing backoff after 1001 or a drop, and reports reconnected on open', () => {
     const { handlers } = start();
     FakeSocket.all[0]!.open();
