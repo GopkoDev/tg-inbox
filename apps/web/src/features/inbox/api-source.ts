@@ -90,3 +90,22 @@ export const markConversationRead = (
 
 export const getInboxBotStatus = (workspaceId: string, options: ReadOptions = {}) =>
   apiRequest(`${inbox(workspaceId)}/bot`, InboxBotStatus, bg(options));
+
+export interface SendReplyBody {
+  client_key: string;
+  body: string;
+  last_seen_reply_id: string | null;
+  confirm_teammate_reply?: boolean;
+}
+
+export const sendReply = (
+  workspaceId: string,
+  conversationId: string,
+  body: SendReplyBody,
+  options: ReadOptions = {},
+) =>
+  apiRequest(`${conversationPath(workspaceId, conversationId)}/replies`, ThreadReply, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    ...bg(options),
+  });

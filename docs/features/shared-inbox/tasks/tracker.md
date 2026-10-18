@@ -31,7 +31,7 @@
 | T24 | [Build SCR-01, the conversation list, on real data: rows, search, empty states, the not-receiving notice and live updates](./t24-inbox-list-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T25 | [Build SCR-02's reading side: thread header, paged history, mark read when visible, live items, edits, late redeliveries and phone layout](./t25-inbox-thread-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T26 | [Build MessageContent for every message kind with media fetched through the API client, and SCR-03, the media viewer](./t26-message-content-and-viewer.md) | ui | Dmytro Hopko | M | T25 | done |
-| T27 | [Build the real reply composer and SCR-04: client key and drafts, sending lock, validation, rate limit, bot-unavailable states and the teammate confirmation](./t27-reply-composer-and-teammate-dialog.md) | ui | Dmytro Hopko | M | T25 | todo |
+| T27 | [Build the real reply composer and SCR-04: client key and drafts, sending lock, validation, rate limit, bot-unavailable states and the teammate confirmation](./t27-reply-composer-and-teammate-dialog.md) | ui | Dmytro Hopko | M | T25 | done |
 | T28 | [Build ReplyDeliveryState with Try again and Send again, and SCR-05, the duplicate-risk confirmation](./t28-delivery-state-and-resend.md) | ui | Dmytro Hopko | M | T26, T27 | todo |
 | T29 | [Add browser end-to-end inbox flows against the real API and the fake Bot API](./t29-inbox-browser-e2e.md) | tests | Dmytro Hopko | M | T21, T24, T28 | todo |
 

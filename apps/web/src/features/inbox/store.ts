@@ -10,9 +10,11 @@ import type {
 } from '@tg/shared';
 import { create } from 'zustand';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { BotCannotReplyError, ReplyLimitReachedError, TeammateRepliedError } from '@tg/shared';
 import { ApiError } from '@/shared/api/client';
 import { openLiveSocket, type LiveClient } from '@/shared/api/realtime';
 import * as source from './api-source';
+import { canSendReply } from './reply';
 
 const BACKGROUND = { background: true } as const;
 const PAGE_SIZE = 30;
@@ -35,6 +37,24 @@ export interface OpenThread {
   readThroughAt: string | null;
 }
 
+/** What the reply box of one conversation keeps for this tab (sad.md §4). */
+export interface Draft {
+  text: string;
+  clientKey: string;
+  lastSeenReplyId: string | null;
+}
+
+/** How a `sendReply` attempt ended; the composer maps each to a state of SCR-02 / SCR-04. */
+export type SendResult =
+  | { kind: 'sent' }
+  | { kind: 'busy' }
+  | { kind: 'invalid' }
+  | { kind: 'teammate'; reply: { id: string; displayName: string; positionAt: string } }
+  | { kind: 'limited'; retryAt: string }
+  | { kind: 'unavailable' }
+  | { kind: 'rejected'; message: string }
+  | { kind: 'failed' };
+
 /**
  * The inbox of ONE workspace (`workspaceId`), shared by SCR-01..05. Entering another workspace
  * resets everything and closes the socket synchronously; every answer or frame tagged with any
@@ -48,7 +68,16 @@ interface InboxState {
   nextCursor: string | null;
   bot: InboxBotStatus | null;
   thread: OpenThread | null;
+  /** Reply drafts of this tab, by conversation id. */
+  drafts: Record<string, Draft>;
   live: LiveStatus;
+  setDraftText: (conversationId: string, text: string) => void;
+  keepEditing: (conversationId: string, lastSeenReplyId: string) => void;
+  sendReply: (
+    workspaceId: string,
+    conversationId: string,
+    options?: { confirmTeammate?: boolean },
+  ) => Promise<SendResult>;
   enter: (workspaceId: string) => Promise<void>;
   leave: () => void;
   openThread: (workspaceId: string, conversationId: string) => Promise<void>;
@@ -56,7 +85,17 @@ interface InboxState {
   closeThread: () => void;
 }
 
-const EMPTY: Omit<InboxState, 'enter' | 'leave' | 'openThread' | 'loadOlder' | 'closeThread'> = {
+const EMPTY: Omit<
+  InboxState,
+  | 'enter'
+  | 'leave'
+  | 'openThread'
+  | 'loadOlder'
+  | 'closeThread'
+  | 'setDraftText'
+  | 'keepEditing'
+  | 'sendReply'
+> = {
   workspaceId: null,
   listStatus: 'loading',
   conversations: [],
@@ -64,10 +103,15 @@ const EMPTY: Omit<InboxState, 'enter' | 'leave' | 'openThread' | 'loadOlder' | '
   nextCursor: null,
   bot: null,
   thread: null,
+  drafts: {},
   live: 'idle',
 };
 
 let client: LiveClient | null = null;
+/** Conversations with a `sendReply` in flight: a second Enter is ignored. */
+const sending = new Set<string>();
+const newestReplyId = (items: ThreadItem[] | undefined): string | null =>
+  items?.filter((i) => i.type === 'reply').at(-1)?.id ?? null;
 /** Bumped on every reset: a request started before it is stale. */
 let epoch = 0;
 const running = new Map<string, { again: boolean }>();
@@ -99,6 +143,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     epoch++;
     closeSocket();
     running.clear();
+    sending.clear();
     set({ ...EMPTY });
   };
 
@@ -285,8 +330,97 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     }
   };
 
+  const draftOf = (conversationId: string): Draft =>
+    get().drafts[conversationId] ?? {
+      text: '',
+      clientKey: crypto.randomUUID(),
+      lastSeenReplyId: null,
+    };
+  const putDraft = (conversationId: string, draft: Draft) =>
+    set((s) => ({ drafts: { ...s.drafts, [conversationId]: draft } }));
+
   return {
     ...EMPTY,
+    setDraftText(conversationId, text) {
+      const draft = draftOf(conversationId);
+      const thread = get().thread;
+      // The newest reply on screen when typing begins is what AC-16 compares against.
+      const began = draft.text === '' && text !== '';
+      putDraft(conversationId, {
+        ...draft,
+        text,
+        lastSeenReplyId:
+          began && thread?.conversationId === conversationId
+            ? newestReplyId(thread.items)
+            : draft.lastSeenReplyId,
+      });
+    },
+    keepEditing(conversationId, lastSeenReplyId) {
+      putDraft(conversationId, { ...draftOf(conversationId), lastSeenReplyId });
+    },
+    async sendReply(workspaceId, conversationId, options = {}) {
+      const draft = draftOf(conversationId);
+      if (get().workspaceId !== workspaceId) return { kind: 'failed' };
+      if (!canSendReply(draft.text)) return { kind: 'invalid' };
+      if (sending.has(conversationId)) return { kind: 'busy' };
+      sending.add(conversationId);
+      const startedAt = epoch;
+      try {
+        const sent = await source.sendReply(workspaceId, conversationId, {
+          client_key: draft.clientKey,
+          body: draft.text.trim(),
+          last_seen_reply_id: draft.lastSeenReplyId,
+          ...(options.confirmTeammate ? { confirm_teammate_reply: true } : {}),
+        });
+        if (!current(workspaceId, startedAt) || sent.workspace_id !== workspaceId)
+          return { kind: 'failed' };
+        const open = get().thread;
+        const items =
+          open?.conversationId === conversationId ? upsertItem(open.items, sent) : undefined;
+        if (open && items) set({ thread: { ...open, items } });
+        putDraft(conversationId, {
+          text: '',
+          clientKey: crypto.randomUUID(),
+          lastSeenReplyId: newestReplyId(items) ?? sent.id,
+        });
+        return { kind: 'sent' };
+      } catch (error) {
+        if (!current(workspaceId, startedAt)) return { kind: 'failed' };
+        if (error instanceof ApiError) {
+          const envelope = (code: string) => ({
+            error: { code, message: '', details: error.details },
+          });
+          if (error.code === 'TEAMMATE_REPLIED') {
+            const parsed = TeammateRepliedError.safeParse(envelope(error.code));
+            if (parsed.success) {
+              const { reply } = parsed.data.error.details;
+              return {
+                kind: 'teammate',
+                reply: {
+                  id: reply.id,
+                  displayName: reply.author.display_name,
+                  positionAt: reply.position_at,
+                },
+              };
+            }
+          } else if (error.code === 'REPLY_LIMIT_REACHED') {
+            const parsed = ReplyLimitReachedError.safeParse(envelope(error.code));
+            if (parsed.success)
+              return { kind: 'limited', retryAt: parsed.data.error.details.retry_at };
+          } else if (error.code === 'BOT_CANNOT_REPLY') {
+            const parsed = BotCannotReplyError.safeParse(envelope(error.code));
+            if (parsed.success && parsed.data.error.details.bot.workspace_id === workspaceId)
+              set({ bot: parsed.data.error.details.bot });
+            else void loadBot(workspaceId);
+            return { kind: 'unavailable' };
+          } else if (error.status === 400 && error.code === 'VALIDATION_ERROR')
+            return { kind: 'rejected', message: error.message };
+        }
+        return { kind: 'failed' };
+      } finally {
+        sending.delete(conversationId);
+      }
+    },
     async enter(workspaceId) {
       if (get().workspaceId === workspaceId) return;
       reset();

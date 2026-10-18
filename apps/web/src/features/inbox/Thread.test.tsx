@@ -13,6 +13,7 @@ const api = {
   getThreadReply: vi.fn(),
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
+  sendReply: vi.fn(),
 };
 vi.mock('./api-source', () => ({
   listConversations: (...a: unknown[]) => api.listConversations(...a),
@@ -22,6 +23,7 @@ vi.mock('./api-source', () => ({
   getThreadReply: (...a: unknown[]) => api.getThreadReply(...a),
   markConversationRead: (...a: unknown[]) => api.markConversationRead(...a),
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
+  sendReply: (...a: unknown[]) => api.sendReply(...a),
 }));
 
 interface Handlers {
@@ -471,5 +473,19 @@ describe('SCR-02 phone layout', () => {
     expect(screen.getByLabelText('Search conversations')).toBeInTheDocument();
     expect(screen.getByText('customer 1')).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Back to conversations' })).toBeNull();
+  });
+});
+
+describe('SCR-02 reply composer (AC-06)', () => {
+  it('sits at the bottom of a ready thread, without the preview note', async () => {
+    await openAndRender([message(1, 1)]);
+    expect(screen.getByRole('textbox', { name: 'Reply' })).toBeInTheDocument();
+    expect(screen.queryByText(/nothing is sent to customers/)).not.toBeInTheDocument();
+  });
+
+  it('is not shown while the thread loads', () => {
+    api.listThreadItems.mockReturnValue(new Promise(() => undefined));
+    renderThread();
+    expect(screen.queryByRole('textbox', { name: 'Reply' })).not.toBeInTheDocument();
   });
 });

@@ -13,6 +13,7 @@ import * as source from './api-source';
 import { contactName } from './ConversationList';
 import { MessageBubble } from './MessageBubble';
 import { MessageContent } from './MessageContent';
+import { ReplyComposer } from './ReplyComposer';
 import { useInboxStore } from './store';
 
 const TOP_THRESHOLD = 48;
@@ -265,6 +266,13 @@ export function Thread() {
       >
         {body}
       </div>
+      {status === 'ready' && open ? (
+        <ReplyComposer
+          key={`${workspaceId}:${conversationId}`}
+          workspaceId={workspaceId}
+          conversationId={conversationId}
+        />
+      ) : null}
     </div>
   );
 }
