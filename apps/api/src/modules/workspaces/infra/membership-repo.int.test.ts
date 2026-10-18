@@ -190,4 +190,42 @@ describe('KyselyMembershipRepo', () => {
     await repo.setState(a, m.id, 'active', null, later);
     expect((await repo.findForGuard(m.accountId, a))?.activeSince).toEqual(later);
   });
+
+  it('isolation: lockActiveAccountIds / listActiveAccountIds only see the given workspace (AC-04)', async () => {
+    const { a, b } = await twoWorkspaces(db);
+    const ma = await insertMembership(db, a);
+    const gone = await insertMembership(db, a, { state: 'deactivated' });
+    const mb = await insertMembership(db, b);
+    const ids = [ma.accountId, gone.accountId, mb.accountId];
+    expect(await repo.listActiveAccountIds(a)).toEqual([ma.accountId]);
+    expect(await repo.listActiveAccountIds(b)).toEqual([mb.accountId]);
+    const locked = await db
+      .transaction()
+      .execute((tx) => new KyselyMembershipRepo(tx).lockActiveAccountIds(a, ids));
+    expect(locked).toEqual([ma.accountId]);
+    expect(await repo.lockActiveAccountIds(b, [])).toEqual([]);
+  });
+
+  it('lockActiveAccountIds takes FOR SHARE: a concurrent state UPDATE waits for the transaction', async () => {
+    const { a } = await twoWorkspaces(db);
+    const m = await insertMembership(db, a);
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    let taken!: () => void;
+    const lockTaken = new Promise<void>((r) => (taken = r));
+    const holder = db.transaction().execute(async (tx) => {
+      await new KyselyMembershipRepo(tx).lockActiveAccountIds(a, [m.accountId]);
+      taken();
+      await hold;
+    });
+    await lockTaken;
+    let done = false;
+    const update = repo.setState(a, m.id, 'deactivated', new Date()).then(() => (done = true));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(done).toBe(false);
+    release();
+    await holder;
+    await update;
+    expect(done).toBe(true);
+  });
 });

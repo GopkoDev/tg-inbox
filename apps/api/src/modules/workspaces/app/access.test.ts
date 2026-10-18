@@ -14,6 +14,7 @@ function setup() {
   const rows: MembershipRecord[] = [];
   const accounts = new Map<string, { id: string; email: string; displayName: string }>();
   const clock = fixedClock(T2);
+  const locked: { w: string; ids: string[] }[] = [];
 
   function addWorkspace(name: string): string {
     const id = newId();
@@ -39,9 +40,9 @@ function setup() {
     rows.push(m);
     return m;
   }
-  function addAccount(): string {
+  function addAccount(displayName = 'Ana'): string {
     const id = newId();
-    accounts.set(id, { id, email: `${id}@x.test`, displayName: 'Ana' });
+    accounts.set(id, { id, email: `${id}@x.test`, displayName });
     return id;
   }
 
@@ -61,6 +62,14 @@ function setup() {
         rows
           .filter((r) => r.workspaceId === w && r.state === 'active' && ids.includes(r.accountId))
           .map((r) => r.accountId),
+      lockActiveAccountIds: async (w: string, ids: string[]) => {
+        locked.push({ w, ids: [...ids] });
+        return rows
+          .filter((r) => r.workspaceId === w && r.state === 'active' && ids.includes(r.accountId))
+          .map((r) => r.accountId);
+      },
+      listActiveAccountIds: async (w: string) =>
+        rows.filter((r) => r.workspaceId === w && r.state === 'active').map((r) => r.accountId),
       touchLastUsed: async (workspaceId: string, accountId: string, at: Date) => {
         const r = rows.find((x) => x.workspaceId === workspaceId && x.accountId === accountId);
         if (r) r.lastUsedAt = at;
@@ -72,7 +81,10 @@ function setup() {
         names.has(id) ? { id, name: names.get(id)!, createdAt: T0 } : null,
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
+  const uow: UnitOfWork = {
+    run: (fn) => fn(repos, undefined as never),
+    reposOn: () => repos,
+  };
   const access = createWorkspaceAccess({
     uow,
     clock,
@@ -82,7 +94,7 @@ function setup() {
         ids.flatMap((id) => accounts.get(id) ?? []),
     },
   });
-  return { access, addWorkspace, addMember, addAccount };
+  return { access, addWorkspace, addMember, addAccount, locked };
 }
 
 describe('guardWorkspace', () => {
@@ -243,5 +255,49 @@ describe('member lookups', () => {
     const names = await s.access.displayNames(wa, [x, y, z]);
     expect([...names.keys()].sort()).toEqual([x, y].sort());
     expect(names.get(y)).toBe('Ana');
+  });
+});
+
+describe('lockActiveMembers', () => {
+  it('AC-04: returns only the active accounts of that workspace, locking through the given transaction', async () => {
+    const s = setup();
+    const wa = s.addWorkspace('Acme');
+    const wb = s.addWorkspace('Bolt');
+    const active = s.addAccount();
+    const gone = s.addAccount();
+    const elsewhere = s.addAccount();
+    s.addMember(wa, active);
+    s.addMember(wa, gone, { state: 'deactivated' });
+    s.addMember(wb, elsewhere);
+    const tx = {} as never;
+    await expect(
+      s.access.lockActiveMembers(tx, wa, [active, gone, elsewhere, newId()]),
+    ).resolves.toEqual([active]);
+    expect(s.locked).toEqual([{ w: wa, ids: [active, gone, elsewhere, expect.any(String)] }]);
+  });
+});
+
+describe('activeMembers', () => {
+  it('AC-04: lists active members of the workspace by display name, then account id', async () => {
+    const s = setup();
+    const wa = s.addWorkspace('Acme');
+    const wb = s.addWorkspace('Bolt');
+    const zed = s.addAccount('Zed');
+    const ana1 = s.addAccount('Ana');
+    const ana2 = s.addAccount('Ana');
+    const gone = s.addAccount('Aaron');
+    const elsewhere = s.addAccount('Abe');
+    for (const a of [zed, ana1, ana2]) s.addMember(wa, a);
+    s.addMember(wa, gone, { state: 'deactivated' });
+    s.addMember(wb, elsewhere);
+    const [lo, hi] = [ana1, ana2].sort();
+    await expect(s.access.activeMembers(wa)).resolves.toEqual([
+      { accountId: lo, displayName: 'Ana' },
+      { accountId: hi, displayName: 'Ana' },
+      { accountId: zed, displayName: 'Zed' },
+    ]);
+    await expect(s.access.activeMembers(wb)).resolves.toEqual([
+      { accountId: elsewhere, displayName: 'Abe' },
+    ]);
   });
 });

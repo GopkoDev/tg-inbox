@@ -19,4 +19,8 @@ export class KyselyUnitOfWork implements UnitOfWork {
   run<T>(fn: (repos: WorkspaceRepos, tx: Transaction<DB>) => Promise<T>): Promise<T> {
     return this.db.transaction().execute((trx) => fn(workspaceRepos(trx), trx));
   }
+
+  reposOn(tx: Transaction<DB>): WorkspaceRepos {
+    return workspaceRepos(tx);
+  }
 }

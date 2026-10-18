@@ -21,6 +21,7 @@ describe('team use cases (Postgres)', () => {
   let database: TestDatabase;
   let db: Db;
   let team: ReturnType<typeof createTeam>;
+  const port: { calls: unknown[]; fail: boolean } = { calls: [], fail: false };
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -29,6 +30,18 @@ describe('team use cases (Postgres)', () => {
       uow: new KyselyUnitOfWork(db),
       clock: systemClock,
       publish,
+      onMembershipDeactivated: async (tx, event) => {
+        port.calls.push(event);
+        // proves the port runs in the deactivation transaction: it sees the membership already updated
+        const row = await tx
+          .selectFrom('memberships')
+          .select('state')
+          .where('workspace_id', '=', event.workspaceId)
+          .where('account_id', '=', event.accountId)
+          .executeTakeFirstOrThrow();
+        expect(row.state).toBe('deactivated');
+        if (port.fail) throw new Error('port failed');
+      },
       publicWebUrl: 'http://web.test',
       accounts: {
         findAccountIdByEmail: async (email) =>
@@ -115,6 +128,30 @@ describe('team use cases (Postgres)', () => {
     } finally {
       await listener.end();
     }
+  });
+
+  it('AC-10: the port runs once inside the transaction; a throwing port rolls the deactivation back', async () => {
+    const ws = await insertWorkspace(db);
+    await insertMembership(db, ws, { role: 'owner' });
+    const op = await insertMembership(db, ws);
+    port.calls = [];
+    port.fail = true;
+    try {
+      await expect(team.deactivateMembership(ws, op.id)).rejects.toThrow('port failed');
+    } finally {
+      port.fail = false;
+    }
+    const row = await db
+      .selectFrom('memberships')
+      .select(['state', 'deactivated_at'])
+      .where('id', '=', op.id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ state: 'active', deactivated_at: null });
+    port.calls = [];
+    await team.deactivateMembership(ws, op.id);
+    expect(port.calls).toEqual([
+      { workspaceId: ws, accountId: op.accountId, at: expect.any(Date) },
+    ]);
   });
 
   it('AC-14/AC-20: invite supersedes, lists without a link, and a revoked invitation is not pending', async () => {

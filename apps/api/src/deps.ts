@@ -113,6 +113,8 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     clock,
     accounts: accountUseCases,
     publish,
+    // T10 replaces this no-op with conversations.unassignDeactivatedMember
+    onMembershipDeactivated: async () => {},
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
   // --- end workspaces dependencies ---

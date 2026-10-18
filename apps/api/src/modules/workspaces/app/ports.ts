@@ -69,6 +69,13 @@ export interface MembershipRepo {
   accountIdsAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
   /** Of `accountIds`, those with an active membership in this workspace. */
   activeAccountIdsAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
+  /**
+   * `SELECT … FOR SHARE` on the memberships of `accountIds` in this workspace; returns the active
+   * ones. A concurrent deactivation's `UPDATE` waits for the transaction (and vice versa).
+   */
+  lockActiveAccountIds(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
+  /** Account ids of the active members of this workspace. */
+  listActiveAccountIds(workspaceId: string): Promise<string[]>;
   /** Returns whether a row of this workspace was changed. `activeSince` is kept when omitted. */
   setState(
     workspaceId: string,
@@ -112,4 +119,19 @@ export interface WorkspaceRepos {
  */
 export interface UnitOfWork {
   run<T>(fn: (repos: WorkspaceRepos, tx: Transaction<DB>) => Promise<T>): Promise<T>;
+  /** The repos bound to a transaction another module's use case already holds. */
+  reposOn(tx: Transaction<DB>): WorkspaceRepos;
 }
+
+/** What a deactivation tells the rest of the system, inside its transaction (ADR-0005). */
+export interface MembershipDeactivation {
+  workspaceId: string;
+  accountId: string;
+  at: Date;
+}
+
+/** Called once per effective deactivation, after the membership `UPDATE`; a throw rolls it back. */
+export type OnMembershipDeactivated = (
+  tx: Transaction<DB>,
+  event: MembershipDeactivation,
+) => Promise<void>;
