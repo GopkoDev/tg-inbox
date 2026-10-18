@@ -1,6 +1,6 @@
 ---
 status: Living
-updated_at: '2026-10-11'
+updated_at: '2026-10-18'
 ---
 
 # Domain Context — tg-inbox
@@ -13,10 +13,12 @@ updated_at: '2026-10-11'
 - Contact — an end customer as known to one workspace, created automatically from their Telegram profile (name, username, language) the first time they write to the workspace's business bot and refreshed on later messages; the same person writing to two workspaces' bots is two separate contacts. NOT Account (a contact never signs in) and NOT End customer in general (a contact is that person's record inside one workspace).
 - Conversation — the one continuous thread between a workspace and one contact, holding every message that contact sent to the business bot (and, from the inbox step on, the operators' replies). NOT Message (a conversation holds many messages) and NOT a support ticket (it is not opened per issue; statuses arrive with the assignment step).
 - End customer — a person who writes to a workspace's bot in Telegram and never uses the web panel. NOT Operator (operators answer end customers from the web).
+- Inbox — the web-panel screen where a workspace's operators and business owners see all of the workspace's conversations, read them and reply; it is shared by the whole team, not one per operator. NOT Conversation (the inbox lists many conversations) and NOT the business bot's own chat in Telegram (operators never work there).
 - Invitation — a single-use, expiring link for one email address and one role, through which that person joins the workspace; created by a business owner, or by a platform admin for a workspace's first business owner. NOT Membership (an invitation only offers a membership until it is accepted).
 - Membership — the link between an account and a workspace, carrying a role (owner / operator) and a state (active / deactivated). NOT Account (deactivating a membership leaves the account and its other memberships untouched).
 - Message — one thing an end customer sent to the business bot in a private chat (text, or another kind such as a photo, voice or sticker, with its caption), captured into their conversation; an edit replaces its captured text. NOT Conversation.
 - Operator — a workspace member who answers end customers from the shared web inbox. NOT End customer; NOT Business owner (an operator does not manage the team).
+- Reply — a text an operator or business owner writes in a conversation in the inbox, which the business bot sends to that conversation's end customer in Telegram; the team sees which member wrote it, the end customer sees only the bot. NOT Message (a message comes from the end customer) and NOT a broadcast (a reply goes to one end customer, inside their conversation).
 - Platform admin — a member of the tg-inbox team who creates workspaces by hand together with the invitation for their first business owner, and issues password-reset links on request (there is no self-serve signup). NOT Business owner (a platform admin acts across workspaces, outside the web panel).
 - Workspace — one business on the platform and the boundary of all its data (bot, conversations, contacts, team). NOT Account (one account can belong to several workspaces).
 
