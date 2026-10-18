@@ -42,4 +42,5 @@ The inbox, contact-list and contact-profile previews need data now, while the re
 
 **Negative**
 - The source's types are this feature's guess at conversation/contact shapes; steps 4/7 may reshape them when the real contracts land.
+- The route table's breadcrumb resolvers (`apps/web/src/app/routes.tsx`) read sample names synchronously from both sources — a second consumer the step 4/7 swap must update (review R-1).
 - Fixtures add to the bundle until replaced (bounded by the size NFR; the contacts routes may be lazy-loaded, the inbox fixtures sit on the measured first-load path).

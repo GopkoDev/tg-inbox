@@ -115,7 +115,7 @@ apps/web/src/
 │   ├── settings/                  SettingsLayout (title, section menu, outlet)
 │   ├── inbox/                     sample source + fixtures, InboxPreview (list + thread + composer; sent replies held in its component state, reset on conversation change), phone list→thread
 │   └── contacts/                  sample source + fixtures, ContactsPreview (table + toolbar), ContactProfilePreview (header card + tabs)
-└── pages/                         thin route elements; TeamPage/BotSettingsPage/WorkspaceHomePage no longer wrap AppShell
+└── pages/                         thin route elements; TeamPage/BotSettingsPage no longer wrap AppShell (WorkspaceHomePage removed — the index redirects to the inbox)
 ```
 
 **C4 Container (L2):**

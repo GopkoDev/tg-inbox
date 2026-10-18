@@ -51,7 +51,7 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 
 | Component | Source (`file:line` / node / URL) | States it supports | Notes |
 |---|---|---|---|
-| AppShell | `apps/web/src/shared/ui/app-shell.tsx:164` | body skeleton (entering) / entered / not found (in-shell `NotFoundCard`) / error + Retry / access-removed notice | Layout-route frame shared by every `/w/:id/*` screen: inset Sidebar with the workspace switcher in the header, Inbox / Contacts / owner-only Settings nav, account menu with sign-out in the footer, Breadcrumb in the header row, drawer at phone width. Enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only once entered; wires the shared guard handler (`useShellGuard`). Composes Sidebar, Breadcrumb, DropdownMenu, Button, Alert, Skeleton. |
+| AppShell | `apps/web/src/shared/ui/app-shell.tsx:168` | body skeleton (entering) / entered / not found (in-shell `NotFoundCard`) / error + Retry / access-removed notice | Layout-route frame shared by every `/w/:id/*` screen: inset Sidebar with the workspace switcher in the header, Inbox / Contacts / owner-only Settings nav, account menu with sign-out in the footer, Breadcrumb in the header row, drawer at phone width. Enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only once entered; wires the shared guard handler (`useShellGuard`). Composes Sidebar, Breadcrumb, DropdownMenu, Button, Alert, Skeleton. |
 | NotFoundCard | `apps/web/src/pages/NotFoundPage.tsx:9` | default | «Not found» card used both as a page and inside AppShell (`headingLevel`). |
 | Button | `apps/web/src/shared/ui/button.tsx:38` | variants default / destructive / outline / secondary / ghost / link; sizes default / xs / sm / lg / icon; disabled | Async actions disable the button while pending. |
 | Input | `apps/web/src/shared/ui/input.tsx:4` | default / focus / disabled / invalid (`aria-invalid`) | |
@@ -83,7 +83,7 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 | EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |
 | AuthLayout | `apps/web/src/shared/ui/auth-layout.tsx:14` | default (title + description + children) | NEW: centred `max-w-sm` auth column; used by sign-in, invite, reset, link-unavailable, no-access and workspace-picker screens. |
 | SettingsLayout | `apps/web/src/features/settings/SettingsLayout.tsx:11` | section nav (stacks above the form below `lg`) + routed section outlet | NEW: Settings frame — title, description, left section nav (Bot, Team), section in a Card. |
-| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:16` | empty / items / selected item / unread badge | NEW: inbox left pane — Avatar, name, relative time, preview, unread Badge, in a ScrollArea. |
+| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:8` | empty / items / selected item / unread badge | NEW: inbox left pane — Avatar, name, relative time, preview, unread Badge, in a ScrollArea. |
 | MessageBubble | `apps/web/src/features/inbox/MessageBubble.tsx:3` | inbound / outbound | NEW: chat message bubble; no shadcn primitive exists. |
 | ReplyComposer | `apps/web/src/features/inbox/ReplyComposer.tsx:6` | empty (send disabled) / filled / sending via `onSend` | NEW: Textarea + send Button for the thread. |
 

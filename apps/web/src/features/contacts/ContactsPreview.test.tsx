@@ -42,8 +42,8 @@ const fetchSpy = vi.fn();
 
 function renderAt(path: string) {
   const router = createMemoryRouter(routes, { initialEntries: [path] });
-  render(<RouterProvider router={router} />);
-  return router;
+  const view = render(<RouterProvider router={router} />);
+  return Object.assign(router, { unmount: view.unmount });
 }
 
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -203,14 +203,14 @@ describe('contacts preview (T7)', () => {
   });
 
   it('AC-17: no API call while rendering, and every workspace shows the same rows', async () => {
-    renderAt('/w/w1/contacts');
+    const first = renderAt('/w/w1/contacts');
     const rows1 = bodyRows(await table()).map((r) => r.textContent);
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(rows1.length).toBe(all().length);
     expect(listMyWorkspaces.mock.calls.length).toBeLessThanOrEqual(1);
     expect(enterWorkspace).toHaveBeenCalledTimes(1);
 
-    document.body.innerHTML = '';
+    first.unmount();
     renderAt('/w/w2/contacts');
     const rows2 = bodyRows(await table()).map((r) => r.textContent);
     expect(rows2).toEqual(rows1);

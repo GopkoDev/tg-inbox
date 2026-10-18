@@ -201,7 +201,7 @@ Sample data (ADR-0002): ~12 conversations with invented names and `@usernames`, 
 
 | State | Trigger / condition | Components (from the inventory) | Source-ref |
 |---|---|---|---|
-| default | `/w/<id>/contacts` — title row «Contacts» + SampleDataBadge; card-wrapped table with a toolbar (search `Input` «Search by name or username», tag filter popover with checkboxes; column toggle — deferred (no AC requires it)); columns: contact (avatar + name + `@username`), tags (`Badge`s), language, first message date, last message (relative); rows open the profile (AC-15) | Card, Table, NEW: SampleDataBadge, NEW: DataTableToolbar (Input, shadcn:popover, shadcn:checkbox, DropdownMenu), shadcn:avatar, Badge | wireframe «contacts» |
+| default | `/w/<id>/contacts` — title row «Contacts» + SampleDataBadge; card-wrapped table with a toolbar (search `Input` «Search by name or username», tag filter popover with checkboxes; column toggle — deferred (no AC requires it)); columns: contact (avatar + name + `@username`), tags (`Badge`s), language, first message date, last message (relative); rows open the profile (AC-15) | Card, Table, NEW: SampleDataBadge, NEW: DataTableToolbar (Input, shadcn:popover, shadcn:checkbox), shadcn:avatar, Badge | wireframe «contacts» |
 | filtered | search and/or tags set — rows narrow; active tag filter shows a count on its button (AC-15) | NEW: DataTableToolbar | — |
 | empty: no match | search + filter match nothing — table body replaced by «No contacts match» + **Clear filters** (AC-16) | NEW: EmptyFilterState (Button) | wireframe «contacts» (empty) |
 | phone | < md — language and first-message columns hidden; the table scrolls sideways inside its card if still wider (AC-02) | Table | — |
