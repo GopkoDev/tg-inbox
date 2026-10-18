@@ -5,7 +5,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | Add the canon's shadcn primitives and the shared preview/list parts | ui | Dmytro Hopko | M | — | todo |
+| T1 | Add the canon's shadcn primitives and the shared preview/list parts | ui | Dmytro Hopko | M | — | done |
 | T2 | Move the entry screens onto the centred auth layout | ui | Dmytro Hopko | M | T1 | todo |
 | T3 | Render workspace screens inside one layout route with the sidebar frame | ui | Dmytro Hopko | L | T1 | todo |
 | T4 | Build the Settings layout and move bot settings into its Bot section | ui | Dmytro Hopko | M | T3 | todo |
