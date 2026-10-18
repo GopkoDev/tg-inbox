@@ -15,7 +15,7 @@ import { relativeTime } from './relative-time';
 
 export type StateChangedAction = 'assign' | 'unassign' | 'reopen';
 
-function ago(iso: string, now: Date): string {
+export function ago(iso: string, now: Date): string {
   const short = relativeTime(iso, now);
   if (short === 'now') return 'just now';
   if (short === 'Yest.') return 'yesterday';
@@ -26,7 +26,7 @@ function ago(iso: string, now: Date): string {
   return `on ${short}`;
 }
 
-const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
+export const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
 /**
  * SCR-11: the operator acted on a conversation that changed since they looked (AC-03). Shows

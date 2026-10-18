@@ -1,12 +1,13 @@
 import { ChevronDown, Loader2, UserRound } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import type { ConversationSummary, ThreadActivity } from '@tg/shared';
+import type { CloseReason, ConversationSummary, ThreadActivity } from '@tg/shared';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { cn } from '@/shared/lib/utils';
 import { AssigneeChooser } from './AssigneeChooser';
+import { CloseConfirmDialog } from './CloseConfirmDialog';
 import { StateChangedDialog } from './StateChangedDialog';
 import { useInboxStore, type ChangeResult } from './store';
 
@@ -22,6 +23,15 @@ interface Confirm {
   pickName: string | null;
   conversation: ConversationSummary;
   latestChange: ThreadActivity | null;
+  again: boolean;
+  failed: boolean;
+}
+
+/** SCR-12 while open: the reasons the server gave for the close it refused. */
+interface CloseAsk {
+  reasons: CloseReason[];
+  staleChange: ThreadActivity | null;
+  newestUnreadMessage: { id: string; received_at: string } | null;
   again: boolean;
   failed: boolean;
 }
@@ -52,9 +62,11 @@ export function ConversationActions({
   const [retryAt, setRetryAt] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [closeAsk, setCloseAsk] = useState<CloseAsk | null>(null);
   const [refusal, setRefusal] = useState(0);
   const assigneeButton = useRef<HTMLButtonElement>(null);
   const reopenButton = useRef<HTMLButtonElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!retryAt) return;
@@ -96,7 +108,7 @@ export function ConversationActions({
     const store = useInboxStore.getState();
     const result =
       action === 'close'
-        ? await store.close(workspaceId, conversationId)
+        ? await store.close(workspaceId, conversationId, fromDialog ? { confirm: true } : {})
         : action === 'reopen'
           ? await store.reopen(workspaceId, conversationId)
           : action === 'assign' && pick
@@ -107,7 +119,20 @@ export function ConversationActions({
       setRetryAt(result.retryAt);
       setSeconds(secondsLeft(result.retryAt));
     } else if (result.kind === 'failed' && !fromDialog) setFailed(true);
-    if (action !== 'close') {
+    if (action === 'close') {
+      if (result.kind === 'needs_confirmation')
+        setCloseAsk({
+          reasons: result.reasons,
+          staleChange: result.staleChange,
+          newestUnreadMessage: result.newestUnreadMessage,
+          again: fromDialog,
+          failed: false,
+        });
+      else if (fromDialog) {
+        if (result.kind === 'failed') setCloseAsk((c) => (c ? { ...c, failed: true } : c));
+        else setCloseAsk(null);
+      }
+    } else {
       if (result.kind === 'stale') {
         // The store already holds the newer summary; the dialog keeps its own copy (Decision 7).
         const now = useInboxStore.getState().thread?.summary;
@@ -179,6 +204,7 @@ export function ConversationActions({
             variant="outline"
             size="sm"
             disabled={locked}
+            ref={closeButton}
             onClick={() => void run('close')}
             className="ml-auto"
           >
@@ -218,6 +244,24 @@ export function ConversationActions({
             // The control that opened it may have been replaced (a closed chooser row).
             event.preventDefault();
             (confirm.action === 'reopen' ? reopenButton : assigneeButton).current?.focus();
+          }}
+        />
+      ) : null}
+      {closeAsk ? (
+        <CloseConfirmDialog
+          open
+          reasons={closeAsk.reasons}
+          staleChange={closeAsk.staleChange}
+          newestUnreadMessage={closeAsk.newestUnreadMessage}
+          again={closeAsk.again}
+          failed={closeAsk.failed}
+          pending={pending !== null}
+          onKeep={() => setCloseAsk(null)}
+          onCloseAnyway={() => void run('close', null, null, true)}
+          onCloseAutoFocus={(event) => {
+            // Close may have been replaced by Reopen once the conversation closed.
+            event.preventDefault();
+            (closeButton.current ?? reopenButton.current)?.focus();
           }}
         />
       ) : null}

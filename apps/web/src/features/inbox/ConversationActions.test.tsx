@@ -135,7 +135,8 @@ describe('SCR-02 actions bar', () => {
     expect(screen.queryByRole('alert')).toBeNull();
   });
 
-  it('close asks first: the owner is told, nothing else shown', async () => {
+  it('close asks first: SCR-12 opens and the result is handed on', async () => {
+    stubRadixDom();
     show(summary());
     api.closeConversation.mockRejectedValue(
       new ApiError(409, 'CLOSE_NEEDS_CONFIRMATION', 'x', {
@@ -154,8 +155,10 @@ describe('SCR-02 actions bar', () => {
         expect.objectContaining({ kind: 'needs_confirmation' }),
       ),
     );
+    expect(
+      await screen.findByRole('alertdialog', { name: 'Close this conversation?' }),
+    ).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeEnabled();
   });
 
   it('change limit: warning with a countdown, controls disabled, then it goes', async () => {
@@ -429,5 +432,179 @@ describe('SCR-11 over the actions bar (AC-03)', () => {
     expect(
       within(dialog()).getByText('Now: assigned to Bob Petrenko · Closed'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('SCR-12 over the actions bar (AC-06, AC-08)', () => {
+  const ana = { account_id: id(5), display_name: 'Ana Shevchenko' };
+  const ask = (
+    reasons: string[],
+    over: Partial<ConversationSummary> = {},
+    unread: { id: string; received_at: string } | null = null,
+  ) =>
+    new ApiError(409, 'CLOSE_NEEDS_CONFIRMATION', 'x', {
+      conversation: summary(over),
+      reasons,
+      stale_change: null,
+      newest_unread_message: unread,
+    });
+  const dialog = () => screen.getByRole('alertdialog');
+  const openDialog = async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await screen.findByRole('alertdialog');
+  };
+
+  beforeEach(() => {
+    stubRadixDom();
+    useAuthStore
+      .getState()
+      .setAccount({ id: ana.account_id, email: 'a@x.io', display_name: ana.display_name });
+    api.listActiveMembers.mockResolvedValue({ workspace_id: WS, items: [ana, bob] });
+  });
+
+  it('opens only from the answer: Close sends the version on screen, no client pre-check', async () => {
+    show(summary({ waiting_for_reply: true, unread_count: 4 }));
+    api.closeConversation.mockRejectedValueOnce(ask(['customer_waiting'], { state_version: 4 }));
+    renderBar();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    await openDialog();
+    expect(api.closeConversation).toHaveBeenCalledTimes(1);
+    expect(api.closeConversation.mock.calls[0]?.[2]).toEqual({
+      expected_state_version: 3,
+      expected_close_snapshot: { customer_message_seq: 1, latest_reply: null },
+      confirm_close_reasons: false,
+    });
+    expect(within(dialog()).getByText('The customer is waiting for a reply')).toBeInTheDocument();
+  });
+
+  it('a close with no reason is recorded at once, no dialog', async () => {
+    show(summary());
+    api.closeConversation.mockResolvedValueOnce(change({ status: 'closed', state_version: 4 }));
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    await screen.findByText('Closed');
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+  });
+
+  it('Close anyway resends the refusal’s version and snapshot with confirm_close_reasons', async () => {
+    show(summary());
+    const snapshot = { customer_message_seq: 7, latest_reply: null };
+    api.closeConversation
+      .mockRejectedValueOnce(
+        ask(['customer_waiting'], { state_version: 6, close_snapshot: snapshot }),
+      )
+      .mockResolvedValueOnce(change({ status: 'closed', state_version: 7 }));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(api.closeConversation.mock.calls[1]?.[2]).toEqual({
+      expected_state_version: 6,
+      expected_close_snapshot: snapshot,
+      confirm_close_reasons: true,
+    });
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('pending: both buttons disabled and a spinner while the confirmed close is in flight', async () => {
+    show(summary());
+    let release: (v: unknown) => void = () => undefined;
+    api.closeConversation
+      .mockRejectedValueOnce(ask(['customer_waiting']))
+      .mockReturnValueOnce(new Promise((r) => (release = r)));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    expect(await within(dialog()).findByTestId('dialog-spinner')).toBeInTheDocument();
+    expect(within(dialog()).getByRole('button', { name: 'Keep it open' })).toBeDisabled();
+    expect(within(dialog()).getByRole('button', { name: /Close anyway/ })).toBeDisabled();
+    release(change({ status: 'closed', state_version: 4 }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+  });
+
+  it('kept open: the dialog closes, nothing is sent, the header takes the refusal’s summary', async () => {
+    show(summary());
+    api.closeConversation.mockRejectedValueOnce(ask(['customer_waiting'], { assignee: bob }));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Keep it open' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(api.closeConversation).toHaveBeenCalledTimes(1);
+    expect(screen.getByText('Open')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Bob Petrenko/ })).toBeInTheDocument();
+  });
+
+  it('unchanged on Close anyway: the dialog closes and the header shows Closed', async () => {
+    show(summary());
+    api.closeConversation
+      .mockRejectedValueOnce(ask(['customer_waiting']))
+      .mockResolvedValueOnce(change({ status: 'closed', state_version: 5 }, 'unchanged'));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(screen.getByText('Closed')).toBeInTheDocument();
+  });
+
+  it('asks again: reasons replaced, notice shown, buttons enabled, next try uses the newer version', async () => {
+    show(summary());
+    api.closeConversation
+      .mockRejectedValueOnce(ask(['customer_waiting'], { state_version: 4 }))
+      .mockRejectedValueOnce(
+        ask(
+          ['unread_customer_message', 'new_customer_message'],
+          { state_version: 5 },
+          { id: id(501), received_at: new Date(Date.now() - 120_000).toISOString() },
+        ),
+      )
+      .mockResolvedValueOnce(change({ status: 'closed', state_version: 6 }));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await screen.findByText('Something changed while you were deciding — check again.');
+    expect(
+      within(dialog()).getByText(
+        "A customer message arrived that you haven't read — 2 minutes ago",
+      ),
+    ).toBeInTheDocument();
+    expect(within(dialog()).queryByText('The customer is waiting for a reply')).toBeNull();
+    expect(within(dialog()).getByRole('button', { name: 'Close anyway' })).toBeEnabled();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(api.closeConversation.mock.calls[2]?.[2]).toMatchObject({
+      expected_state_version: 5,
+      confirm_close_reasons: true,
+    });
+  });
+
+  it('change limit: the dialog closes and the bar counts down', async () => {
+    show(summary());
+    api.closeConversation.mockRejectedValueOnce(ask(['customer_waiting'])).mockRejectedValueOnce(
+      new ApiError(429, 'CHANGE_LIMIT_REACHED', 'x', {
+        limit: 60,
+        window_seconds: 60,
+        retry_at: new Date(Date.now() + 30_000).toISOString(),
+      }),
+    );
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull());
+    expect(await screen.findByText(/Changes are limited to 60 per minute/)).toBeInTheDocument();
+  });
+
+  it('error: the message stays inside the dialog, buttons enabled', async () => {
+    show(summary());
+    api.closeConversation
+      .mockRejectedValueOnce(ask(['customer_waiting']))
+      .mockRejectedValueOnce(new ApiError(500, 'INTERNAL_ERROR', 'x', undefined));
+    renderBar();
+    await openDialog();
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    expect(
+      await within(dialog()).findByText('Couldn’t close the conversation — try again'),
+    ).toBeInTheDocument();
+    expect(within(dialog()).getByRole('button', { name: 'Close anyway' })).toBeEnabled();
+    expect(screen.queryByText(/Couldn.t save the change — check/)).toBeNull();
   });
 });
