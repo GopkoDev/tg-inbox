@@ -42,4 +42,4 @@ The inbox, contact-list and contact-profile previews need data now, while the re
 
 **Negative**
 - The source's types are this feature's guess at conversation/contact shapes; steps 4/7 may reshape them when the real contracts land.
-- Fixtures add to the bundle until replaced (bounded by the size NFR; preview routes may be lazy-loaded).
+- Fixtures add to the bundle until replaced (bounded by the size NFR; the contacts routes may be lazy-loaded, the inbox fixtures sit on the measured first-load path).

@@ -27,7 +27,7 @@ target_surfaces: [web-frontend]
 | Business owner | Manages bot and team in Settings | No |
 | Tech Lead | SAD approval; the route/frame structure every next UI feature builds into | Yes |
 
-**Decisions taken at easy depth (assumptions ledger — the user delegated the stage questions for this pipeline run):** web-frontend is the only surface; the SPA stays an SPA; one layout route renders the frame (ADR-0001); preview screens read sample data through a per-feature read-only source that later steps swap for the API (ADR-0002); a "sent" preview reply is component state of the open thread; primitives come from the shadcn/ui catalogue per the canon; Team filtering runs on loaded rows in the browser; deployment unchanged.
+**Decisions taken at easy depth (assumptions ledger — the user delegated the stage questions for this pipeline run):** web-frontend is the only surface; the SPA stays an SPA; one layout route renders the frame (ADR-0001); preview screens read sample data through a per-feature read-only source that later steps swap for the API (ADR-0002); a "sent" preview reply lives in the InboxPreview component's state (shared by its list and thread), resets when the conversation changes and is never kept in a store; primitives come from the shadcn/ui catalogue per the canon; Team filtering runs on loaded rows in the browser; deployment unchanged.
 
 ## 2. Constraints
 
@@ -53,7 +53,7 @@ target_surfaces: [web-frontend]
 
 The web panel is the only place operators and business owners work; it talks to tg-inbox's own API, which talks to Telegram. This feature changes only the panel's presentation and navigation; the trust boundary (the API and its session + membership checks) stays where it is, and preview screens never leave the browser.
 
-<!-- brownfield: docs/architecture-map.md reflects f172cee (174 commits behind HEAD); the web panel was scanned directly — 10 pages under apps/web/src/pages, each workspace page wraps its body in AppShell (apps/web/src/shared/ui/app-shell.tsx), feature folders under apps/web/src/features/{auth,workspaces,bot}, 14 shadcn primitives in apps/web/src/shared/ui, 17 *.test.tsx files, Playwright e2e in apps/web/e2e locating the account menu inside the page banner. -->
+<!-- brownfield: docs/architecture-map.md reflects f172cee (174 commits behind HEAD); the web panel was scanned directly — 10 pages under apps/web/src/pages, each workspace page wraps its body in AppShell (apps/web/src/shared/ui/app-shell.tsx), feature folders under apps/web/src/features/{auth,workspaces,bot}, 12 shadcn primitives (plus app-shell / app-shell-context) in apps/web/src/shared/ui, 17 *.test.tsx files, Playwright e2e in apps/web/e2e locating the account menu inside the page banner. -->
 
 **External systems (in / out):**
 
@@ -113,7 +113,7 @@ apps/web/src/
 │   ├── workspaces/…               picker / no-access on auth-layout; team → settings Team section with toolbar filters (client-side over loaded rows)
 │   ├── bot/…                      bot settings → settings Bot section; dialogs untouched
 │   ├── settings/                  SettingsLayout (title, section menu, outlet)
-│   ├── inbox/                     sample source + fixtures, InboxPreview (list + thread + composer), phone list→thread
+│   ├── inbox/                     sample source + fixtures, InboxPreview (list + thread + composer; sent replies held in its component state, reset on conversation change), phone list→thread
 │   └── contacts/                  sample source + fixtures, ContactsPreview (table + toolbar), ContactProfilePreview (header card + tabs)
 └── pages/                         thin route elements; TeamPage/BotSettingsPage/WorkspaceHomePage no longer wrap AppShell
 ```
@@ -215,7 +215,9 @@ sequenceDiagram
 | Role-dependent navigation | Settings link shown only when the current membership's role is owner; the server's owners-only refusal stays the real guard | spec §6.1, `workspace-operators` ADR-0003 |
 | Guard / error handling | Unchanged shared guard (`useGuard` / `useShellGuard`), destructive `Alert` for page/form errors, not-found card in the frame | `docs/design-system.md` § Interaction & writing conventions |
 | Loading | `Skeleton` shaped like the content for screens loading workspace data; preview and entry screens render at once | spec §6, design-system |
-| Sample data | Per-feature read-only source + fixtures; every preview screen shows the sample-data badge; nothing persists, nothing is sent | ADR-0002 |
+| Sample data | Per-feature read-only source + fixtures; every preview screen shows the sample-data badge; a sent preview reply lives only in InboxPreview component state (never a store), so leaving, switching workspace or reloading drops it; nothing persists, nothing is sent | ADR-0002 |
+| Workspace isolation in the UI | Outlet content is keyed on the workspace id and the frame renders no body until the workspace is entered, so nothing of the previous workspace stays on screen after a switch | ADR-0001, spec §6.1 |
+| Safe rendering | User-typed text (preview replies, search boxes) is rendered as plain React text, never as HTML | spec §6.1 |
 | Responsive | Desktop-first; `md` collapses the sidebar into a sheet; tables may scroll inside their card, the page never scrolls sideways | design-system § Platform posture, spec AC-02 |
 | Accessibility | Every control has an accessible name; tests locate by role + name; keyboard reachable | spec §6 |
 | Styling | Tailwind semantic tokens only (`bg-background`, `text-muted-foreground`, …); no raw colours | design-system § Token source |
@@ -248,13 +250,30 @@ ADR files live under `docs/features/ui-redesign/adr/NNNN-<title>.md`.
 - **Then:** "≤ +120 KB gzipped, over the `main` baseline" of everything downloaded on that path (spec §6), and the inbox / contacts screens depend only on their sample source (ADR-0002).
 - **How verify:** build output of the files that path loads, compared against `main` in the review; review check that no preview component imports fixtures directly.
 
+**QG-4. Accessibility**
+- **When:** any screen is used by keyboard or located by tests.
+- **Then:** "100% of navigation items and actions reachable and operable by keyboard; every control has an accessible name" (spec §6).
+- **How verify:** "screen tests query controls by role and name; manual keyboard pass over every screen before ship" (spec §6).
+
+**QG-5. Loading feedback**
+- **When:** the frame enters a workspace or the Bot / Team section loads its data.
+- **Then:** "100% of screens that load workspace data … render a content-shaped placeholder before the data arrives; 0 full-page spinners; preview and entry screens render at once with no simulated loading" (spec §6).
+- **How verify:** "screen tests holding the data request pending and asserting the placeholder" (spec §6).
+
+**QG-6. Reference clean-up and canon registration**
+- **When:** the feature ships.
+- **Then:** "0 reference files in the repository's reference folder and 0 mentions of it in the design canon at ship; 100% of library primitives and reusable screen parts added by this feature listed in the canon's component inventory" (spec §6).
+- **How verify:** "repository check before ship" (spec §6).
+
 ## 11. Risks and technical debt
 
 | Risk / debt | Severity | Mitigation | Owner |
 |---|---|---|---|
 | Pilots read sample conversations as a leak of another business's customers | Medium | Sample-data badge on every preview screen, invented names, identical data in every workspace (spec AC-12, AC-17) | Dmytro Hopko |
 | Moving `AppShell` into a layout route breaks many screen and e2e tests at once (they locate the account menu in the page banner) | Medium | Migrate locators in the same task as the frame; review that assertions are unchanged (QG-1) | Dmytro Hopko |
-| shadcn sidebar + new primitives push the first-load bundle over budget | Low | Measure against `main` in review (QG-3); lazy-load preview routes if needed | Dmytro Hopko |
+| shadcn sidebar + new primitives push the first-load bundle over budget | Low | Measure against `main` in review (QG-3); if over, lazy-load the contacts and Settings routes (not on the measured path) and trim unused primitives | Dmytro Hopko |
+| Open architectural decision: operators see the Team section read-only (spec §8) | Open question | Resolve before roadmap step 5 (assignment) is specified; would add an operator branch to the Settings route and nav | Dmytro Hopko |
+| Open architectural decision: Settings entries for operators (spec §8) | Open question | Resolve before roadmap step 6 (notifications) is specified; would make Settings visible to operators with role-filtered sections | Dmytro Hopko |
 | Copying reference markup verbatim leaks reference-only names or social sign-in | Low | Rewrite onto `shared/ui`; checklist in review; references deleted at the end | Dmytro Hopko |
 
 **Accepted debt (acceptable in v1, plan to fix later):**
