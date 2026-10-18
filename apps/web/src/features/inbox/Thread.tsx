@@ -14,6 +14,7 @@ import { contactName } from './ConversationList';
 import { MessageBubble } from './MessageBubble';
 import { MessageContent } from './MessageContent';
 import { ReplyComposer } from './ReplyComposer';
+import { ReplyDeliveryState } from './ReplyDeliveryState';
 import { useInboxStore } from './store';
 
 const TOP_THRESHOLD = 48;
@@ -38,6 +39,7 @@ function Item({
         text={item.body}
         at={timeOf(item.sent_at ?? item.position_at)}
         author={item.author.display_name}
+        footer={<ReplyDeliveryState reply={item} workspaceId={workspaceId} />}
       />
     );
   const at = timeOf(item.sent_at);

@@ -10,7 +10,12 @@ import type {
 } from '@tg/shared';
 import { create } from 'zustand';
 import { useWorkspaceStore } from '@/features/workspaces/store';
-import { BotCannotReplyError, ReplyLimitReachedError, TeammateRepliedError } from '@tg/shared';
+import {
+  BotCannotReplyError,
+  ReplyLimitReachedError,
+  ReplyNotResendableError,
+  TeammateRepliedError,
+} from '@tg/shared';
 import { ApiError } from '@/shared/api/client';
 import { openLiveSocket, type LiveClient } from '@/shared/api/realtime';
 import * as source from './api-source';
@@ -55,6 +60,16 @@ export type SendResult =
   | { kind: 'rejected'; message: string }
   | { kind: 'failed' };
 
+/** How a `resendReply` attempt ended; ReplyDeliveryState maps each to a state of SCR-02 / SCR-05. */
+export type ResendResult =
+  | { kind: 'sent' }
+  | { kind: 'busy' }
+  | { kind: 'redrawn' }
+  | { kind: 'confirmation_required' }
+  | { kind: 'limited'; retryAt: string }
+  | { kind: 'unavailable' }
+  | { kind: 'failed' };
+
 /**
  * The inbox of ONE workspace (`workspaceId`), shared by SCR-01..05. Entering another workspace
  * resets everything and closes the socket synchronously; every answer or frame tagged with any
@@ -78,6 +93,12 @@ interface InboxState {
     conversationId: string,
     options?: { confirmTeammate?: boolean },
   ) => Promise<SendResult>;
+  resendReply: (
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    options?: { confirmDuplicateRisk?: boolean },
+  ) => Promise<ResendResult>;
   enter: (workspaceId: string) => Promise<void>;
   leave: () => void;
   openThread: (workspaceId: string, conversationId: string) => Promise<void>;
@@ -95,6 +116,7 @@ const EMPTY: Omit<
   | 'setDraftText'
   | 'keepEditing'
   | 'sendReply'
+  | 'resendReply'
 > = {
   workspaceId: null,
   listStatus: 'loading',
@@ -419,6 +441,59 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         return { kind: 'failed' };
       } finally {
         sending.delete(conversationId);
+      }
+    },
+    async resendReply(workspaceId, conversationId, replyId, options = {}) {
+      if (get().workspaceId !== workspaceId) return { kind: 'failed' };
+      if (sending.has(replyId)) return { kind: 'busy' };
+      sending.add(replyId);
+      const startedAt = epoch;
+      const place = (reply: ThreadReply) => {
+        const open = get().thread;
+        if (open?.conversationId === conversationId)
+          set({ thread: { ...open, items: upsertItem(open.items, reply) } });
+      };
+      try {
+        const resent = await source.resendReply(
+          workspaceId,
+          conversationId,
+          replyId,
+          options.confirmDuplicateRisk ? { confirm_duplicate_risk: true } : {},
+          {},
+        );
+        if (!current(workspaceId, startedAt) || resent.workspace_id !== workspaceId)
+          return { kind: 'failed' };
+        place(resent);
+        return { kind: 'sent' };
+      } catch (error) {
+        if (!current(workspaceId, startedAt)) return { kind: 'failed' };
+        if (error instanceof ApiError) {
+          const envelope = (code: string) => ({
+            error: { code, message: '', details: error.details },
+          });
+          if (error.code === 'REPLY_NOT_RESENDABLE') {
+            const parsed = ReplyNotResendableError.safeParse(envelope(error.code));
+            if (parsed.success && parsed.data.error.details.reply.workspace_id === workspaceId) {
+              place(parsed.data.error.details.reply);
+              return { kind: 'redrawn' };
+            }
+          } else if (error.code === 'DUPLICATE_RISK_CONFIRMATION_REQUIRED')
+            return { kind: 'confirmation_required' };
+          else if (error.code === 'REPLY_LIMIT_REACHED') {
+            const parsed = ReplyLimitReachedError.safeParse(envelope(error.code));
+            if (parsed.success)
+              return { kind: 'limited', retryAt: parsed.data.error.details.retry_at };
+          } else if (error.code === 'BOT_CANNOT_REPLY') {
+            const parsed = BotCannotReplyError.safeParse(envelope(error.code));
+            if (parsed.success && parsed.data.error.details.bot.workspace_id === workspaceId)
+              set({ bot: parsed.data.error.details.bot });
+            else void loadBot(workspaceId);
+            return { kind: 'unavailable' };
+          }
+        }
+        return { kind: 'failed' };
+      } finally {
+        sending.delete(replyId);
       }
     },
     async enter(workspaceId) {

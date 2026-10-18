@@ -109,3 +109,20 @@ export const sendReply = (
     body: JSON.stringify(body),
     ...bg(options),
   });
+
+export interface ResendReplyBody {
+  confirm_duplicate_risk?: boolean;
+}
+
+export const resendReply = (
+  workspaceId: string,
+  conversationId: string,
+  replyId: string,
+  body: ResendReplyBody,
+  options: ReadOptions = {},
+) =>
+  apiRequest(
+    `${conversationPath(workspaceId, conversationId)}/replies/${encodeURIComponent(replyId)}/resend`,
+    ThreadReply,
+    { method: 'POST', body: JSON.stringify(body), ...bg(options) },
+  );
