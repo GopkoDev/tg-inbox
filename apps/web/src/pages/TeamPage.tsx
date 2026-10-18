@@ -6,7 +6,6 @@ export function TeamPage({ onInvite }: { onInvite?: () => void } = {}) {
   const { workspaceId = '' } = useParams();
   return (
     <>
-      <h1 className="sr-only">Team</h1>
       <Team key={workspaceId} workspaceId={workspaceId} onInvite={onInvite} />
     </>
   );

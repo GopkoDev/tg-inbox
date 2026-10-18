@@ -137,7 +137,7 @@ test('invite a teammate: link shown once, then a pending row without it (AC-14)'
   await signIn(page, 'boss@example.test');
   await openTeam(page, workspaceId, 'Acme Flowers');
   await page.getByRole('button', { name: 'Invite', exact: true }).click();
-  await page.getByLabel('Email').fill('hire@example.test');
+  await page.getByRole('dialog').getByLabel('Email').fill('hire@example.test');
   await page.getByRole('button', { name: 'Create invitation' }).click();
 
   const dialog = page.getByRole('dialog');
@@ -183,13 +183,17 @@ test('deactivating a member with a second tab open shows the access-removed noti
   await owner.goto('/sign-in');
   await signIn(owner, 'boss@example.test');
   await openTeam(owner, acme, 'Acme Flowers');
-  await owner.getByRole('row', { name: /Sam/ }).getByRole('button', { name: 'Deactivate' }).click();
+  await owner
+    .getByRole('row', { name: /Sam/ })
+    .getByRole('button', { name: /^Actions for / })
+    .click();
+  await owner.getByRole('menuitem', { name: 'Deactivate' }).click();
   await owner.getByRole('alertdialog').getByRole('button', { name: 'Deactivate' }).click();
   await expect(owner.getByRole('row', { name: /Sam/ }).getByText('Deactivated')).toBeVisible();
 
   // The member's next action in the still-open tab hits the shared guard.
   await member.getByRole('button', { name: 'Invite', exact: true }).click();
-  await member.getByLabel('Email').fill('hire@example.test');
+  await member.getByRole('dialog').getByLabel('Email').fill('hire@example.test');
   await member.getByRole('button', { name: 'Create invitation' }).click();
   await expect(member).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(member, 'Bolt Bikes')).toBeVisible();

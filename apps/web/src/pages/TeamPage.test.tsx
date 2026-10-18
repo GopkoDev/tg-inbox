@@ -70,6 +70,7 @@ function renderPage(path = '/w/w1/team') {
           <Route index element={<TeamPage />} />
         </Route>
         <Route path="/w/:workspaceId" element={<p>home screen</p>} />
+        <Route path="/w/:workspaceId/inbox" element={<p>inbox screen</p>} />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
         <Route path="*" element={<p>other</p>} />
       </Routes>
@@ -85,6 +86,10 @@ function Where() {
 }
 const err = (status: number, code: string) => new ApiError(status, code as never, code);
 const rowOf = (name: string) => screen.getByText(name).closest('tr')!;
+const act = async (email: string, item: string) => {
+  openMenu(`Actions for ${email}`);
+  fireEvent.click(await screen.findByRole('menuitem', { name: item }));
+};
 const lastButton = async (name: string) => (await screen.findAllByRole('button', { name })).at(-1)!;
 
 beforeEach(() => {
@@ -115,10 +120,8 @@ describe('TeamPage (SCR-07)', () => {
     expect(screen.getByText('(you)')).toBeInTheDocument();
     const pending = screen.getByTestId('pending-invitations');
     expect(within(pending).getByText('new@x.test')).toBeInTheDocument();
-    expect(within(pending).getAllByText('Operator')).toHaveLength(2); // badge + phone line
+    expect(within(pending).getAllByText('Operator')).toHaveLength(1);
     expect(within(rowOf('Olga')).getByText('Business owner')).toBeInTheDocument();
-    expect(within(rowOf('Olga')).getByText('o@x.io · Business owner')).toBeInTheDocument();
-    expect(within(rowOf('Bob')).getByText('bob@x.test · Operator')).toBeInTheDocument();
     expect(screen.queryByText(/^(owner|operator)$/)).not.toBeInTheDocument();
     expect(screen.queryByText(/· (owner|operator)$/)).not.toBeInTheDocument();
     expect(within(pending).getByText(/expires/i)).toBeInTheDocument();
@@ -137,7 +140,7 @@ describe('TeamPage (SCR-07)', () => {
     revokeInvitation.mockResolvedValue(undefined);
     renderPage();
     await screen.findByText('new@x.test');
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    await act('new@x.test', 'Revoke');
     expect(
       await screen.findByText('Revoke the invitation for new@x.test? Its link stops working.'),
     ).toBeInTheDocument();
@@ -155,16 +158,16 @@ describe('TeamPage (SCR-07)', () => {
     });
     renderPage();
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     expect(
       await screen.findByText(
         'Deactivate Bob? Bob loses access to Acme Flowers at once. You can reactivate them later.',
       ),
     ).toBeInTheDocument();
     fireEvent.click(await lastButton('Deactivate'));
-    await waitFor(() =>
-      expect(within(rowOf('Bob')).getByRole('button', { name: 'Reactivate' })).toBeInTheDocument(),
-    );
+    await waitFor(() => expect(within(rowOf('Bob')).getByText('Deactivated')).toBeInTheDocument());
+    openMenu('Actions for bob@x.test');
+    expect(await screen.findByRole('menuitem', { name: 'Reactivate' })).toBeInTheDocument();
     expect(within(rowOf('Bob')).getByText('Deactivated')).toBeInTheDocument();
   });
 
@@ -177,10 +180,10 @@ describe('TeamPage (SCR-07)', () => {
     reactivateMembership.mockResolvedValue({ ...dead, state: 'active', deactivated_at: null });
     renderPage();
     await screen.findByText('Carl');
-    fireEvent.click(screen.getByRole('button', { name: 'Reactivate' }));
-    await waitFor(() =>
-      expect(within(rowOf('Carl')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument(),
-    );
+    await act('carl@x.test', 'Reactivate');
+    await waitFor(() => expect(within(rowOf('Carl')).getByText('Active')).toBeInTheDocument());
+    openMenu('Actions for carl@x.test');
+    expect(await screen.findByRole('menuitem', { name: 'Deactivate' })).toBeInTheDocument();
     expect(within(rowOf('Carl')).getByText('Active')).toBeInTheDocument();
     expect(within(rowOf('Carl')).getByText('Operator')).toBeInTheDocument();
     expect(reactivateMembership).toHaveBeenCalledWith('w1', 'm3');
@@ -190,28 +193,31 @@ describe('TeamPage (SCR-07)', () => {
     deactivateMembership.mockReturnValue(new Promise(() => undefined));
     renderPage();
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Revoke' })).toBeDisabled());
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Actions for new@x.test' })).toBeDisabled(),
+    );
   });
 
   it('409 LAST_ACTIVE_OWNER: alert, row unchanged (AC-18)', async () => {
     deactivateMembership.mockRejectedValue(err(409, 'LAST_ACTIVE_OWNER'));
     renderPage();
     await screen.findByText('Olga');
-    fireEvent.click(within(rowOf('Olga')).getByRole('button', { name: 'Deactivate' }));
+    await act('o@x.io', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'A workspace must always have at least one active business owner',
     );
-    expect(within(rowOf('Olga')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+    openMenu('Actions for o@x.io');
+    expect(await screen.findByRole('menuitem', { name: 'Deactivate' })).toBeInTheDocument();
   });
 
   it('404 on action: stale alert and both lists reload', async () => {
     revokeInvitation.mockRejectedValue(err(404, 'NOT_FOUND'));
     renderPage();
     await screen.findByText('new@x.test');
-    fireEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+    await act('new@x.test', 'Revoke');
     fireEvent.click(await lastButton('Revoke'));
     expect(await screen.findByRole('alert')).toHaveTextContent(
       'This item has changed — the list was refreshed',
@@ -227,8 +233,8 @@ describe('TeamPage (SCR-07)', () => {
     expect(await screen.findByText('Only business owners manage the team')).toBeInTheDocument();
     expect(screen.queryByRole('table')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Invite' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Back to home' }));
-    expect(await screen.findByText('home screen')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Back to inbox' }));
+    expect(await screen.findByText('inbox screen')).toBeInTheDocument();
   });
 
   it('403 ACCESS_REMOVED: shared guard handler (AC-17)', async () => {
@@ -245,7 +251,7 @@ describe('TeamPage (SCR-07)', () => {
     resolveWorkspace.mockReturnValue(new Promise(() => undefined));
     renderPage();
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     await waitFor(() => expect(resolveWorkspace).toHaveBeenCalled());
     await waitFor(() => expect(screen.queryByText('Bob')).not.toBeInTheDocument());
@@ -262,7 +268,7 @@ describe('TeamPage (SCR-07)', () => {
       resolveWorkspace.mockRejectedValueOnce(failure);
       renderPage();
       await screen.findByText('Bob');
-      fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+      await act('bob@x.test', 'Deactivate');
       fireEvent.click(await lastButton('Deactivate'));
       expect(await screen.findByText('Something went wrong')).toBeInTheDocument();
       expect(screen.queryByText('Bob')).not.toBeInTheDocument();
@@ -292,7 +298,7 @@ describe('TeamPage (SCR-07)', () => {
       </InDataRouter>,
     );
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     expect(await screen.findByText('Page not found')).toBeInTheDocument();
@@ -321,7 +327,7 @@ describe('TeamPage (SCR-07)', () => {
       </InDataRouter>,
     );
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     expect(await screen.findByText('Page not found')).toBeInTheDocument();
@@ -353,7 +359,7 @@ describe('TeamPage (SCR-07)', () => {
       </InDataRouter>,
     );
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     await waitFor(() => expect(useWorkspaceStore.getState().current).toEqual(bolt));
@@ -423,10 +429,11 @@ describe('TeamPage (SCR-07)', () => {
     deactivateMembership.mockRejectedValue(new Error('boom'));
     renderPage();
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
     expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong');
-    expect(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' })).toBeInTheDocument();
+    openMenu('Actions for bob@x.test');
+    expect(await screen.findByRole('menuitem', { name: 'Deactivate' })).toBeInTheDocument();
   });
 });
 
@@ -455,7 +462,7 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
   }
   async function startDeactivate() {
     await screen.findByText('Bob');
-    fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
+    await act('bob@x.test', 'Deactivate');
     fireEvent.click(await lastButton('Deactivate'));
   }
 
