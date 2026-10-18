@@ -109,5 +109,6 @@ No DB changes (writes go through T7's `changeStatus`).
 ## Definition of Done
 
 - [ ] Route tests prove close recorded with no reason, 409 CLOSE_NEEDS_CONFIRMATION with every reason, close anyway with the refusal's snapshot, asks again after a capture or failed reply in between, reopen recorded / unchanged / stale, and the 61st change across assign, unassign, close and reopen refused with 429 and Retry-After while refused and unchanged requests are not counted.
+- [ ] a seeded timing test (1 000 conversations) shows each change route p95 ≤ 300 ms server time (test-plan.md)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
