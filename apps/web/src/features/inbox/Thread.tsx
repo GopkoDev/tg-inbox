@@ -10,6 +10,8 @@ import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import * as source from './api-source';
+import { ActivityLine } from './ActivityLine';
+import { ConversationActions } from './ConversationActions';
 import { contactName } from './ConversationList';
 import { MessageBubble } from './MessageBubble';
 import { MessageContent } from './MessageContent';
@@ -32,8 +34,8 @@ function Item({
   workspaceId: string;
   contactName: string;
 }) {
-  // Activity lines are rendered by a later task (T18).
-  if (item.type === 'activity') return null;
+  if (item.type === 'activity')
+    return <ActivityLine activity={item} at={timeOf(item.position_at)} />;
   if (item.type === 'reply')
     return (
       <MessageBubble
@@ -176,34 +178,46 @@ export function Thread() {
 
   const contact = open?.contact ?? null;
   const name = contact ? contactName(contact) : '';
+  const actions = (
+    <ConversationActions
+      workspaceId={workspaceId}
+      conversationId={conversationId}
+      compact={isMobile}
+    />
+  );
+  const showActions = status !== 'error' || !!contact;
   const header = (
-    <div className="flex items-center gap-3 border-b p-3">
-      {isMobile ? (
-        <Button asChild variant="ghost" size="sm">
-          <Link to={`/w/${workspaceId}/inbox`}>
-            <ArrowLeft aria-hidden />
-            Back to conversations
-          </Link>
-        </Button>
-      ) : null}
-      {status === 'error' && !contact ? null : status === 'loading' || !contact ? (
-        <div data-testid="thread-loading" className="flex items-center gap-3">
-          <Skeleton className="size-8 rounded-full" />
-          <Skeleton className="h-4 w-32" />
-        </div>
-      ) : (
-        <>
-          <Avatar>
-            <AvatarFallback>{initials(name)}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold">{name}</h2>
-            {contact.username ? (
-              <p className="truncate text-xs text-muted-foreground">@{contact.username}</p>
-            ) : null}
+    <div className="border-b">
+      <div className="flex items-center gap-3 p-3">
+        {isMobile ? (
+          <Button asChild variant="ghost" size="sm">
+            <Link to={`/w/${workspaceId}/inbox`}>
+              <ArrowLeft aria-hidden />
+              Back to conversations
+            </Link>
+          </Button>
+        ) : null}
+        {status === 'error' && !contact ? null : status === 'loading' || !contact ? (
+          <div data-testid="thread-loading" className="flex items-center gap-3">
+            <Skeleton className="size-8 rounded-full" />
+            <Skeleton className="h-4 w-32" />
           </div>
-        </>
-      )}
+        ) : (
+          <>
+            <Avatar>
+              <AvatarFallback>{initials(name)}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-semibold">{name}</h2>
+              {contact.username ? (
+                <p className="truncate text-xs text-muted-foreground">@{contact.username}</p>
+              ) : null}
+            </div>
+            {!isMobile && showActions ? <div className="ml-auto">{actions}</div> : null}
+          </>
+        )}
+      </div>
+      {isMobile && showActions && contact ? actions : null}
     </div>
   );
 
