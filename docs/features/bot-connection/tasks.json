@@ -1,0 +1,604 @@
+{
+  "slug": "bot-connection",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Promote the four staged migrations and regenerate DB types",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-11"
+      ],
+      "dod": "The four bot-connection migrations apply and revert cleanly on a fresh Postgres 16, the regenerated db.types.gen.ts compiles, and the migrations integration test rejects every constraint violation listed in the task.",
+      "files_hint": [
+        "docs/features/bot-connection/migrations/",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t01-promote-migrations.md"
+    },
+    {
+      "id": "T2",
+      "title": "Add platform primitives: bot error codes incl. the first 5xx, owner-guard message, config keys, Bot API root, secret-header redaction",
+      "layer": "infra",
+      "deps": [],
+      "acs": [
+        "AC-02",
+        "AC-03",
+        "AC-04",
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "Unit tests prove the eight new error classes map to their codes, statuses and details (503 TELEGRAM_UNAVAILABLE not reported as INTERNAL_ERROR), config parses and validates the four new keys, the secret header is redacted, and the owner guard takes its message as a parameter with the team routes unchanged.",
+      "files_hint": [
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "packages/shared/src/errors.ts",
+        "apps/api/src/platform/config.ts",
+        ".env.example",
+        "apps/api/src/platform/telegram.ts",
+        "apps/api/src/platform/logger.ts",
+        "apps/api/src/modules/workspaces/http/guard.ts",
+        "apps/api/src/modules/workspaces/http/team-routes.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t02-platform-primitives.md"
+    },
+    {
+      "id": "T3",
+      "title": "Build the scriptable fake Telegram Bot API and the webhook update builder for tests",
+      "layer": "tests",
+      "deps": [],
+      "acs": [
+        "AC-06",
+        "AC-12",
+        "AC-16",
+        "AC-16b"
+      ],
+      "dod": "fake-telegram.test.ts shows grammY pointed at the fake through apiRoot receiving every scripted outcome (ok, unauthorized, transient, hang) with recorded call parameters, and the update builders validate against recorded Bot API examples.",
+      "files_hint": [
+        "apps/api/src/test/fake-telegram.ts",
+        "apps/api/src/test/fake-telegram.test.ts",
+        "apps/api/src/test/fixtures/telegram.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t03-fake-telegram.md"
+    },
+    {
+      "id": "T4",
+      "title": "Define the bots zod contracts in packages/shared",
+      "layer": "ports",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-05",
+        "AC-06",
+        "AC-15"
+      ],
+      "dod": "Unit tests show every openapi.yaml example for the four owner operations parses with the shared bots schemas and that no schema accepts a token or webhook-secret field.",
+      "files_hint": [
+        "packages/shared/src/bots.ts",
+        "packages/shared/src/bots.test.ts",
+        "packages/shared/src/index.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t04-shared-contracts.md"
+    },
+    {
+      "id": "T5",
+      "title": "Implement the bots domain: token check, connection states, inbound filter, update normalisation, due rule",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-09",
+        "AC-12",
+        "AC-15"
+      ],
+      "dod": "Unit tests cover token trimming and format, the paste decision (connect, connect again, rotate, refuse with reason), every inbound-filter reason, every message kind incl. other, and the 3-minute due rule, with no I/O.",
+      "files_hint": [
+        "apps/api/src/modules/bots/domain/"
+      ],
+      "file": "docs/features/bot-connection/tasks/t05-bots-domain.md"
+    },
+    {
+      "id": "T6",
+      "title": "Implement the conversations and contacts domain rules: message kinds, edit rule, profile refresh",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "Unit tests cover the edit rule with both tie-breaks and the redelivery case, the profile-refresh rule, and the 15-value message kind list, with no I/O.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/domain/",
+        "apps/api/src/modules/contacts/domain/"
+      ],
+      "file": "docs/features/bot-connection/tasks/t06-conversation-contact-domain.md"
+    },
+    {
+      "id": "T7",
+      "title": "Build the contacts module: repository with isolation tests, upsert-from-profile and count use cases",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T6"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-13",
+        "AC-15"
+      ],
+      "dod": "Testcontainers tests prove every contacts repository method is isolated across two workspaces, a late older message never restores an old profile, and concurrent first upserts create one contact.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/",
+        "apps/api/src/modules/contacts/infra/",
+        "apps/api/src/test/fixtures/contacts.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t07-contacts-module.md"
+    },
+    {
+      "id": "T8",
+      "title": "Build the conversation and message repositories with cross-workspace isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T6"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-11",
+        "AC-13"
+      ],
+      "dod": "Testcontainers tests prove every conversation and message repository method is isolated across two workspaces, duplicate inserts report already_present, and the conditional edit converges on the latest edit and ignores uncaptured messages.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/infra/",
+        "apps/api/src/test/fixtures/conversations.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t08-conversations-infra.md"
+    },
+    {
+      "id": "T9",
+      "title": "Implement the conversations app layer: capture inbound message, apply edit, last message time, has conversations",
+      "layer": "app",
+      "deps": [
+        "T7",
+        "T8"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-19"
+      ],
+      "dod": "Unit and Postgres tests show capture creates contact, conversation and message in one transaction, stores a redelivery once, handles concurrent first messages and duplicates without doubles, applies only later edits, and leaves nothing half-written on a forced failure.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/"
+      ],
+      "file": "docs/features/bot-connection/tasks/t09-capture-use-cases.md"
+    },
+    {
+      "id": "T10",
+      "title": "Build the bot repository, the AES-GCM token cipher and webhook secrets, with isolation tests incl. the two controlled exceptions",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T2",
+        "T5"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-13",
+        "AC-14",
+        "AC-18"
+      ],
+      "dod": "Testcontainers tests prove every bot repository method and both controlled exceptions are isolated across two workspaces, the telegram_bot_id violation is reported without reading the other row, and the AES-GCM cipher round-trips without the token appearing in stored bytes.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/infra/bot-repo.ts",
+        "apps/api/src/modules/bots/infra/bot-repo.int.test.ts",
+        "apps/api/src/modules/bots/infra/token-cipher.ts",
+        "apps/api/src/modules/bots/infra/webhook-secret.ts",
+        "apps/api/src/test/fixtures/bots.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t10-bots-infra.md"
+    },
+    {
+      "id": "T11",
+      "title": "Build the Telegram gateway: getMe, getWebhookInfo, setWebhook, deleteWebhook with typed outcomes and timeouts",
+      "layer": "infra",
+      "deps": [
+        "T2",
+        "T3"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-06",
+        "AC-16",
+        "AC-16b"
+      ],
+      "dod": "Integration tests against the fake Bot API show each gateway method returning its typed outcome (incl. a 1 s timeout as transient), setWebhook sending allowed_updates message/edited_message and max_connections, and no token or Bot API URL in errors or logs.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t11-telegram-gateway.md"
+    },
+    {
+      "id": "T12",
+      "title": "Implement the bots use cases get-settings and paste-token (connect, rotate, connect again, refusals, takeover confirmation)",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T7",
+        "T9",
+        "T10",
+        "T11"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-15",
+        "AC-17",
+        "AC-19"
+      ],
+      "dod": "Unit tests with fakes cover every paste branch in the contract refusal order and the restore-on-setWebhook-failure path, getSettings makes no Telegram call, and a Postgres test shows two workspaces pasting the same bot concurrently yield one connection and one BOT_BELONGS_TO_ANOTHER_WORKSPACE.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/settings.ts",
+        "apps/api/src/modules/bots/app/paste-token.ts",
+        "apps/api/src/modules/bots/app/fakes.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t12-settings-and-paste.md"
+    },
+    {
+      "id": "T13",
+      "title": "Implement the bots use cases reconnect-with-stored-token and disconnect",
+      "layer": "app",
+      "deps": [
+        "T12"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-16b",
+        "AC-18"
+      ],
+      "dod": "Unit and integration tests cover every branch of reconnect (flow 6) and disconnect (flow 7), including needs_token on a rejected stored token, the row kept when conversations exist and deleted otherwise, and no deleteWebhook for a foreign URL.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/reconnect.ts",
+        "apps/api/src/modules/bots/app/disconnect.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t13-reconnect-and-disconnect.md"
+    },
+    {
+      "id": "T14",
+      "title": "Implement the bots use case accept-webhook-update: secret check, inbound filter, capture epoch, hand-off to conversations",
+      "layer": "app",
+      "deps": [
+        "T5",
+        "T9",
+        "T10"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-09",
+        "AC-12",
+        "AC-13",
+        "AC-14"
+      ],
+      "dod": "Unit tests cover unauthorized, captured, already-present, edited and every ignore reason, and a Postgres test shows one person writing to two workspaces' bots gets a separate contact and conversation in each.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t14-accept-update.md"
+    },
+    {
+      "id": "T15",
+      "title": "Implement the scheduled health check: run-health-check use case and the bots.schedule-health-checks / bots.check-health jobs",
+      "layer": "app",
+      "deps": [
+        "T5",
+        "T10",
+        "T11"
+      ],
+      "acs": [
+        "AC-15",
+        "AC-16",
+        "AC-16b"
+      ],
+      "dod": "Unit tests cover each row of the events.md outcome table, and pg-boss integration tests show one check per bot at a time and a no-op for a disconnected bot or a mismatched workspace id.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/health-check.ts",
+        "apps/api/src/modules/bots/infra/jobs.ts",
+        "apps/api/src/modules/bots/infra/jobs.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t15-health-check.md"
+    },
+    {
+      "id": "T16",
+      "title": "Expose the owner-only bot routes and wire the bots, conversations and contacts modules into buildDeps / buildApp",
+      "layer": "ports",
+      "deps": [
+        "T4",
+        "T12",
+        "T13"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-15",
+        "AC-18"
+      ],
+      "dod": "app.inject() tests show the four owner routes returning every contract status and code, 403 \"Only business owners manage the bot\" for an operator, 404 for a non-member or another workspace's owner, no Telegram call on GET, and no token in any response.",
+      "files_hint": [
+        "apps/api/src/modules/bots/http/routes.ts",
+        "apps/api/src/modules/bots/http/owner-routes.int.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t16-owner-routes.md"
+    },
+    {
+      "id": "T17",
+      "title": "Expose the Telegram webhook route with secret-before-parse, empty-body 401/200 and fail-closed 500",
+      "layer": "ports",
+      "deps": [
+        "T14",
+        "T16"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-09",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-14"
+      ],
+      "dod": "app.inject() tests show the webhook capturing every kind, edit, redelivery and ordering case, ignoring filtered updates with 200, refusing every forgery with an identical empty 401, and answering 500 on a forced DB failure followed by a single capture on redelivery.",
+      "files_hint": [
+        "apps/api/src/modules/bots/http/routes.ts",
+        "apps/api/src/modules/bots/http/webhook-route.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t17-webhook-route.md"
+    },
+    {
+      "id": "T18",
+      "title": "Register the health-check workers in buildApp and prove five-minute freshness over a simulated hour",
+      "layer": "wiring",
+      "deps": [
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-15",
+        "AC-16",
+        "AC-16b"
+      ],
+      "dod": "buildApp() registers the health-check workers and a simulated-hour integration test shows no live bot ever more than 5 minutes stale, with revoke and takeover detected on the first due tick.",
+      "files_hint": [
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/modules/bots/infra/freshness.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t18-register-health-jobs.md"
+    },
+    {
+      "id": "T19",
+      "title": "Update CLAUDE.md, the architecture map, the workspace-operators SAD and the design system for the new modules, exceptions and config",
+      "layer": "docs",
+      "deps": [
+        "T16",
+        "T17",
+        "T18"
+      ],
+      "acs": [
+        "AC-13",
+        "AC-14"
+      ],
+      "dod": "CLAUDE.md, docs/architecture-map.md, the workspace-operators SAD and docs/design-system.md list the same five tenancy exceptions, three new modules, four config keys and the owner-only Bot link, and Prettier passes.",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/features/workspace-operators/sad.md",
+        "docs/design-system.md"
+      ],
+      "file": "docs/features/bot-connection/tasks/t19-conventions-docs.md"
+    },
+    {
+      "id": "T20",
+      "title": "Add the three API-level end-to-end stories: capture lifecycle, edits and redeliveries, health and recovery",
+      "layer": "tests",
+      "deps": [
+        "T17",
+        "T18"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-07",
+        "AC-11",
+        "AC-13",
+        "AC-16",
+        "AC-17",
+        "AC-18",
+        "AC-19"
+      ],
+      "dod": "The three API-level e2e stories (capture lifecycle, edits and redeliveries, health and recovery) pass against an ephemeral database and the fake Bot API, each step using only what earlier steps returned.",
+      "files_hint": [
+        "apps/api/src/e2e/bot-flows.int.test.ts",
+        "apps/api/src/e2e/helpers.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t20-api-e2e.md"
+    },
+    {
+      "id": "T21",
+      "title": "Add the token-secrecy suite: no token, secret or message text in any log line or response across every bot flow",
+      "layer": "tests",
+      "deps": [
+        "T17",
+        "T18"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-14",
+        "AC-15"
+      ],
+      "dod": "An integration suite running every bot flow and Telegram failure branch finds no token, webhook secret, message text or Bot API URL in any log line, response or error body.",
+      "files_hint": [
+        "apps/api/src/modules/bots/http/secrecy.int.test.ts"
+      ],
+      "file": "docs/features/bot-connection/tasks/t21-token-secrecy-suite.md"
+    },
+    {
+      "id": "T22",
+      "title": "Write the load-test script for throughput, flood isolation, owner actions and settings load (runnable locally, run pre-pilot)",
+      "layer": "tests",
+      "deps": [
+        "T17"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-11"
+      ],
+      "dod": "The load script runs every scenario with --profile smoke against a local instance and reports capture/acknowledgement p95 and 0 lost / 0 duplicated; the full pre-pilot run on a production-like host is out of this task.",
+      "files_hint": [
+        "apps/api/load/",
+        "apps/api/package.json"
+      ],
+      "file": "docs/features/bot-connection/tasks/t22-load-test-script.md"
+    },
+    {
+      "id": "T23",
+      "title": "Lay the web bot foundation: bot API client, store, /w/:workspaceId/bot route and the owner-only Bot entry in AppShell (SCR-01)",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-03"
+      ],
+      "dod": "Testing Library tests show the owner-only Bot link after Team in the desktop nav and phone menu (absent for operators), the /w/:workspaceId/bot route mounting, and the bot store replacing and clearing settings with no token field.",
+      "files_hint": [
+        "apps/web/src/features/bot/api.ts",
+        "apps/web/src/features/bot/store.ts",
+        "apps/web/src/features/bot/store.test.ts",
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/pages/BotSettingsPage.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx"
+      ],
+      "file": "docs/features/bot-connection/tasks/t23-web-bot-foundation.md"
+    },
+    {
+      "id": "T24",
+      "title": "Build SCR-02 Bot settings with every declared state",
+      "layer": "ui",
+      "deps": [
+        "T23"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-07",
+        "AC-15",
+        "AC-16",
+        "AC-16b"
+      ],
+      "dod": "Testing Library tests render every declared SCR-02 state against a stubbed API, including owners-only, stale notice and reconnect outcomes, and never render a token.",
+      "files_hint": [
+        "apps/web/src/pages/BotSettingsPage.tsx",
+        "apps/web/src/pages/BotSettingsPage.test.tsx",
+        "apps/web/src/features/bot/settings/"
+      ],
+      "file": "docs/features/bot-connection/tasks/t24-bot-settings-page.md"
+    },
+    {
+      "id": "T25",
+      "title": "Build SCR-03 Paste token dialog with every declared state",
+      "layer": "ui",
+      "deps": [
+        "T24"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-04",
+        "AC-05",
+        "AC-17",
+        "AC-19"
+      ],
+      "dod": "Testing Library tests render every declared SCR-03 state against mocked pasteBotToken responses and prove the token is cleared on success, cancel and close and never reaches the store.",
+      "files_hint": [
+        "apps/web/src/features/bot/paste-token/",
+        "apps/web/src/pages/BotSettingsPage.tsx"
+      ],
+      "file": "docs/features/bot-connection/tasks/t25-paste-token-dialog.md"
+    },
+    {
+      "id": "T26",
+      "title": "Build SCR-04 Confirm takeover and SCR-05 Confirm disconnect",
+      "layer": "ui",
+      "deps": [
+        "T25"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-16b",
+        "AC-18"
+      ],
+      "dod": "Testing Library tests render every declared SCR-04 and SCR-05 state, show cancel sends no request, and show paste-path refusals on re-check reopening SCR-03.",
+      "files_hint": [
+        "apps/web/src/features/bot/confirm-takeover/",
+        "apps/web/src/features/bot/confirm-disconnect/",
+        "apps/web/src/pages/BotSettingsPage.tsx"
+      ],
+      "file": "docs/features/bot-connection/tasks/t26-confirm-dialogs.md"
+    },
+    {
+      "id": "T27",
+      "title": "Add the seven browser end-to-end flows for bot settings against the fake Bot API",
+      "layer": "ui",
+      "deps": [
+        "T20",
+        "T26"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-06",
+        "AC-16",
+        "AC-16b",
+        "AC-17",
+        "AC-18"
+      ],
+      "dod": "The seven browser flows of the test plan pass against the built SPA, an ephemeral database and the fake Bot API, locally and in the browser e2e CI step.",
+      "files_hint": [
+        "apps/web/e2e/bot.spec.ts",
+        "apps/web/e2e/global-setup.ts",
+        "apps/web/e2e/support/"
+      ],
+      "file": "docs/features/bot-connection/tasks/t27-ui-e2e.md"
+    }
+  ]
+}

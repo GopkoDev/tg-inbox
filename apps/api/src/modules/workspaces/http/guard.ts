@@ -28,9 +28,14 @@ export function createWorkspaceGuard({
   };
 }
 
-/** preHandler that follows the guard on owner-only routes. */
-export const ownerOnly: preHandlerAsyncHookHandler = async (request) => {
-  if (request.workspace.role !== 'owner') {
-    throw new OwnerOnlyError('Only business owners manage the team');
-  }
-};
+/**
+ * preHandler that follows the guard on owner-only routes; `message` names the route family
+ * ("Only business owners manage the team" / "… manage the bot").
+ */
+export function ownerOnly(message: string): preHandlerAsyncHookHandler {
+  return async (request) => {
+    if (request.workspace.role !== 'owner') {
+      throw new OwnerOnlyError(message);
+    }
+  };
+}

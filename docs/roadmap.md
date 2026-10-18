@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: "2026-10-11"
+updated_at: "2026-10-12"
 ---
 
 # Roadmap — tg-inbox
@@ -21,7 +21,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 |---|---|---|:---:|---|
 | 1 | Project skeleton — the empty repo becomes a buildable, testable project | idea-brief.md §1 Raw idea | S | idea |
 | 2 | Workspace & operator accounts — a business is created by hand and its operators sign in to the web panel | idea-brief.md §3 Users | M | shipped → [`features/workspace-operators`](features/workspace-operators/spec.md) |
-| 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | idea |
+| 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | shipped → [`features/bot-connection`](features/bot-connection/spec.md) |
 | 4 | Shared web inbox — operators see conversations and reply; the customer receives the reply in the bot | idea-brief.md §2 Problem | M | idea |
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | S | idea |
 | 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | S | idea |
@@ -99,3 +99,4 @@ flowchart LR
 | Step | Shipped | Link |
 |---|---|---|
 | 2 · Workspace & operator accounts | 2026-10-11 | [changelog](features/workspace-operators/_ship/changelog.md) · [PR #1](https://github.com/GopkoDev/tg-inbox/pull/1) |
+| 3 · Bot connection & inbound capture | 2026-10-12 | [changelog](features/bot-connection/_ship/changelog.md) · [PR #2](https://github.com/GopkoDev/tg-inbox/pull/2) |

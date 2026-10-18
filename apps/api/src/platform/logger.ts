@@ -9,6 +9,7 @@ const REDACT = [
   'req.headers.cookie',
   'res.headers["set-cookie"]',
   'req.headers["x-telegram-bot-api-secret-token"]',
+  'headers["x-telegram-bot-api-secret-token"]',
   '*.token',
   '*.botToken',
   'err.rawPacket',

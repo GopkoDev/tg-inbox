@@ -58,12 +58,14 @@ const pageOf = <T, U>(
   next_cursor: p.nextCursor,
 });
 
+const OWNER_ONLY_TEAM = 'Only business owners manage the team';
+
 /** The six owner-only team routes under `/workspaces/:workspaceId`; the caller supplies `/api`. */
 export async function registerTeamRoutes(
   app: FastifyInstance,
   { team, access, authenticate }: TeamRoutesDeps,
 ): Promise<void> {
-  const pre = [authenticate, createWorkspaceGuard(access), ownerOnly];
+  const pre = [authenticate, createWorkspaceGuard(access), ownerOnly(OWNER_ONLY_TEAM)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const prefix = '/workspaces/:workspaceId';
 

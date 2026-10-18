@@ -95,6 +95,93 @@ export class TooManyRequestsError extends AppError {
   readonly statusCode = 429;
 }
 
+export class BotTokenInvalidError extends AppError {
+  readonly code = ErrorCode.BOT_TOKEN_INVALID;
+  readonly statusCode = 400;
+
+  constructor() {
+    super('The token is not valid — copy it again from BotFather');
+  }
+}
+
+export class BotBelongsToAnotherWorkspaceError extends AppError {
+  readonly code = ErrorCode.BOT_BELONGS_TO_ANOTHER_WORKSPACE;
+  readonly statusCode = 409;
+
+  /** Never names the other workspace (AC-04). */
+  constructor() {
+    super('This bot already belongs to another workspace');
+  }
+}
+
+const KEEPS_ONE_BOT_MESSAGES = {
+  connected: 'A workspace keeps one business bot — disconnect the current bot first',
+  history: 'A workspace keeps one business bot — your customers know only the bot they wrote to',
+} as const;
+
+/** `reason`: `connected` — disconnect first; `history` — the workspace stays with its bot (AC-05). */
+export class WorkspaceKeepsOneBotError extends AppError {
+  readonly code = ErrorCode.WORKSPACE_KEEPS_ONE_BOT;
+  readonly statusCode = 409;
+
+  constructor(reason: keyof typeof KEEPS_ONE_BOT_MESSAGES) {
+    super(KEEPS_ONE_BOT_MESSAGES[reason], { reason });
+  }
+}
+
+/** `bot` names the bot for the takeover warning (AC-06, SCR-04). */
+export class TakeoverConfirmationRequiredError extends AppError {
+  readonly code = ErrorCode.TAKEOVER_CONFIRMATION_REQUIRED;
+  readonly statusCode = 409;
+
+  constructor(bot: { name: string; username: string }) {
+    super('Connecting will stop this bot delivering messages to another service', { bot });
+  }
+}
+
+/** The settings refusals hand back the current Bot settings so the panel can refresh. */
+export class NothingToReconnectError extends AppError {
+  readonly code = ErrorCode.NOTHING_TO_RECONNECT;
+  readonly statusCode = 409;
+
+  constructor(settings: unknown) {
+    super('The bot is not taken over by another service — there is nothing to reconnect', {
+      settings,
+    });
+  }
+}
+
+export class BotNeedsNewTokenError extends AppError {
+  readonly code = ErrorCode.BOT_NEEDS_NEW_TOKEN;
+  readonly statusCode = 409;
+
+  constructor(settings: unknown) {
+    super("The bot's token no longer works — paste a new token from BotFather", { settings });
+  }
+}
+
+export class NoBotConnectedError extends AppError {
+  readonly code = ErrorCode.NO_BOT_CONNECTED;
+  readonly statusCode = 409;
+
+  constructor(settings: unknown) {
+    super('No bot is connected', { settings });
+  }
+}
+
+/**
+ * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
+ * AppError. Its message never carries Telegram's error text or URL.
+ */
+export class TelegramUnavailableError extends AppError {
+  readonly code = ErrorCode.TELEGRAM_UNAVAILABLE;
+  readonly statusCode = 503;
+
+  constructor() {
+    super('Telegram is not responding — try again');
+  }
+}
+
 function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnvelope {
   return { error: details === undefined ? { code, message } : { code, message, details } };
 }
@@ -109,6 +196,10 @@ function sendError(
   reply: FastifyReply,
 ): FastifyReply {
   if (error instanceof AppError) {
+    if (error.statusCode >= 500) {
+      // An expected upstream failure, not a bug: the code only — never the cause, text or URL.
+      request.log.warn({ code: error.code }, 'upstream unavailable');
+    }
     return reply.status(error.statusCode).send(envelope(error.code, error.message, error.details));
   }
   if (error.validation) {

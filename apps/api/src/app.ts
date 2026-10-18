@@ -5,6 +5,8 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import type { DestinationStream } from 'pino';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerAuth } from './modules/auth/http/routes.js';
+import { registerBots } from './modules/bots/http/routes.js';
+import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import type { Config } from './platform/config.js';
@@ -53,11 +55,17 @@ export async function buildApp(
     acceptInvitation,
     team,
     optionalAccount,
+    bots,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
   app.addHook('onClose', async () => {
     await jobs.stop({ graceful: true });
     await deps.destroy();
+  });
+  // pg-boss workers are registered here, in the composition root (ADR-0001).
+  await registerBotJobs(jobs, bots.healthCheck, {
+    onTick: (enqueued) =>
+      app.log.info({ queue: SCHEDULE_HEALTH_CHECKS_QUEUE, enqueued }, 'bot health-check tick'),
   });
 
   await registerHealth(app, { db });
@@ -83,6 +91,19 @@ export async function buildApp(
           optionalAccount,
           cookie: { secure: config.NODE_ENV !== 'development' },
         },
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerBots(api, {
+        settings: bots.settings,
+        paste: bots.paste,
+        reconnect: bots.reconnect,
+        disconnect: bots.disconnect,
+        webhook: bots.acceptUpdate,
+        access: workspaceAccess,
+        authenticate,
       }),
     { prefix: '/api' },
   );

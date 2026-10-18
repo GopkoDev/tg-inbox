@@ -1,0 +1,832 @@
+# Derived contract for bot-connection. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (bots, contacts, messages) + Telegram's Update object (webhook body)
+#   error responses       ← sad.md §6 flows 1–8 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The pg-boss jobs are in events.md.
+#
+# Deviations from the api-skill defaults follow the workspace-operators precedent and are recorded in
+# api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token. The webhook
+#     is authenticated only by the per-bot secret header (feature ADR-0002)
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - webhook 401: empty body, not the envelope (feature ADR-0002)
+openapi: 3.1.0
+
+info:
+  title: bot-connection API
+  version: 0.1.0
+  description: |
+    Attaches each workspace to its own business bot and turns what end customers write to that bot
+    into workspace data. A business owner pastes the bot's token. tg-inbox checks the token with
+    Telegram, shows which bot it is, warns before taking the bot's messages away from another service,
+    and starts capturing. From then on every private message an end customer sends is captured exactly
+    once, in Telegram's order, into one conversation per end customer. The first message creates a
+    contact from the person's Telegram profile. The owner sees whether the bot is healthy, can rotate
+    its token, can reconnect after another service took the messages over, and can disconnect without
+    losing anything that was captured.
+
+    Owner routes sit under `/api/workspaces/{workspaceId}/bot…` behind the workspace-access guard of
+    workspace-operators. A caller who was never a member gets `404 NOT_FOUND`. A deactivated member gets
+    `403 ACCESS_REMOVED`. An operator gets `403 OWNER_ONLY` (AC-03). Every owner route that succeeds,
+    and every refusal that carries `details.settings`, returns the same `BotSettings` payload, so the
+    panel replaces its store with it. The bot token never appears in a response, an error or a log.
+
+    Telegram calls the webhook route `POST /api/telegram/webhook/{botId}` with no session. It is
+    authenticated only by the per-bot secret in `X-Telegram-Bot-Api-Secret-Token`.
+
+servers:
+  - url: /
+    description: Same origin as the web panel. Telegram reaches the webhook through the public base URL in TELEGRAM_WEBHOOK_BASE_URL
+
+# Global default: every operation needs a session cookie unless it declares otherwise.
+security:
+  - SessionCookie: []
+
+tags:
+  - name: bots
+    description: The workspace's business bot (connect, rotate, reconnect, disconnect, settings) and the Telegram webhook ingress. Module `bots`
+
+paths:
+  /api/workspaces/{workspaceId}/bot:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [bots]
+      summary: Open the bot settings (US-05, US-01, business owners only)
+      description: |
+        Flow 4. A pure database read with no Telegram call, so the load stays within the 300 ms target
+        (ADR-0008). The stored state is kept fresh by the scheduled health check (flow 3, events.md) and
+        by every owner action, so it is never more than 5 minutes old (AC-15). With no bot row, or a row
+        kept after a disconnect, the state is `not_connected` and nothing else is shown. Otherwise the
+        answer carries the bot's name and username, the stored state, the last check time, the time of
+        the last message received (AC-07) and the number of contacts captured (AC-15). It never carries
+        the token or the webhook secret.
+      operationId: getBotSettings
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The bot settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BotSettings" }
+              examples:
+                connected:
+                  value:
+                    state: connected
+                    bot: { name: "Test Bot 1", username: "test_bot_1" }
+                    last_checked_at: "2026-10-11T10:03:00Z"
+                    last_message_received_at: "2026-10-11T09:58:12Z"
+                    contacts_count: 12
+                needsToken:
+                  summary: Token revoked or bot deleted (AC-16)
+                  value:
+                    state: needs_token
+                    bot: { name: "Test Bot 1", username: "test_bot_1" }
+                    last_checked_at: "2026-10-11T10:03:00Z"
+                    last_message_received_at: "2026-10-11T08:40:00Z"
+                    contacts_count: 12
+                takenOver:
+                  summary: Another service took the messages over (AC-16b)
+                  value:
+                    state: taken_over
+                    bot: { name: "Test Bot 1", username: "test_bot_1" }
+                    last_checked_at: "2026-10-11T10:03:00Z"
+                    last_message_received_at: null
+                    contacts_count: 0
+                notConnected:
+                  value:
+                    state: not_connected
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+  /api/workspaces/{workspaceId}/bot/token:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      tags: [bots]
+      summary: Paste a bot token to connect, rotate or re-paste (US-01, US-06, business owners only)
+      description: |
+        Flows 1 and 5. This is the one paste step of SCR-03. Surrounding spaces are trimmed, then the token
+        format is checked. Telegram's `getMe` tells which bot the token belongs to, and that decides the
+        action:
+        - **No bot row** → connect (AC-01). A new capture epoch starts, and pending updates are dropped.
+        - **A row kept after a disconnect, same bot** → connect again (AC-19). A new capture epoch starts,
+          and existing conversations continue.
+        - **Same bot, connected, needs a new token or taken over** → rotate (AC-17, AC-16). The capture
+          epoch and the webhook secret are kept, and pending updates are kept. Pasting the stored token
+          again after a takeover does the same as `reconnectBot` (AC-16b).
+        - **A different bot** → `409 WORKSPACE_KEEPS_ONE_BOT` (AC-05).
+
+        Refusals are decided in this order: token format, then Telegram rejects the token, then a
+        different bot, then the bot belongs to another workspace, then takeover confirmation. So an owner
+        is never asked to confirm a takeover of a bot that belongs to another workspace. When
+        `getWebhookInfo` shows the bot delivering to another service and `confirm_takeover` is not
+        `true`, the answer is `409 TAKEOVER_CONFIRMATION_REQUIRED` (AC-06). The panel keeps the pasted
+        token in memory and resubmits it with `confirm_takeover: true`. The server re-checks everything
+        on that request, and nothing is stored between the two requests.
+
+        Any refusal changes nothing, and an existing connection keeps working (AC-02). Repeating a
+        successful request gives the same result, so no `Idempotency-Key` is needed.
+      operationId: pasteBotToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BotTokenPaste" }
+            examples:
+              paste:
+                value:
+                  token: " 100000001:TEST-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa "
+              confirmTakeover:
+                summary: Resubmit after the takeover warning (SCR-04)
+                value:
+                  token: "100000001:TEST-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  confirm_takeover: true
+      responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "200":
+          description: The bot is connected, either new, rotated or connected again. The token is never returned
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BotSettings" }
+              example:
+                state: connected
+                bot: { name: "Test Bot 1", username: "test_bot_1" }
+                last_checked_at: "2026-10-11T10:05:00Z"
+                last_message_received_at: null
+                contacts_count: 0
+        "400":
+          description: |
+            The text is not a bot token after trimming, or Telegram does not accept it (mistyped,
+            revoked, bot deleted). Nothing changed (AC-02). A body that does not match the schema is
+            `VALIDATION_ERROR`
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                tokenInvalid:
+                  value:
+                    error:
+                      code: BOT_TOKEN_INVALID
+                      message: "The token is not valid — copy it again from BotFather"
+                malformedBody:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "body/token must be string" }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+        "409":
+          description: |
+            One of three refusals. Nothing changed in any of them.
+            - `BOT_BELONGS_TO_ANOTHER_WORKSPACE`: the bot is connected to another workspace, or another
+              workspace captured conversations through it (AC-04). The other workspace is never named.
+            - `WORKSPACE_KEEPS_ONE_BOT`: the token belongs to a different bot than this workspace's
+              (AC-05). `details.reason` is `connected` when the workspace's bot is connected, so the owner
+              should disconnect it first. It is `history` when the workspace's bot was disconnected after
+              customers wrote to it, so the workspace stays with that bot.
+            - `TAKEOVER_CONFIRMATION_REQUIRED`: the bot delivers its messages to another service, and
+              `confirm_takeover` was not `true` (AC-06). `details.bot` names the bot for the warning (SCR-04).
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - { $ref: "#/components/schemas/ErrorEnvelope" }
+                  - { $ref: "#/components/schemas/WorkspaceKeepsOneBotError" }
+                  - { $ref: "#/components/schemas/TakeoverConfirmationRequiredError" }
+              examples:
+                anotherWorkspace:
+                  value:
+                    error:
+                      code: BOT_BELONGS_TO_ANOTHER_WORKSPACE
+                      message: "This bot already belongs to another workspace"
+                oneBotConnected:
+                  value:
+                    error:
+                      code: WORKSPACE_KEEPS_ONE_BOT
+                      message: "A workspace keeps one business bot — disconnect the current bot first"
+                      details: { reason: connected }
+                oneBotHistory:
+                  value:
+                    error:
+                      code: WORKSPACE_KEEPS_ONE_BOT
+                      message: "A workspace keeps one business bot — your customers know only the bot they wrote to"
+                      details: { reason: history }
+                takeover:
+                  value:
+                    error:
+                      code: TAKEOVER_CONFIRMATION_REQUIRED
+                      message: "Connecting will stop this bot delivering messages to another service"
+                      details:
+                        bot: { name: "Test Bot 1", username: "test_bot_1" }
+        "503":
+          $ref: "#/components/responses/TelegramUnavailable"
+
+  /api/workspaces/{workspaceId}/bot/reconnect:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      tags: [bots]
+      summary: Reconnect the bot with the stored token after a takeover (US-05, business owners only)
+      description: |
+        Flow 6 (AC-16b). This is the separate reconnect action on SCR-02. No paste is needed, because the
+        stored token is used. It is allowed only in state `taken_over`. The stored token is first
+        re-validated with `getMe` (ADR-0008):
+        - Telegram rejects the token → the bot moves to `needs_token`, and the answer is
+          `409 BOT_NEEDS_NEW_TOKEN` with the new settings.
+        - Telegram accepts it, and the webhook still points to another service while `confirm_takeover`
+          is not `true` → `409 TAKEOVER_CONFIRMATION_REQUIRED`. The panel shows SCR-04 and resubmits with
+          `confirm_takeover: true`. The confirming request repeats the whole flow.
+        - Otherwise the webhook is registered again with the stored secret. Pending updates and the
+          capture epoch are kept. The row becomes `connected` only after `setWebhook` succeeds, so a
+          failure leaves the bot `taken_over`.
+      operationId: reconnectBot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BotReconnect" }
+            examples:
+              first:
+                value: {}
+              confirmTakeover:
+                summary: Resubmit after the takeover warning (SCR-04)
+                value: { confirm_takeover: true }
+      responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "200":
+          description: Connected again. New messages continue the existing conversations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BotSettings" }
+              example:
+                state: connected
+                bot: { name: "Test Bot 1", username: "test_bot_1" }
+                last_checked_at: "2026-10-11T10:06:00Z"
+                last_message_received_at: "2026-10-11T08:40:00Z"
+                contacts_count: 12
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+        "409":
+          description: |
+            One of three refusals.
+            - `NOTHING_TO_RECONNECT`: there is no bot, or its state is not `taken_over`. Nothing changed.
+              `details.settings` carries the current settings for the panel to show.
+            - `BOT_NEEDS_NEW_TOKEN`: Telegram rejected the stored token. The bot is now `needs_token`, and
+              `details.settings` carries the new settings. The owner should paste a new token (SCR-03).
+            - `TAKEOVER_CONFIRMATION_REQUIRED`: as for `pasteBotToken` (AC-06).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/SettingsRefusalError" }
+                  - { $ref: "#/components/schemas/TakeoverConfirmationRequiredError" }
+              examples:
+                nothingToReconnect:
+                  value:
+                    error:
+                      code: NOTHING_TO_RECONNECT
+                      message: "The bot is not taken over by another service — there is nothing to reconnect"
+                      details:
+                        settings:
+                          state: connected
+                          bot: { name: "Test Bot 1", username: "test_bot_1" }
+                          last_checked_at: "2026-10-11T10:06:00Z"
+                          last_message_received_at: null
+                          contacts_count: 0
+                needsNewToken:
+                  value:
+                    error:
+                      code: BOT_NEEDS_NEW_TOKEN
+                      message: "The bot's token no longer works — paste a new token from BotFather"
+                      details:
+                        settings:
+                          state: needs_token
+                          bot: { name: "Test Bot 1", username: "test_bot_1" }
+                          last_checked_at: "2026-10-11T10:06:00Z"
+                          last_message_received_at: null
+                          contacts_count: 0
+                takeover:
+                  value:
+                    error:
+                      code: TAKEOVER_CONFIRMATION_REQUIRED
+                      message: "Connecting will stop this bot delivering messages to another service"
+                      details:
+                        bot: { name: "Test Bot 1", username: "test_bot_1" }
+        "503":
+          $ref: "#/components/responses/TelegramUnavailable"
+
+  /api/workspaces/{workspaceId}/bot/disconnect:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    post:
+      tags: [bots]
+      summary: Disconnect the bot (US-06, business owners only)
+      description: |
+        Flow 7 (AC-18). The owner has already confirmed on SCR-05. The request takes no body. The server
+        calls `getWebhookInfo` with the stored token, and the result decides the next step:
+        - Our URL → `deleteWebhook`, dropping pending updates.
+        - Another service's URL, or no URL → that webhook is never removed.
+        - Telegram rejects the token → the token is dead, and the disconnect proceeds.
+        - A transient failure → `503`, and nothing changes.
+
+        After that, if the workspace has conversations, the bot row is kept without its token, secret
+        hash or capture epoch, so the bot stays bound to this workspace (AC-05, AC-19). If nothing was
+        captured, the row is deleted. Every contact and conversation stays. Messages sent afterwards are
+        never captured. A stored token the server can no longer decrypt (ADR-0006) skips the Telegram calls.
+        Running disconnect again after one cut short (a disconnected row with no conversation) deletes that
+        row and answers `200` with `not_connected`.
+      operationId: disconnectBot
+      responses:
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "400": { $ref: "#/components/responses/MalformedBody" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "200":
+          description: Disconnected
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BotSettings" }
+              example:
+                state: not_connected
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/OwnerRouteForbidden"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+        "409":
+          description: No bot is connected (no row, or a row kept after an earlier disconnect). `details.settings` carries the current settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SettingsRefusalError" }
+              example:
+                error:
+                  code: NO_BOT_CONNECTED
+                  message: "No bot is connected"
+                  details:
+                    settings: { state: not_connected }
+        "503":
+          $ref: "#/components/responses/TelegramUnavailable"
+
+  /api/telegram/webhook/{botId}:
+    parameters:
+      - in: path
+        name: botId
+        required: true
+        description: |
+          tg-inbox's own bot row id (`bots.id`), never a Telegram id or the token (ADR-0002). An id that
+          is not a UUID is treated as an unknown bot (`401`), not a validation error, so the route gives
+          no hint
+        schema: { type: string, maxLength: 64 }
+    post:
+      tags: [bots]
+      summary: Receive a Telegram update for one bot (US-02, US-03, US-04)
+      description: |
+        Flows 2 and 8. Telegram calls this route. The secret header is checked before the body is parsed:
+        the bot is looked up by `botId`, and the SHA-256 of the header is compared in constant time with
+        the stored hash. An unknown bot, a missing or mismatched secret, or a disconnected bot (whose
+        secret hash is cleared) gets `401` with an empty body, and nothing is recorded (AC-14, AC-18).
+
+        For an authentic update, everything is answered `200` with an empty body, both what is captured
+        and what is deliberately ignored:
+        - A `message` from a private chat with a human sender, no `business_connection_id`, and a `date`
+          not before the capture epoch is captured in one transaction. The transaction upserts the
+          contact (the profile is refreshed only by a newer message, AC-07, AC-08, AC-13) and the
+          conversation, then inserts the message keyed by (conversation, `message_id`). A redelivery is
+          "already present" (AC-09, AC-11).
+        - An `edited_message` updates the stored text or caption only when its `edit_date` (with
+          `update_id` as the tie-break) is later than the stored one. An edit of a message that was never
+          captured is dropped (AC-10).
+        - Groups, channels, bot senders, business messages, updates older than the capture epoch, and
+          update types outside `allowed_updates` are ignored (AC-12). An authentic body that is not a
+          recognisable update is also ignored with `200`, and is never answered `400`, because Telegram
+          would redeliver it for 24 h.
+
+        A server failure answers `500`, and Telegram redelivers (ADR-0003). There is no dead letter on
+        our side. A bot in state `needs_token` or `taken_over` still captures anything Telegram delivers
+        with the right secret.
+      operationId: receiveTelegramUpdate
+      security:
+        - TelegramSecretToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TelegramUpdate" }
+            example:
+              update_id: 900001
+              message:
+                message_id: 42
+                date: 1791712800
+                chat: { id: 700001, type: private, first_name: "Test User" }
+                from:
+                  id: 700001
+                  is_bot: false
+                  first_name: "Test User"
+                  username: "test_user_1"
+                  language_code: "en"
+                text: "Hello"
+      responses:
+        "200":
+          description: Captured, already present, or deliberately ignored. The body is empty
+        "401":
+          description: |
+            Unknown bot id, a missing or mismatched secret, or a disconnected bot. The body is empty, not
+            the envelope (ADR-0002), and nothing is recorded
+        "500":
+          description: The capture failed (for example the database is unavailable). Telegram redelivers later
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: INTERNAL_ERROR, message: "Internal server error" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: The opaque session cookie of workspace-operators (its ADR-0002 and contract)
+    TelegramSecretToken:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+      description: |
+        The per-bot secret: 32 unpredictable bytes, base64url (Telegram's allowed alphabet `A-Z a-z 0-9 _ -`),
+        derived as HMAC-SHA256(server key, bot row id ‖ capture epoch) (ADR-0002 amendment) and set with
+        `setWebhook` `secret_token`; it changes with each new capture epoch. Only its SHA-256 is stored (`bots.webhook_secret_hash`). The header is
+        redacted from request logs (sad.md §8)
+
+  parameters:
+    WorkspaceId:
+      in: path
+      name: workspaceId
+      required: true
+      description: A malformed or unknown id answers 404 exactly like a workspace the caller never belonged to
+      schema: { type: string, format: uuid }
+    BackgroundRequest:
+      in: header
+      name: X-Background-Request
+      required: false
+      description: Sent as `1` on automatic requests. Such a request does not extend the session (workspace-operators contract)
+      schema: { type: string, enum: ["1"] }
+
+  responses:
+    ValidationFailed:
+      description: The request does not match the schema (including a malformed URL)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: VALIDATION_ERROR, message: "body/confirm_takeover must be boolean" }
+    MalformedBody:
+      description: A body-less POST that still sent a malformed or empty `application/json` body, or another framework-level 4xx
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: VALIDATION_ERROR, message: "Body cannot be empty when content-type is set to 'application/json'" }
+    Unauthenticated:
+      description: No session, or the session ended. The owner signs in again
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNAUTHENTICATED, message: "Sign in to continue" }
+    WorkspaceNotFound:
+      description: Never a member of this workspace, or no such workspace. The two are indistinguishable on purpose, so there is no hint that the workspace or its bot exists (AC-03)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    OwnerRouteForbidden:
+      description: The membership is deactivated, or the caller is an operator, and only business owners manage the bot (AC-03)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          examples:
+            accessRemoved:
+              value:
+                error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+            ownerOnly:
+              value:
+                error: { code: OWNER_ONLY, message: "Only business owners manage the bot" }
+    TelegramUnavailable:
+      description: |
+        Telegram did not answer in time, answered with a server error or rate limit, or `setWebhook`
+        failed. Nothing changed: the previous row is restored, and the existing connection keeps working.
+        The owner should try again
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: TELEGRAM_UNAVAILABLE, message: "Telegram is not responding — try again" }
+    UnsupportedMediaType:
+      description: A mutating request whose body is not `application/json`
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNSUPPORTED_MEDIA_TYPE, message: "Only application/json request bodies are accepted" }
+    PayloadTooLarge:
+      description: The body is larger than the server's body limit
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: PAYLOAD_TOO_LARGE, message: "Request body is too large" }
+
+  schemas:
+    # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts. The codes used here that already exist are
+        VALIDATION_ERROR 400, UNAUTHENTICATED 401, ACCESS_REMOVED 403, OWNER_ONLY 403, NOT_FOUND 404,
+        PAYLOAD_TOO_LARGE 413, UNSUPPORTED_MEDIA_TYPE 415 and INTERNAL_ERROR 500. The codes added by this
+        feature are BOT_TOKEN_INVALID 400, BOT_BELONGS_TO_ANOTHER_WORKSPACE 409, WORKSPACE_KEEPS_ONE_BOT 409,
+        TAKEOVER_CONFIRMATION_REQUIRED 409, NOTHING_TO_RECONNECT 409, BOT_NEEDS_NEW_TOKEN 409,
+        NO_BOT_CONNECTED 409 and TELEGRAM_UNAVAILABLE 503.
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - OWNER_ONLY
+        - BOT_TOKEN_INVALID
+        - BOT_BELONGS_TO_ANOTHER_WORKSPACE
+        - WORKSPACE_KEEPS_ONE_BOT
+        - TAKEOVER_CONFIRMATION_REQUIRED
+        - NOTHING_TO_RECONNECT
+        - BOT_NEEDS_NEW_TOKEN
+        - NO_BOT_CONNECTED
+        - TELEGRAM_UNAVAILABLE
+
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message:
+          type: string
+          description: Never contains the token, the webhook secret, or a Telegram error text or URL (spec §6 token secrecy)
+        details:
+          description: Optional structured context
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+
+    WorkspaceKeepsOneBotError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: WORKSPACE_KEEPS_ONE_BOT }
+            message: { type: string }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  enum: [connected, history]
+                  description: |
+                    `connected` means the workspace's bot row is not `disconnected`, so the owner should
+                    disconnect it first. `history` means the row was kept after a disconnect because
+                    conversations exist, so the workspace stays with that bot (AC-05)
+
+    TakeoverConfirmationRequiredError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAKEOVER_CONFIRMATION_REQUIRED }
+            message: { type: string }
+            details:
+              type: object
+              required: [bot]
+              additionalProperties: false
+              properties:
+                bot: { $ref: "#/components/schemas/BotIdentity" }
+
+    SettingsRefusalError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      description: A refusal that also hands back the current settings, so the panel refreshes SCR-02
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code:
+              type: string
+              enum: [NOTHING_TO_RECONNECT, BOT_NEEDS_NEW_TOKEN, NO_BOT_CONNECTED]
+            message: { type: string }
+            details:
+              type: object
+              required: [settings]
+              additionalProperties: false
+              properties:
+                settings: { $ref: "#/components/schemas/BotSettings" }
+
+    # ───────── bots (data-model.md → bots; contacts and messages read through their app layers) ─────────
+    BotIdentity:
+      type: object
+      required: [name, username]
+      additionalProperties: false
+      properties:
+        name:
+          type: string
+          description: "`bots.name`, from `getMe` `first_name`. There is no length bound, because Telegram's strings get none (data-model.md)"
+        username:
+          type: string
+          description: "`bots.username`, stored without `@`"
+
+    BotState:
+      type: string
+      enum: [connected, needs_token, taken_over]
+      description: |
+        `bots.state` of a live connection. `connected` is shown as "connected". `needs_token` is shown as
+        "not working — needs a new token" (AC-16). `taken_over` is shown as "not receiving messages —
+        another service took them over" (AC-16b). The stored `disconnected`, and the absence of a row,
+        are both shown as `not_connected` in `BotSettings`
+
+    BotSettings:
+      description: What SCR-02 shows. It never contains the token or the webhook secret
+      oneOf:
+        - { $ref: "#/components/schemas/NotConnectedBotSettings" }
+        - { $ref: "#/components/schemas/ConnectedBotSettings" }
+      discriminator:
+        propertyName: state
+        mapping:
+          not_connected: "#/components/schemas/NotConnectedBotSettings"
+          connected: "#/components/schemas/ConnectedBotSettings"
+          needs_token: "#/components/schemas/ConnectedBotSettings"
+          taken_over: "#/components/schemas/ConnectedBotSettings"
+
+    NotConnectedBotSettings:
+      type: object
+      required: [state]
+      additionalProperties: false
+      description: The workspace has no bot row, or a row kept after a disconnect (flow 4)
+      properties:
+        state: { const: not_connected }
+
+    ConnectedBotSettings:
+      type: object
+      required: [state, bot, last_checked_at, last_message_received_at, contacts_count]
+      additionalProperties: false
+      properties:
+        state: { $ref: "#/components/schemas/BotState" }
+        bot: { $ref: "#/components/schemas/BotIdentity" }
+        last_checked_at:
+          type: string
+          format: date-time
+          description: "`bots.last_checked_at`, the last Bot API exchange that had an outcome. The state shown is at most 5 minutes old (AC-15)"
+        last_message_received_at:
+          type: [string, "null"]
+          format: date-time
+          description: "The newest `messages.received_at` of the workspace, read through the `conversations` app layer. It is null before the first message (AC-07, AC-15)"
+        contacts_count:
+          type: integer
+          minimum: 0
+          description: The number of `contacts` rows of the workspace, read through the `contacts` app layer (AC-15)
+
+    BotTokenPaste:
+      type: object
+      required: [token]
+      additionalProperties: false
+      properties:
+        token:
+          type: string
+          maxLength: 512
+          description: |
+            The bot token copied from BotFather. This field only bounds the raw input. The server trims
+            surrounding spaces and then requires the bot-token form `^[0-9]{1,20}:[A-Za-z0-9_-]{30,100}$`
+            (bots domain). Any other text is `400 BOT_TOKEN_INVALID`, the same answer as a token Telegram
+            rejects (AC-02). The token is never logged, never returned, and stored only encrypted
+            (`bots.token_encrypted`, ADR-0006)
+        confirm_takeover:
+          type: boolean
+          default: false
+          description: true only on the resubmission after the owner confirmed the takeover warning (SCR-04, AC-06)
+
+    BotReconnect:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm_takeover:
+          type: boolean
+          default: false
+          description: true only on the resubmission after the owner confirmed the takeover warning (SCR-04, AC-06, AC-16b)
+
+    # ───────── Telegram's Update object (external schema: Bot API) ─────────
+    TelegramUpdate:
+      type: object
+      required: [update_id]
+      additionalProperties: true
+      description: |
+        Telegram's `Update` (https://core.telegram.org/bots/api#update), restricted by `allowed_updates`
+        to `message` and `edited_message`. Only the fields below are read. Everything else is kept as
+        part of the stored `messages.telegram_message` object, or ignored. The contract does not
+        validate the body at the HTTP layer beyond JSON. The bots domain turns it into a normalised
+        message or drops it
+      properties:
+        update_id:
+          type: integer
+          description: The tie-break for edits with an equal `edit_date` (`messages.edit_update_id`)
+        message: { $ref: "#/components/schemas/TelegramMessage" }
+        edited_message: { $ref: "#/components/schemas/TelegramMessage" }
+
+    TelegramMessage:
+      type: object
+      required: [message_id, date, chat]
+      additionalProperties: true
+      description: Telegram's `Message`. It is stored whole in `messages.telegram_message` (jsonb) for its media references, and is never logged
+      properties:
+        message_id:
+          type: integer
+          description: "`messages.telegram_message_id`, the order key inside a conversation (ADR-0004)"
+        date:
+          type: integer
+          description: "Unix time, giving `messages.sent_at`, the capture-epoch filter and `contacts.profile_seen_at`"
+        edit_date:
+          type: integer
+          description: "Unix time of an edit, giving `messages.edited_at` (AC-10)"
+        business_connection_id:
+          type: string
+          description: When present, the update comes from a Telegram Business account and is ignored (AC-12)
+        chat:
+          type: object
+          required: [id, type]
+          additionalProperties: true
+          properties:
+            id:
+              type: integer
+              description: "`conversations.telegram_chat_id`"
+            type:
+              type: string
+              description: Only `private` is captured (AC-12)
+        from:
+          type: object
+          required: [id, is_bot, first_name]
+          additionalProperties: true
+          properties:
+            id:
+              type: integer
+              description: "`contacts.telegram_user_id`"
+            is_bot:
+              type: boolean
+              description: A bot sender is ignored (AC-12)
+            first_name: { type: string, description: "`contacts.first_name`" }
+            last_name: { type: string, description: "`contacts.last_name`" }
+            username: { type: string, description: "`contacts.username`" }
+            language_code: { type: string, description: "`contacts.language_code`" }
+        text:
+          type: string
+          description: "`messages.body` of a `text` message"
+        caption:
+          type: string
+          description: "`messages.body` of any other kind. The kind (`messages.kind`) is derived from which content field is present (sad.md §8 Message kinds), and an unrecognised one is `other` (AC-09)"

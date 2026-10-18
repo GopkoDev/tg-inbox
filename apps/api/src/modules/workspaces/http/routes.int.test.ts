@@ -41,7 +41,7 @@ describe('workspace access routes (postgres)', () => {
     );
     app.get(
       '/api/workspaces/:workspaceId/_owner-probe',
-      { preHandler: [resolver, guard, ownerOnly] },
+      { preHandler: [resolver, guard, ownerOnly('Only business owners manage the team')] },
       async (r) => ({ ...r.workspace }),
     );
   });

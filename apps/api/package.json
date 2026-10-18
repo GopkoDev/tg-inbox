@@ -9,6 +9,7 @@
     "start": "node dist/main.js",
     "admin": "tsx --conditions=development src/cli/admin.ts",
     "admin:prod": "node dist/cli/admin.js",
+    "load": "tsx --conditions=development load/run.ts",
     "typecheck": "tsc --noEmit",
     "db:new": "kysely migrate:make",
     "db:migrate": "kysely migrate:latest",
