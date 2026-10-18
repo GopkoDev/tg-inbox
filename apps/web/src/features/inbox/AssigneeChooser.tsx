@@ -38,11 +38,17 @@ export function AssigneeChooser({
   workspaceId,
   assigneeId,
   onPick,
+  refusal = 0,
   children,
 }: {
   workspaceId: string;
   assigneeId: string | null;
-  onPick: (assigneeId: string | null) => Promise<ChangeResult>;
+  onPick: (assigneeId: string | null, name: string | null) => Promise<ChangeResult>;
+  /**
+   * Bumped by the owner when a go-ahead from SCR-11 is refused `ASSIGNEE_NOT_ACTIVE`: the chooser
+   * opens again in its refused state with the members re-read.
+   */
+  refusal?: number;
   /** The assignee button; rendered as the popover trigger. */
   children: ReactNode;
 }) {
@@ -54,9 +60,8 @@ export function AssigneeChooser({
   const list = useRef<HTMLDivElement>(null);
   const reads = useRef(0);
 
-  const load = useCallback(() => {
+  const fetchMembers = useCallback(() => {
     const read = ++reads.current;
-    setMembers({ kind: 'loading' });
     listActiveMembers(workspaceId)
       .then((answer) => {
         if (read === reads.current) setMembers({ kind: 'ready', items: answer.items });
@@ -65,6 +70,10 @@ export function AssigneeChooser({
         if (read === reads.current) setMembers({ kind: 'error' });
       });
   }, [workspaceId]);
+  const load = useCallback(() => {
+    setMembers({ kind: 'loading' });
+    fetchMembers();
+  }, [fetchMembers]);
 
   const onOpenChange = (next: boolean) => {
     setOpen(next);
@@ -80,14 +89,26 @@ export function AssigneeChooser({
       list.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
   }, [open, members.kind]);
 
-  const pick = async (target: string | null) => {
+  // A new refusal from the owner reopens the chooser refused (state adjusted while rendering).
+  const [seenRefusal, setSeenRefusal] = useState(refusal);
+  if (seenRefusal !== refusal) {
+    setSeenRefusal(refusal);
+    setOpen(true);
+    setRefused(true);
+    setMembers({ kind: 'loading' });
+  }
+  useEffect(() => {
+    if (refusal !== 0) fetchMembers();
+  }, [refusal, fetchMembers]);
+
+  const pick = async (target: string | null, name: string | null = null) => {
     if (target === assigneeId && target !== null) {
       setOpen(false);
       return;
     }
     setRefused(false);
     setPicking(target ?? 'unassign');
-    const result = await onPick(target);
+    const result = await onPick(target, name);
     setPicking(null);
     if (result.kind === 'assignee_not_active') {
       setRefused(true);
@@ -119,7 +140,7 @@ export function AssigneeChooser({
       size="sm"
       disabled={busy}
       aria-current={account.account_id === assigneeId ? 'true' : undefined}
-      onClick={() => void pick(account.account_id)}
+      onClick={() => void pick(account.account_id, account.display_name)}
       className="w-full justify-start"
     >
       <Avatar className="size-6">

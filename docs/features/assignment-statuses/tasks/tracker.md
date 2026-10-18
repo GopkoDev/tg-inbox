@@ -24,7 +24,7 @@
 | T17 | [Build the SCR-01 lenses: status tabs and assignee select, the assignee line and closed mark on rows, per-lens empty states and live join and leave](./t17-scr01-lenses.md) | ui | Dmytro Hopko | M | T16 | done |
 | T18 | [Build the SCR-02 actions bar (ConversationActions) and the activity line in the thread: status badge, assignee button, close and reopen, pending lock, limit countdown and live changes](./t18-scr02-actions-and-activity.md) | ui | Dmytro Hopko | M | T16 | done |
 | T19 | [Build SCR-10, the assignee chooser: me first, active teammates, unassign, current check, per-row pending and the in-place not-active refusal](./t19-scr10-assignee-chooser.md) | ui | Dmytro Hopko | S | T18 | done |
-| T20 | [Build SCR-11, the confirm-over-a-recent-change dialog: current state, who or what changed it and when, go ahead or leave it, asks again](./t20-scr11-state-changed-dialog.md) | ui | Dmytro Hopko | S | T19 | todo |
+| T20 | [Build SCR-11, the confirm-over-a-recent-change dialog: current state, who or what changed it and when, go ahead or leave it, asks again](./t20-scr11-state-changed-dialog.md) | ui | Dmytro Hopko | S | T19 | done |
 | T21 | [Build SCR-12, the close confirmation: every close reason, close anyway with the refusal's version and snapshot, asks again](./t21-scr12-close-confirm-dialog.md) | ui | Dmytro Hopko | S | T18 | todo |
 | T22 | [Add the unassign sentence to the deactivate confirmation (SCR-14) and keep the lenses in the sign-in return address (SCR-09)](./t22-deactivate-copy-and-signin-return.md) | ui | Dmytro Hopko | S | T16 | todo |
 | T23 | [Add browser end-to-end assignment flows against the real API and the fake Bot API](./t23-browser-e2e.md) | tests | Dmytro Hopko | M | T15, T17, T20, T21, T22 | todo |

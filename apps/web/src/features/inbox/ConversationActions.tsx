@@ -1,17 +1,30 @@
 import { ChevronDown, Loader2, UserRound } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { ConversationSummary, ThreadActivity } from '@tg/shared';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { cn } from '@/shared/lib/utils';
 import { AssigneeChooser } from './AssigneeChooser';
+import { StateChangedDialog } from './StateChangedDialog';
 import { useInboxStore, type ChangeResult } from './store';
 
 export type ActionName = 'close' | 'reopen' | 'assign' | 'unassign';
 
 const secondsLeft = (retryAt: string) =>
   Math.max(0, Math.ceil((new Date(retryAt).getTime() - Date.now()) / 1000));
+
+/** SCR-11 while open: the refusal on screen and the request it will resend on the go-ahead. */
+interface Confirm {
+  action: 'assign' | 'unassign' | 'reopen';
+  pick: string | null;
+  pickName: string | null;
+  conversation: ConversationSummary;
+  latestChange: ThreadActivity | null;
+  again: boolean;
+  failed: boolean;
+}
 
 /**
  * SCR-02 actions bar: status badge, assignee button (opens SCR-10, the AssigneeChooser),
@@ -38,6 +51,10 @@ export function ConversationActions({
   const [failed, setFailed] = useState(false);
   const [retryAt, setRetryAt] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [refusal, setRefusal] = useState(0);
+  const assigneeButton = useRef<HTMLButtonElement>(null);
+  const reopenButton = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!retryAt) return;
@@ -68,7 +85,12 @@ export function ConversationActions({
   const locked = pending !== null || limited;
   const closed = summary.status === 'closed';
 
-  const run = async (action: ActionName, pick: string | null = null): Promise<ChangeResult> => {
+  const run = async (
+    action: ActionName,
+    pick: string | null = null,
+    pickName: string | null = null,
+    fromDialog = false,
+  ): Promise<ChangeResult> => {
     setPending(action);
     setFailed(false);
     const store = useInboxStore.getState();
@@ -84,7 +106,29 @@ export function ConversationActions({
     if (result.kind === 'limited') {
       setRetryAt(result.retryAt);
       setSeconds(secondsLeft(result.retryAt));
-    } else if (result.kind === 'failed') setFailed(true);
+    } else if (result.kind === 'failed' && !fromDialog) setFailed(true);
+    if (action !== 'close') {
+      if (result.kind === 'stale') {
+        // The store already holds the newer summary; the dialog keeps its own copy (Decision 7).
+        const now = useInboxStore.getState().thread?.summary;
+        if (now)
+          setConfirm({
+            action,
+            pick,
+            pickName,
+            conversation: now,
+            latestChange: result.latestChange,
+            again: fromDialog,
+            failed: false,
+          });
+      } else if (fromDialog) {
+        if (result.kind === 'failed') setConfirm((c) => (c ? { ...c, failed: true } : c));
+        else {
+          setConfirm(null);
+          if (result.kind === 'assignee_not_active') setRefusal((n) => n + 1);
+        }
+      }
+    }
     if (action === 'assign' || action === 'unassign') onResult?.(action, result, pick);
     else onResult?.(action, result);
     return result;
@@ -100,9 +144,11 @@ export function ConversationActions({
         <AssigneeChooser
           workspaceId={workspaceId}
           assigneeId={summary.assignee?.account_id ?? null}
-          onPick={(pick) => run(pick ? 'assign' : 'unassign', pick)}
+          refusal={refusal}
+          onPick={(pick, name) => run(pick ? 'assign' : 'unassign', pick, name)}
         >
           <Button
+            ref={assigneeButton}
             type="button"
             variant="outline"
             size="sm"
@@ -120,6 +166,7 @@ export function ConversationActions({
             variant="outline"
             size="sm"
             disabled={locked}
+            ref={reopenButton}
             onClick={() => void run('reopen')}
             className="ml-auto"
           >
@@ -154,6 +201,25 @@ export function ConversationActions({
             Couldn&apos;t save the change — check your connection and try again
           </AlertDescription>
         </Alert>
+      ) : null}
+      {confirm ? (
+        <StateChangedDialog
+          open
+          action={confirm.action}
+          pickName={confirm.pickName}
+          conversation={confirm.conversation}
+          latestChange={confirm.latestChange}
+          again={confirm.again}
+          failed={confirm.failed}
+          pending={pending !== null}
+          onLeave={() => setConfirm(null)}
+          onGoAhead={() => void run(confirm.action, confirm.pick, confirm.pickName, true)}
+          onCloseAutoFocus={(event) => {
+            // The control that opened it may have been replaced (a closed chooser row).
+            event.preventDefault();
+            (confirm.action === 'reopen' ? reopenButton : assigneeButton).current?.focus();
+          }}
+        />
       ) : null}
     </div>
   );
