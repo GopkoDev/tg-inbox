@@ -67,37 +67,41 @@ target_surfaces: []  # filled in §4 — subset of: backend-service | web-fronte
 
 ## 3. Context and scope
 
-<!-- 🎯 Why: draws the SYSTEM BOUNDARY — who talks to it from outside, where the trust zone ends.
-     Without §3, §5 and §8 (authorization) blur — unclear what's «inside» vs «outside».
-     📋 Write: 2–3 sentences of business context + an external-systems table + a C4Context block.
-     📌 «External: none (deliberate, no third-party in v1)» is itself a decision worth stating.
-     Trust boundary — the line past which you don't trust data without checking it.
-     Never N/A — greenfield still draws the planned actors + external systems. -->
+tg-inbox is a shared Telegram inbox for small businesses. bot-connection made each workspace's business bot push every private message into tg-inbox; this feature lets the workspace's team read those conversations in the web panel and answer them, with tg-inbox sending each reply through the same business bot. End customers still see only their Telegram chat with the bot. Two trust boundaries matter: the browser (everything sent to it — pages, data, live events, media bytes — is scoped to one active membership and never carries the bot token) and Telegram (every outbound call carries the token, so it stays inside the `bots` infra layer, including the file download used to proxy media).
 
-<Business context in 2–3 sentences. What the system does for whom.>
-
-<!-- brownfield: <one-line scan summary> (or «N/A — greenfield repo» if no source existed) -->
+<!-- brownfield: bot-connection + ui-redesign shipped (HEAD 222fe3b) — modules auth, workspaces, bots, conversations (app + infra only: capture, edits), contacts (app + infra only); @fastify/websocket registered with no route; no LISTEN/NOTIFY, no rate limiter beyond the sign-in lockout; the bots gateway has no sendMessage/getFile; conversations has no last-activity column, no read state; memberships have no active-since time; the web inbox is a preview fed by features/inbox/sample-source.ts; architecture-map.md reflects f172cee + later module rows, re-checked against the code for this design -->
 
 **External systems (in / out):**
 
 | Actor or system | Type | Interaction |
 |---|---|---|
-| <author role> | Person | <what they do> |
-| <external service> | System (internal/external) | <interaction> |
-| <identity provider> | System (external) | <provides auth tokens> |
+| Operator | Person | Opens the inbox, searches, reads conversations and media, replies, sees delivery states and teammates' activity live |
+| Business owner | Person | Everything an operator does in the inbox; follows the inbox's notices to the bot settings when the bot cannot carry replies or messages |
+| End customer | Person | Writes to the business bot and receives the team's replies in Telegram; never uses tg-inbox directly |
+| Telegram Bot API | System (external) | In: pushes customer messages and edits to each bot's webhook (bot-connection, unchanged). Out: `sendMessage` for replies; `getFile` + the file download for media opened in the panel |
+| Map service | System (external) | Receives a customer's location only when a member clicks the location's map link (AC-04); tg-inbox never calls it |
 
-**C4 Context (L1):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. -->
+**C4 Context (L1):**
 
 ```mermaid
 C4Context
-    title <feature> — System Context
+    title shared-inbox — System Context
 
-    Person(actor, "<Actor role>", "<intent>")
-    System(app, "<Our system>", "<one-sentence description>")
-    System_Ext(ext, "<External system>", "<one-sentence description>")
+    Person(operator, "Operator", "Reads and answers the workspace's conversations")
+    Person(owner, "Business owner", "Answers like an operator and fixes the bot")
+    Person(customer, "End customer", "Writes to the business bot in Telegram")
 
-    Rel(actor, app, "<interaction>", "<protocol>")
-    Rel(app, ext, "<interaction>", "<protocol>")
+    System(tginbox, "tg-inbox", "Shared inbox: live conversations, media, replies with delivery states")
+
+    System_Ext(telegram, "Telegram Bot API", "Webhook delivery, sendMessage, getFile and file download")
+    System_Ext(maps, "Map service", "Opens a shared location on click")
+
+    Rel(operator, tginbox, "Reads, searches and replies; receives live updates", "HTTPS, WebSocket")
+    Rel(owner, tginbox, "Same as an operator; opens bot settings from notices", "HTTPS, WebSocket")
+    Rel(customer, telegram, "Writes to and reads from the business bot", "Telegram app")
+    Rel(telegram, tginbox, "Pushes customer messages and edits", "HTTPS webhook")
+    Rel(tginbox, telegram, "Sends replies, fetches media files", "HTTPS Bot API")
+    Rel(operator, maps, "Opens a location link on click", "HTTPS")
 ```
 
 ## 4. Solution strategy
