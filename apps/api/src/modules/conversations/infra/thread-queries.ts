@@ -132,13 +132,23 @@ export function createThreadQueries(db: Db): ThreadReads {
             replies = replies.where(replyCondition(cursor, dir));
           }
           const order = newer ? 'asc' : 'desc';
-          const [messageRows, replyRows] = await Promise.all([
+          const newestReply = trx
+            .selectFrom('replies')
+            .select('id')
+            .where('workspace_id', '=', workspaceId)
+            .where('conversation_id', '=', conversationId)
+            .orderBy('position_at', 'desc')
+            .orderBy('id', 'desc')
+            .limit(1)
+            .executeTakeFirst();
+          const [messageRows, replyRows, newest] = await Promise.all([
             messages
               .orderBy('sent_at', order)
               .orderBy('telegram_message_id', order)
               .limit(take)
               .execute(),
             replies.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
+            newestReply,
           ]);
 
           const merged = [...messageRows.map(messageEntry), ...replyRows.map(replyEntry)].sort(
@@ -157,6 +167,7 @@ export function createThreadQueries(db: Db): ThreadReads {
             hasPrev: newer ? true : more,
             hasNext: newer ? more : cursor !== null,
             readThroughAt: cursor === null ? conversation.last_message_received_at : null,
+            newestReplyId: newest?.id ?? null,
           };
         });
     },

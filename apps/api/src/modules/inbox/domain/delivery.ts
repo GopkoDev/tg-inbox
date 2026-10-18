@@ -1,4 +1,4 @@
-import { RETRY_WINDOW_MS } from './rules.js';
+import { DEFAULT_BACKOFF_MS, RETRY_WINDOW_MS } from './rules.js';
 
 export type GatewayOutcome =
   | { outcome: 'accepted'; messageId: bigint; at: Date }
@@ -49,7 +49,9 @@ export function decideOutcome(o: GatewayOutcome, positionAt: Date, now: Date): O
         drainContinues: true,
       };
     case 'not_accepted':
-      if (now.getTime() - positionAt.getTime() <= RETRY_WINDOW_MS) {
+      // Retried only when the next try (after the back-off, in whole seconds like the delayed job)
+      // still lands inside the 5-minute window; otherwise it is final now (AC-12).
+      if (nextTryAt(o.retryAfterMs, now) - positionAt.getTime() <= RETRY_WINDOW_MS) {
         const d: OutcomeDecision = {
           attemptOutcome: 'not_accepted',
           replyState: 'sending',
@@ -67,4 +69,18 @@ export function decideOutcome(o: GatewayOutcome, positionAt: Date, now: Date): O
     case 'unknown':
       return { attemptOutcome: 'unknown', replyState: 'not_confirmed', drainContinues: true };
   }
+}
+
+/** Whole seconds of back-off before the next try, as the delayed drain job is scheduled. */
+export function backoffSeconds(retryAfterMs: number | undefined): number {
+  return Math.max(1, Math.ceil((retryAfterMs ?? DEFAULT_BACKOFF_MS) / 1000));
+}
+
+function nextTryAt(retryAfterMs: number | undefined, now: Date): number {
+  return now.getTime() + backoffSeconds(retryAfterMs) * 1000;
+}
+
+/** A reply refused earlier whose window has closed is final before another try (AC-12). */
+export function retryWindowClosed(positionAt: Date, now: Date): boolean {
+  return now.getTime() - positionAt.getTime() > RETRY_WINDOW_MS;
 }

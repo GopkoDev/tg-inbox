@@ -187,6 +187,12 @@ export const ThreadPage = z.strictObject({
   prev_cursor: Cursor.nullable(),
   next_cursor: Cursor.nullable(),
   read_through_at: DateTime.nullable(),
+  /**
+   * The conversation's newest reply (thread order), on every page whatever page holds it; null when
+   * it has none. The composer sends it as `last_seen_reply_id`. Always sent by the server; optional
+   * here only so pages built before it existed still parse.
+   */
+  newest_reply_id: Id.nullable().optional(),
 });
 export type ThreadPage = z.infer<typeof ThreadPage>;
 

@@ -58,6 +58,8 @@ export interface ThreadPageResult {
   nextCursor: string | null;
   /** Present on the latest page only. */
   readThroughAt: Date | null;
+  /** The conversation's newest reply, whatever page it is on; null when it has none. */
+  newestReplyId: string | null;
 }
 
 export interface MarkReadInput extends Viewer {
@@ -156,6 +158,7 @@ export function createInboxReads(deps: InboxReadsDeps): InboxReads {
         prevCursor: page.hasPrev && first ? encodeThreadCursor(first.position) : null,
         nextCursor: page.hasNext && last ? encodeThreadCursor(last.position) : null,
         readThroughAt: page.readThroughAt,
+        newestReplyId: page.newestReplyId,
       };
     },
 

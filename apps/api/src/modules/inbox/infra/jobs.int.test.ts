@@ -259,20 +259,20 @@ describe('inbox.deliver-replies worker (pg-boss + fake Bot API)', () => {
     });
   });
 
-  it('the dead-letter handler resolves in-flight attempts and never-attempted replies', async () => {
+  it('the dead-letter handler resolves stale in-flight attempts and never-attempted replies', async () => {
     const s = await seed();
     const inFlight = await insertReply(db, {
       workspaceId: s.ws,
       conversationId: s.conv,
       authorAccountId: s.accountId,
-      positionAt: ago(5000),
+      positionAt: ago(15_000),
     });
     await insertReplyAttempt(db, {
       workspaceId: s.ws,
       conversationId: s.conv,
       replyId: inFlight,
       initiatedByAccountId: s.accountId,
-      startedAt: ago(1000),
+      startedAt: ago(11_000),
     });
     const waiting = await pendingReply(s, 'waiting', ago(4000));
     await enqueue(s, DELIVER_REPLIES_DLQ);
@@ -284,6 +284,70 @@ describe('inbox.deliver-replies worker (pg-boss + fake Bot API)', () => {
       failure_reason: 'delivery_interrupted',
     });
     expect(sendCalls(s.token)).toHaveLength(0);
+  });
+
+  it('the dead-letter handler leaves a conversation with a queued drain to that drain (B2, AC-11)', async () => {
+    const s = await seed();
+    const waiting = await pendingReply(s, 'still wanted', ago(2000));
+    // A fresh drain is queued (it starts in 2 s), then the dead letter of an older job arrives.
+    await boss.send(
+      DELIVER_REPLIES_QUEUE,
+      { workspace_id: s.ws, conversation_id: s.conv },
+      { singletonKey: s.conv, startAfter: 2 },
+    );
+    await enqueue(s, DELIVER_REPLIES_DLQ);
+    await settled(waiting);
+    expect(await reply(waiting)).toMatchObject({ state: 'sent' });
+    expect(sendCalls(s.token)).toHaveLength(1);
+  });
+
+  it('the dead-letter handler leaves a young in-flight attempt and schedules the drain that resolves it (B2)', async () => {
+    const s = await seed();
+    const inFlight = await insertReply(db, {
+      workspaceId: s.ws,
+      conversationId: s.conv,
+      authorAccountId: s.accountId,
+      positionAt: ago(3000),
+    });
+    await insertReplyAttempt(db, {
+      workspaceId: s.ws,
+      conversationId: s.conv,
+      replyId: inFlight,
+      initiatedByAccountId: s.accountId,
+      startedAt: ago(1000),
+    });
+    await enqueue(s, DELIVER_REPLIES_DLQ);
+    await vi.waitFor(
+      async () => {
+        const queued = (await boss.findJobs(DELIVER_REPLIES_QUEUE, { key: s.conv })).filter(
+          (j) => j.state === 'created',
+        );
+        expect(queued).toHaveLength(1);
+      },
+      { timeout: 5_000, interval: 100 },
+    );
+    expect((await reply(inFlight)).state).toBe('sending');
+    await settled(inFlight, 15_000);
+    expect((await reply(inFlight)).state).toBe('not_confirmed');
+    expect(sendCalls(s.token)).toHaveLength(0);
+  }, 25_000);
+
+  it('logs a pg-boss error by code and queue only, instead of crashing the process (B5)', async () => {
+    const logged: Array<{ obj: object; msg: string }> = [];
+    const logger = { error: (obj: object, msg: string) => logged.push({ obj, msg }) };
+    const own = await startJobs(database.url, logger);
+    try {
+      const err = Object.assign(new Error('connect ECONNREFUSED postgres://user:secret@db/x'), {
+        code: 'ECONNREFUSED',
+        queue: DELIVER_REPLIES_QUEUE,
+      });
+      expect(() => own.emit('error', err)).not.toThrow();
+      expect(logged).toEqual([
+        { obj: { code: 'ECONNREFUSED', queue: DELIVER_REPLIES_QUEUE }, msg: 'job queue error' },
+      ]);
+    } finally {
+      await own.stop({ graceful: false });
+    }
   });
 
   it('a throw after the attempt started, then an immediate re-run, sends exactly once (ADR-0004)', async () => {

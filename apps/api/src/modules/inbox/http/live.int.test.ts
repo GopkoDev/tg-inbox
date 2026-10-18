@@ -214,6 +214,30 @@ describe('inbox live socket (postgres + real websocket)', () => {
     expect(tab.socket.readyState).toBe(1);
   });
 
+  it('closes a socket that sends a frame over 1 KiB: the channel is server to client (B7)', async () => {
+    const ws = await insertWorkspace(db, `P ${newId()}`);
+    const me = await member(ws);
+    const tab = await connect(ws, me.token);
+    tab.socket.send('x'.repeat(2048));
+    const close = await tab.closed;
+    expect(close.code).toBe(1009);
+  });
+
+  it('closes open sockets with 1001 when the server shuts down (B8, events.md)', async () => {
+    const other = await buildApp(testConfig(database.url));
+    await other.ready();
+    const ws = await insertWorkspace(db, `S ${newId()}`);
+    const me = await member(ws);
+    const socket = await other.injectWS(`/api/workspaces/${ws}/inbox/live`, {
+      headers: { cookie: `session=${me.token}`, origin: ORIGIN },
+    });
+    const closed = new Promise<number>((resolve) =>
+      socket.on('close', (code: number) => resolve(code)),
+    );
+    await other.close();
+    expect(await closed).toBe(1001);
+  });
+
   it('sends resync to every socket after the listener reconnects', async () => {
     const ws = await insertWorkspace(db, `RS ${newId()}`);
     const me = await member(ws);

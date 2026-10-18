@@ -13,7 +13,7 @@ import { insertMembership, insertWorkspace } from '../../../test/fixtures/worksp
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { fakeConversationSignals } from '../app/fakes.js';
 import type { EnqueueDrain } from '../app/ports.js';
-import { createReplies } from '../app/replies.js';
+import { createReplies, createReplyDelivery } from '../app/replies.js';
 import { createReplyRepo } from './reply-repo.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -110,6 +110,62 @@ describe('reply requests (Postgres)', () => {
       { kind: 'send', initiated_by_account_id: s.accountId, started_at: null },
     ]);
     expect(await jobsFor(s.conversationId)).toHaveLength(1);
+  });
+
+  it('a drain reading pending while a reply is being stored waits for it, so an absorbed job never strands the reply (B3, AC-06)', async () => {
+    const s = await setup();
+    const delivery = createReplyDelivery({
+      transaction: (fn) => db.transaction().execute(fn),
+      replies: repo(),
+      signals,
+      clock,
+    });
+    let drainRead: Promise<string[]> | undefined;
+    // The job is absorbed by a queued drain (stately singleton) that starts and reads `pending`
+    // right now, before this reply's transaction commits.
+    const absorbed: EnqueueDrain = async (tx, w, c) => {
+      await enqueueDrain(tx, w, c);
+      drainRead = delivery.pendingReplies(w, c).then((rows) => rows.map((r) => r.id));
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    const created = await service().createReply(input(s, { enqueueDrain: absorbed }));
+    expect(created.status).toBe('created');
+    expect(await drainRead).toEqual([created.status === 'created' && created.reply.id]);
+  });
+
+  it('a requeue racing a drain read is seen by that drain too (B3)', async () => {
+    const s = await setup();
+    const delivery = createReplyDelivery({
+      transaction: (fn) => db.transaction().execute(fn),
+      replies: repo(),
+      signals,
+      clock,
+    });
+    const replyId = await insertReply(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      authorAccountId: s.accountId,
+      state: 'not_delivered',
+      failureReason: 'telegram_not_accepted',
+    });
+    let drainRead: Promise<string[]> | undefined;
+    const absorbed: EnqueueDrain = async (tx, w, c) => {
+      await enqueueDrain(tx, w, c);
+      drainRead = delivery.pendingReplies(w, c).then((rows) => rows.map((r) => r.id));
+      await new Promise((r) => setTimeout(r, 300));
+    };
+    const requeued = await service().requeueReply({
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      replyId,
+      memberId: s.accountId,
+      confirmDuplicate: false,
+      limit: 30,
+      windowMs: 60_000,
+      enqueueDrain: absorbed,
+    });
+    expect(requeued.status).toBe('requeued');
+    expect(await drainRead).toEqual([replyId]);
   });
 
   it('rolls reply, attempt and job back together when a later step fails', async () => {

@@ -125,25 +125,26 @@ The hub closes a member's sockets of a workspace at once on `membership.deactiva
 - **Options:** policy `stately`, `singletonKey = conversation_id`, `retryLimit = 3` (re-runs exist for crashes only), `expireInSeconds = 60`, queue polling interval 0.5 s (the reply-latency target, sad.md §11). A Telegram back-off is a **new** job with `startAfter = retry_after` (or the default back-off). It is never a pg-boss retry.
 - **Work** (flow 9). It reads by `(workspace_id, conversation_id)`.
   1. Finds this conversation's attempt still in flight (started, no outcome). If it started more than 10 s ago, the attempt becomes `unknown` and its reply `not_confirmed`, and it is never retried on its own (AC-11).
-  2. Takes the pending replies (`state = 'sending'`) oldest position first. For each one:
+  2. Takes the pending replies (`state = 'sending'`) oldest position first, under the conversation's drain lock (a transaction-level advisory lock that storing or re-queueing a reply also holds from before its job is sent until commit, so a reply whose job was absorbed by a queued drain is always seen by it). A run starts attempts for at most 40 s, then enqueues a follow-up drain (1 s) and stops, so even a 10 s send ends before the 60 s expiry; once the job's signal is aborted (expired, worker stopping) it starts no further attempt. For each one:
+     - A reply already refused `not_accepted` since its `position_at` whose 5 minutes have passed → `not_delivered` / `telegram_not_accepted` without another call (AC-12).
      - Pre-check: the author is still an active member → otherwise `not_delivered` / `author_access_removed` (AC-09). The bot can carry replies → otherwise `not_delivered` / `bot_not_working` (AC-13). The attempt is `skipped`.
      - Waits until at least 1 s has passed since the last start in this chat. Commits the attempt's `started_at` (in flight). Takes the member's unstarted attempt, or inserts a `retry` attempt for an automatic retry.
      - Calls `bots` *send text* (`sendMessage`, plain text, 10 s timeout), then records the outcome and the reply state in one transaction with a `conversation.changed` / `state` signal:
 
 | Gateway outcome | Attempt `outcome` | Reply | Drain continues? |
 |---|---|---|---|
-| accepted | `accepted` | `sent`, `sent_at`, `telegram_message_id`. The conversation's `last_reply_sent_at` / `last_activity_at` are raised | yes |
+| accepted | `accepted` | `sent`, `sent_at` (our clock when the answer came back, not Telegram's whole-second `date`), `telegram_message_id`. The conversation's `last_reply_sent_at` / `last_activity_at` are raised | yes |
 | 403 blocked / deactivated account, 400 chat not found | `refused` | `not_delivered` with `customer_blocked` / `customer_account_gone` / `chat_not_found` (AC-10) | yes |
 | 401 bot unauthorized | `bot_unauthorized` | `not_delivered` / `bot_not_working` (AC-13) | yes |
-| 429 (`retry_after`), 5xx, connection refused before the request was written, **within** 5 min of `position_at` | `not_accepted` | stays `sending` | **no**: enqueue a delayed drain and stop, so later replies wait (AC-12) |
-| the same, **after** 5 min | `not_accepted` | `not_delivered` / `telegram_not_accepted` (AC-12) | yes |
+| 429 (`retry_after`), 5xx, connection refused before the request was written, and the next try (now + back-off in whole seconds) lands **within** 5 min of `position_at` | `not_accepted` | stays `sending` | **no**: enqueue a delayed drain and stop, so later replies wait (AC-12) |
+| the same, the next try would land **after** 5 min | `not_accepted` | `not_delivered` / `telegram_not_accepted` (AC-12) | yes |
 | timeout, or a reset after the request was written | `unknown` | `not_confirmed` (AC-11) | yes |
 
 - **Idempotency:** a re-run (crash, expiry) first resolves any stale in-flight attempt as `not_confirmed` (step 1), so no attempt is ever sent twice. A duplicate job for the same conversation is absorbed by `singletonKey`. A drain with no pending replies is a no-op.
 - **Retry:** pg-boss re-runs the job up to 3 times, only when the process died or the job expired after 60 s. Telegram refusals are handled by the delayed new job above, for up to 5 minutes from the reply's `position_at`.
-- **Dead-letter:** after 3 failed runs the job goes to `inbox.deliver-replies-dlq`, and an alert is raised (sad.md §7). The dead-letter handler marks:
-  - this conversation's in-flight attempts `unknown` (their replies become `not_confirmed`);
-  - its never-attempted `sending` replies `not_delivered` / `delivery_interrupted` (never sent, so "Try again" is safe).
+- **Dead-letter:** after 3 failed runs the job goes to `inbox.deliver-replies-dlq`, and an alert is raised (sad.md §7). Under the drain lock, the dead-letter handler marks:
+  - this conversation's in-flight attempts that started more than 10 s ago `unknown` (their replies become `not_confirmed`). A younger one may still reach Telegram: it is left to the run that started it, and a delayed drain is enqueued for when it turns stale;
+  - only when no `inbox.deliver-replies` job of the conversation is queued, waiting to retry or running: its `sending` replies with nothing in flight `not_delivered` / `delivery_interrupted` (never sent, so "Try again" is safe). With such a job, that drain carries them.
 
   Each of these writes publishes a `state` signal. **Pending design confirmation** — sad.md §6 flagged this handler for `design`, see api-sync-report.md OQ-2.
 

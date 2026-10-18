@@ -274,6 +274,19 @@ export function fakeReplyRepo(o: {
       return strip(r);
     },
 
+    /** One process, one call at a time: the drain lock has nothing to serialize here. */
+    async lockDrain() {},
+    async hasNotAcceptedAttempt(w, c, replyId, since) {
+      return attempts.some(
+        (a) =>
+          a.workspaceId === w &&
+          a.conversationId === c &&
+          a.replyId === replyId &&
+          a.outcome === 'not_accepted' &&
+          a.createdAt >= since,
+      );
+    },
+
     async pendingReplies(w, c) {
       return own(w, c)
         .filter((r) => r.state === 'sending')

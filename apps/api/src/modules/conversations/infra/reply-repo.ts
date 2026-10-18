@@ -158,6 +158,27 @@ export function createReplyRepo(db: Db): ReplyRepo {
       return row ? toReplyView(row) : null;
     },
 
+    async lockDrain(workspaceId, conversationId, tx) {
+      // A key space of its own: the member limit lock hashes `${workspace}:${account}`.
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`drain:${workspaceId}:${conversationId}`}, 0))`.execute(
+        tx,
+      );
+    },
+
+    async hasNotAcceptedAttempt(workspaceId, conversationId, replyId, since, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('reply_attempts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('reply_id', '=', replyId)
+        .where('outcome', '=', 'not_accepted')
+        .where('created_at', '>=', since)
+        .limit(1)
+        .executeTakeFirst();
+      return row !== undefined;
+    },
+
     async pendingReplies(workspaceId, conversationId, tx) {
       const rows = await (tx ?? db)
         .selectFrom('replies')

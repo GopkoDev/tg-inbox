@@ -73,10 +73,15 @@ describe('reply delivery', () => {
   it('dead letter twice changes nothing the second time', async () => {
     const { delivery, signals, replyId } = await setup();
     await delivery.startAttempt({ workspaceId: W, conversationId: C, replyId });
-    const first = await delivery.resolveDeadLetter(W, C);
-    expect(first).toEqual({ notConfirmed: [replyId], interrupted: [] });
+    const options = { staleBefore: at(200), drainQueued: async () => false };
+    const first = await delivery.resolveDeadLetter(W, C, options);
+    expect(first).toEqual({ notConfirmed: [replyId], interrupted: [], inFlightSince: null });
     signals.replies.length = 0;
-    expect(await delivery.resolveDeadLetter(W, C)).toEqual({ notConfirmed: [], interrupted: [] });
+    expect(await delivery.resolveDeadLetter(W, C, options)).toEqual({
+      notConfirmed: [],
+      interrupted: [],
+      inFlightSince: null,
+    });
     expect(signals.replies).toHaveLength(0);
   });
 });

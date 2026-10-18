@@ -171,6 +171,7 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
         prev_cursor: page.prevCursor,
         next_cursor: page.nextCursor,
         read_through_at: page.readThroughAt && iso(page.readThroughAt),
+        newest_reply_id: page.newestReplyId,
       };
     },
 

@@ -26,6 +26,9 @@ import { startJobs } from './platform/jobs.js';
 import { startRealtimeListener } from './platform/realtime.js';
 import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
+
+/** Largest client frame the live socket accepts; bigger frames close it with 1009. */
+const LIVE_MAX_INBOUND_BYTES = 1024;
 import type { Clock } from './platform/clock.js';
 
 /** Composition root: builds every dependency and registers every module plugin. */
@@ -48,7 +51,19 @@ export async function buildApp(
     },
   });
   requireJsonBodies(app);
-  await app.register(websocket);
+  // Set once the hub exists, below. The plugin's own preClose would close every socket with no code
+  // (1005); the hub closes them with 1001 first (events.md).
+  let closeLiveSockets = async (): Promise<void> => {};
+  await app.register(websocket, {
+    // The live channel is server to client: a client frame is never read, so keep it tiny.
+    options: { maxPayload: LIVE_MAX_INBOUND_BYTES },
+    preClose: async () => {
+      await closeLiveSockets();
+      for (const client of app.websocketServer.clients) client.close(1001, 'server going away');
+      // Stops new upgrades; like the plugin's default, it does not wait for the closing handshakes.
+      app.websocketServer.close();
+    },
+  });
   await app.register(cookie);
   if (config.WEB_DIST_DIR) {
     // wildcard:false registers the files that exist; everything else reaches the not-found handler.
@@ -71,7 +86,7 @@ export async function buildApp(
     conversationReplies,
     replyDelivery,
   } = deps;
-  const jobs = await startJobs(config.DATABASE_URL);
+  const jobs = await startJobs(config.DATABASE_URL, app.log);
   // Live sockets: the hub fans realtime signals out to the open inbox tabs (ADR-0002, ADR-0003).
   const liveHub = createLiveHub({
     sessions: sessionUseCases,
@@ -82,6 +97,7 @@ export async function buildApp(
   realtime.onSignal((signal) => liveHub.dispatch(signal));
   realtime.onGap(() => liveHub.resync());
   liveHub.start();
+  closeLiveSockets = () => liveHub.stop();
   app.addHook('onClose', async () => {
     await realtime.stop();
     await liveHub.stop();
@@ -106,6 +122,7 @@ export async function buildApp(
     }),
     delivery: replyDelivery,
     logger: app.log,
+    clock: deps.clock,
   });
   const inboxReplies = createSendReply({
     replies: conversationReplies,

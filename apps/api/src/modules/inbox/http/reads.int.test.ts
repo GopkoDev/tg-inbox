@@ -266,6 +266,55 @@ describe('inbox read routes (postgres)', () => {
     expect(older.read_through_at).toBeNull();
   });
 
+  it('carries the conversation newest reply id on every page, wherever that reply is (W9, AC-16)', async () => {
+    const s = await seed();
+    const ws = s.ws;
+    const contact = await insertContact(db, { workspaceId: ws });
+    const conv = await insertConversation(db, {
+      workspaceId: ws,
+      contactId: contact,
+      lastActivityAt: at('07:10'),
+      lastMessageReceivedAt: at('07:10'),
+      lastReplySentAt: at('07:01'),
+    });
+    const url = `${base(ws)}/conversations/${conv}/items`;
+    const none = ThreadPage.parse((await get(s.operator, url)).json());
+    expect(none.newest_reply_id).toBeNull();
+
+    await insertReply(db, {
+      workspaceId: ws,
+      conversationId: conv,
+      authorAccountId: s.owner.accountId,
+      state: 'sent',
+      positionAt: at('07:00'),
+    });
+    const newest = await insertReply(db, {
+      workspaceId: ws,
+      conversationId: conv,
+      authorAccountId: s.owner.accountId,
+      state: 'sent',
+      positionAt: at('07:01'),
+    });
+    for (let i = 0; i < 3; i++) {
+      await insertMessage(db, {
+        workspaceId: ws,
+        conversationId: conv,
+        telegramMessageId: BigInt(i + 1),
+        sentAt: new Date(at('07:05').getTime() + i * 60_000),
+        receivedAt: new Date(at('07:05').getTime() + i * 60_000),
+      });
+    }
+    // The latest page holds only customer messages; the newest reply is on an earlier page.
+    const latest = ThreadPage.parse((await get(s.operator, `${url}?limit=2`)).json());
+    expect(latest.items.every((i) => i.type === 'message')).toBe(true);
+    expect(latest.newest_reply_id).toBe(newest);
+    const earlier = ThreadPage.parse(
+      (await get(s.operator, `${url}?limit=2&before=${latest.prev_cursor}`)).json(),
+    );
+    expect(earlier.items.map((i) => i.type)).toContain('reply');
+    expect(earlier.newest_reply_id).toBe(newest);
+  });
+
   it('rejects before with after, and a malformed thread cursor', async () => {
     const s = await seed();
     const url = `${base(s.ws)}/conversations/${s.c1}/items`;

@@ -34,7 +34,7 @@ A reply must reach the customer at most once (AC-11, spec §6 "0 replies deliver
 **Chosen:** Option 1. It gives one code path for first sends and retries, keeps per-conversation order without blocking other conversations, and survives the author's tab closing or the request timing out — option 2 races its inline send against the retry job for ordering and turns an HTTP timeout into an ambiguous duplicate risk on the request path.
 
 Outcome rules (the gateway classifies every `sendMessage` answer):
-- accepted → "sent", with Telegram's message id and time; the conversation's activity and "waiting" columns update in the same transaction;
+- accepted → "sent", with Telegram's message id and our clock (the time the answer came back — Telegram's `date` has whole seconds only and would sort a reply before the customer message it answers); the conversation's activity and "waiting" columns update in the same transaction;
 - 403 blocked / account deactivated, 400 chat not found → "not delivered" with that reason, no retry; the drain continues with the next reply;
 - the bot is not connected or needs a new token (checked before each attempt, or Telegram answers 401) → "not delivered — the bot is not working"; the author's membership is no longer active (checked before each attempt) → "not delivered — the author's access was removed";
 - 429 (with `retry_after`), 5xx, or a connection refused before the request was sent → the attempt is recorded, the reply stays "sending" and the drain re-schedules itself after the back-off (honouring `retry_after`), stopping so later replies of the conversation wait; once 5 minutes have passed since the reply was (re)sent by a member → "not delivered — Telegram did not accept it";

@@ -34,6 +34,11 @@ function setup(
     startReturnsNull?: boolean;
     sendThrows?: boolean;
     inFlightSince?: Date | null;
+    /** Replies with an earlier not-accepted attempt (an automatic retry is due). */
+    notAccepted?: string[];
+    /** How long each Telegram call takes on the fake clock. */
+    sendTakesMs?: number;
+    onSend?: (count: number) => void;
   } = {},
 ) {
   const clock = fixedClock(NOW);
@@ -54,6 +59,9 @@ function setup(
     },
     async inFlightSince() {
       return o.inFlightSince ?? null;
+    },
+    async wasNotAccepted(_w, _c, replyId) {
+      return (o.notAccepted ?? []).includes(replyId);
     },
     async chatIdOf() {
       return CHAT;
@@ -79,7 +87,7 @@ function setup(
       return [];
     },
     async resolveDeadLetter() {
-      return { notConfirmed: [], interrupted: [] };
+      return { notConfirmed: [], interrupted: [], inFlightSince: null };
     },
   };
   const deliver = createDeliver({
@@ -90,7 +98,9 @@ function setup(
       async sendText(r) {
         calls.push('send');
         if (o.sendThrows) throw new Error('boom');
+        if (o.sendTakesMs) clock.advance(o.sendTakesMs);
         sent.push({ chatId: r.chatId, text: r.text });
+        o.onSend?.(sent.length);
         return outcomes.shift() ?? { outcome: 'accepted', messageId: 7n, at: clock.now() };
       },
     },
@@ -106,8 +116,12 @@ function setup(
   return { deliver, calls, finished, skipped, sent, sleeps, delayed, clock };
 }
 
-const run = (s: ReturnType<typeof setup>) =>
-  s.deliver.deliverConversation({ workspaceId: WS, conversationId: CONV });
+const run = (s: ReturnType<typeof setup>, signal?: AbortSignal) =>
+  s.deliver.deliverConversation({
+    workspaceId: WS,
+    conversationId: CONV,
+    ...(signal && { signal }),
+  });
 
 describe('deliverConversation', () => {
   it('first resolves attempts in flight for more than 10 s (at-most-once, AC-11)', async () => {
@@ -263,5 +277,59 @@ describe('deliverConversation', () => {
     expect(s.sent).toEqual([]);
     expect(s.calls.some((c) => c.startsWith('start:'))).toBe(false);
     expect(s.delayed).toEqual([{ seconds: 8 }]);
+  });
+  it('stamps the sent time with our clock, not the second-truncated Telegram date (B4, AC-06)', async () => {
+    const s = setup({
+      pending: [reply('r1', 'one')],
+      outcomes: [{ outcome: 'accepted', messageId: 9n, at: new Date('2026-10-18T09:59:00Z') }],
+    });
+    await run(s);
+    expect(s.finished[0]).toMatchObject({ replyState: 'sent', telegramMessageId: 9n, sentAt: NOW });
+  });
+
+  it('stops within its time budget, well before the 60 s job expiry, and hands the rest to a follow-up drain (B1, AC-12)', async () => {
+    const pending = Array.from({ length: 30 }, (_, i) => reply(`r${i}`, `text ${i}`));
+    const s = setup({ pending, sendTakesMs: 3_000 });
+    await run(s);
+    expect(s.sent.length).toBeGreaterThan(0);
+    expect(s.sent.length).toBeLessThan(30);
+    // The last start is inside the 40 s budget; even a 10 s send then ends before the expiry.
+    expect(s.clock.now().getTime() - NOW.getTime()).toBeLessThanOrEqual(40_000 + 10_000);
+    expect(s.delayed).toEqual([{ seconds: 1 }]);
+    const starts = s.calls.filter((c) => c.startsWith('start:'));
+    expect(starts).toHaveLength(s.sent.length);
+  });
+
+  it('starts no further attempt once the job signal is aborted (expired or shutting down) (B1)', async () => {
+    const controller = new AbortController();
+    const s = setup({
+      pending: [reply('r1', 'one'), reply('r2', 'two'), reply('r3', 'three')],
+      onSend: () => controller.abort(),
+    });
+    await run(s, controller.signal);
+    expect(s.sent).toHaveLength(1);
+    expect(s.calls.filter((c) => c.startsWith('start:'))).toEqual(['start:r1']);
+    // pg-boss re-runs an expired or interrupted job itself: no extra job here.
+    expect(s.delayed).toEqual([]);
+  });
+
+  it('a retry due after the 5-minute window ends not_delivered without calling Telegram (B6, AC-12)', async () => {
+    const old = new Date(NOW.getTime() - 301_000);
+    const s = setup({
+      pending: [reply('r1', 'one', old), reply('r2', 'two')],
+      notAccepted: ['r1'],
+    });
+    await run(s);
+    expect(s.skipped).toEqual([{ replyId: 'r1', failureReason: 'telegram_not_accepted' }]);
+    expect(s.calls).not.toContain('start:r1');
+    expect(s.sent).toEqual([{ chatId: CHAT, text: 'two' }]);
+  });
+
+  it('a reply past 5 minutes that was never refused is still sent', async () => {
+    const old = new Date(NOW.getTime() - 301_000);
+    const s = setup({ pending: [reply('r1', 'one', old)] });
+    await run(s);
+    expect(s.skipped).toEqual([]);
+    expect(s.sent).toHaveLength(1);
   });
 });

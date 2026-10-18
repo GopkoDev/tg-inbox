@@ -6,6 +6,7 @@ import type {
   AttemptKind,
   AttemptOutcomeValue,
   ConversationSignals,
+  DrainQueued,
   EnqueueDrain,
   ReplyRepo,
   ReplySettlement,
@@ -93,6 +94,10 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
         if (existing) return { status: 'existing', reply: existing };
 
         const retryAt = await limitedUntil(tx, workspaceId, authorId, now, input);
+        // A double press may have waited on the limit lock while the first press stored this key and
+        // committed; it answers with that reply, never with 429 (AC-11).
+        const stored = await replies.findByClientKey(workspaceId, conversationId, clientKey, tx);
+        if (stored) return { status: 'existing', reply: stored };
         if (retryAt) return { status: 'limited', retryAt };
 
         if (!input.confirmTeammate) {
@@ -136,6 +141,7 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
           },
           tx,
         );
+        await replies.lockDrain(workspaceId, conversationId, tx);
         await input.enqueueDrain(tx, workspaceId, conversationId);
         await signals.replyChanged(tx, {
           workspaceId,
@@ -179,6 +185,7 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
           },
           tx,
         );
+        await replies.lockDrain(workspaceId, conversationId, tx);
         await input.enqueueDrain(tx, workspaceId, conversationId);
         await signals.replyChanged(tx, { workspaceId, conversationId, replyId, change: 'state' });
         return { status: 'requeued', reply };
@@ -199,7 +206,22 @@ export interface FinishAttemptInput {
   sentAt?: Date;
 }
 
+export interface DeadLetterOptions {
+  /** In-flight attempts started before this are stale (the send timeout has passed). */
+  staleBefore: Date;
+  /** Supplied by `inbox`: whether a drain job of the conversation is queued or running. */
+  drainQueued: DrainQueued;
+}
+
+export interface DeadLetterResult {
+  notConfirmed: string[];
+  interrupted: string[];
+  /** Start of a young in-flight attempt left to its drain; a later drain must resolve it. */
+  inFlightSince: Date | null;
+}
+
 export interface ReplyDelivery {
+  /** Read under the conversation's drain lock, so a reply being stored with its job is waited for. */
   pendingReplies(workspaceId: string, conversationId: string): Promise<ReplyView[]>;
   lastStartedAt(workspaceId: string, conversationId: string): Promise<Date | null>;
   /** Start of the oldest attempt that started and has no outcome (in flight); null when none. */
@@ -227,11 +249,23 @@ export interface ReplyDelivery {
     conversationId: string,
     olderThan: Date,
   ): Promise<string[]>;
-  /** Dead-letter: every in-flight attempt `unknown`; unattempted `sending` replies `delivery_interrupted`. */
+  /** Whether the reply was refused with "not accepted" since `since` (its position): a retry is due. */
+  wasNotAccepted(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    since: Date,
+  ): Promise<boolean>;
+  /**
+   * Dead-letter, under the drain lock: stale in-flight attempts end `unknown`. When no drain job of the
+   * conversation is queued or running, `sending` replies with nothing in flight end
+   * `delivery_interrupted`; a young in-flight attempt is left to the drain that started it.
+   */
   resolveDeadLetter(
     workspaceId: string,
     conversationId: string,
-  ): Promise<{ notConfirmed: string[]; interrupted: string[] }>;
+    options: DeadLetterOptions,
+  ): Promise<DeadLetterResult>;
 }
 
 /** The storage half of the drain: pending, in flight, and the truthful final state of each reply (ADR-0004). */
@@ -258,7 +292,12 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
 
   return {
     pendingReplies: (workspaceId, conversationId) =>
-      replies.pendingReplies(workspaceId, conversationId),
+      transaction(async (tx) => {
+        await replies.lockDrain(workspaceId, conversationId, tx);
+        return replies.pendingReplies(workspaceId, conversationId, tx);
+      }),
+    wasNotAccepted: (workspaceId, conversationId, replyId, since) =>
+      replies.hasNotAcceptedAttempt(workspaceId, conversationId, replyId, since),
     lastStartedAt: (workspaceId, conversationId) =>
       replies.lastStartedAt(workspaceId, conversationId),
     inFlightSince: (workspaceId, conversationId) =>
@@ -338,12 +377,22 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
       });
     },
 
-    resolveDeadLetter(workspaceId, conversationId) {
-      return transaction(async (tx) => {
-        const inFlight = await replies.inFlightAttempts(workspaceId, conversationId, null, tx);
-        const notConfirmed = await resolveUnknown(tx, workspaceId, conversationId, inFlight);
+    resolveDeadLetter(workspaceId, conversationId, { staleBefore, drainQueued }) {
+      return transaction(async (tx): Promise<DeadLetterResult> => {
+        // Under the lock, a reply stored beside a new job is either committed (its job is seen
+        // below) or not yet visible; neither is interrupted while a drain will carry it.
+        await replies.lockDrain(workspaceId, conversationId, tx);
+        const stale = await replies.inFlightAttempts(workspaceId, conversationId, staleBefore, tx);
+        const notConfirmed = await resolveUnknown(tx, workspaceId, conversationId, stale);
+        const young = await replies.inFlightAttempts(workspaceId, conversationId, null, tx);
+        const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
         const interrupted: string[] = [];
+        if (await drainQueued(tx, workspaceId, conversationId)) {
+          return { notConfirmed, interrupted, inFlightSince };
+        }
+        const busy = new Set(young.map((a) => a.replyId));
         for (const reply of await replies.pendingReplies(workspaceId, conversationId, tx)) {
+          if (busy.has(reply.id)) continue;
           const settled = await settle(tx, workspaceId, conversationId, reply.id, {
             state: 'not_delivered',
             failureReason: 'delivery_interrupted',
@@ -359,7 +408,7 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
           );
           interrupted.push(reply.id);
         }
-        return { notConfirmed, interrupted };
+        return { notConfirmed, interrupted, inFlightSince };
       });
     },
   };

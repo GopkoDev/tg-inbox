@@ -1,10 +1,12 @@
 import type { Clock } from '../../../platform/clock.js';
 import type { ReplyDelivery } from '../../conversations/app/replies.js';
-import { decideOutcome, type GatewayOutcome } from '../domain/delivery.js';
-import { CHAT_PACE_MS, SEND_TIMEOUT_MS } from '../domain/rules.js';
-
-/** Back-off of a not-accepted send that carries no `retry_after`. */
-export const DEFAULT_BACKOFF_SECONDS = 5;
+import {
+  backoffSeconds,
+  decideOutcome,
+  retryWindowClosed,
+  type GatewayOutcome,
+} from '../domain/delivery.js';
+import { CHAT_PACE_MS, DRAIN_BUDGET_MS, SEND_TIMEOUT_MS } from '../domain/rules.js';
 
 export interface DeliverDeps {
   delivery: ReplyDelivery;
@@ -33,13 +35,22 @@ export interface DeliverDeps {
  * The drain of one conversation (flow 9, ADR-0004): replies go out one at a time, oldest first. An
  * attempt is committed as started before Telegram is called, and a reply whose attempt started and
  * did not finish is never sent again (it ends `not_confirmed`).
+ *
+ * A run starts attempts for at most `DRAIN_BUDGET_MS`, then hands the rest to a follow-up drain, so
+ * it ends (even after a 10 s send) before its job expires at 60 s and pg-boss starts a second run.
+ * Once `signal` is aborted (the job expired or the worker stops) no further attempt starts.
  */
 export function createDeliver(deps: DeliverDeps) {
   const { delivery, workspaces, bots, enqueueDelayed, sleep, clock } = deps;
 
   return {
-    async deliverConversation(input: { workspaceId: string; conversationId: string }) {
-      const { workspaceId, conversationId } = input;
+    async deliverConversation(input: {
+      workspaceId: string;
+      conversationId: string;
+      signal?: AbortSignal;
+    }) {
+      const { workspaceId, conversationId, signal } = input;
+      const startedAt = clock.now().getTime();
 
       await delivery.resolveStaleInFlight(
         workspaceId,
@@ -75,6 +86,20 @@ export function createDeliver(deps: DeliverDeps) {
           });
         };
 
+        if (signal?.aborted) return;
+        if (clock.now().getTime() - startedAt >= DRAIN_BUDGET_MS) {
+          await enqueueDelayed(workspaceId, conversationId, 1);
+          return;
+        }
+
+        if (
+          retryWindowClosed(reply.positionAt, clock.now()) &&
+          (await delivery.wasNotAccepted(workspaceId, conversationId, reply.id, reply.positionAt))
+        ) {
+          await skip('telegram_not_accepted');
+          continue;
+        }
+
         const active = await workspaces.activeMembersAmong(workspaceId, [reply.authorAccountId]);
         if (!active.includes(reply.authorAccountId)) {
           await skip('author_access_removed');
@@ -90,6 +115,7 @@ export function createDeliver(deps: DeliverDeps) {
           const wait = CHAT_PACE_MS - (clock.now().getTime() - last.getTime());
           if (wait > 0) await sleep(wait);
         }
+        if (signal?.aborted) return;
 
         const started = await delivery.startAttempt({
           workspaceId,
@@ -114,17 +140,16 @@ export function createDeliver(deps: DeliverDeps) {
           attemptOutcome: decision.attemptOutcome,
           replyState: decision.replyState,
           ...(decision.failureReason && { failureReason: decision.failureReason }),
+          // Our clock, not Telegram's second-truncated date: the reply must sort after the customer
+          // message it answers, or "waiting for a reply" stays set (data-model.md).
           ...(outcome.outcome === 'accepted' && {
             telegramMessageId: outcome.messageId,
-            sentAt: outcome.at,
+            sentAt: clock.now(),
           }),
         });
 
         if (!decision.drainContinues) {
-          const seconds = decision.retryAfterMs
-            ? Math.max(1, Math.ceil(decision.retryAfterMs / 1000))
-            : DEFAULT_BACKOFF_SECONDS;
-          await enqueueDelayed(workspaceId, conversationId, seconds);
+          await enqueueDelayed(workspaceId, conversationId, backoffSeconds(decision.retryAfterMs));
           return;
         }
       }

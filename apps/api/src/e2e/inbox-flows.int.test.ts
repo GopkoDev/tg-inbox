@@ -175,6 +175,29 @@ describe('shared-inbox end-to-end stories (postgres + pg-boss worker + fake Bot 
     expect(after.items[0]).toMatchObject({ waiting_for_reply: true });
   });
 
+  it('story 1b — a sent reply clears "waiting for a reply" and moves its conversation to the top (AC-01, AC-06)', async () => {
+    const w = await workspace('Acme Tulips');
+    expect((await write(w.hook, 920001, 1, 'First customer')).statusCode).toBe(200);
+    expect((await write(w.hook, 920002, 1, 'Second customer')).statusCode).toBe(200);
+    const before = await list(w);
+    expect(before.items).toHaveLength(2);
+    const [newer, older] = [before.items[0]!, before.items[1]!];
+    expect(older).toMatchObject({ waiting_for_reply: true });
+
+    const sent = await reply(w, older.id, 'On it!');
+    expect(sent.statusCode).toBe(201);
+    const id = ThreadReply.parse(sent.json()).id;
+    await settled(id);
+    expect((await stateOf(id)).state).toBe('sent');
+
+    const after = await list(w);
+    expect(after.items.map((c) => c.id)).toEqual([older.id, newer.id]);
+    expect(after.items[0]).toMatchObject({
+      waiting_for_reply: false,
+      last_item: { type: 'reply', id },
+    });
+  });
+
   it('story 2 — one person writes to two workspaces: separate inboxes, replies only through their own bot (AC-18)', async () => {
     const a = await workspace('Acme Flowers');
     const b = await workspace('Bolt Bikes');

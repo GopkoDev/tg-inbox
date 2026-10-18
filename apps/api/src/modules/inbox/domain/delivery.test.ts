@@ -3,7 +3,8 @@ import { decideOutcome } from './delivery.js';
 
 const positionAt = new Date('2026-01-01T10:00:00.000Z');
 const at = (ms: number) => new Date(positionAt.getTime() + ms);
-const WITHIN = 4 * 60_000 + 59_000;
+// The next try (after the back-off) still lands inside the 5-minute window.
+const WITHIN = 4 * 60_000;
 const AFTER = 5 * 60_000 + 1_000;
 
 describe('decideOutcome (AC-10, AC-11, AC-12, AC-13)', () => {
@@ -81,9 +82,40 @@ describe('decideOutcome (AC-10, AC-11, AC-12, AC-13)', () => {
     expect(r).toMatchObject({ replyState: 'not_delivered', drainContinues: true });
   });
 
-  it('exactly 5 min is still within the window', () => {
-    const r = decideOutcome({ outcome: 'not_accepted' }, positionAt, at(300_000));
+  it('a next try landing exactly at 5 min is still within the window', () => {
+    const r = decideOutcome({ outcome: 'not_accepted' }, positionAt, at(295_000));
     expect(r).toMatchObject({ replyState: 'sending', drainContinues: false });
+  });
+
+  it('a retry_after that would land past 5 min ends not_delivered now (B6, AC-12)', () => {
+    const r = decideOutcome(
+      { outcome: 'not_accepted', retryAfterMs: 60_000 },
+      positionAt,
+      at(280_000),
+    );
+    expect(r).toMatchObject({
+      attemptOutcome: 'not_accepted',
+      replyState: 'not_delivered',
+      failureReason: 'telegram_not_accepted',
+      drainContinues: true,
+    });
+  });
+
+  it('the default back-off past 5 min also ends not_delivered now (B6)', () => {
+    const r = decideOutcome({ outcome: 'not_accepted' }, positionAt, at(297_000));
+    expect(r).toMatchObject({
+      replyState: 'not_delivered',
+      failureReason: 'telegram_not_accepted',
+    });
+  });
+
+  it('a retry_after is rounded up to whole seconds, as the delayed job is', () => {
+    const r = decideOutcome(
+      { outcome: 'not_accepted', retryAfterMs: 4_100 },
+      positionAt,
+      at(295_500),
+    );
+    expect(r).toMatchObject({ replyState: 'not_delivered' });
   });
 
   it('unknown -> not_confirmed, never retried, drain continues', () => {

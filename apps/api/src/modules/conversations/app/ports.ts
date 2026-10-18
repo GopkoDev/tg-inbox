@@ -199,6 +199,8 @@ export interface ThreadPageRows {
   hasNext: boolean;
   /** The conversation's newest arrival, read in the same snapshot; the latest page only. */
   readThroughAt: Date | null;
+  /** The conversation's newest reply in thread order, read in the same snapshot; every page. */
+  newestReplyId: string | null;
 }
 
 export interface MediaReference extends MediaFile {
@@ -255,6 +257,16 @@ export type EnqueueDrain = (
   workspaceId: string,
   conversationId: string,
 ) => Promise<void>;
+
+/**
+ * Whether the conversation has a drain job queued or running (inbox's delivery queue), read on the
+ * caller's transaction after it took the drain lock, so a job committed beside a reply is seen.
+ */
+export type DrainQueued = (
+  tx: Executor,
+  workspaceId: string,
+  conversationId: string,
+) => Promise<boolean>;
 
 export interface NewReply {
   id: string;
@@ -323,6 +335,21 @@ export interface ReplyRepo {
     tx?: Executor,
   ): Promise<ReplyView | null>;
   // ───────── delivery side (inbox drain) ─────────
+
+  /**
+   * Takes the conversation's transaction-level drain lock. Storing or re-queueing a reply holds it
+   * from before its job is sent until commit, and the drain reads `pending` under it, so a reply whose
+   * job was absorbed by a queued drain (stately singleton) is always seen by that drain (ADR-0004).
+   */
+  lockDrain(workspaceId: string, conversationId: string, tx: Executor): Promise<void>;
+  /** Whether the reply has a `not_accepted` attempt created at or after `since` (its position). */
+  hasNotAcceptedAttempt(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    since: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
 
   /** The conversation's `sending` replies, oldest position first. */
   pendingReplies(workspaceId: string, conversationId: string, tx?: Executor): Promise<ReplyView[]>;

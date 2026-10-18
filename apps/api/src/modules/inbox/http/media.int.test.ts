@@ -75,6 +75,33 @@ describe('inbox media route (postgres + fake Bot API)', () => {
   const get = (who: Who | null, url: string, headers: Record<string, string> = {}) =>
     app.inject({ method: 'GET', url, cookies: who?.cookies, headers });
 
+  it('an automatic (background) media fetch does not extend the idle session; a foreground one does (W10)', async () => {
+    const s = await seed();
+    s.script({ p1: { path: 'photos/a.jpg', size: 1000 } });
+    const msg = await s.add('photo', {
+      photo: [{ file_id: 'p1', file_unique_id: 'u1', width: 1, height: 1, file_size: 1000 }],
+    });
+    const account = await insertAccount(db, {});
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60_000);
+    const session = await insertSession(db, account.id, { createdAt: tenMinutesAgo });
+    await insertMembership(db, s.ws, { accountId: account.id });
+    const who = { cookies: { session: session.token } };
+    const lastSeen = async () =>
+      (
+        await db
+          .selectFrom('sessions')
+          .select('last_seen_at')
+          .where('id', '=', session.row.id)
+          .executeTakeFirstOrThrow()
+      ).last_seen_at.getTime();
+
+    const background = await get(who, s.url(msg), { 'x-background-request': '1' });
+    expect(background.statusCode).toBe(200);
+    expect(await lastSeen()).toBe(tenMinutesAgo.getTime());
+    expect((await get(who, s.url(msg))).statusCode).toBe(200);
+    expect(await lastSeen()).toBeGreaterThan(tenMinutesAgo.getTime());
+  });
+
   it('streams a photo inline as image/jpeg with the forced safe headers (AC-04)', async () => {
     const s = await seed();
     s.script({ p1: { path: 'photos/a.jpg', size: 1000 } });

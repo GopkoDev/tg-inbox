@@ -10,7 +10,7 @@ import {
 import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { fakeConversationSignals } from '../app/fakes.js';
-import { createReplyDelivery } from '../app/replies.js';
+import { createReplies, createReplyDelivery } from '../app/replies.js';
 import { createReplyRepo } from './reply-repo.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -81,6 +81,11 @@ describe('reply delivery (Postgres)', () => {
   const stateSignals = (replyId: string) =>
     signals.replies.filter((x) => x.replyId === replyId && x.change === 'state');
   const ids = (s: S) => ({ workspaceId: s.workspaceId, conversationId: s.conversationId });
+  /** Dead-letter options: attempts started before at(1001) are stale; no drain job is queued. */
+  const dead = (o: { drainQueued?: () => Promise<boolean>; staleBefore?: Date } = {}) => ({
+    staleBefore: o.staleBefore ?? at(1001),
+    drainQueued: o.drainQueued ?? (async () => false),
+  });
 
   it('lists pending replies oldest position first and reports the newest start', async () => {
     const s = await setup();
@@ -335,8 +340,12 @@ describe('reply delivery (Postgres)', () => {
     });
     await delivery().startAttempt({ ...ids(s), replyId: inFlight.replyId });
 
-    const first = await delivery().resolveDeadLetter(s.workspaceId, s.conversationId);
-    expect(first).toEqual({ notConfirmed: [inFlight.replyId], interrupted: [waiting.replyId] });
+    const first = await delivery().resolveDeadLetter(s.workspaceId, s.conversationId, dead());
+    expect(first).toEqual({
+      notConfirmed: [inFlight.replyId],
+      interrupted: [waiting.replyId],
+      inFlightSince: null,
+    });
     expect(await reply(inFlight.replyId)).toMatchObject({ state: 'not_confirmed' });
     expect(await attempt(inFlight.attemptId)).toMatchObject({ outcome: 'unknown' });
     expect(await reply(waiting.replyId)).toMatchObject({
@@ -359,8 +368,8 @@ describe('reply delivery (Postgres)', () => {
         .orderBy('id')
         .execute(),
     );
-    const second = await delivery().resolveDeadLetter(s.workspaceId, s.conversationId);
-    expect(second).toEqual({ notConfirmed: [], interrupted: [] });
+    const second = await delivery().resolveDeadLetter(s.workspaceId, s.conversationId, dead());
+    expect(second).toEqual({ notConfirmed: [], interrupted: [], inFlightSince: null });
     expect(
       JSON.stringify(
         await db
@@ -372,6 +381,78 @@ describe('reply delivery (Postgres)', () => {
       ),
     ).toBe(snapshot);
     expect(stateSignals(inFlight.replyId)).toHaveLength(1);
+  });
+
+  it('dead letter leaves a young in-flight attempt to the drain that started it and reports when it started (B2, AC-11)', async () => {
+    const s = await setup();
+    const young = await pending(s, at(10));
+    const waiting = await pending(s, at(20));
+    await delivery().startAttempt({ ...ids(s), replyId: young.replyId });
+    const result = await delivery().resolveDeadLetter(
+      s.workspaceId,
+      s.conversationId,
+      dead({ staleBefore: at(990) }),
+    );
+    expect(result).toEqual({
+      notConfirmed: [],
+      interrupted: [waiting.replyId],
+      inFlightSince: at(1000),
+    });
+    expect(await reply(young.replyId)).toMatchObject({ state: 'sending' });
+    expect(await attempt(young.attemptId)).toMatchObject({ outcome: null, finished_at: null });
+  });
+
+  it('dead letter interrupts nothing while a drain job for the conversation is queued or running (B2)', async () => {
+    const s = await setup();
+    const stale = await pending(s, at(10));
+    const waiting = await pending(s, at(20));
+    await delivery().startAttempt({ ...ids(s), replyId: stale.replyId });
+    const result = await delivery().resolveDeadLetter(
+      s.workspaceId,
+      s.conversationId,
+      dead({ drainQueued: async () => true }),
+    );
+    expect(result).toEqual({ notConfirmed: [stale.replyId], interrupted: [], inFlightSince: null });
+    expect(await reply(waiting.replyId)).toMatchObject({ state: 'sending' });
+  });
+
+  it('a reply created while the dead letter runs is never interrupted: its job is checked under the drain lock (B2, B3)', async () => {
+    const s = await setup();
+    const requests = createReplies({
+      transaction: (fn) => db.transaction().execute(fn),
+      replies: createReplyRepo(db),
+      signals,
+      clock,
+    });
+    let creating: ReturnType<typeof requests.createReply> | undefined;
+    const result = await delivery().resolveDeadLetter(
+      s.workspaceId,
+      s.conversationId,
+      dead({
+        drainQueued: async () => {
+          creating = requests.createReply({
+            workspaceId: s.workspaceId,
+            conversationId: s.conversationId,
+            authorId: s.accountId,
+            clientKey: crypto.randomUUID(),
+            body: 'late',
+            lastSeenReplyId: null,
+            confirmTeammate: false,
+            limit: 30,
+            windowMs: 60_000,
+            enqueueDrain: async () => {},
+          });
+          await new Promise((r) => setTimeout(r, 300));
+          return false;
+        },
+      }),
+    );
+    const created = await creating!;
+    expect(created.status).toBe('created');
+    expect(result.interrupted).toEqual([]);
+    expect(created.status === 'created' && (await reply(created.reply.id))).toMatchObject({
+      state: 'sending',
+    });
   });
 
   it('isolates every method by workspace', async () => {
@@ -400,9 +481,10 @@ describe('reply delivery (Postgres)', () => {
     expect(
       await delivery().resolveStaleInFlight(b.workspaceId, a.conversationId, at(2000)),
     ).toEqual([]);
-    expect(await delivery().resolveDeadLetter(b.workspaceId, a.conversationId)).toEqual({
+    expect(await delivery().resolveDeadLetter(b.workspaceId, a.conversationId, dead())).toEqual({
       notConfirmed: [],
       interrupted: [],
+      inFlightSince: null,
     });
     // sent from another workspace must not touch the conversation either
     const repo = createReplyRepo(db);

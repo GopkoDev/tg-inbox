@@ -95,6 +95,30 @@ describe('createReply', () => {
     expect(repo.replies).toHaveLength(30);
   });
 
+  it('a double press at 29 sends answers the stored reply, not 429, once the first press committed under the lock (B9, AC-11)', async () => {
+    const { create, clock, repo } = setup();
+    for (let i = 0; i < 29; i++) {
+      clock.set(at(100 + i));
+      await create({ clientKey: `k${i}` });
+    }
+    clock.set(at(130));
+    // The second press read no reply for its key, then waited on the limit lock while the first
+    // press (same key) stored the 30th send and committed.
+    const count = repo.lockAndCountAttempts.bind(repo);
+    let firstPress: ReturnType<typeof create> | undefined;
+    repo.lockAndCountAttempts = async (...args) => {
+      if (!firstPress) {
+        firstPress = create({ clientKey: 'dup' });
+        await firstPress;
+      }
+      return count(...args);
+    };
+    const second = await create({ clientKey: 'dup' });
+    expect((await firstPress!).status).toBe('created');
+    expect(second.status).toBe('existing');
+    expect(repo.replies.filter((r) => r.clientKey === 'dup')).toHaveLength(1);
+  });
+
   it('does not count a send older than the window', async () => {
     const { create, clock } = setup();
     for (let i = 0; i < 30; i++) await create({ clientKey: `k${i}` });

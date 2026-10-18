@@ -346,6 +346,7 @@ paths:
         shows the bytes.
       operationId: openMessageMedia
       parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
         - in: header
           name: Range
           required: false
@@ -928,7 +929,7 @@ components:
       in: header
       name: X-Background-Request
       required: false
-      description: Sent as `1` on automatic requests (live refetches, marking read). Such a request does not extend the session (workspace-operators contract)
+      description: Sent as `1` on automatic requests (live refetches, marking read, inline media the panel fetches on its own). Such a request does not extend the session (workspace-operators contract)
       schema: { type: string, enum: ["1"] }
 
   headers:
@@ -1085,6 +1086,16 @@ components:
             Only on the latest page (no cursor). It is `conversations.last_message_received_at`, read in
             the same snapshot as the page. It is the value to pass to `markConversationRead`. It is null on
             older and newer pages
+        newest_reply_id:
+          type: [string, "null"]
+          format: uuid
+          description: |
+            The conversation's newest reply in thread order (`replies.position_at`, then `id`), any
+            author and any state, read in the same snapshot as the page. It is on every page, whichever
+            page holds that reply, so the composer can send it as `last_seen_reply_id` even when the
+            loaded pages show no reply (AC-16). Null when the conversation has no reply. The server
+            always sends it; it is left out of `required` only so a page from before it existed still
+            parses (additive change)
 
     # ───────── list ─────────
     Conversation:
