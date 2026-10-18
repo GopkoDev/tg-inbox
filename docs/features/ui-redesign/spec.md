@@ -236,3 +236,39 @@ Traceability: the canon's "Visual direction", "Component inventory" and "Interac
 
 - [ ] Should operators see the Team section (read-only), e.g. to know whom to hand a conversation to? Default now: no — Settings stays owner-only (carried over from `workspace-operators` §8). — owner: Dmytro Hopko, due: before roadmap step 5 (assignment) is specified
 - [ ] Should an operator get a Settings entry of their own (profile, password change, notification preferences)? Default now: no Settings for operators until such a capability exists. — owner: Dmytro Hopko, due: before roadmap step 6 (notifications) is specified
+
+## Test plan
+
+Levels from the fixed vocabulary; the target surface is `web-frontend` (sad.md), so the frontend tiers apply. **component** = a screen or part rendered in isolation with its API calls answered by test doubles of the panel's own API client (no datastore is involved — this feature has no server change); **e2e-through-UI** = the existing end-to-end suite driven through the real panel against the real API and a throwaway database, scripted from `ux-flows.md`; component states come from `screens.md`. Decided at easy depth by the delegate of the author (assumptions ledger).
+
+| AC | Test | Level | Notes |
+|---|---|---|---|
+| AC-01 | entering a workspace lands on the inbox preview inside the frame with switcher, Inbox, Contacts, account menu and breadcrumb | component, e2e-through-UI | e2e: sign in → inbox preview; existing account-menu locators move from the page banner to the sidebar |
+| AC-02 | at phone width the navigation opens as a drawer and closes after a pick | component | layout width itself is checked manually (spec §6) |
+| AC-03 | switching to a workspace where the account is an operator hides Settings and shows that workspace's inbox | component, e2e-through-UI | e2e: two-workspace account from the existing flows suite |
+| AC-04 | sign-in on the centred layout reaches the destination picked by the existing rule | component, e2e-through-UI | existing sign-in tests keep their assertions |
+| AC-05 | empty field and wrong email or password are refused with the existing messages | component | dedicated error row |
+| AC-06 | invitation, reset and dead-link screens render on the centred layout with unchanged outcomes | component, e2e-through-UI | existing invite e2e keeps its assertions |
+| AC-07 | Settings opens on the Bot section with the section menu and every bot action | component | |
+| AC-08 | search, role and state filters narrow members and invitations over loaded rows; Show more stays and its rows are filtered | component | |
+| AC-09 | no match shows the nothing-matches sentence with clear filters and keeps Show more | component | dedicated error row |
+| AC-10 | an operator sees no Settings link and gets the owners-only refusals with the way back to the inbox | component, e2e-through-UI | dedicated authorization row |
+| AC-11 | old team and bot addresses lead to the matching Settings section | component, e2e-through-UI | e2e: existing `goto(.../team)` now lands in Settings › Team |
+| AC-12 | the inbox preview lists sample conversations with the label, opens a thread by address, clears unread, unknown id shows not found | component | |
+| AC-12b | at phone width the thread replaces the list and back returns to it | component | |
+| AC-13 | empty, spaces-only and over-4096-character replies cannot be sent; Enter sends, Shift+Enter adds a line | component, unit | unit: the reply-validity rule; dedicated error row |
+| AC-14 | a sent reply shows in the thread and list only until the conversation changes; the no-send note is always shown | component | |
+| AC-15 | contacts preview filters by search and tag, opens a profile by address, unknown id shows not found | component | |
+| AC-16 | contacts with no match show the nothing-matches sentence with clear filters | component | dedicated error row |
+| AC-17 | preview screens render only sample data, identical across workspaces, and call no API | component, unit | unit: the sample sources return the same data for any workspace; component: no API client call while a preview renders |
+| AC-18 | a refused action after deactivation lands by the existing rule with the access-removed notice | component, e2e-through-UI | existing e2e keeps its assertions |
+| AC-19 | every existing team and bot action keeps its confirmations, messages and outcomes | component, e2e-through-UI | the existing Team, bot and dialog tests re-run unchanged in assertions |
+| AC-20 | not found, Retry and the loading placeholder render inside the frame | component | |
+
+**Edge / error rows:** AC-05, AC-09, AC-10, AC-13, AC-16 are dedicated rows; additionally — an unknown sample conversation or contact address shows the not-found card (AC-12/AC-15 rows); switching workspace while a preview reply is shown drops it (AC-14 row).
+
+**Integration strategy:** no integration tier — the feature changes no module that owns a dependency. The e2e-through-UI suite keeps its existing throwaway database and API process; seed = the existing e2e setup (workspaces, members, invitations), cleanup per suite as today.
+
+**Load:** <!-- N/A: no numeric NFR --> — the numeric NFRs are layout, size and coverage targets, verified by the manual walk and the build-size comparison (spec §6), not by load.
+
+**CI placement:** unit and component on every PR (`pnpm test`); e2e-through-UI pre-merge for this branch as the existing suite already runs.
