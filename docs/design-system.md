@@ -27,9 +27,8 @@ updated_at: "2026-10-18"
 
 ## Visual direction
 
-Target layout patterns for the operator panel. They follow public shadcn/ui blocks; local,
-**uncommitted** reference markup for them may sit in `docs/design-refs/` on a maintainer's machine
-(never committed — treat it as a picture, not as code to copy: rewrite it onto the primitives below).
+Target layout patterns for the operator panel. They follow public shadcn/ui blocks, composed onto
+the primitives below.
 
 - **Auth screens** (sign-in, invite, reset): one centred column `max-w-sm`, `min-h-svh`, logo mark + `text-xl font-bold` heading + short description above the form; form fields stacked with `gap-6`. Source pattern: shadcn login blocks — https://ui.shadcn.com/blocks/login
 - **Workspace shell:** collapsible left sidebar in the `inset` variant (workspace switcher in the header, primary nav, secondary nav, account menu in the footer) + an inset body with a `h-16` header row (sidebar trigger, vertical separator, breadcrumb). Source pattern: shadcn sidebar blocks — https://ui.shadcn.com/blocks/sidebar
@@ -52,7 +51,7 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 
 | Component | Source (`file:line` / node / URL) | States it supports | Notes |
 |---|---|---|---|
-| AppShell | `apps/web/src/shared/ui/app-shell.tsx:32` | body skeleton (entering) / entered / not found (in-shell `NotFoundCard`) / error + Retry / access-removed notice | Workspace-area frame shared by every `/w/:id/*` screen: enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only once entered; workspace switcher, owner-only Team and Bot links, account menu with sign-out (collapses into a menu at phone width); wires the shared guard handler (`useShellGuard`). Composes DropdownMenu, Button, Alert, Skeleton. |
+| AppShell | `apps/web/src/shared/ui/app-shell.tsx:164` | body skeleton (entering) / entered / not found (in-shell `NotFoundCard`) / error + Retry / access-removed notice | Layout-route frame shared by every `/w/:id/*` screen: inset Sidebar with the workspace switcher in the header, Inbox / Contacts / owner-only Settings nav, account menu with sign-out in the footer, Breadcrumb in the header row, drawer at phone width. Enters the URL's workspace (`useWorkspaceFromUrl`) and renders the page body only once entered; wires the shared guard handler (`useShellGuard`). Composes Sidebar, Breadcrumb, DropdownMenu, Button, Alert, Skeleton. |
 | NotFoundCard | `apps/web/src/pages/NotFoundPage.tsx:9` | default | «Not found» card used both as a page and inside AppShell (`headingLevel`). |
 | Button | `apps/web/src/shared/ui/button.tsx:38` | variants default / destructive / outline / secondary / ghost / link; sizes default / xs / sm / lg / icon; disabled | Async actions disable the button while pending. |
 | Input | `apps/web/src/shared/ui/input.tsx:4` | default / focus / disabled / invalid (`aria-invalid`) | |
@@ -66,14 +65,32 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 | DropdownMenu | `apps/web/src/shared/ui/dropdown-menu.tsx:8` | open / closed / item disabled | Switchers, account menu, row actions. |
 | Table | `apps/web/src/shared/ui/table.tsx:4` | default | Lists of members / invitations; wrap in a Card. |
 | Skeleton | `apps/web/src/shared/ui/skeleton.tsx:3` | loading | The one loading pattern. |
+| Sidebar | `apps/web/src/shared/ui/sidebar.tsx:138` | expanded / collapsed (`SidebarProvider` state, cookie-persisted) / mobile drawer / menu button active | Family: `SidebarProvider` (`:43`), `SidebarInset` (`:287`), header / content / footer / group / menu parts. Used by AppShell in the `inset` variant; pulls in Separator, Sheet, Tooltip. |
+| Separator | `apps/web/src/shared/ui/separator.tsx:5` | horizontal / vertical | Header row divider, Field and Sidebar separators. |
+| Sheet | `apps/web/src/shared/ui/sheet.tsx:8` | open / closed; sides top / right / bottom / left | Side drawer; the Sidebar uses it at phone width. |
+| Tooltip | `apps/web/src/shared/ui/tooltip.tsx:18` | open / closed | Used by Sidebar menu buttons (collapsed state); `TooltipProvider` at `:5`. |
+| Breadcrumb | `apps/web/src/shared/ui/breadcrumb.tsx:6` | link / current page / separator / ellipsis | Location trail in the AppShell header row. |
+| Avatar | `apps/web/src/shared/ui/avatar.tsx:7` | image / fallback initials; sizes; badge / group | Contact and member identity in lists, conversation rows and the account menu. |
+| ScrollArea | `apps/web/src/shared/ui/scroll-area.tsx:5` | default | Conversation list and message thread scrolling. |
+| Textarea | `apps/web/src/shared/ui/textarea.tsx:4` | default / focus / disabled / invalid | Reply composer input. |
+| Tabs | `apps/web/src/shared/ui/tabs.tsx:8` | active / inactive trigger; content | Contact profile sections. |
+| Field | `apps/web/src/shared/ui/field.tsx:78` | default / invalid (`FieldError`) / disabled | Family: `FieldGroup` (`:44`), `FieldLabel`, `FieldDescription`, `FieldError`; form-field layout in the auth forms. |
+| Checkbox | `apps/web/src/shared/ui/checkbox.tsx:6` | unchecked / checked / disabled | Column toggles in the contacts toolbar. |
+| Select | `apps/web/src/shared/ui/select.tsx:8` | open / closed / item disabled / placeholder | Filter and role selects (team). |
+| Popover | `apps/web/src/shared/ui/popover.tsx:5` | open / closed | Filter and column-toggle popovers in list toolbars. |
+| SampleDataBadge | `apps/web/src/shared/ui/sample-data-badge.tsx:3` | default | NEW: «Sample data» label on screens backed by the swappable sample source (inbox, contacts, contact profile). No primitive fits: a fixed-copy Badge. |
+| DataTableToolbar | `apps/web/src/shared/ui/data-table-toolbar.tsx:3` | with / without search; with / without filters | NEW: toolbar row (search slot + filters slot) above a card-wrapped Table; used by Team and Contacts. |
+| EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |
+| AuthLayout | `apps/web/src/shared/ui/auth-layout.tsx:14` | default (title + description + children) | NEW: centred `max-w-sm` auth column; used by sign-in, invite, reset, link-unavailable, no-access and workspace-picker screens. |
+| SettingsLayout | `apps/web/src/features/settings/SettingsLayout.tsx:11` | section nav (stacks above the form below `lg`) + routed section outlet | NEW: Settings frame — title, description, left section nav (Bot, Team), section in a Card. |
+| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:16` | empty / items / selected item / unread badge | NEW: inbox left pane — Avatar, name, relative time, preview, unread Badge, in a ScrollArea. |
+| MessageBubble | `apps/web/src/features/inbox/MessageBubble.tsx:3` | inbound / outbound | NEW: chat message bubble; no shadcn primitive exists. |
+| ReplyComposer | `apps/web/src/features/inbox/ReplyComposer.tsx:6` | empty (send disabled) / filled / sending via `onSend` | NEW: Textarea + send Button for the thread. |
 
-**Not yet in the repo** — the visual direction above needs these shadcn/ui primitives; add each with
+**Not yet in the repo** — shadcn/ui primitives the visual direction may still use; add each with
 `pnpm dlx shadcn@latest add <name>` inside `apps/web` when the first screen needs it, check the import
 points at `@/shared/lib/utils`, then move its row into the table above with its `file:line`:
-`sidebar` (+ `separator`, `sheet`, `tooltip`), `breadcrumb`, `avatar`, `scroll-area`, `textarea`,
-`input-group`, `tabs`, `field`, `checkbox`, `select`, `popover`, `sonner` (toast) — catalogue:
-https://ui.shadcn.com/docs/components. A chat message bubble has no shadcn primitive: it is a
-`NEW:` candidate for the inbox feature's `screens.md`.
+`input-group`, `sonner` (toast) — catalogue: https://ui.shadcn.com/docs/components.
 
 ## Interaction & writing conventions
 

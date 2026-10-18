@@ -1,3 +1,4 @@
+import { lazy, Suspense, type ComponentType } from 'react';
 import {
   createBrowserRouter,
   redirect,
@@ -6,18 +7,31 @@ import {
 } from 'react-router';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
-import { BotSettingsPage } from '@/pages/BotSettingsPage';
-import { ContactProfilePage } from '@/pages/ContactProfilePage';
-import { ContactsPage } from '@/pages/ContactsPage';
 import { InboxPage } from '@/pages/InboxPage';
 import { NoAccessPage } from '@/pages/NoAccessPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 import { ResetPasswordPage } from '@/pages/ResetPasswordPage';
-import { SettingsPage } from '@/pages/SettingsPage';
 import { SignInPage } from '@/pages/SignInPage';
-import { TeamPage } from '@/pages/TeamPage';
 import { WorkspacesPage } from '@/pages/WorkspacesPage';
+import { Skeleton } from '@/shared/ui/skeleton';
 import { AppShell } from '@/shared/ui/app-shell';
+
+/** A page whose code loads on first visit (kept out of the inbox's first download); the frame stays up meanwhile. */
+const lazyPage = (load: () => Promise<Record<string, unknown>>, name: string) => {
+  const Page = lazy(async () => ({ default: (await load())[name] as ComponentType }));
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-3 p-4 pt-0" data-testid="page-skeleton">
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      }
+    >
+      <Page />
+    </Suspense>
+  );
+};
 
 /** A redirect decided before anything renders, so the address is final when the frame mounts. */
 const to =
@@ -43,18 +57,30 @@ const workspaceRoute: RouteObject = {
       path: 'contacts',
       handle: { crumb: 'Contacts' },
       children: [
-        { index: true, element: <ContactsPage /> },
-        { path: ':contactId', handle: { crumb: 'Contact' }, element: <ContactProfilePage /> },
+        { index: true, element: lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage') },
+        {
+          path: ':contactId',
+          handle: { crumb: 'Contact' },
+          element: lazyPage(() => import('@/pages/ContactProfilePage'), 'ContactProfilePage'),
+        },
       ],
     },
     {
       path: 'settings',
       handle: { crumb: 'Settings' },
-      element: <SettingsPage />,
+      element: lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage'),
       children: [
         { index: true, loader: to('settings/bot') },
-        { path: 'bot', handle: { crumb: 'Bot' }, element: <BotSettingsPage /> },
-        { path: 'team', handle: { crumb: 'Team' }, element: <TeamPage /> },
+        {
+          path: 'bot',
+          handle: { crumb: 'Bot' },
+          element: lazyPage(() => import('@/pages/BotSettingsPage'), 'BotSettingsPage'),
+        },
+        {
+          path: 'team',
+          handle: { crumb: 'Team' },
+          element: lazyPage(() => import('@/pages/TeamPage'), 'TeamPage'),
+        },
       ],
     },
     { path: 'team', loader: to('settings/team') },

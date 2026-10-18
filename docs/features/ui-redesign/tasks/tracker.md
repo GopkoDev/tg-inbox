@@ -12,6 +12,6 @@
 | T5 | Move the team page into the Settings Team section with search and filters | ui | Dmytro Hopko | M | T4 | done |
 | T6 | Build the inbox preview on a swappable sample-data source | ui | Dmytro Hopko | L | T3 | done |
 | T7 | Build the contacts and contact-profile previews on a sample-data source | ui | Dmytro Hopko | M | T3 | done |
-| T8 | Register the new components in the canon and remove the reference markup | docs | Dmytro Hopko | S | T2, T5, T6, T7 | todo |
+| T8 | Register the new components in the canon and remove the reference markup | docs | Dmytro Hopko | S | T2, T5, T6, T7 | done |
 
 **Total:** 8 tasks, ~6 person-days.
