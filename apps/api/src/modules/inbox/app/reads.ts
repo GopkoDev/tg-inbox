@@ -117,6 +117,9 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       const page = await conversations.listConversations(workspaceId, {
         ...member,
         contactIds,
+        status: 'open',
+        assignee: 'all',
+        search: (input.q ?? '').trim(),
         cursor: input.after ?? null,
         limit: input.limit,
       });
@@ -151,13 +154,15 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
         limit: input.limit,
       });
       if (!page) throw notFound();
-      const authorIds = page.items.flatMap((e) =>
+      // Activity entries reach the thread DTO in the inbox reads task (T12).
+      const entries = page.items.flatMap((e) => (e.type === 'activity' ? [] : [e]));
+      const authorIds = entries.flatMap((e) =>
         e.type === 'reply' ? [e.reply.authorAccountId] : [],
       );
       const names = authorIds.length
         ? await workspaces.displayNames(workspaceId, [...new Set(authorIds)])
         : new Map<string, string>();
-      const items: ThreadItem[] = page.items.map((e) =>
+      const items: ThreadItem[] = entries.map((e) =>
         e.type === 'message'
           ? messageDto(workspaceId, e.message)
           : replyDto(workspaceId, e.reply, names),

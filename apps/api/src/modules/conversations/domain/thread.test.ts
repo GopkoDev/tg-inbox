@@ -145,4 +145,26 @@ describe('list cursor', () => {
   it('rejects a thread cursor presented as a list cursor', () => {
     expect(decodeListCursor(encodeThreadCursor(msg(1, 1n)))).toBeNull();
   });
+
+  const v = { lastActivityAt: t(7, 42), id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b' };
+  const lens = { status: 'closed', assignee: 'mine', q: 'Олена' } as const;
+
+  it('binds the cursor to the lenses and the search it was issued for', () => {
+    const c = encodeListCursor(v, lens);
+    expect(c.length).toBeLessThanOrEqual(200);
+    expect(decodeListCursor(c, lens)).toEqual(v);
+    expect(decodeListCursor(c, { ...lens, status: 'open' })).toBeNull();
+    expect(decodeListCursor(c, { ...lens, assignee: 'all' })).toBeNull();
+    expect(decodeListCursor(c, { ...lens, q: 'other' })).toBeNull();
+    expect(decodeListCursor(c)).toBeNull();
+  });
+
+  it('a cursor without lens fields is the open, all, no-search cursor', () => {
+    const old = Buffer.from(
+      JSON.stringify({ k: 'l', at: v.lastActivityAt.getTime(), id: v.id }),
+    ).toString('base64url');
+    expect(decodeListCursor(old)).toEqual(v);
+    expect(decodeListCursor(old, lens)).toBeNull();
+    expect(decodeListCursor(encodeListCursor(v))).toEqual(v);
+  });
 });

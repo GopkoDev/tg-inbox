@@ -1,16 +1,23 @@
 import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { newId } from '../../../platform/ids.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { startRealtimeListener, type RealtimeSignal } from '../../../platform/realtime.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
-import { insertConversation, insertMessage } from '../../../test/fixtures/conversations.js';
+import {
+  insertActivity,
+  insertConversation,
+  insertMessage,
+  insertReply,
+} from '../../../test/fixtures/conversations.js';
 import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createConversationSignals } from '../infra/conversation-signals.js';
 import { createListQueries } from '../infra/list-queries.js';
 import { createReadMarkRepo } from '../infra/read-mark-repo.js';
 import { createThreadQueries } from '../infra/thread-queries.js';
+import { encodeListCursor } from '../domain/thread.js';
 import { createInboxReads } from './inbox-reads.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -109,5 +116,66 @@ describe('inbox reads (Postgres)', () => {
     } finally {
       await listener.stop();
     }
+  });
+
+  it('reads the summary with its close snapshot, the activity item by id, and refuses a cursor of other lenses', async () => {
+    const s = await seed();
+    await insertReply(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      authorAccountId: s.accountId,
+      state: 'not_confirmed',
+      positionAt: at(40),
+    });
+    const activityId = await insertActivity(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      kind: 'closed',
+      actorAccountId: s.accountId,
+      positionAt: at(50),
+    });
+    const r = reads();
+    const summary = await r.conversationSummary(s.workspaceId, s.conversationId, {
+      accountId: s.accountId,
+      activeSince: at(0),
+    });
+    expect(summary).toMatchObject({
+      status: 'open',
+      stateVersion: 0,
+      closeSnapshot: { customerMessageSeq: 0, latestReply: { state: 'not_confirmed' } },
+    });
+    expect(await r.threadActivity(s.workspaceId, s.conversationId, activityId)).toMatchObject({
+      id: activityId,
+      kind: 'closed',
+    });
+    expect(await r.threadActivity(s.workspaceId, newId(), activityId)).toBeNull();
+    const thread = await r.threadPage(s.workspaceId, s.conversationId, {
+      before: null,
+      after: null,
+      limit: 50,
+    });
+    expect(thread!.items.map((e) => e.type)).toEqual(['message', 'reply', 'activity']);
+
+    const base = {
+      accountId: s.accountId,
+      activeSince: at(0),
+      contactIds: null,
+      assignee: 'all' as const,
+      search: '',
+      limit: 1,
+    };
+    const openPage = await r.listConversations(s.workspaceId, {
+      ...base,
+      status: 'open',
+      cursor: null,
+    });
+    expect(openPage.items).toHaveLength(1);
+    await expect(
+      r.listConversations(s.workspaceId, {
+        ...base,
+        status: 'closed',
+        cursor: encodeListCursor({ lastActivityAt: at(1), id: newId() }),
+      }),
+    ).rejects.toThrow('The cursor is not valid.');
   });
 });

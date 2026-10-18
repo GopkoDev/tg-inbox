@@ -1,6 +1,6 @@
 import type { Db } from '../../../platform/db.js';
 import type { ActivityCause, ActivityKind } from '../domain/activity.js';
-import type { ConversationState, LatestReply } from '../domain/state.js';
+import type { CloseSnapshot, ConversationState, LatestReply } from '../domain/state.js';
 import type { MessageKind } from '../domain/message.js';
 import type { MediaFile, MessageProjection } from '../domain/projection.js';
 import type { ListPosition, ThreadPosition } from '../domain/thread.js';
@@ -236,9 +236,24 @@ export interface ConversationRow {
   lastItem: LastItemView | null;
   unreadCount: number;
   waitingForReply: boolean;
+  status: ConversationStatus;
+  /** Null: unassigned. Names are joined by `inbox` through `workspaces`. */
+  assigneeAccountId: string | null;
+  stateVersion: number;
+}
+
+export type ConversationStatus = 'open' | 'closed';
+
+/** The row plus what a close confirmation is checked against (decideChange's snapshot). */
+export interface ConversationSummaryRow extends ConversationRow {
+  closeSnapshot: CloseSnapshot;
 }
 
 export interface ListPageQuery extends Viewer {
+  /** Ignored while `contactIds` is set: a search spans both statuses. */
+  status: ConversationStatus;
+  /** `mine` is the viewer's account. */
+  assignee: 'all' | 'mine' | 'unassigned';
   /** Null: no filter. An empty list matches nothing. */
   contactIds: string[] | null;
   after: ListPosition | null;
@@ -255,7 +270,7 @@ export interface ConversationListReads {
     workspaceId: string,
     conversationId: string,
     viewer: Viewer,
-  ): Promise<ConversationRow | null>;
+  ): Promise<ConversationSummaryRow | null>;
 }
 
 export interface MessageView extends MessageProjection {
@@ -286,7 +301,8 @@ export interface ReplyView {
 
 export type ThreadEntry =
   | { type: 'message'; position: ThreadPosition; message: MessageView }
-  | { type: 'reply'; position: ThreadPosition; reply: ReplyView };
+  | { type: 'reply'; position: ThreadPosition; reply: ReplyView }
+  | { type: 'activity'; position: ThreadPosition; activity: ActivityView };
 
 export interface ThreadPageQuery {
   /** Items strictly before this position (older page). */
@@ -324,6 +340,12 @@ export interface ThreadReads {
     messageId: string,
   ): Promise<MessageView | null>;
   reply(workspaceId: string, conversationId: string, replyId: string): Promise<ReplyView | null>;
+  /** Null for an unknown entry and for one of another conversation or workspace. */
+  activity(
+    workspaceId: string,
+    conversationId: string,
+    activityId: string,
+  ): Promise<ActivityView | null>;
   /** Null for an unknown message and for a kind with no file. */
   mediaReference(
     workspaceId: string,

@@ -5,12 +5,16 @@ import {
   decodeThreadCursor,
   encodeListCursor,
   encodeThreadCursor,
+  type AssigneeLens,
+  type StatusLens,
   type ThreadPosition,
 } from '../domain/thread.js';
 import type { Transaction } from './conversations.js';
 import type {
+  ActivityView,
   ConversationListReads,
   ConversationRow,
+  ConversationSummaryRow,
   ConversationSignals,
   MediaReference,
   MessageView,
@@ -33,6 +37,10 @@ export interface InboxReadsDeps {
 
 export interface ListInput extends Viewer {
   contactIds: string[] | null;
+  status: StatusLens;
+  assignee: AssigneeLens;
+  /** The trimmed search text ('' when not searching); it only binds the cursor — `contactIds` is the filter. */
+  search: string;
   cursor: string | null;
   limit: number;
 }
@@ -74,7 +82,7 @@ export interface InboxReads {
     workspaceId: string,
     conversationId: string,
     viewer: Viewer,
-  ): Promise<ConversationRow | null>;
+  ): Promise<ConversationSummaryRow | null>;
   threadPage(
     workspaceId: string,
     conversationId: string,
@@ -90,6 +98,11 @@ export interface InboxReads {
     conversationId: string,
     replyId: string,
   ): Promise<ReplyView | null>;
+  threadActivity(
+    workspaceId: string,
+    conversationId: string,
+    activityId: string,
+  ): Promise<ActivityView | null>;
   messageMedia(
     workspaceId: string,
     conversationId: string,
@@ -110,15 +123,18 @@ export function createInboxReads(deps: InboxReadsDeps): InboxReads {
   const { transaction, lists, threads, marks, signals, clock } = deps;
   return {
     async listConversations(workspaceId, input) {
+      const lens = { status: input.status, assignee: input.assignee, q: input.search };
       let after = null;
       if (input.cursor !== null) {
-        after = decodeListCursor(input.cursor);
+        after = decodeListCursor(input.cursor, lens);
         if (after === null) throw new ValidationError('The cursor is not valid.');
       }
       const { rows, hasNext } = await lists.listPage(workspaceId, {
         accountId: input.accountId,
         activeSince: input.activeSince,
         contactIds: input.contactIds,
+        status: input.status,
+        assignee: input.assignee,
         after,
         limit: input.limit,
       });
@@ -129,7 +145,7 @@ export function createInboxReads(deps: InboxReadsDeps): InboxReads {
         hasNext,
         nextCursor:
           hasNext && last
-            ? encodeListCursor({ lastActivityAt: last.lastActivityAt, id: last.id })
+            ? encodeListCursor({ lastActivityAt: last.lastActivityAt, id: last.id }, lens)
             : null,
       };
     },
@@ -166,6 +182,8 @@ export function createInboxReads(deps: InboxReadsDeps): InboxReads {
       threads.message(workspaceId, conversationId, messageId),
     threadReply: (workspaceId, conversationId, replyId) =>
       threads.reply(workspaceId, conversationId, replyId),
+    threadActivity: (workspaceId, conversationId, activityId) =>
+      threads.activity(workspaceId, conversationId, activityId),
     messageMedia: (workspaceId, conversationId, messageId) =>
       threads.mediaReference(workspaceId, conversationId, messageId),
 
