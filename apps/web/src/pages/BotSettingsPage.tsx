@@ -13,7 +13,6 @@ import {
 } from '@/features/bot/paste-token/PasteTokenDialog';
 import { BotSettings } from '@/features/bot/settings/BotSettings';
 import { useBotStore } from '@/features/bot/store';
-import { AppShell } from '@/shared/ui/app-shell';
 
 interface PasteState {
   /** The workspace the dialog was opened for; a switch elsewhere closes it (and drops the token). */
@@ -96,7 +95,7 @@ export function BotSettingsPage() {
   };
 
   return (
-    <AppShell>
+    <>
       <h1 className="mb-3 text-xl font-semibold">Bot</h1>
       <BotSettings
         key={workspaceId}
@@ -124,6 +123,6 @@ export function BotSettingsPage() {
         bot={here(disconnect)?.value ?? null}
         onClose={() => setDisconnect((d) => (d?.workspaceId === workspaceId ? null : d))}
       />
-    </AppShell>
+    </>
   );
 }

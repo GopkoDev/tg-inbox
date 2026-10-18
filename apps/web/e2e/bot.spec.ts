@@ -21,8 +21,11 @@ async function signIn(page: Page, email: string) {
 
 /** SCR-01 → SCR-02 through the owner-only Bot entry. */
 async function openBot(page: Page, workspaceId: string) {
-  await page.getByRole('banner').getByRole('link', { name: 'Bot' }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/bot$`));
+  await page
+    .getByRole('navigation', { name: 'Workspace' })
+    .getByRole('link', { name: 'Settings' })
+    .click();
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/settings/bot$`));
   await expect(page.getByRole('heading', { name: 'Bot' })).toBeVisible();
 }
 
@@ -171,12 +174,14 @@ test('an operator sees no Bot entry and the owners-only page at the Bot address 
   const workspaceId = await world.workspaceWithOwner('Acme Flowers', OWNER);
   await world.joinOperator(OWNER, workspaceId, 'ana@example.test', 'Ana');
   await signIn(page, 'ana@example.test');
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
-  await expect(page.getByRole('banner').getByRole('link', { name: 'Bot' })).toHaveCount(0);
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
+  await expect(
+    page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Settings' }),
+  ).toHaveCount(0);
 
   await page.goto(`/w/${workspaceId}/bot`);
   await expect(page.getByText('Only business owners manage the bot')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Connect bot' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Back to home' }).click();
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
 });

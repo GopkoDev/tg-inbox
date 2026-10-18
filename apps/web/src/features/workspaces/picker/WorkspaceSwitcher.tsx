@@ -21,13 +21,18 @@ export function WorkspaceSwitcher() {
   const list = useWorkspaceList(open);
   const { enteringId, error, enter } = useEnterWorkspace(() => void list.reload());
 
-  if (!current) return <Skeleton className="h-9 w-40" data-testid="shell-name-skeleton" />;
+  if (!current) return <Skeleton className="h-12 w-full" data-testid="shell-name-skeleton" />;
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" className="max-w-[60vw] gap-1 truncate font-semibold">
-          <span className="truncate">{current.name}</span>
+        <Button variant="ghost" className="h-12 w-full justify-start gap-2 px-2 font-semibold">
+          <span className="grid flex-1 text-left leading-tight">
+            <span className="truncate">{current.name}</span>
+            <span aria-hidden className="text-muted-foreground truncate text-xs font-normal">
+              {ROLE_LABEL[current.role]}
+            </span>
+          </span>
           <ChevronDown />
         </Button>
       </DropdownMenuTrigger>

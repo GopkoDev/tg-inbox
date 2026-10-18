@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
+import { Route, Routes, useNavigate } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { stubRadixDom } from '@/test/radix';
+import { InDataRouter } from '@/test/router';
+import { AppShell } from '@/shared/ui/app-shell';
 
 vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
@@ -30,13 +32,15 @@ function Jump({ to }: { to: string }) {
 
 function renderPage(path = '/w/w1') {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <InDataRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+        <Route path="/w/:workspaceId" element={<AppShell />}>
+          <Route index element={<WorkspaceHomePage />} />
+        </Route>
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
         <Route path="*" element={<p>other</p>} />
       </Routes>
-    </MemoryRouter>,
+    </InDataRouter>,
   );
 }
 
@@ -61,20 +65,20 @@ describe('WorkspaceHomePage (SCR-06)', () => {
     expect(screen.getByTestId('shell-name-skeleton')).toBeInTheDocument();
   });
 
-  it('owner: enters the workspace, shows placeholder and Team link', async () => {
+  it('owner: enters the workspace, shows placeholder and Settings link', async () => {
     enterWorkspace.mockResolvedValue(acme);
     renderPage();
     expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
     expect(enterWorkspace).toHaveBeenCalledWith('w1');
     expect(useWorkspaceStore.getState().current).toEqual(acme);
-    expect(screen.getAllByRole('link', { name: 'Team' }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole('link', { name: 'Settings' }).length).toBeGreaterThan(0);
   });
 
-  it('operator: no Team link', async () => {
+  it('operator: no Settings link', async () => {
     enterWorkspace.mockResolvedValue(bolt);
     renderPage('/w/w2');
     expect(await screen.findByText('Your inbox arrives here')).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Team' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
   it('access-removed notice shown under the header (AC-17)', async () => {
@@ -118,12 +122,14 @@ describe('WorkspaceHomePage (SCR-06)', () => {
       id === 'w1' ? new Promise((r) => (resolveA = r)) : Promise.resolve(bolt),
     );
     render(
-      <MemoryRouter initialEntries={['/w/w1']}>
+      <InDataRouter initialEntries={['/w/w1']}>
         <Routes>
-          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+          <Route path="/w/:workspaceId" element={<AppShell />}>
+            <Route index element={<WorkspaceHomePage />} />
+          </Route>
         </Routes>
         <Jump to="/w/w2" />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     await screen.findByRole('button', { name: /Bolt Bikes/ });
@@ -139,12 +145,14 @@ describe('WorkspaceHomePage (SCR-06)', () => {
       id === 'w1' ? new Promise((_, r) => (rejectA = r)) : Promise.resolve(bolt),
     );
     render(
-      <MemoryRouter initialEntries={['/w/w1']}>
+      <InDataRouter initialEntries={['/w/w1']}>
         <Routes>
-          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+          <Route path="/w/:workspaceId" element={<AppShell />}>
+            <Route index element={<WorkspaceHomePage />} />
+          </Route>
         </Routes>
         <Jump to="/w/w2" />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     fireEvent.click(screen.getByRole('button', { name: 'jump' }));
     await screen.findByRole('button', { name: /Bolt Bikes/ });

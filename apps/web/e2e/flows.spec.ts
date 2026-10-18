@@ -9,17 +9,17 @@ async function signIn(page: Page, email: string, password = PASSWORD) {
 }
 
 const workspaceButton = (page: Page, name: string) =>
-  page.getByRole('banner').getByRole('button', { name });
+  page.getByRole('navigation', { name: 'Workspace' }).getByRole('button', { name });
 
 /** Opens SCR-07 by its address, as a bookmark or reload would — the app shell must enter the workspace itself. */
 async function openTeam(page: Page, workspaceId: string, workspaceName: string) {
-  await page.goto(`/w/${workspaceId}/team`);
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/team$`));
+  await page.goto(`/w/${workspaceId}/settings/team`);
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/settings/team$`));
   await expect(workspaceButton(page, workspaceName)).toBeVisible();
 }
 
 async function signOut(page: Page, email: string) {
-  await page.getByRole('banner').getByRole('button', { name: email }).click();
+  await page.getByRole('button', { name: email }).click();
   await page.getByRole('menuitem', { name: 'Sign out' }).click();
 }
 
@@ -35,7 +35,7 @@ test('join as a new person lands on the workspace home (AC-03)', async ({ page, 
   await page.getByLabel('Password').fill(PASSWORD);
   await page.getByRole('button', { name: 'Create account and join' }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
   await expect(workspaceButton(page, 'Acme Flowers')).toBeVisible();
   await expect(page.getByText('Your inbox arrives here')).toBeVisible();
 });
@@ -70,7 +70,7 @@ test('sign in, sign out, and the panel asks to sign in again (AC-07, AC-11)', as
 
   await page.goto('/sign-in');
   await signIn(page, 'boss@example.test');
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
   await expect(workspaceButton(page, 'Acme Flowers')).toBeVisible();
 
   await signOut(page, 'boss@example.test');
@@ -80,7 +80,7 @@ test('sign in, sign out, and the panel asks to sign in again (AC-07, AC-11)', as
   await expect(page).toHaveURL(/\/sign-in$/);
   await expect(page.getByText('Sign in to continue')).toBeVisible();
   await signIn(page, 'boss@example.test'); // returns to the remembered address
-  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
 });
 
 test('switch workspace shows only the picked workspace name (AC-12)', async ({ page, world }) => {
@@ -96,9 +96,11 @@ test('switch workspace shows only the picked workspace name (AC-12)', async ({ p
   await workspaceButton(page, 'Acme Flowers').click();
   await page.getByRole('menuitem', { name: /Bolt Bikes/ }).click();
 
-  await expect(page).toHaveURL(new RegExp(`/w/${bolt}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
-  await expect(page.getByRole('banner').getByText('Acme Flowers')).toHaveCount(0);
+  await expect(
+    page.getByRole('navigation', { name: 'Workspace' }).getByText('Acme Flowers'),
+  ).toHaveCount(0);
 });
 
 test('sign in opens the last-used workspace, not the picker (AC-07, AC-12)', async ({
@@ -118,9 +120,11 @@ test('sign in opens the last-used workspace, not the picker (AC-07, AC-12)', asy
   await expect(page).toHaveURL(/\/sign-in$/);
   await signIn(page, 'boss@example.test');
 
-  await expect(page).toHaveURL(new RegExp(`/w/${bolt}$`));
+  await expect(page).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
-  await expect(page.getByRole('banner').getByText('Acme Flowers')).toHaveCount(0);
+  await expect(
+    page.getByRole('navigation', { name: 'Workspace' }).getByText('Acme Flowers'),
+  ).toHaveCount(0);
 });
 
 test('invite a teammate: link shown once, then a pending row without it (AC-14)', async ({
@@ -187,7 +191,7 @@ test('deactivating a member with a second tab open shows the access-removed noti
   await member.getByRole('button', { name: 'Invite', exact: true }).click();
   await member.getByLabel('Email').fill('hire@example.test');
   await member.getByRole('button', { name: 'Create invitation' }).click();
-  await expect(member).toHaveURL(new RegExp(`/w/${bolt}$`));
+  await expect(member).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(member, 'Bolt Bikes')).toBeVisible();
   await expect(member.getByText('Your access to Acme Flowers was removed')).toBeVisible();
 

@@ -1,10 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes, useLocation, useNavigate } from 'react-router';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { openMenu, stubRadixDom } from '@/test/radix';
+import { InDataRouter } from '@/test/router';
+import { AppShell } from '@/shared/ui/app-shell';
 
 vi.mock('@/features/auth/api', () => ({ getMe: vi.fn(), signOut: vi.fn() }));
 const listMyWorkspaces = vi.fn();
@@ -62,14 +64,16 @@ const bob = mem('m2', 'Bob');
 
 function renderPage(path = '/w/w1/team') {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <InDataRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+        <Route path="/w/:workspaceId/team" element={<AppShell />}>
+          <Route index element={<TeamPage />} />
+        </Route>
         <Route path="/w/:workspaceId" element={<p>home screen</p>} />
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
         <Route path="*" element={<p>other</p>} />
       </Routes>
-    </MemoryRouter>,
+    </InDataRouter>,
   );
 }
 function Jump({ to }: { to: string }) {
@@ -278,12 +282,14 @@ describe('TeamPage (SCR-07)', () => {
     deactivateMembership.mockReturnValue(new Promise((_, reject) => (failLate = reject)));
     enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
     render(
-      <MemoryRouter initialEntries={['/w/w1/team']}>
+      <InDataRouter initialEntries={['/w/w1/team']}>
         <Routes>
-          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="/w/:workspaceId/team" element={<AppShell />}>
+            <Route index element={<TeamPage />} />
+          </Route>
         </Routes>
         <Jump to="/w/w2/team" />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     await screen.findByText('Bob');
     fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
@@ -303,14 +309,16 @@ describe('TeamPage (SCR-07)', () => {
     enterWorkspace.mockRejectedValue(err(404, 'NOT_FOUND'));
     resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w9'));
     render(
-      <MemoryRouter initialEntries={['/w/w1/team']}>
+      <InDataRouter initialEntries={['/w/w1/team']}>
         <Routes>
-          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="/w/:workspaceId/team" element={<AppShell />}>
+            <Route index element={<TeamPage />} />
+          </Route>
           <Route path="*" element={<p>other</p>} />
         </Routes>
         <Jump to="/w/w2/team" />
         <Where />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     await screen.findByText('Bob');
     fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
@@ -333,14 +341,16 @@ describe('TeamPage (SCR-07)', () => {
     enterWorkspace.mockResolvedValue(bolt);
     resolveWorkspace.mockImplementation(async (nav: (to: string) => void) => nav('/w/w2'));
     render(
-      <MemoryRouter initialEntries={['/w/w1/team']}>
+      <InDataRouter initialEntries={['/w/w1/team']}>
         <Routes>
-          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="/w/:workspaceId/team" element={<AppShell />}>
+            <Route index element={<TeamPage />} />
+          </Route>
           <Route path="*" element={<p>other</p>} />
         </Routes>
         <Jump to="/w/w2/team" />
         <Where />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     await screen.findByText('Bob');
     fireEvent.click(within(rowOf('Bob')).getByRole('button', { name: 'Deactivate' }));
@@ -427,16 +437,20 @@ describe('TeamPage: a late refusal after leaving the team route (Z1)', () => {
   /** Both workspace routes render their own shell, as in `app/routes.tsx`. */
   function renderBoth(to: string) {
     return render(
-      <MemoryRouter initialEntries={['/w/w1/team']}>
+      <InDataRouter initialEntries={['/w/w1/team']}>
         <Routes>
-          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
-          <Route path="/w/:workspaceId" element={<WorkspaceHomePage />} />
+          <Route path="/w/:workspaceId/team" element={<AppShell />}>
+            <Route index element={<TeamPage />} />
+          </Route>
+          <Route path="/w/:workspaceId" element={<AppShell />}>
+            <Route index element={<WorkspaceHomePage />} />
+          </Route>
           <Route path="/sign-in" element={<p>sign-in screen</p>} />
           <Route path="*" element={<p>other</p>} />
         </Routes>
         <Jump to={to} />
         <Where />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
   }
   async function startDeactivate() {
@@ -536,12 +550,14 @@ describe('TeamPage enters its workspace from the URL (AC-12, AC-13, AC-17)', () 
   it('address change A -> B: the header never shows A, then shows B', async () => {
     enterWorkspace.mockResolvedValue(bolt);
     render(
-      <MemoryRouter initialEntries={['/w/w1/team']}>
+      <InDataRouter initialEntries={['/w/w1/team']}>
         <Routes>
-          <Route path="/w/:workspaceId/team" element={<TeamPage />} />
+          <Route path="/w/:workspaceId/team" element={<AppShell />}>
+            <Route index element={<TeamPage />} />
+          </Route>
         </Routes>
         <Jump to="/w/w2/team" />
-      </MemoryRouter>,
+      </InDataRouter>,
     );
     await screen.findByText('Bob');
     expect(screen.getByRole('button', { name: /Acme Flowers/ })).toBeInTheDocument();
