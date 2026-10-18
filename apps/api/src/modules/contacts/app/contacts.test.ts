@@ -76,4 +76,15 @@ describe('contacts use cases', () => {
     expect(await contacts.countContacts('ws-b')).toBe(1);
     expect(await contacts.countContacts('ws-c')).toBe(0);
   });
+
+  it('searches contact ids and reads summaries per workspace (AC-02)', async () => {
+    const { contacts } = setup();
+    const a = await contacts.upsertFromProfile('ws-a', profile({ firstName: 'Олена' }), at(1));
+    await contacts.upsertFromProfile('ws-b', profile({ firstName: 'Олена' }), at(1));
+    expect(await contacts.searchContactIds('ws-a', ' олЕНА ')).toEqual([a.contactId]);
+    expect(await contacts.searchContactIds('ws-a', ' @ ')).toBeNull();
+    expect(await contacts.contactsByIds('ws-a', [a.contactId])).toEqual([
+      { id: a.contactId, firstName: 'Олена', lastName: null, username: 'test_user_1' },
+    ]);
+  });
 });

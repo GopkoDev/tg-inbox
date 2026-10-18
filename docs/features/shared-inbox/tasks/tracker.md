@@ -16,7 +16,7 @@
 | T9 | [Build the conversations read side: list page with unread counts, summary, thread page, single items, media reference and mark read](./t09-conversations-read-side.md) | infra | Dmytro Hopko | M | T5, T8 | todo |
 | T10 | [Build reply creation and re-queueing in conversations: idempotent client key, per-member limit under an advisory lock, teammate check, attempt row and drain job in one transaction](./t10-conversations-reply-requests.md) | infra | Dmytro Hopko | M | T5, T8 | todo |
 | T11 | [Build the delivery side in conversations: pending replies, in-flight mark, outcome recording, mark sent, stale in-flight and dead-letter resolution](./t11-conversations-delivery-side.md) | infra | Dmytro Hopko | M | T10 | todo |
-| T12 | [Add contact search ids and contacts by ids to the contacts module](./t12-contacts-search.md) | infra | Dmytro Hopko | S | — | todo |
+| T12 | [Add contact search ids and contacts by ids to the contacts module](./t12-contacts-search.md) | infra | Dmytro Hopko | S | — | done |
 | T13 | [Expose the inbox bot status to every member and publish bot.changed on every bot state transition](./t13-bots-inbox-status.md) | app | Dmytro Hopko | S | T3 | todo |
 | T14 | [Add sendMessage to the bots gateway as send text, classifying every answer into a typed outcome](./t14-bots-send-text.md) | infra | Dmytro Hopko | M | T4 | todo |
 | T15 | [Add the media stream to the bots gateway: getFile, size check and a ranged byte stream with typed unavailability](./t15-bots-media-stream.md) | infra | Dmytro Hopko | M | T4, T14 | todo |
