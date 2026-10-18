@@ -369,6 +369,366 @@ sequenceDiagram
     Web-->>Member: shown, played or downloaded, or content unavailable with the reason
 ```
 
+Flows 4–10 below were added by the `sequences` stage. They use the generic runtime vocabulary — `<user>` (an operator or business owner), `<ui>` (the web panel), `<service>` (tg-inbox's backend), `<data-store>`, `<message-bus>` (the live-signal fan-out and the job queue) and `<external-system>` (the Telegram Bot API); `SCR-NN` ids refer to [`ux-flows.md`](ux-flows.md). Every persist / read note is a hint for `data-model`.
+
+### Flow 4: Open the inbox list and search it (US-01 — AC-01, AC-02, AC-08, AC-18)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over U,S: Precondition: the person opens the inbox address of one workspace (SCR-01)
+    U->>UI: opens the inbox of the workspace
+    UI->>S: ask for the first list page of this workspace
+    S->>D: check the session and the membership in this workspace
+    alt not signed in
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back to the inbox (SCR-09)
+    else account of another workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member of either role
+        S->>D: read one page of the workspace's conversations, newest activity first
+        Note over S,D: reads conversations by (workspace, last activity, id) - informs the list index
+        S->>D: read this member's arrival watermarks and membership active-since time
+        Note over S,D: unread = customer messages arrived after the later of watermark and active-since - reads messages by (conversation, arrival)
+        S->>D: read contact names and the bot's reply and receiving state
+        D-->>S: rows with last item, waiting marker, unread count, names, bot state
+        S-->>UI: list page tagged with the workspace id
+        UI->>UI: drop anything tagged with another workspace
+        alt no conversations and the bot is connected
+            UI-->>U: empty inbox - conversations appear when customers write to the bot
+        else no conversations, no bot, business owner
+            UI-->>U: empty inbox with the way to the bot settings (SCR-08)
+        else conversations exist
+            UI-->>U: list newest first, unread counts, waiting markers, last item by kind and caption
+        end
+        opt member types into the search
+            UI->>S: ask for the list filtered by the query
+            S->>S: trim spaces and drop a leading at sign
+            S->>D: find contacts whose full name or username contains the query, any letter case
+            Note over S,D: reads contacts by workspace with case-folded full name and username - informs contact search support
+            S->>D: read the list page limited to those contacts
+            D-->>S: matching rows
+            S-->>UI: filtered page
+            alt nothing matches
+                UI-->>U: nothing matches, with a control to clear the search
+            else some match
+                UI-->>U: only the matching conversations
+            end
+        end
+    end
+    Note over U,S: Postcondition: only this workspace's conversations are shown, at most one per end customer, and nothing was written
+```
+
+### Flow 5: Open a conversation and read its history (US-02 — AC-03, AC-08)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the person picks a conversation, follows a saved link, reloads or goes back to its address (SCR-02)
+    U->>UI: opens a conversation
+    UI->>S: ask for the conversation summary and its latest thread page
+    S->>D: check the session and the membership in this workspace
+    alt not signed in, another workspace's account or deactivated
+        S-->>UI: sign in first, not found or access removed - as in flow 4
+        UI-->>U: sign-in, not-found card or access-removed landing
+    else active member
+        S->>D: look up the conversation by workspace and id
+        alt no such conversation in this workspace
+            D-->>S: none
+            S-->>UI: not found, no hint it exists
+            UI-->>U: not-found card (SCR-06)
+        else conversation found
+            S->>D: read the latest page of messages and replies by position time
+            Note over S,D: reads messages and replies by (workspace, conversation, position time, id) - informs the thread indexes
+            S->>D: read the contact's name and reply authors' display names
+            D-->>S: items with kind, caption, author and delivery state
+            S-->>UI: summary and latest page tagged with the workspace id
+            UI-->>U: thread with the contact in the header, items in order, each reply with its author
+            opt the tab is visible
+                UI->>S: mark read through the newest arrival shown
+                S->>D: raise this member's arrival watermark, never lower it
+                Note over S,D: persists read mark (workspace, member, conversation) with its arrival watermark
+                S->>B: read signal for this member's own sockets, published with the write
+                S-->>UI: this member's unread count is now zero
+            end
+            loop member scrolls up, until the first item
+                UI->>S: ask for the page before the oldest position shown
+                S->>D: read the previous page by position time
+                D-->>S: older items
+                S-->>UI: older page
+                UI-->>U: older history added above
+            end
+        end
+    end
+    Note over U,S: Postcondition: teammates' unread counts are unchanged - at phone width the thread replaced the list and a back control returns to it
+```
+
+### Flow 6: Confirm a send after a teammate's reply (US-06 — AC-16)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the member began typing when teammate reply R1 was the newest they had seen - the bot can carry replies
+    Note over UI,S: a newer teammate reply R2 may or may not have reached this tab live yet
+    U->>UI: presses Enter
+    UI->>S: send the reply with its client key and R1 as the newest teammate reply seen
+    S->>D: in the reply's transaction, look for another member's reply newer than R1
+    alt no newer teammate reply
+        S->>D: store the reply as sending with its member-initiated attempt and the drain job
+        Note over S,D: persists reply and reply attempt - informs the per-conversation pending order
+        S->>B: reply-created signal, published with the write
+        S-->>UI: reply stored as sending
+        UI-->>U: reply shown as sending, box cleared
+    else teammate reply R2 is newer than R1
+        D-->>S: R2 with its author and time
+        S-->>UI: refused - a teammate replied, with who and when, nothing stored
+        UI-->>U: dialog - the teammate replied N minutes ago, send anyway or keep editing (SCR-04)
+        alt keep editing
+            U->>UI: chooses keep editing
+            UI->>UI: keep the draft and its client key, take R2 as the newest reply seen
+            UI-->>U: back in the reply box with the text
+        else send anyway
+            U->>UI: chooses send anyway
+            UI->>S: the same send with the same client key and the confirmation flag
+            S->>D: store the reply as sending with its attempt and the drain job, teammate check skipped
+            Note over S,D: persists reply and reply attempt - the bot, limit and client-key checks of flow 1 still apply
+            S->>B: reply-created signal, published with the write
+            S-->>UI: reply stored as sending
+            UI-->>U: reply shown as sending, then delivered as in flow 1
+        end
+    end
+    Note over U,S: Postcondition: a reply is stored only after the member saw the teammate's reply or none was newer
+```
+
+### Flow 7: Try again and send again (US-05 — AC-11, AC-12, AC-12b)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: a reply shows "not delivered - Telegram did not accept it" or "not confirmed"
+    alt Try again on a not-delivered reply
+        U->>UI: clicks Try again
+        UI->>S: re-queue this reply
+    else Send again on a not-confirmed reply
+        U->>UI: clicks Send again
+        UI-->>U: warning that the customer may receive it twice (SCR-05)
+        U->>UI: confirms - a cancel leaves the reply not confirmed and sends nothing
+        UI->>S: re-queue this reply with the duplicate-risk confirmation
+    end
+    S->>D: in one transaction, lock (workspace, member) and count this member's initiated attempts of the last 60 s
+    Note over S,D: reads reply attempts by (workspace, member, initiated, started) - informs the limit index
+    alt 30 initiated sends already in the window
+        S-->>UI: refused - 30 replies per minute, with the time sending is available again
+        UI-->>U: reply keeps its state, the limit and resume time are shown
+    else not confirmed and no duplicate-risk confirmation
+        S-->>UI: refused - confirmation required
+        UI-->>U: the warning is shown again
+    else bot cannot carry replies
+        S-->>UI: refused - the bot is not working
+        UI-->>U: reply keeps its state, the reason is shown
+    else accepted
+        S->>D: set the reply to sending at a new position time, add a member-initiated attempt, enqueue the drain job
+        Note over S,D: persists reply state, position time and reply attempt - the reply moves to the end of the thread
+        S->>B: reply-state signal, published with the write
+        S-->>UI: reply sending
+        UI-->>U: reply moved to the end of the thread as sending, then delivered as in flow 1
+    end
+    Note over U,S: Postcondition: a reply is resent only on a member's action, and a not-confirmed one only after the duplicate warning
+```
+
+### Flow 8: The bot cannot carry replies or stops receiving, and is fixed (US-07 — AC-13, AC-14)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    participant X as #lt;external-system#gt;
+    Note over U,X: Precondition: members have the inbox open and the workspace's bot was connected
+    S->>X: scheduled bot health check, or a refused send or file call
+    X-->>S: token refused, or the bot's messages now go to another service
+    alt token refused
+        S->>D: set the bot to not working - needs a new token
+    else messages taken over
+        S->>D: set the bot to not receiving messages
+    end
+    Note over S,D: persists bot state (bot-connection)
+    S->>B: bot-changed signal, published with the write
+    B->>S: signal delivered to every instance
+    S->>UI: push bot changed to every open socket of the workspace
+    UI->>S: read the inbox bot status
+    S->>D: read the bot's state
+    S-->>UI: can carry replies, is receiving
+    alt not connected or not working
+        UI-->>U: conversations stay readable, reply box unavailable with the reason - owners get the way to the bot settings, operators are told to ask an owner
+        Note over S,X: replies still sending end not delivered - the bot is not working, at the drain's pre-check (flow 9)
+    else not receiving messages
+        UI-->>U: notice for every member that new customer messages do not arrive until an owner reconnects the bot - replies still work, each shows the notice by its state
+    end
+    opt a business owner fixes the same bot (SCR-08)
+        U->>UI: owner reconnects the bot in the bot settings
+        UI->>S: reconnect the bot
+        S->>X: verify the token and set the webhook
+        X-->>S: bot verified, webhook set
+        S->>D: set the bot to connected
+        Note over S,D: persists bot state (bot-connection)
+        S->>B: bot-changed signal, published with the write
+        B->>S: signal delivered to every instance
+        S->>UI: push bot changed to every open socket of the workspace
+        UI->>S: read the inbox bot status
+        S-->>UI: can carry replies, is receiving
+        UI-->>U: reply box available and the notice gone, without a reload
+    end
+```
+
+### Cross-cutting: Flow 9 — the delivery drain, its pre-checks and its recovery (US-05 — AC-09, AC-11, AC-12, AC-13)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as #lt;message-bus#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    Note over B,S: Trigger: a drain job of one conversation runs - after a reply commit, as a delayed back-off, or re-run after the process died
+    B->>S: deliver the drain job, one at a time per conversation
+    S->>D: idempotency check - find this conversation's attempts still in flight
+    opt an in-flight attempt older than the 10 s send timeout
+        S->>D: mark that attempt and its reply not confirmed, never retried on its own
+        Note over S,D: persists attempt outcome and reply state - reads attempts by (conversation, in flight, started)
+        S->>B: reply-state signal, published with the write
+    end
+    loop each pending reply of the conversation, oldest position first
+        S->>D: is the author still an active member, can the bot carry replies
+        alt author deactivated
+            S->>D: mark not delivered - the author's access was removed
+            Note over S,D: persists reply state with its reason
+        else bot not connected or not working
+            S->>D: mark not delivered - the bot is not working
+            Note over S,D: persists reply state with its reason
+        else checks pass
+            S->>D: record the attempt in flight before calling out, at least 1 s after the last send to this chat
+            Note over S,D: persists reply attempt (automatic or member-initiated) with its start
+            S->>X: send the text as plain text
+            X-->>S: accepted, refused, not accepted, or no answer within 10 s
+            S->>D: record the outcome and the reply state, as in flow 1
+        end
+        S->>B: reply-state signal, published with each write
+    end
+    Note over S,X: retry - Telegram not accepting schedules a new delayed drain job after its back-off, for up to 5 minutes from the first attempt, while later replies of the conversation wait
+    Note over B,S: retry - the job itself is re-run up to 3 times only when the process dies or the job expires after 60 s
+    alt job re-runs exhausted
+        B->>S: route the job to the dead-letter queue and alert
+        S->>D: mark in-flight attempts not confirmed and never-attempted pending replies not delivered - try again
+        Note over S,D: persists reply states - flagged for design, see the note after flow 10
+        S->>B: reply-state signal, published with the write
+    end
+```
+
+### Flow 10: A customer edits a message, or a late redelivery arrives (US-06 — AC-15)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant X as #lt;external-system#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    participant UI as #lt;ui#gt;
+    actor U as #lt;user#gt;
+    Note over X,S: Trigger: Telegram pushes an edited message, or delivers an earlier message late, to the bot's webhook
+    X->>S: update for the workspace's bot
+    S->>D: idempotency check - is this update already captured
+    alt already captured
+        S-->>X: acknowledged, nothing changes
+    else edit of a captured message
+        S->>D: replace the text and mark it edited, arrival and last activity unchanged, row's last item refreshed if it is this message
+        Note over S,D: persists message text and edited mark - no change to arrival or last activity
+        S->>B: conversation-changed signal, change edited, published with the write
+        S-->>X: acknowledged
+    else late redelivery of an earlier message
+        S->>D: store the message at its Telegram send time in the history, arrival now
+        Note over S,D: persists message with position by send time and arrival by now - informs the (conversation, arrival) index
+        S->>B: conversation-changed signal, change created, published with the write
+        S-->>X: acknowledged
+    else capture fails
+        S-->>X: not acknowledged
+        Note over X,S: retry - Telegram redelivers the update by itself, and after its own retries drops it, outside tg-inbox, as in bot-connection
+    end
+    B->>S: signal delivered to every instance
+    S->>UI: push to the open sockets of this workspace
+    UI->>S: read the changed item and its list row
+    S-->>UI: item and row with this member's unread count by arrival
+    alt edit
+        UI-->>U: new text marked edited, unread count unchanged
+    else late redelivery
+        UI-->>U: message in its earlier place, counted unread for every member who has not looked since
+    end
+```
+
+**Coverage — every spec §4 user story and §5 acceptance criterion → where §6 shows it:**
+
+| Spec item | Shown by |
+|---|---|
+| US-01 | Flow 4; flow 2 (live re-ordering) |
+| US-02 | Flow 5; flow 3 (media) |
+| US-03 | Flow 1; flow 6 |
+| US-04 | Flow 1 (sent by the workspace's own bot); flow 2 (the customer's answer continues the conversation) |
+| US-05 | Flow 1 (delivery outcomes); flow 7; flow 9 |
+| US-06 | Flow 2; flow 6; flow 10 |
+| US-07 | Flow 8; flow 1 (bot-cannot-reply refusal) |
+| AC-01 | Flow 4 (list, unread by arrival and active-since, waiting marker, empty states); flow 2 (activity re-orders the list) |
+| AC-02 | Flow 4 — search `opt`, "nothing matches" and empty-workspace branches |
+| AC-03 | Flow 5 — latest page, older pages `loop`, mark read for this member only, not-found branch; reload / back / saved link as its precondition, phone width as its postcondition |
+| AC-04 | Flow 3 — happy path; plain-text rendering of locations, contacts and polls is a UI rule (§8 *Untrusted content*), not a runtime step |
+| AC-05 | Flow 3 — "unavailable with the reason" branches |
+| AC-06 | Flow 1 — accepted path |
+| AC-07 | Flow 1 — the panel's text check before sending |
+| AC-08 | Flow 4 and flow 5 — guard branches; flow 3 — not-found branch; the same guard fronts every inbox route and the socket upgrade (§8 *Authorization*) |
+| AC-09 | Flow 2 — deactivation and workspace-switch branches; flow 9 — the author-deactivated pre-check |
+| AC-10 | Flow 1 — permanent refusal branch |
+| AC-11 | Flow 1 — client-key and unknown-outcome branches; flow 7 — send again with the duplicate warning; flow 9 — stale in-flight attempt |
+| AC-12 | Flow 1 — not-accepted branches; flow 7 — Try again; flow 9 — the retry rules |
+| AC-12b | Flow 1 and flow 7 — limit branches |
+| AC-13 | Flow 1 — bot refusal; flow 8 — not-working branch and the fix; flow 9 — bot pre-check |
+| AC-14 | Flow 8 — not-receiving branch |
+| AC-15 | Flow 2 — new message and read-when-visible; flow 10 — edit and late redelivery |
+| AC-16 | Flow 1 — teammate-replied refusal; flow 6 — the confirmation |
+| AC-17 | Flow 1 — plain-text `sendMessage` through the workspace's bot; flow 2 — the customer's answer is captured into the same conversation. "No operator name" is a content rule, not a runtime step |
+| AC-18 | Flow 4 — workspace-tagged pages and its postcondition; flow 1 — a reply goes only through its own workspace's bot |
+
+**Flagged by `sequences` (for `design` to reconcile — no ADR written):**
+
+- **Dead-lettered drain job (flow 9).** §8 *Jobs* gives `inbox.deliver-replies` `retryLimit` 3 but does not say what happens to a conversation's replies when the job exhausts its re-runs: today they would stay "sending" with no job to move them, which breaks QG-1 ("its shown state always tells the truth"). Flow 9 draws a dead-letter handler that ends in-flight attempts "not confirmed" and never-attempted replies "not delivered — try again" (safe: never sent) and alerts. This amends ADR-0004 → confirm it in `design` or record it with `/sdd:decide-adr shared-inbox`.
+- **"Send again" / "Try again" as a state transition (flow 7).** Re-queueing is allowed only from "not delivered" or "not confirmed"; the reply moves to a new position time. ADR-0008 already defines position time as "when a member (re)sent it" — no new decision, listed so `data-model` keeps position time mutable.
+- **No new participants:** all flows stay within §5's containers — `<message-bus>` is `platform/realtime` (signals) and the pg-boss queue (drain jobs).
+
 ## 7. Deployment view
 
 No production target is chosen yet (architecture map: deferred until the first pilot goes live). The feature stays inside the one Node 26 process — Fastify API, built web panel, Telegram webhook ingress, the live socket endpoint and pg-boss workers — talking to one PostgreSQL 16 database ([ADR-0001](adr/0001-build-the-inbox-as-api-routes-a-live-socket-and-in-process-delivery-jobs-behind-the-existing-spa.md)). New for the runtime: long-lived WebSocket connections on the same origin (any proxy in front must pass `Upgrade` and keep idle sockets open — the server pings every 25 s so idle timeouts above 30 s suffice), one extra database connection per instance for `LISTEN` (outside the Kysely pool and pg-boss's own pool), and the `inbox.deliver-replies` queue (policy `stately`, singleton key = conversation id, polling interval 0.5 s). A second replica needs no code change and no sticky sessions: signals reach every instance through Postgres ([ADR-0003](adr/0003-fan-out-live-signals-through-postgres-listen-notify-published-in-the-writing-transaction.md)), the drain is serialised per conversation by pg-boss, and the per-member limit is counted in the database.
