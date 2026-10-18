@@ -28,11 +28,10 @@ shared-inbox fills the ui-redesign inbox preview with real data and lets members
 
 1. **API + existing SPA, delivery as in-process pg-boss jobs** — `[backend-service, web-frontend]`; the delivery worker, the live socket endpoint and the media proxy run inside the API process.
 2. **API + SPA + a separate delivery worker container** — `[backend-service, web-frontend, worker]`; replies are sent by a second deployable reading the same queue.
-3. **API + SPA, sending inline in the reply request** — no background worker; retries driven by the browser.
 
 ## Decision outcome
 
-**Chosen:** Option 1. It matches the decided v1 topology (one process) and the bot-connection precedent, keeps retries server-side as AC-12 requires ("tg-inbox keeps trying on its own" even when the operator closes the tab — which rules out option 3), and pg-boss queues let the worker move to its own process later without code changes, which is when option 2 starts paying for its extra deployable.
+**Chosen:** Option 1. It matches the decided v1 topology (one process) and the bot-connection precedent, keeps retries server-side as AC-12 requires ("tg-inbox keeps trying on its own", even when the operator closes the tab), and pg-boss queues let the worker move to its own process later without code changes, which is when option 2 starts paying for its extra deployable.
 
 ## Consequences
 

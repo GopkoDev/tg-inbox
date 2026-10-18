@@ -27,12 +27,11 @@ The changes the inbox must show live are committed by different modules and code
 ## Considered options
 
 1. **Postgres `LISTEN/NOTIFY` via a platform publisher** — the writer calls `pg_notify` inside its own transaction (delivered only on commit); each instance holds one dedicated listening connection and dispatches to its sockets.
-2. **In-process event emitter in `platform`** — writers emit after commit; the hub subscribes in memory.
-3. **pg-boss jobs as events** — writers enqueue a "changed" job; a worker forwards it to sockets.
+2. **pg-boss jobs as events** — writers enqueue a "changed" job; a worker forwards it to sockets.
 
 ## Decision outcome
 
-**Chosen:** Option 1. It is transactional for free (a notification is delivered exactly when its transaction commits), works across replicas without new infrastructure, and adds latency in milliseconds. Option 2 is simpler today but silently breaks live updates the day a second replica exists and needs care to emit only after commit; option 3 adds queue polling latency to every live update and turns a broadcast into a job per instance.
+**Chosen:** Option 1. It is transactional for free (a notification is delivered exactly when its transaction commits), works across replicas without new infrastructure, and adds latency in milliseconds. An in-process emitter was not considered viable: it breaks live updates the day a second replica exists (§2 constraint). Option 2 adds queue polling latency to every live update and turns a broadcast into a job per instance.
 
 Shape: one channel; payload JSON ≤ 1 kB holding only the workspace id, the signal type and ids (never text, names or tokens — Postgres caps payloads at 8 000 bytes, and signals feed the refetch path of ADR-0002). Publishing goes through a `platform/realtime` publisher that takes the caller's transaction, so modules stay unaware of `inbox`; the listener reconnects with backoff and, after a gap, tells the hub to ask every client to resynchronise.
 
