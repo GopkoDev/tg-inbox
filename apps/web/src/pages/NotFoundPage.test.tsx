@@ -59,7 +59,7 @@ describe('route table', () => {
     [`/reset-password/${'A'.repeat(43)}`, 'Set a new password'],
     ['/workspaces', 'Your workspaces'],
     ['/no-access', 'You no longer have access to any workspace'],
-    ['/w/w1', 'Workspace home'],
+    ['/w/w1', 'Inbox'],
     ['/w/w1/team', 'Team'],
     ['/nope/never', 'Page not found'],
   ])('%s resolves', async (path, heading) => {

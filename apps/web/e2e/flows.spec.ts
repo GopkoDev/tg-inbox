@@ -37,7 +37,7 @@ test('join as a new person lands on the workspace home (AC-03)', async ({ page, 
 
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
   await expect(workspaceButton(page, 'Acme Flowers')).toBeVisible();
-  await expect(page.getByText('Your inbox arrives here')).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Inbox' })).toBeVisible();
 });
 
 test('join with an existing account keeps the other workspace in the switcher (AC-04)', async ({
