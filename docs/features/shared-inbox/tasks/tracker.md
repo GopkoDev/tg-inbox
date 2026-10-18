@@ -11,7 +11,7 @@
 | T4 | [Extend the fake Bot API with sendMessage, getFile and the file download, scriptable per call](./t04-fake-telegram-send-and-files.md) | tests | Dmytro Hopko | S | — | done |
 | T5 | [Add the conversations domain rules: reply states and transitions, thread position order and cursors, the arrival-watermark rule](./t05-conversations-domain.md) | domain | Dmytro Hopko | S | — | done |
 | T6 | [Add the inbox domain rules: reply text check, delivery outcome to reply state, retry window, per-member limit window](./t06-inbox-domain.md) | domain | Dmytro Hopko | S | — | done |
-| T7 | [Give workspaces an active-since time, a richer guard result, active-member and display-name lookups and a deactivation signal; promote migration 09](./t07-workspaces-inbox-support.md) | app | Dmytro Hopko | M | T1, T3 | todo |
+| T7 | [Give workspaces an active-since time, a richer guard result, active-member and display-name lookups and a deactivation signal; promote migration 09](./t07-workspaces-inbox-support.md) | app | Dmytro Hopko | M | T1, T3 | done |
 | T8 | [Maintain the conversation list columns on capture and edit, publish conversation.changed, and promote migration 10](./t08-capture-list-columns-and-signals.md) | app | Dmytro Hopko | M | T1, T3, T7 | todo |
 | T9 | [Build the conversations read side: list page with unread counts, summary, thread page, single items, media reference and mark read](./t09-conversations-read-side.md) | infra | Dmytro Hopko | M | T5, T8 | todo |
 | T10 | [Build reply creation and re-queueing in conversations: idempotent client key, per-member limit under an advisory lock, teammate check, attempt row and drain job in one transaction](./t10-conversations-reply-requests.md) | infra | Dmytro Hopko | M | T5, T8 | todo |

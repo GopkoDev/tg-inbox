@@ -12,6 +12,7 @@ import type { InvitationRecord, MembershipRecord, UnitOfWork, WorkspaceRepos } f
 import { createTeam } from './team.js';
 
 const T0 = new Date('2026-03-01T00:00:00Z');
+const JOINED = new Date('2026-02-01T00:00:00Z');
 const WEEK = 7 * 86_400_000;
 const WS = 'ws-1';
 const OTHER_WS = 'ws-2';
@@ -38,6 +39,7 @@ function setup() {
       lastUsedAt: null,
       deactivatedAt: state === 'deactivated' ? T0 : null,
       createdAt: T0,
+      activeSince: JOINED,
     };
     members.push(m);
     return m;
@@ -54,11 +56,18 @@ function setup() {
       countActiveOwners: async (w: string) =>
         members.filter((m) => m.workspaceId === w && m.role === 'owner' && m.state === 'active')
           .length,
-      setState: async (w: string, id: string, state: MembershipState, at: Date | null) => {
+      setState: async (
+        w: string,
+        id: string,
+        state: MembershipState,
+        at: Date | null,
+        activeSince?: Date,
+      ) => {
         const m = members.find((x) => x.workspaceId === w && x.id === id);
         if (!m) return false;
         m.state = state;
         m.deactivatedAt = at;
+        if (activeSince) m.activeSince = activeSince;
         return true;
       },
     },
@@ -90,9 +99,11 @@ function setup() {
     },
   } as unknown as WorkspaceRepos;
   const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
+  const published: unknown[] = [];
   const team = createTeam({
     uow,
     clock: fixedClock(T0),
+    publish: async (_tx, signal) => void published.push(signal),
     publicWebUrl: 'http://web.test',
     accounts: {
       findAccountIdByEmail: async (email) =>
@@ -100,7 +111,7 @@ function setup() {
       getAccountsByIds: async (ids) => ids.flatMap((id) => accounts.get(id) ?? []),
     },
   });
-  return { team, members, invitations, addMember };
+  return { team, members, invitations, published, addMember };
 }
 
 describe('inviteMember', () => {
@@ -151,6 +162,7 @@ describe('deactivate / reactivate', () => {
       LastActiveOwnerError,
     );
     expect(ana.state).toBe('active');
+    expect(s.published).toEqual([]);
   });
 
   it('AC-18: an owner may deactivate themselves while another active owner remains', async () => {
@@ -160,6 +172,10 @@ describe('deactivate / reactivate', () => {
     const r = await s.team.deactivateMembership(WS, ana.id);
     expect(r).toMatchObject({ id: ana.id, state: 'deactivated', role: 'owner' });
     expect(r.deactivatedAt).toEqual(T0);
+    expect(ana.activeSince).toEqual(JOINED);
+    expect(s.published).toEqual([
+      { type: 'membership.deactivated', v: 1, workspace_id: WS, account_id: ana.accountId },
+    ]);
   });
 
   it('deactivating an operator never needs another owner; repeated calls are unchanged', async () => {
@@ -170,6 +186,7 @@ describe('deactivate / reactivate', () => {
     await expect(s.team.deactivateMembership(WS, op.id)).resolves.toMatchObject({
       state: 'deactivated',
     });
+    expect(s.published).toHaveLength(1);
   });
 
   it('AC-19: reactivation keeps the role; already active is unchanged', async () => {
@@ -177,9 +194,11 @@ describe('deactivate / reactivate', () => {
     const ben = s.addMember('ben', 'owner', 'deactivated');
     const r = await s.team.reactivateMembership(WS, ben.id);
     expect(r).toMatchObject({ state: 'active', role: 'owner', deactivatedAt: null });
+    expect(ben.activeSince).toEqual(T0);
     await expect(s.team.reactivateMembership(WS, ben.id)).resolves.toMatchObject({
       state: 'active',
     });
+    expect(s.published).toEqual([]);
   });
 
   it('a membership of another workspace is not found', async () => {

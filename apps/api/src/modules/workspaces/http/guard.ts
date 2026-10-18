@@ -6,7 +6,7 @@ import type { Role } from '../domain/membership.js';
 declare module 'fastify' {
   interface FastifyRequest {
     /** Set by the workspace guard on `/api/workspaces/:workspaceId/…` routes. */
-    workspace: { workspaceId: string; role: Role };
+    workspace: { workspaceId: string; role: Role; activeSince: Date };
   }
 }
 
@@ -24,7 +24,11 @@ export function createWorkspaceGuard({
   return async (request) => {
     const { workspaceId } = request.params as { workspaceId: string };
     const grant = await guardWorkspace(request.account.id, workspaceId);
-    request.workspace = { workspaceId: grant.workspaceId, role: grant.role };
+    request.workspace = {
+      workspaceId: grant.workspaceId,
+      role: grant.role,
+      activeSince: grant.activeSince,
+    };
   };
 }
 

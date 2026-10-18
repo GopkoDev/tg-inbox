@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely';
+import type { Kysely, Transaction } from 'kysely';
 import type { DB } from '../../../platform/db.types.gen.js';
 import type { UnitOfWork, WorkspaceRepos } from '../app/ports.js';
 import { KyselyInvitationRepo } from './invitation-repo.js';
@@ -16,7 +16,7 @@ export function workspaceRepos(db: Kysely<DB>): WorkspaceRepos {
 export class KyselyUnitOfWork implements UnitOfWork {
   constructor(private readonly db: Kysely<DB>) {}
 
-  run<T>(fn: (repos: WorkspaceRepos, tx: Kysely<DB>) => Promise<T>): Promise<T> {
+  run<T>(fn: (repos: WorkspaceRepos, tx: Transaction<DB>) => Promise<T>): Promise<T> {
     return this.db.transaction().execute((trx) => fn(workspaceRepos(trx), trx));
   }
 }

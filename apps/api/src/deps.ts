@@ -13,6 +13,7 @@ import { createResetLinkRepo } from './modules/auth/infra/reset-link-repo.js';
 import { createSessionRepo } from './modules/auth/infra/session-repo.js';
 import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-repo.js';
 import { createAcceptInvitation } from './modules/workspaces/app/accept-invitation.js';
+import { publish } from './platform/realtime.js';
 import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
 import { createTeam } from './modules/workspaces/app/team.js';
 import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
@@ -97,6 +98,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     uow: workspaceUow,
     clock,
     accounts: accountUseCases,
+    publish,
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
   // --- end workspaces dependencies ---

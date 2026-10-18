@@ -87,8 +87,8 @@ describe('workspace-operators migrations', () => {
     await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
               VALUES (${account}, 'm@x.com', 'M', 'h', ${now})`.execute(db);
     const insert = (workspaceId: string, state: string) =>
-      sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at)
-          VALUES (${newId()}, ${workspaceId}, ${account}, 'operator', ${state}, ${now})`.execute(
+      sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+          VALUES (${newId()}, ${workspaceId}, ${account}, 'operator', ${state}, ${now}, ${now})`.execute(
         db,
       );
     await insert(ws, 'active');

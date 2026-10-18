@@ -1,4 +1,5 @@
-import type { Db } from '../../../platform/db.js';
+import type { Transaction } from 'kysely';
+import type { DB } from '../../../platform/db.types.gen.js';
 import type { MembershipState, Role } from '../domain/membership.js';
 
 export type InvitationState = 'pending' | 'accepted' | 'revoked' | 'superseded';
@@ -25,6 +26,8 @@ export interface MembershipRecord {
   lastUsedAt: Date | null;
   deactivatedAt: Date | null;
   createdAt: Date;
+  /** Set at join and on reactivation, kept on deactivation: the unread floor (AC-01). */
+  activeSince: Date;
 }
 
 export interface ActiveMembershipOfAccount extends MembershipRecord {
@@ -62,12 +65,17 @@ export interface MembershipRepo {
   list(workspaceId: string, page: PageQuery): Promise<MembershipRecord[]>;
   countActiveOwners(workspaceId: string): Promise<number>;
   hasAnyMember(workspaceId: string): Promise<boolean>;
-  /** Returns whether a row of this workspace was changed. */
+  /** Of `accountIds`, those with a membership (any state) in this workspace. */
+  accountIdsAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
+  /** Of `accountIds`, those with an active membership in this workspace. */
+  activeAccountIdsAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
+  /** Returns whether a row of this workspace was changed. `activeSince` is kept when omitted. */
   setState(
     workspaceId: string,
     membershipId: string,
     state: MembershipState,
     deactivatedAt: Date | null,
+    activeSince?: Date,
   ): Promise<boolean>;
   touchLastUsed(workspaceId: string, accountId: string, at: Date): Promise<boolean>;
 
@@ -103,5 +111,5 @@ export interface WorkspaceRepos {
  * transaction, for passing to other modules' app layers (e.g. auth) so they join it.
  */
 export interface UnitOfWork {
-  run<T>(fn: (repos: WorkspaceRepos, tx: Db) => Promise<T>): Promise<T>;
+  run<T>(fn: (repos: WorkspaceRepos, tx: Transaction<DB>) => Promise<T>): Promise<T>;
 }

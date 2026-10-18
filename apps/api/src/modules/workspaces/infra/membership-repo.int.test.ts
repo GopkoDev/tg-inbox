@@ -39,6 +39,7 @@ describe('KyselyMembershipRepo', () => {
       lastUsedAt: null,
       deactivatedAt: null,
       createdAt: T0,
+      activeSince: T0,
     };
     await repo.insert(a, rec);
     expect(await repo.findById(a, id)).toEqual({ ...rec, workspaceId: a });
@@ -164,5 +165,29 @@ describe('KyselyMembershipRepo', () => {
     release();
     await Promise.all([first, second]);
     expect(events).toEqual(['first-locked', 'first-done', 'second-locked']);
+  });
+
+  it('accountIdsAmong / activeAccountIdsAmong are isolated by workspace and by state', async () => {
+    const { a, b } = await twoWorkspaces(db);
+    const active = await insertMembership(db, a);
+    const off = await insertMembership(db, a, { state: 'deactivated' });
+    const other = await insertMembership(db, b);
+    const ids = [active.accountId, off.accountId, other.accountId];
+    expect((await repo.accountIdsAmong(a, ids)).sort()).toEqual(
+      [active.accountId, off.accountId].sort(),
+    );
+    expect(await repo.activeAccountIdsAmong(a, ids)).toEqual([active.accountId]);
+    expect(await repo.activeAccountIdsAmong(b, ids)).toEqual([other.accountId]);
+    expect(await repo.activeAccountIdsAmong(a, [])).toEqual([]);
+  });
+
+  it('setState moves active_since only when given; findForGuard returns it', async () => {
+    const { a } = await twoWorkspaces(db);
+    const m = await insertMembership(db, a);
+    const later = new Date('2026-04-01T00:00:00Z');
+    await repo.setState(a, m.id, 'deactivated', later);
+    expect((await repo.findForGuard(m.accountId, a))?.activeSince).toEqual(T0);
+    await repo.setState(a, m.id, 'active', null, later);
+    expect((await repo.findForGuard(m.accountId, a))?.activeSince).toEqual(later);
   });
 });

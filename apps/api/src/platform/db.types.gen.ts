@@ -80,7 +80,7 @@ export interface Invitations {
 
 export interface Memberships {
   account_id: string;
-  active_since: Timestamp | null;
+  active_since: Timestamp;
   created_at: Timestamp;
   deactivated_at: Timestamp | null;
   id: string;

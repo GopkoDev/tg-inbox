@@ -33,6 +33,7 @@ export async function insertMembership(
     role?: 'owner' | 'operator';
     state?: 'active' | 'deactivated';
     lastUsedAt?: Date | null;
+    activeSince?: Date;
   } = {},
 ): Promise<{ id: string; accountId: string }> {
   const id = newId();
@@ -49,6 +50,7 @@ export async function insertMembership(
       last_used_at: opts.lastUsedAt ?? null,
       deactivated_at: state === 'deactivated' ? T0 : null,
       created_at: T0,
+      active_since: opts.activeSince ?? T0,
     })
     .execute();
   return { id, accountId };
