@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS conversations_workspace_id_assignee_status_idx;
+DROP INDEX IF EXISTS conversations_workspace_id_status_idx;

@@ -1,0 +1,5 @@
+DROP INDEX IF EXISTS conversation_activities_workspace_id_new_assignee_idx;
+DROP INDEX IF EXISTS conversation_activities_workspace_id_previous_assignee_idx;
+DROP INDEX IF EXISTS conversation_activities_workspace_id_actor_created_at_idx;
+DROP INDEX IF EXISTS conversation_activities_conversation_id_position_at_idx;
+DROP TABLE IF EXISTS conversation_activities;
