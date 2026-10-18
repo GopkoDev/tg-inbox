@@ -93,6 +93,11 @@ interface InboxState {
   conversations: Conversation[];
   hasNext: boolean;
   nextCursor: string | null;
+  /**
+   * Bumped each time the first list page is (re-)read: pages loaded beyond it belong to the old
+   * order, so the list restarts paging from the new `nextCursor`.
+   */
+  listVersion: number;
   bot: InboxBotStatus | null;
   thread: OpenThread | null;
   /** Reply drafts of this tab, by conversation id. */
@@ -140,6 +145,7 @@ const EMPTY: Omit<
   conversations: [],
   hasNext: false,
   nextCursor: null,
+  listVersion: 0,
   bot: null,
   thread: null,
   drafts: {},
@@ -264,6 +270,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           : [...page.items].sort(byActivity),
         hasNext: page.has_next,
         nextCursor: page.next_cursor,
+        listVersion: s.listVersion + 1,
         listStatus: 'ready',
       }));
     } catch (error) {
@@ -307,7 +314,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       const paged = open.pagedNewest ?? null;
       // A background re-read merges only when it reaches back to what pages already loaded:
       // earlier loaded pages and newer live items stay. Otherwise the items between would be a
-      // hole no cursor reaches, so the page replaces them (keeping only items newer than it).
+      // hole no cursor reaches, so the page replaces them; shown items from its oldest one on
+      // stay (live items the read missed, or newer than it).
       const overlaps =
         !page.has_prev || (fresh[0] !== undefined && paged && byPosition(fresh[0], paged) <= 0);
       const merges = options.background && Boolean(overlaps);
@@ -318,11 +326,11 @@ export const useInboxStore = create<InboxState>()((set, get) => {
               ...fresh,
               ...open.items.filter(
                 (i) =>
-                  freshNewest !== null &&
-                  byPosition(i, freshNewest) > 0 &&
+                  fresh[0] !== undefined &&
+                  byPosition(i, fresh[0]) >= 0 &&
                   !fresh.some((f) => f.id === i.id),
               ),
-            ]
+            ].sort(byPosition)
           : fresh;
       const keepsEarlier =
         merges &&
@@ -713,6 +721,11 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           now?.conversationId !== conversationId
         )
           return;
+        // A re-read replaced the items meanwhile: this page belongs to the old region.
+        if (now.prevCursor !== open.prevCursor) {
+          set({ thread: { ...now, older: 'idle' } });
+          return;
+        }
         const known = new Set(now.items.map((i) => i.id));
         set({
           thread: {
@@ -732,7 +745,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         noteGuard(error, workspaceId, startedAt);
         const now = get().thread;
         if (current(workspaceId, startedAt) && now?.conversationId === conversationId)
-          set({ thread: { ...now, older: 'error' } });
+          set({ thread: { ...now, older: now.prevCursor === open.prevCursor ? 'error' : 'idle' } });
       }
     },
     closeThread: () => set({ thread: null }),

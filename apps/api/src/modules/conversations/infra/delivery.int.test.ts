@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
@@ -474,6 +475,41 @@ describe('reply delivery (Postgres)', () => {
     expect(result).toEqual({ notConfirmed: [], interrupted: [], inFlightSince: at(1000) });
     expect(await reply(late.replyId)).toMatchObject({ state: 'sending', failure_reason: null });
     expect(await attempt(late.attemptId)).toMatchObject({ outcome: null, finished_at: null });
+  });
+
+  it('dead letter waits for a startAttempt holding the reply row and then leaves the reply sending (R6)', async () => {
+    const s = await setup();
+    const late = await pending(s, at(10));
+    // Tx A: a lagging drain's startAttempt, holding the reply row lock, not yet committed.
+    const a = await db.startTransaction().execute();
+    try {
+      const started = await createReplyRepo(db).startAttempt(
+        s.workspaceId,
+        s.conversationId,
+        late.replyId,
+        crypto.randomUUID(),
+        at(1000),
+        a,
+      );
+      expect(started).toBe(late.attemptId);
+      const resolving = delivery().resolveDeadLetter(s.workspaceId, s.conversationId, dead());
+      // Wait until the dead letter is blocked behind tx A's row lock.
+      const waiting = async () => {
+        const row = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM pg_locks WHERE NOT granted`.execute(db);
+        return row.rows[0]!.n > 0;
+      };
+      for (let i = 0; i < 200 && !(await waiting()); i++)
+        await new Promise((r) => setTimeout(r, 10));
+      expect(await waiting()).toBe(true);
+      await a.commit().execute();
+      const result = await resolving;
+      expect(result.interrupted).toEqual([]);
+      expect(result.inFlightSince).toEqual(at(1000));
+      expect(await reply(late.replyId)).toMatchObject({ state: 'sending', failure_reason: null });
+    } finally {
+      if (!a.isCommitted && !a.isRolledBack) await a.rollback().execute();
+    }
   });
 
   it('isolates every method by workspace', async () => {

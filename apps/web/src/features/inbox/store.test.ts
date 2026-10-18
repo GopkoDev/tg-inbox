@@ -544,6 +544,62 @@ describe('inbox store: background re-reads merge (W7)', () => {
     expect(open.prevCursor).toBe('cur-36');
   });
 
+  it('a replacing re-read keeps live items inside its range that the server read missed (R4)', async () => {
+    const at = (n: number) => `2026-10-18T10:${String(n).padStart(2, '0')}:00.000Z`;
+    api.listThreadItems.mockResolvedValueOnce(
+      threadPage(A, C1, [message(A, C1, id(501), at(1)), message(A, C1, id(502), at(2))]),
+    );
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    api.getThreadMessage.mockResolvedValue(message(A, C1, id(540), at(40)));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'created', { type: 'message', id: id(540) }));
+    await flush();
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(536), at(36)), message(A, C1, id(550), at(50))]),
+      has_prev: true,
+      prev_cursor: 'cur-36',
+    });
+    sockets[0]!.handlers.onReconnected();
+    await flush();
+    expect(useInboxStore.getState().thread!.items.map((i) => i.id)).toEqual([
+      id(536),
+      id(540),
+      id(550),
+    ]);
+  });
+
+  it('an older page answering after a replacing re-read is dropped (R5)', async () => {
+    const at = (n: number) => `2026-10-18T10:${String(n).padStart(2, '0')}:00.000Z`;
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(510), at(10))]),
+      has_prev: true,
+      prev_cursor: 'cur-old',
+    });
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    let answerOlder!: (p: ThreadPage) => void;
+    api.listThreadItems.mockReturnValueOnce(new Promise((r) => (answerOlder = r)));
+    const older = useInboxStore.getState().loadOlder(A, C1);
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(536), at(36))]),
+      has_prev: true,
+      prev_cursor: 'cur-36',
+    });
+    sockets[0]!.handlers.onReconnected();
+    await flush();
+    answerOlder({
+      ...threadPage(A, C1, [message(A, C1, id(505), at(5))]),
+      has_prev: false,
+      prev_cursor: null,
+    });
+    await older;
+    const open = useInboxStore.getState().thread!;
+    expect(open.items.map((i) => i.id)).toEqual([id(536)]);
+    expect(open.hasPrev).toBe(true);
+    expect(open.prevCursor).toBe('cur-36');
+    expect(open.older).toBe('idle');
+  });
+
   it('a re-read first list page drops shown rows that now sort below its last row (R1)', async () => {
     const C3 = id(103);
     api.listConversations.mockResolvedValueOnce({

@@ -39,12 +39,21 @@ export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
   const isMobile = useIsMobile();
   const role = useWorkspaceStore((s) => s.current?.role);
-  const { listStatus, conversations, hasNext, nextCursor, bot } = useInboxStore();
+  const { listStatus, conversations, hasNext, nextCursor, listVersion, bot } = useInboxStore();
   const isOwner = role === 'owner';
 
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
-  const [more, setMore] = useState<Extra>({ rows: [], hasNext: false, cursor: null });
+  const [paged, setMore] = useState<Extra & { version: number }>({
+    rows: [],
+    hasNext: false,
+    cursor: null,
+    version: listVersion,
+  });
+  // Pages loaded beyond an older first page are stale once it is re-read: page again from the
+  // new `nextCursor` (a row that slid off the first page shows up there).
+  const more: Extra =
+    paged.version === listVersion ? paged : { rows: [], hasNext: false, cursor: null };
   const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [results, setResults] = useState<Extra | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -105,20 +114,28 @@ export function InboxList() {
       })
       .then((page) => {
         if (pageRequest.current !== id || page.workspace_id !== workspaceId) return;
+        if (!filtered && useInboxStore.getState().listVersion !== listVersion) {
+          setMoreState('idle');
+          return;
+        }
         const next = (prev: Extra | null): Extra => ({
           rows: appendPage(prev?.rows ?? [], page.items),
           hasNext: page.has_next,
           cursor: page.next_cursor,
         });
         if (filtered) setResults(next);
-        else setMore(next);
+        else
+          setMore((prev) => ({
+            ...next(prev.version === listVersion ? prev : null),
+            version: listVersion,
+          }));
         setMoreState('idle');
       })
       .catch((error: unknown) => {
         useInboxStore.getState().reportGuard(error, workspaceId);
         if (pageRequest.current === id) setMoreState('error');
       });
-  }, [q, results, more.cursor, nextCursor, moreState, workspaceId]);
+  }, [q, results, more.cursor, nextCursor, listVersion, moreState, workspaceId]);
 
   const filtered = q !== '' && results !== null;
   const rows = filtered ? results.rows : merge(conversations, more.rows);

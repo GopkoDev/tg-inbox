@@ -15,7 +15,13 @@ vi.mock('./api-source', () => ({
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
 }));
-vi.mock('@/shared/api/realtime', () => ({ openLiveSocket: () => ({ close: vi.fn() }) }));
+const live = vi.hoisted(() => ({ reconnected: null as null | (() => void) }));
+vi.mock('@/shared/api/realtime', () => ({
+  openLiveSocket: (_ws: string, handlers: { onReconnected: () => void }) => {
+    live.reconnected = handlers.onReconnected;
+    return { close: vi.fn() };
+  },
+}));
 
 import { InboxPage } from '@/pages/InboxPage';
 import { useInboxStore } from './store';
@@ -389,6 +395,38 @@ describe('SCR-01 paging', () => {
     await reachLast();
     expect(screen.getByRole('link', { name: /fresh 5/ })).toBeInTheDocument();
     expect(screen.queryByRole('link', { name: /hello 5/ })).not.toBeInTheDocument();
+  });
+
+  it('a re-read first page restarts paging from its cursor, so a row that slid down shows again (R3)', async () => {
+    const page = (items: Conversation[], next: string | null) => ({
+      workspace_id: WS,
+      items,
+      has_prev: false,
+      has_next: next !== null,
+      next_cursor: next,
+    });
+    useInboxStore.getState().leave();
+    api.listConversations.mockResolvedValueOnce(page([conv(1), conv(2), conv(3)], 'abc'));
+    await act(() => useInboxStore.getState().enter(WS));
+    renderList();
+    api.listConversations.mockResolvedValueOnce(page([conv(5)], 'def'));
+    await reach();
+    expect(screen.getByRole('link', { name: /Name5/ })).toBeInTheDocument();
+    // Offline, conversation 2 got busier and conversation 3 slid off the first page.
+    api.listConversations.mockResolvedValueOnce(
+      page([conv(2, { last_activity_at: ago(0) }), conv(1)], 'xyz'),
+    );
+    await act(async () => live.reconnected!());
+    await flush();
+    api.listConversations.mockResolvedValueOnce(page([conv(3), conv(5)], null));
+    await act(async () => {
+      observers
+        .at(-1)
+        ?.cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+    const loads = api.listConversations.mock.calls.filter((c) => c[1]?.after);
+    expect(loads.at(-1)![1]).toMatchObject({ after: 'xyz' });
+    expect(screen.getByRole('link', { name: /Name3/ })).toBeInTheDocument();
   });
 
   it('error while loading more: message with Retry', async () => {
