@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: "2026-10-12"
+updated_at: "2026-10-18"
 ---
 
 # Roadmap — tg-inbox
@@ -30,6 +30,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
 | 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | idea |
 | 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
+| 12 | UI redesign — every shipped screen moves onto the design canon (side-navigation frame, owner Settings with Bot + Team), plus inbox / contacts / contact-profile preview screens on labelled sample data | [design-system.md](design-system.md) § Visual direction | S | spec'd → [`features/ui-redesign`](features/ui-redesign/spec.md) |
 
 ## Not yet specified
 
