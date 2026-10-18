@@ -15,12 +15,17 @@ vi.mock('@/features/workspaces/api', () => ({
   enterWorkspace: (id: string) => enterWorkspace(id),
 }));
 vi.mock('@/features/workspaces/resolve', () => ({ resolveWorkspace: vi.fn() }));
+// The inbox reads and its live socket are other tasks' business here.
+vi.mock('@/features/inbox/store', () => ({
+  useInboxStore: Object.assign(() => undefined, {
+    getState: () => ({ enter: () => Promise.resolve(), leave: () => undefined }),
+  }),
+}));
 // The section bodies are other tasks' business; the route tree is what is under test here.
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
 
 import { getSampleContact } from '@/features/contacts/sample-source';
-import { listSampleConversations } from '@/features/inbox/sample-source';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { routes } from './routes';
 
@@ -174,20 +179,11 @@ describe('breadcrumb (review fixes)', () => {
   });
 
   it('S2-1: only the last crumb is the current page (inbox/<id>)', async () => {
-    const c = listSampleConversations()[0]!;
-    renderAt(`/w/w1/inbox/${c.id}`);
-    await screen.findByRole('region', { name: 'Conversation' });
+    renderAt('/w/w1/inbox/c1');
+    await screen.findByRole('heading', { level: 1, name: 'Inbox' });
     const current = crumbNav().querySelectorAll('[aria-current="page"]');
     expect(current).toHaveLength(1);
-    expect(current[0]).toHaveTextContent(c.name);
-  });
-
-  it('S1-6a: the conversation crumb carries the contact name', async () => {
-    const c = listSampleConversations()[1]!;
-    renderAt(`/w/w1/inbox/${c.id}`);
-    await screen.findByRole('region', { name: 'Conversation' });
-    expect(within(crumbNav()).getByText(c.name)).toBeInTheDocument();
-    expect(within(crumbNav()).queryByText('Conversation')).not.toBeInTheDocument();
+    expect(current[0]).toHaveTextContent('Conversation');
   });
 
   it('S1-6a: the contact crumb carries the contact name', async () => {

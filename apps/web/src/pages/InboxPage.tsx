@@ -1,21 +1,21 @@
+import { useEffect } from 'react';
 import { useParams } from 'react-router';
-import { InboxPreview } from '@/features/inbox/InboxPreview';
-import { getSampleConversation } from '@/features/inbox/sample-source';
-import { SampleDataBadge } from '@/shared/ui/sample-data-badge';
-import { NotFoundCard } from './NotFoundPage';
+import { useInboxStore } from '@/features/inbox/store';
 
-/** SCR-08: the inbox preview on sample data; an unknown conversation shows the frame's not-found card. */
+/**
+ * SCR-01/SCR-02 host. This foundation step only joins the workspace's live inbox (one socket
+ * per tab, closed on leaving); the list and the thread are drawn on top of the store by T24/T25.
+ */
 export function InboxPage() {
-  const { conversationId } = useParams();
-  if (conversationId && !getSampleConversation(conversationId))
-    return <NotFoundCard headingLevel={1} />;
+  const { workspaceId } = useParams();
+  useEffect(() => {
+    if (!workspaceId) return;
+    void useInboxStore.getState().enter(workspaceId);
+    return () => useInboxStore.getState().leave();
+  }, [workspaceId]);
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <h1 className="text-xl font-semibold">Inbox</h1>
-        <SampleDataBadge />
-      </div>
-      <InboxPreview />
+      <h1 className="text-xl font-semibold">Inbox</h1>
     </div>
   );
 }
