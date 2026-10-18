@@ -9,6 +9,7 @@ import type {
   ConversationsApi,
   GetMeResult,
   NewBot,
+  SendOutcome,
   TelegramGateway,
   Transaction,
   WebhookTarget,
@@ -130,11 +131,13 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
 }
 
 export interface GatewayCall {
-  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook';
+  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook' | 'sendText';
   token: string;
   timeoutMs: number;
   webhook?: { url: string; secret: string; dropPending: boolean };
   ourUrl?: string;
+  chatId?: bigint;
+  text?: string;
 }
 
 /** Scriptable TelegramGateway for unit tests: set the next answers, read the calls made. */
@@ -144,6 +147,7 @@ export function fakeGateway(): TelegramGateway & {
   webhook: WebhookTarget;
   setResult: 'ok' | 'failed';
   deleteResult: 'ok' | 'failed';
+  sendResult: SendOutcome;
 } {
   const fake = {
     calls: [] as GatewayCall[],
@@ -156,6 +160,11 @@ export function fakeGateway(): TelegramGateway & {
     webhook: 'ours' as WebhookTarget,
     setResult: 'ok' as 'ok' | 'failed',
     deleteResult: 'ok' as 'ok' | 'failed',
+    sendResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as SendOutcome,
+    async sendText(token: string, chatId: bigint, text: string, timeoutMs: number) {
+      fake.calls.push({ method: 'sendText', token, timeoutMs, chatId, text });
+      return fake.sendResult;
+    },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });
       return fake.me;

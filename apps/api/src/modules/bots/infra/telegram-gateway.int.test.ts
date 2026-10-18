@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { startFakeTelegram, type FakeTelegram } from '../../../test/fake-telegram.js';
-import { HEALTH_CHECK_TIMEOUT, OWNER_ACTION_TIMEOUT } from '../app/ports.js';
+import { sendAnswers, startFakeTelegram, type FakeTelegram } from '../../../test/fake-telegram.js';
+import { HEALTH_CHECK_TIMEOUT, OWNER_ACTION_TIMEOUT, SEND_TIMEOUT } from '../app/ports.js';
 import { createTelegramGateway } from './telegram-gateway.js';
 
 const TOKEN = '100001:TEST-gateway-token-not-real-aaaaaaaaaaaa';
@@ -193,5 +193,100 @@ describe('Telegram gateway (against the fake Bot API)', () => {
     );
     expect(serialised).not.toContain(TOKEN);
     expect(serialised).not.toContain(fake.apiRoot);
+  });
+
+  describe('sendText', () => {
+    const CHAT = 700001n;
+    const send = (text = 'Hello', timeoutMs = SEND_TIMEOUT, chat = CHAT) =>
+      gateway.sendText(TOKEN, chat, text, timeoutMs);
+    const script = (...sendMessage: ReturnType<(typeof sendAnswers)[keyof typeof sendAnswers]>[]) =>
+      fake.bot(TOKEN).script({ sendMessage });
+
+    it('exports a 10 s send timeout', () => {
+      expect(SEND_TIMEOUT).toBe(10_000);
+    });
+
+    it('accepts: message id and time (AC-17)', async () => {
+      script(sendAnswers.ok(77));
+      const out = await send();
+      expect(out).toMatchObject({ outcome: 'accepted', messageId: 77n });
+      expect(out.outcome === 'accepted' && out.at).toBeInstanceOf(Date);
+    });
+
+    it('sends the exact text with its line breaks, to the chat, without parse_mode', async () => {
+      const text = 'Hi <b>there</b> *you*\nsecond line\n\nthird';
+      script(sendAnswers.ok(1));
+      await send(text);
+      const calls = fake.calls(TOKEN).filter((c) => c.method === 'sendMessage');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.params.text).toBe(text);
+      expect(Number(calls[0]!.params.chat_id)).toBe(700001);
+      expect(calls[0]!.params).not.toHaveProperty('parse_mode');
+    });
+
+    it.each([
+      ['blocked', sendAnswers.blocked(), { outcome: 'refused', reason: 'blocked' }],
+      ['deactivated', sendAnswers.deactivated(), { outcome: 'refused', reason: 'account_gone' }],
+      [
+        'chat not found',
+        sendAnswers.chatNotFound(),
+        { outcome: 'refused', reason: 'chat_not_found' },
+      ],
+      ['401', sendAnswers.unauthorized(), { outcome: 'bot_unauthorized' }],
+      ['429', sendAnswers.tooMany(5), { outcome: 'not_accepted', retryAfterMs: 5000 }],
+      ['500', sendAnswers.serverError(), { outcome: 'not_accepted' }],
+    ])('classifies %s', async (_n, answer, expected) => {
+      script(answer);
+      expect(await send()).toEqual(expected);
+    });
+
+    it('a 500 carries no retryAfterMs', async () => {
+      script(sendAnswers.serverError());
+      expect(await send()).not.toHaveProperty('retryAfterMs');
+    });
+
+    it('a connection reset after the request was written is unknown, with one call', async () => {
+      script(sendAnswers.resetAfterWrite());
+      expect(await send()).toEqual({ outcome: 'unknown' });
+      expect(fake.calls(TOKEN).filter((c) => c.method === 'sendMessage')).toHaveLength(1);
+    });
+
+    it('a connection refused before the request was written is not_accepted', async () => {
+      const dead = createTelegramGateway({ apiRoot: 'http://127.0.0.1:1', maxConnections: 7 });
+      expect(await dead.sendText(TOKEN, CHAT, 'Hi', SEND_TIMEOUT)).toEqual({
+        outcome: 'not_accepted',
+      });
+    });
+
+    it('a hang past the timeout is unknown, with no second call', async () => {
+      script(sendAnswers.hang(2000));
+      const started = Date.now();
+      expect(await send('Hi', 300)).toEqual({ outcome: 'unknown' });
+      expect(Date.now() - started).toBeLessThan(1500);
+      expect(fake.calls(TOKEN).filter((c) => c.method === 'sendMessage')).toHaveLength(1);
+    });
+
+    it('a hang of 11 s is unknown after the real 10 s timeout', async () => {
+      script(sendAnswers.hang(11_000));
+      const started = Date.now();
+      expect(await send()).toEqual({ outcome: 'unknown' });
+      const elapsed = Date.now() - started;
+      expect(elapsed).toBeGreaterThanOrEqual(9900);
+      expect(elapsed).toBeLessThan(10_900);
+    }, 20_000);
+
+    it('puts neither the token, the text nor the API root in any outcome', async () => {
+      script(sendAnswers.blocked(), sendAnswers.serverError(), sendAnswers.resetAfterWrite());
+      const outs = [
+        await send('secret reply'),
+        await send('secret reply'),
+        await send('secret reply'),
+      ];
+      const serialised = JSON.stringify(outs, (_k, v: unknown) =>
+        typeof v === 'bigint' ? String(v) : v,
+      );
+      for (const bad of [TOKEN, 'secret reply', fake.apiRoot])
+        expect(serialised).not.toContain(bad);
+    });
   });
 });

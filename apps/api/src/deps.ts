@@ -25,6 +25,8 @@ import { createPasteToken } from './modules/bots/app/paste-token.js';
 import { createReconnect } from './modules/bots/app/reconnect.js';
 import { createBotSettings } from './modules/bots/app/settings.js';
 import { createBotSignals } from './modules/bots/infra/bot-signals.js';
+import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
+import { createSendText } from './modules/bots/app/send-text.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
@@ -139,8 +141,16 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     signals: createBotSignals(),
     webhookBaseUrl,
   };
+  const markNeedsToken = createMarkNeedsToken({
+    bots: botRepo,
+    clock,
+    transaction,
+    signals: botOwnerDeps.signals,
+  });
   const bots = {
     settings: botSettings,
+    markNeedsToken,
+    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken }).sendText,
     inboxStatus: createInboxBotStatus({ bots: botRepo }),
     paste: createPasteToken({ ...botOwnerDeps, conversations }),
     reconnect: createReconnect(botOwnerDeps),

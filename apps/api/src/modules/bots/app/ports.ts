@@ -155,7 +155,26 @@ export type GetMeResult =
  */
 export type WebhookTarget = 'ours' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
 
+/** Per-call timeout of `sendMessage` (sad.md §8): past it the answer is `unknown`. */
+export const SEND_TIMEOUT = 10_000;
+
+/**
+ * The answer to sending a reply, classified. Structurally identical to inbox's `GatewayOutcome`
+ * (`bots` must not import `inbox`); `send-text.test.ts` pins that at the type level.
+ */
+export type SendOutcome =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'refused'; reason: 'blocked' | 'account_gone' | 'chat_not_found' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'not_accepted'; retryAfterMs?: number }
+  | { outcome: 'unknown' };
+
 export interface TelegramGateway {
+  /**
+   * Plain text (no `parse_mode`). Never throws: every answer, a timeout included, is an outcome.
+   * A call that may have been written is never repeated here.
+   */
+  sendText(token: string, chatId: bigint, text: string, timeoutMs: number): Promise<SendOutcome>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
