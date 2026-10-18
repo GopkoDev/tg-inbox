@@ -1,13 +1,14 @@
 export type ThreadPosition =
   | { positionAt: Date; kind: 'message'; id: bigint }
-  | { positionAt: Date; kind: 'reply'; id: string };
+  | { positionAt: Date; kind: 'reply'; id: string }
+  | { positionAt: Date; kind: 'activity'; id: string };
 
 export interface ListPosition {
   lastActivityAt: Date;
   id: string;
 }
 
-const KIND_ORDER = { message: 0, reply: 1 } as const;
+const KIND_ORDER = { message: 0, reply: 1, activity: 2 } as const;
 
 export function compareThreadPosition(a: ThreadPosition, b: ThreadPosition): number {
   const dt = a.positionAt.getTime() - b.positionAt.getTime();
@@ -50,6 +51,7 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   const positionAt = toDate(o.at);
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
   if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
+  if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };
   }

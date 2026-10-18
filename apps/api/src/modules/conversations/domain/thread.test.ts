@@ -11,6 +11,11 @@ import {
 const t = (s: number, ms = 0) => new Date(Date.UTC(2026, 9, 11, 10, 0, s, ms));
 const msg = (s: number, id: bigint): ThreadPosition => ({ positionAt: t(s), kind: 'message', id });
 const reply = (s: number, id: string): ThreadPosition => ({ positionAt: t(s), kind: 'reply', id });
+const activity = (s: number, id: string): ThreadPosition => ({
+  positionAt: t(s),
+  kind: 'activity',
+  id,
+});
 
 describe('compareThreadPosition (AC-03)', () => {
   it('orders by position time first', () => {
@@ -44,7 +49,54 @@ describe('compareThreadPosition (AC-03)', () => {
   });
 });
 
+describe('compareThreadPosition with activity (AC-09)', () => {
+  it('orders message < reply < activity at equal positions', () => {
+    const items = [activity(5, 'a'), reply(5, 'r'), msg(5, 1n)];
+    items.sort(compareThreadPosition);
+    expect(items.map((i) => i.kind)).toEqual(['message', 'reply', 'activity']);
+    expect(compareThreadPosition(reply(5, 'z'), activity(5, 'a'))).toBeLessThan(0);
+    expect(compareThreadPosition(activity(5, 'a'), msg(5, 9n))).toBeGreaterThan(0);
+  });
+
+  it('orders activity by time before kind', () => {
+    expect(compareThreadPosition(activity(4, 'a'), msg(5, 1n))).toBeLessThan(0);
+  });
+
+  it('breaks activity ties by id', () => {
+    expect(compareThreadPosition(activity(5, 'a'), activity(5, 'b'))).toBeLessThan(0);
+    expect(compareThreadPosition(activity(5, 'b'), activity(5, 'a'))).toBeGreaterThan(0);
+    expect(compareThreadPosition(activity(5, 'a'), activity(5, 'a'))).toBe(0);
+  });
+});
+
 describe('thread cursor', () => {
+  it('round-trips an activity position', () => {
+    const p: ThreadPosition = { positionAt: t(5, 7), kind: 'activity', id: '0190a1b2-c3d4' };
+    expect(decodeThreadCursor(encodeThreadCursor(p))).toEqual(p);
+  });
+
+  it('still decodes cursors issued before the deploy (message / reply)', () => {
+    const old = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const at = t(5, 123).getTime();
+    expect(decodeThreadCursor(old({ k: 't', at, kind: 'message', id: '42' }))).toEqual({
+      positionAt: t(5, 123),
+      kind: 'message',
+      id: 42n,
+    });
+    expect(decodeThreadCursor(old({ k: 't', at, kind: 'reply', id: 'r-1' }))).toEqual({
+      positionAt: t(5, 123),
+      kind: 'reply',
+      id: 'r-1',
+    });
+  });
+
+  it('rejects an unknown kind and an empty activity id', () => {
+    const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const at = t(5).getTime();
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'note', id: 'x' }))).toBeNull();
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'activity', id: '' }))).toBeNull();
+  });
+
   it('round-trips a message position', () => {
     const c = encodeThreadCursor(msg(5, 123456789012n));
     const back = decodeThreadCursor(c);
