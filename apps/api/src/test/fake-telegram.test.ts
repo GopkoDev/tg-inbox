@@ -5,6 +5,7 @@ import { telegramApi } from '../platform/telegram.js';
 import {
   connectFakeTelegram,
   RECORDED,
+  sendAnswers,
   startFakeTelegram,
   type FakeTelegram,
 } from './fake-telegram.js';
@@ -353,5 +354,182 @@ describe('webhook update builders', () => {
     expect(await remote.calls()).toEqual([]);
     await expect(api().getMe()).rejects.toThrow();
     await fake.stop();
+  });
+});
+
+describe('fake Bot API: sendMessage', () => {
+  let fake: FakeTelegram;
+  const api = () => telegramApi(TOKEN, { apiRoot: fake.apiRoot });
+  const send = (text = 'hi') => api().sendMessage(700001, text, { parse_mode: 'HTML' });
+  const failure = async (p: Promise<unknown>) => (await p.catch((e: unknown) => e)) as GrammyError;
+
+  beforeAll(async () => {
+    fake = await startFakeTelegram();
+  });
+  afterAll(async () => {
+    await fake.stop();
+  });
+  beforeEach(() => {
+    fake.reset();
+  });
+
+  it('returns the sent message with the scripted id and records chat id, text and parse_mode', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.ok(77)] });
+    const sent = await send('hello');
+    expect(sent).toMatchObject({
+      message_id: 77,
+      chat: { id: 700001, type: 'private' },
+      text: 'hello',
+    });
+    expect(fake.calls(TOKEN)).toEqual([
+      {
+        token: TOKEN,
+        method: 'sendMessage',
+        params: { chat_id: 700001, text: 'hello', parse_mode: 'HTML' },
+      },
+    ]);
+  });
+
+  it.each([
+    ['blocked', sendAnswers.blocked(), 403, 'Forbidden: bot was blocked by the user'],
+    ['deactivated', sendAnswers.deactivated(), 403, 'Forbidden: user is deactivated'],
+    ['chatNotFound', sendAnswers.chatNotFound(), 400, 'Bad Request: chat not found'],
+    ['unauthorized', sendAnswers.unauthorized(), 401, 'Unauthorized'],
+    ['serverError', sendAnswers.serverError(), 500, 'Internal Server Error'],
+  ])('answers %s with the recorded error', async (_n, answer, code, description) => {
+    fake.bot(TOKEN).script({ sendMessage: [answer] });
+    const err = await failure(send());
+    expect(err).toBeInstanceOf(GrammyError);
+    expect(err.error_code).toBe(code);
+    expect(err.description).toBe(description);
+  });
+
+  it('answers tooMany with 429 and retry_after', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.tooMany(7)] });
+    const err = await failure(send());
+    expect(err.error_code).toBe(429);
+    expect(err.parameters.retry_after).toBe(7);
+  });
+
+  it('plays the script in call order, then falls back to ok with increasing message ids', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.tooMany(1), sendAnswers.ok(10)] });
+    expect((await failure(send())).error_code).toBe(429);
+    expect((await send()).message_id).toBe(10);
+    const a = await send();
+    const b = await send();
+    expect(b.message_id).toBeGreaterThan(a.message_id);
+    expect(fake.calls(TOKEN)).toHaveLength(4);
+  });
+
+  it('hang(ms) holds the answer past a client timeout', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.hang(3000)] });
+    const timed = new Api(TOKEN, { apiRoot: fake.apiRoot, timeoutSeconds: 1 });
+    await expect(timed.sendMessage(700001, 'x')).rejects.toBeInstanceOf(HttpError);
+    expect(fake.calls(TOKEN).filter((c) => c.method === 'sendMessage')).toHaveLength(1);
+  });
+
+  it('hang(ms) answers ok once the delay has passed', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.hang(250)] });
+    const started = performance.now();
+    await send();
+    expect(performance.now() - started).toBeGreaterThanOrEqual(230);
+  });
+
+  it('resetAfterWrite records the call, then drops the connection without an answer', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.resetAfterWrite()] });
+    await expect(send('lost')).rejects.toBeInstanceOf(HttpError);
+    expect(fake.calls(TOKEN).map((c) => c.params.text)).toEqual(['lost']);
+  });
+
+  it('is scriptable over HTTP from another process', async () => {
+    const remote = connectFakeTelegram(fake.apiRoot);
+    await remote.script(TOKEN, { sendMessage: [sendAnswers.blocked(), sendAnswers.ok(5)] });
+    expect((await failure(send())).error_code).toBe(403);
+    expect((await send()).message_id).toBe(5);
+  });
+});
+
+describe('fake Bot API: getFile and the file download', () => {
+  const MB5 = 5 * 1024 * 1024;
+  let fake: FakeTelegram;
+  const api = () => telegramApi(TOKEN, { apiRoot: fake.apiRoot });
+  const url = (path: string, token = TOKEN) => `${fake.apiRoot}/file/bot${token}/${path}`;
+
+  beforeAll(async () => {
+    fake = await startFakeTelegram();
+  });
+  afterAll(async () => {
+    await fake.stop();
+  });
+  beforeEach(() => {
+    fake.reset();
+    fake.bot(TOKEN).script({
+      files: {
+        'photo-1': { path: 'photos/file_1.jpg', size: MB5 },
+        big: 'too_big',
+        gone: 'not_found',
+      },
+    });
+  });
+
+  it('getFile returns file_path and file_size, and records the call', async () => {
+    const file = await api().getFile('photo-1');
+    expect(file).toMatchObject({
+      file_id: 'photo-1',
+      file_path: 'photos/file_1.jpg',
+      file_size: MB5,
+    });
+    expect(fake.calls(TOKEN)).toEqual([
+      { token: TOKEN, method: 'getFile', params: { file_id: 'photo-1' } },
+    ]);
+  });
+
+  it('getFile refuses a file over 20 MB with 400 "file is too big"', async () => {
+    const err = (await api()
+      .getFile('big')
+      .catch((e: unknown) => e)) as GrammyError;
+    expect(err).toBeInstanceOf(GrammyError);
+    expect(err.error_code).toBe(400);
+    expect(err.description).toBe('Bad Request: file is too big');
+  });
+
+  it('getFile answers 400 for a file Telegram no longer has or never knew', async () => {
+    for (const id of ['gone', 'unknown']) {
+      const err = (await api()
+        .getFile(id)
+        .catch((e: unknown) => e)) as GrammyError;
+      expect(err.error_code).toBe(400);
+      expect(err.description).toMatch(/^Bad Request:/);
+    }
+  });
+
+  it('serves the whole 5 MB file with 200 and the right length', async () => {
+    const res = await fetch(url('photos/file_1.jpg'));
+    expect(res.status).toBe(200);
+    expect((await res.arrayBuffer()).byteLength).toBe(MB5);
+  });
+
+  it('honours Range bytes=0-99 with 206, Content-Range and 100 bytes', async () => {
+    const res = await fetch(url('photos/file_1.jpg'), { headers: { range: 'bytes=0-99' } });
+    expect(res.status).toBe(206);
+    expect(res.headers.get('content-range')).toBe(`bytes 0-99/${MB5}`);
+    expect((await res.arrayBuffer()).byteLength).toBe(100);
+  });
+
+  it('serves consistent bytes for overlapping ranges', async () => {
+    const full = new Uint8Array(await (await fetch(url('photos/file_1.jpg'))).arrayBuffer());
+    const res = await fetch(url('photos/file_1.jpg'), { headers: { range: 'bytes=1000-1999' } });
+    expect(res.status).toBe(206);
+    expect(new Uint8Array(await res.arrayBuffer())).toEqual(full.slice(1000, 2000));
+  });
+
+  it('answers a Range beyond the end with 416', async () => {
+    const res = await fetch(url('photos/file_1.jpg'), { headers: { range: `bytes=${MB5}-` } });
+    expect(res.status).toBe(416);
+  });
+
+  it('answers 404 for an unknown path and for an unscripted token', async () => {
+    expect((await fetch(url('photos/nope.jpg'))).status).toBe(404);
+    expect((await fetch(url('photos/file_1.jpg', OTHER))).status).toBe(401);
   });
 });
