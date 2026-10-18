@@ -375,25 +375,19 @@ sequenceDiagram
 
 ## 7. Deployment view
 
-<!-- 🎯 Why: the TOPOLOGY DevOps must know without reading the deploy charts — how many replicas,
-     where the background worker lives, AT WHAT NUMBERS we scale.
-     📋 Write: 2–3 sentences on topology + monitoring + concrete threshold numbers.
-     📌 e.g. «500 authors → partition by quarter» (not «we'll think about scale later»).
-     🎯 N/A allowed for XS/S that reuses an existing deployment unit with no change.
-     Deployment-diagram scaffold → templates/deployment.md. -->
+No production target is chosen yet (architecture map: deferred until the first pilot goes live). The feature stays inside the one Node 26 process — Fastify API, built web panel, Telegram webhook ingress, the live socket endpoint and pg-boss workers — talking to one PostgreSQL 16 database ([ADR-0001](adr/0001-build-the-inbox-as-api-routes-a-live-socket-and-in-process-delivery-jobs-behind-the-existing-spa.md)). New for the runtime: long-lived WebSocket connections on the same origin (any proxy in front must pass `Upgrade` and keep idle sockets open — the server pings every 25 s so idle timeouts above 30 s suffice), one extra database connection per instance for `LISTEN` (outside the Kysely pool and pg-boss's own pool), and the `inbox.deliver-replies` queue (policy `stately`, singleton key = conversation id, polling interval 0.5 s). A second replica needs no code change and no sticky sessions: signals reach every instance through Postgres ([ADR-0003](adr/0003-fan-out-live-signals-through-postgres-listen-notify-published-in-the-writing-transaction.md)), the drain is serialised per conversation by pg-boss, and the per-member limit is counted in the database.
 
-<Topology in 2–3 sentences. Where it runs, replicas, scaling thresholds.>
+**Configuration added:** none. The rule constants (4096 characters, 30 replies per 60 s, 5-minute retry window, 5 s socket re-validation, 10 s send timeout) are fixed by the spec or this SAD and live in `inbox/domain`; the Telegram file download base follows `TELEGRAM_API_ROOT` like every Bot API call; the socket's allowed origin is `PUBLIC_WEB_URL`.
 
 **Monitoring:**
-- <Metrics — e.g. `<metric_name>`>
-- <Alerts — e.g. «worker lag > 10 min → page on-call»>
-- <Tracing — e.g. spans on the request boundary>
+- Metrics (from structured logs): reply latency from send to "sent"; live-push latency from commit to socket write; list, thread and media request durations; delivery outcomes by state and reason; attempts per reply; drain queue wait time; open sockets per instance; socket closes by reason (access removed, session ended, client); realtime listener reconnects and gap resyncs; per-member limit refusals
+- Alerts: uptime check on `GET /health` (availability); any reply ending "not confirmed" or "not delivered — Telegram did not accept it" (spec §7: 0 caused by tg-inbox); the daily duplicate reconciliation (replies with more than one accepted attempt and no member-confirmed resend) above 0; drain queue wait above 30 s; the realtime listener down for more than 10 s
+- Tracing: Fastify per-request id in every log line; delivery logs carry workspace id, conversation id, reply id and attempt id — never reply text, message text, the token or a Telegram file URL
 
 **Scaling thresholds:**
-- <e.g. comfortable in one table up to N rows/year>
-- <e.g. partition by quarter above N rows/year>
-
-<!-- For XS/S with no deployment change: <!-- N/A: reuses existing deployment unit, no infra change --> -->
+- Pilot scale is 5–10 workspaces with a few members each: tens of open sockets, one re-validation query per workspace with open sockets every 5 s; past ~1 000 open sockets per instance, move re-validation to deactivation and session-end signals plus a slower sweep
+- `DATABASE_POOL_MAX` (default 10) is shared by HTTP reads, webhook capture (`TELEGRAM_WEBHOOK_MAX_CONNECTIONS` below it) and the delivery worker; run the worker with a local concurrency of 2 and raise the pool before raising either
+- Lists and threads are paged by keyset; the spec's seeded sizes (1 000 conversations, 5 000-message thread) fit plain B-tree indexes; contact search scans one workspace's contacts — add a trigram index when a workspace passes ~10 000 contacts
 
 ## 8. Crosscutting concepts
 
