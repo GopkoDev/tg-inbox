@@ -186,7 +186,7 @@ describe('TeamPage (SCR-07)', () => {
     await act('bob@x.test', 'Deactivate');
     expect(
       await screen.findByText(
-        'Deactivate Bob? Bob loses access to Acme Flowers at once. You can reactivate them later.',
+        'Deactivate Bob? Bob loses access to Acme Flowers at once. Conversations assigned to Bob here become unassigned, and reactivating does not give them back. You can reactivate them later.',
       ),
     ).toBeInTheDocument();
     fireEvent.click(await lastButton('Deactivate'));

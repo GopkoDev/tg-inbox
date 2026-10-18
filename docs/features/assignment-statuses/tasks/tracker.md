@@ -26,7 +26,7 @@
 | T19 | [Build SCR-10, the assignee chooser: me first, active teammates, unassign, current check, per-row pending and the in-place not-active refusal](./t19-scr10-assignee-chooser.md) | ui | Dmytro Hopko | S | T18 | done |
 | T20 | [Build SCR-11, the confirm-over-a-recent-change dialog: current state, who or what changed it and when, go ahead or leave it, asks again](./t20-scr11-state-changed-dialog.md) | ui | Dmytro Hopko | S | T19 | done |
 | T21 | [Build SCR-12, the close confirmation: every close reason, close anyway with the refusal's version and snapshot, asks again](./t21-scr12-close-confirm-dialog.md) | ui | Dmytro Hopko | S | T18 | done |
-| T22 | [Add the unassign sentence to the deactivate confirmation (SCR-14) and keep the lenses in the sign-in return address (SCR-09)](./t22-deactivate-copy-and-signin-return.md) | ui | Dmytro Hopko | S | T16 | todo |
+| T22 | [Add the unassign sentence to the deactivate confirmation (SCR-14) and keep the lenses in the sign-in return address (SCR-09)](./t22-deactivate-copy-and-signin-return.md) | ui | Dmytro Hopko | S | T16 | done |
 | T23 | [Add browser end-to-end assignment flows against the real API and the fake Bot API](./t23-browser-e2e.md) | tests | Dmytro Hopko | M | T15, T17, T20, T21, T22 | todo |
 | T24 | [Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the conversation state, the activity table, the deactivation port and the new components](./t24-docs-and-canon.md) | docs | Dmytro Hopko | S | T10, T14, T17, T20, T21, T22 | todo |
 

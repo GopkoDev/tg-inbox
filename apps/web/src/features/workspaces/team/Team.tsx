@@ -357,7 +357,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {confirm.kind === 'deactivate'
-                    ? `Deactivate ${confirm.member.display_name}? ${confirm.member.display_name} loses access to ${workspaceName} at once. You can reactivate them later.`
+                    ? `Deactivate ${confirm.member.display_name}? ${confirm.member.display_name} loses access to ${workspaceName} at once. Conversations assigned to ${confirm.member.display_name} here become unassigned, and reactivating does not give them back. You can reactivate them later.`
                     : `Revoke the invitation for ${confirm.invite.email}? Its link stops working.`}
                 </AlertDialogDescription>
               </AlertDialogHeader>
