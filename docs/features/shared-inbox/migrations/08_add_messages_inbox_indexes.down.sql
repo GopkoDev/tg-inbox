@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS messages_conversation_id_sent_at_idx;
+DROP INDEX IF EXISTS messages_conversation_id_received_at_idx;
