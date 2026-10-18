@@ -4,9 +4,11 @@ import { canTransition } from '../domain/reply.js';
 import type { Transaction } from './conversations.js';
 import type {
   AttemptKind,
+  AttemptOutcomeValue,
   ConversationSignals,
   EnqueueDrain,
   ReplyRepo,
+  ReplySettlement,
   ReplyView,
 } from './ports.js';
 
@@ -178,4 +180,199 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
       });
     },
   };
+}
+
+export interface FinishAttemptInput {
+  workspaceId: string;
+  conversationId: string;
+  attemptId: string;
+  attemptOutcome: AttemptOutcomeValue;
+  /** `sending` leaves the reply as it is (a not-accepted answer inside the retry window). */
+  replyState: 'sending' | 'sent' | 'not_delivered' | 'not_confirmed';
+  failureReason?: string;
+  telegramMessageId?: bigint;
+  sentAt?: Date;
+}
+
+export interface ReplyDelivery {
+  pendingReplies(workspaceId: string, conversationId: string): Promise<ReplyView[]>;
+  lastStartedAt(workspaceId: string, conversationId: string): Promise<Date | null>;
+  /** Commits the attempt's `started_at` (in flight); null when the reply is no longer `sending`. */
+  startAttempt(input: {
+    workspaceId: string;
+    conversationId: string;
+    replyId: string;
+  }): Promise<{ attemptId: string } | null>;
+  /** Records the outcome, settles the reply and signals; false (no write) when already finished. */
+  finishAttempt(input: FinishAttemptInput): Promise<boolean>;
+  /** A pre-check failed: the attempt is `skipped` and the reply `not_delivered`. */
+  skipReply(input: {
+    workspaceId: string;
+    conversationId: string;
+    replyId: string;
+    failureReason: string;
+  }): Promise<boolean>;
+  /** In-flight attempts started before `olderThan` become `unknown`, their replies `not_confirmed`. */
+  resolveStaleInFlight(
+    workspaceId: string,
+    conversationId: string,
+    olderThan: Date,
+  ): Promise<string[]>;
+  /** Dead-letter: every in-flight attempt `unknown`; unattempted `sending` replies `delivery_interrupted`. */
+  resolveDeadLetter(
+    workspaceId: string,
+    conversationId: string,
+  ): Promise<{ notConfirmed: string[]; interrupted: string[] }>;
+}
+
+/** The storage half of the drain: pending, in flight, and the truthful final state of each reply (ADR-0004). */
+export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
+  const { transaction, replies, signals, clock } = deps;
+  type Tx = Parameters<Parameters<Transaction>[0]>[0];
+
+  /** Settles a `sending` reply and publishes its `state` signal; null when it was not `sending`. */
+  async function settle(
+    tx: Tx,
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    settlement: ReplySettlement,
+  ): Promise<ReplyView | null> {
+    const reply = await replies.settleReply(workspaceId, conversationId, replyId, settlement, tx);
+    if (!reply) return null;
+    if (settlement.state === 'sent') {
+      await replies.raiseReplySent(workspaceId, conversationId, settlement.sentAt, tx);
+    }
+    await signals.replyChanged(tx, { workspaceId, conversationId, replyId, change: 'state' });
+    return reply;
+  }
+
+  return {
+    pendingReplies: (workspaceId, conversationId) =>
+      replies.pendingReplies(workspaceId, conversationId),
+    lastStartedAt: (workspaceId, conversationId) =>
+      replies.lastStartedAt(workspaceId, conversationId),
+
+    startAttempt({ workspaceId, conversationId, replyId }) {
+      return transaction(async (tx) => {
+        const attemptId = await replies.startAttempt(
+          workspaceId,
+          conversationId,
+          replyId,
+          newId(),
+          clock.now(),
+          tx,
+        );
+        return attemptId ? { attemptId } : null;
+      });
+    },
+
+    finishAttempt(input) {
+      const { workspaceId, conversationId } = input;
+      return transaction(async (tx) => {
+        const finished = await replies.finishAttempt(
+          workspaceId,
+          conversationId,
+          input.attemptId,
+          input.attemptOutcome,
+          clock.now(),
+          tx,
+        );
+        if (!finished) return false;
+        let settlement: ReplySettlement;
+        switch (input.replyState) {
+          case 'sending':
+            return true;
+          case 'sent':
+            if (input.telegramMessageId === undefined || !input.sentAt) {
+              throw new Error('A sent reply needs the Telegram message id and the sent time');
+            }
+            settlement = {
+              state: 'sent',
+              telegramMessageId: input.telegramMessageId,
+              sentAt: input.sentAt,
+            };
+            break;
+          case 'not_delivered':
+            if (!input.failureReason)
+              throw new Error('A not delivered reply needs a failure reason');
+            settlement = { state: 'not_delivered', failureReason: input.failureReason };
+            break;
+          case 'not_confirmed':
+            settlement = { state: 'not_confirmed' };
+            break;
+        }
+        await settle(tx, workspaceId, conversationId, finished.replyId, settlement);
+        return true;
+      });
+    },
+
+    skipReply({ workspaceId, conversationId, replyId, failureReason }) {
+      return transaction(async (tx) => {
+        const reply = await settle(tx, workspaceId, conversationId, replyId, {
+          state: 'not_delivered',
+          failureReason,
+        });
+        if (!reply) return false;
+        await replies.skipAttempt(workspaceId, conversationId, replyId, newId(), clock.now(), tx);
+        return true;
+      });
+    },
+
+    resolveStaleInFlight(workspaceId, conversationId, olderThan) {
+      return transaction(async (tx) => {
+        const stale = await replies.inFlightAttempts(workspaceId, conversationId, olderThan, tx);
+        return resolveUnknown(tx, workspaceId, conversationId, stale);
+      });
+    },
+
+    resolveDeadLetter(workspaceId, conversationId) {
+      return transaction(async (tx) => {
+        const inFlight = await replies.inFlightAttempts(workspaceId, conversationId, null, tx);
+        const notConfirmed = await resolveUnknown(tx, workspaceId, conversationId, inFlight);
+        const interrupted: string[] = [];
+        for (const reply of await replies.pendingReplies(workspaceId, conversationId, tx)) {
+          const settled = await settle(tx, workspaceId, conversationId, reply.id, {
+            state: 'not_delivered',
+            failureReason: 'delivery_interrupted',
+          });
+          if (!settled) continue;
+          await replies.skipAttempt(
+            workspaceId,
+            conversationId,
+            reply.id,
+            newId(),
+            clock.now(),
+            tx,
+          );
+          interrupted.push(reply.id);
+        }
+        return { notConfirmed, interrupted };
+      });
+    },
+  };
+
+  /** Each in-flight attempt ends `unknown` and its reply `not_confirmed`; never retried on its own. */
+  async function resolveUnknown(
+    tx: Tx,
+    workspaceId: string,
+    conversationId: string,
+    attempts: Array<{ id: string; replyId: string }>,
+  ): Promise<string[]> {
+    const resolved: string[] = [];
+    for (const attempt of attempts) {
+      const done = await replies.finishAttempt(
+        workspaceId,
+        conversationId,
+        attempt.id,
+        'unknown',
+        clock.now(),
+        tx,
+      );
+      if (!done) continue;
+      await settle(tx, workspaceId, conversationId, done.replyId, { state: 'not_confirmed' });
+      resolved.push(done.replyId);
+    }
+    return resolved;
+  }
 }

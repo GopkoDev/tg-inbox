@@ -322,4 +322,73 @@ export interface ReplyRepo {
     positionAt: Date,
     tx?: Executor,
   ): Promise<ReplyView | null>;
+  // ───────── delivery side (inbox drain) ─────────
+
+  /** The conversation's `sending` replies, oldest position first. */
+  pendingReplies(workspaceId: string, conversationId: string, tx?: Executor): Promise<ReplyView[]>;
+  /** Start of the newest started attempt of the conversation (pacing); null when none. */
+  lastStartedAt(workspaceId: string, conversationId: string, tx?: Executor): Promise<Date | null>;
+  /**
+   * Puts the reply in flight: stamps `startedAt` on its oldest unstarted attempt or, when there is none
+   * (an automatic retry), inserts a `retry` attempt already started. Null unless the reply is `sending`.
+   */
+  startAttempt(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    attemptId: string,
+    startedAt: Date,
+    tx?: Executor,
+  ): Promise<string | null>;
+  /** Records the outcome on an unfinished attempt; null (nothing written) when it is already finished. */
+  finishAttempt(
+    workspaceId: string,
+    conversationId: string,
+    attemptId: string,
+    outcome: AttemptOutcomeValue,
+    finishedAt: Date,
+    tx?: Executor,
+  ): Promise<{ replyId: string } | null>;
+  /** `sending` -> a final state; null when the reply is not `sending`. */
+  settleReply(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    settlement: ReplySettlement,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
+  /** A reply was sent at `sentAt`: raises the reply and activity columns in one UPDATE (GREATEST). */
+  raiseReplySent(
+    workspaceId: string,
+    conversationId: string,
+    sentAt: Date,
+    tx?: Executor,
+  ): Promise<void>;
+  /**
+   * Closes the reply's never-started attempt as `skipped`, or inserts a finished `retry` one when it has
+   * none; returns nothing.
+   */
+  skipAttempt(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    attemptId: string,
+    finishedAt: Date,
+    tx?: Executor,
+  ): Promise<void>;
+  /** Attempts started and unfinished, started before `olderThan` when given; locked for the transaction. */
+  inFlightAttempts(
+    workspaceId: string,
+    conversationId: string,
+    olderThan: Date | null,
+    tx?: Executor,
+  ): Promise<Array<{ id: string; replyId: string }>>;
 }
+
+export type AttemptOutcomeValue =
+  'accepted' | 'refused' | 'bot_unauthorized' | 'not_accepted' | 'unknown' | 'skipped';
+
+export type ReplySettlement =
+  | { state: 'sent'; telegramMessageId: bigint; sentAt: Date }
+  | { state: 'not_delivered'; failureReason: string }
+  | { state: 'not_confirmed' };

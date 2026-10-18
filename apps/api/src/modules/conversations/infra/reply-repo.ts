@@ -157,5 +157,173 @@ export function createReplyRepo(db: Db): ReplyRepo {
         .executeTakeFirst();
       return row ? toReplyView(row) : null;
     },
+
+    async pendingReplies(workspaceId, conversationId, tx) {
+      const rows = await (tx ?? db)
+        .selectFrom('replies')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('state', '=', 'sending')
+        .orderBy('position_at')
+        .orderBy('id')
+        .execute();
+      return rows.map(toReplyView);
+    },
+
+    async lastStartedAt(workspaceId, conversationId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('reply_attempts')
+        .select('started_at')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('started_at', 'is not', null)
+        .orderBy('started_at', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      return row?.started_at ?? null;
+    },
+
+    async startAttempt(workspaceId, conversationId, replyId, attemptId, startedAt, tx) {
+      const exec = tx ?? db;
+      const reply = await exec
+        .selectFrom('replies')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('id', '=', replyId)
+        .where('state', '=', 'sending')
+        .forUpdate()
+        .executeTakeFirst();
+      if (!reply) return null;
+      const unstarted = await exec
+        .updateTable('reply_attempts')
+        .set({ started_at: startedAt })
+        .where('id', '=', (eb) =>
+          eb
+            .selectFrom('reply_attempts')
+            .select('id')
+            .where('workspace_id', '=', workspaceId)
+            .where('conversation_id', '=', conversationId)
+            .where('reply_id', '=', replyId)
+            .where('started_at', 'is', null)
+            .where('finished_at', 'is', null)
+            .orderBy('created_at')
+            .orderBy('id')
+            .limit(1),
+        )
+        .where('workspace_id', '=', workspaceId)
+        .returning('id')
+        .executeTakeFirst();
+      if (unstarted) return unstarted.id;
+      await exec
+        .insertInto('reply_attempts')
+        .values({
+          id: attemptId,
+          workspace_id: workspaceId,
+          conversation_id: conversationId,
+          reply_id: replyId,
+          kind: 'retry',
+          initiated_by_account_id: null,
+          created_at: startedAt,
+          started_at: startedAt,
+        })
+        .execute();
+      return attemptId;
+    },
+
+    async finishAttempt(workspaceId, conversationId, attemptId, outcome, finishedAt, tx) {
+      const row = await (tx ?? db)
+        .updateTable('reply_attempts')
+        .set({ outcome, finished_at: finishedAt })
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('id', '=', attemptId)
+        .where('finished_at', 'is', null)
+        .returning('reply_id')
+        .executeTakeFirst();
+      return row ? { replyId: row.reply_id } : null;
+    },
+
+    async settleReply(workspaceId, conversationId, replyId, settlement, tx) {
+      const values =
+        settlement.state === 'sent'
+          ? {
+              state: 'sent',
+              failure_reason: null,
+              sent_at: settlement.sentAt,
+              telegram_message_id: settlement.telegramMessageId,
+            }
+          : {
+              state: settlement.state,
+              failure_reason:
+                settlement.state === 'not_delivered' ? settlement.failureReason : null,
+            };
+      const row = await (tx ?? db)
+        .updateTable('replies')
+        .set(values)
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('id', '=', replyId)
+        .where('state', '=', 'sending')
+        .returningAll()
+        .executeTakeFirst();
+      return row ? toReplyView(row) : null;
+    },
+
+    async raiseReplySent(workspaceId, conversationId, sentAt, tx) {
+      // One UPDATE: every right-hand side reads the old row, so activity includes the new sent time itself.
+      await (tx ?? db)
+        .updateTable('conversations')
+        .set({
+          last_reply_sent_at: sql`GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)`,
+          last_activity_at: sql`GREATEST(last_message_received_at, last_reply_sent_at, ${sentAt}::timestamptz)`,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .execute();
+    },
+
+    async skipAttempt(workspaceId, conversationId, replyId, attemptId, finishedAt, tx) {
+      const exec = tx ?? db;
+      const closed = await exec
+        .updateTable('reply_attempts')
+        .set({ outcome: 'skipped', finished_at: finishedAt })
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('reply_id', '=', replyId)
+        .where('started_at', 'is', null)
+        .where('finished_at', 'is', null)
+        .returning('id')
+        .execute();
+      if (closed.length > 0) return;
+      await exec
+        .insertInto('reply_attempts')
+        .values({
+          id: attemptId,
+          workspace_id: workspaceId,
+          conversation_id: conversationId,
+          reply_id: replyId,
+          kind: 'retry',
+          initiated_by_account_id: null,
+          created_at: finishedAt,
+          outcome: 'skipped',
+          finished_at: finishedAt,
+        })
+        .execute();
+    },
+
+    async inFlightAttempts(workspaceId, conversationId, olderThan, tx) {
+      let query = (tx ?? db)
+        .selectFrom('reply_attempts')
+        .select(['id', 'reply_id'])
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('started_at', 'is not', null)
+        .where('finished_at', 'is', null);
+      if (olderThan) query = query.where('started_at', '<', olderThan);
+      const rows = await query.orderBy('started_at').forUpdate().execute();
+      return rows.map((r) => ({ id: r.id, replyId: r.reply_id }));
+    },
   };
 }

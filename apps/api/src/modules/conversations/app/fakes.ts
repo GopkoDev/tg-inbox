@@ -185,6 +185,9 @@ export interface FakeAttempt {
   kind: string;
   initiatedByAccountId: string | null;
   createdAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  outcome: string | null;
 }
 
 /** In-memory ReplyRepo for unit tests (one workspace's conversations are `known`). */
@@ -193,7 +196,10 @@ export function fakeReplyRepo(o: {
 }): ReplyRepo & {
   replies: Array<ReplyView & { workspaceId: string }>;
   attempts: FakeAttempt[];
+  /** Sent times raised by `raiseReplySent`, in call order. */
+  raised: Date[];
 } {
+  const raised: Date[] = [];
   const replies: Array<ReplyView & { workspaceId: string }> = [];
   const attempts: FakeAttempt[] = [];
   const own = (w: string, c: string) =>
@@ -209,6 +215,7 @@ export function fakeReplyRepo(o: {
   return {
     replies,
     attempts,
+    raised,
     async findByClientKey(w, c, key) {
       const r = own(w, c).find((x) => x.clientKey === key);
       return r ? strip(r) : null;
@@ -252,13 +259,113 @@ export function fakeReplyRepo(o: {
       return strip(row);
     },
     async insertAttempt(w, a) {
-      attempts.push({ ...a, workspaceId: w, initiatedByAccountId: a.initiatedByAccountId });
+      attempts.push({
+        ...a,
+        workspaceId: w,
+        startedAt: null,
+        finishedAt: null,
+        outcome: null,
+      });
     },
     async requeue(w, c, id, positionAt) {
       const r = own(w, c).find((x) => x.id === id);
       if (!r || (r.state !== 'not_delivered' && r.state !== 'not_confirmed')) return null;
       Object.assign(r, { state: 'sending', failureReason: null, positionAt });
       return strip(r);
+    },
+
+    async pendingReplies(w, c) {
+      return own(w, c)
+        .filter((r) => r.state === 'sending')
+        .sort(order)
+        .map(strip);
+    },
+    async lastStartedAt(w, c) {
+      const times = attempts
+        .filter((a) => a.workspaceId === w && a.conversationId === c && a.startedAt)
+        .map((a) => a.startedAt!.getTime());
+      return times.length ? new Date(Math.max(...times)) : null;
+    },
+    async startAttempt(w, c, replyId, attemptId, startedAt) {
+      const r = own(w, c).find((x) => x.id === replyId);
+      if (r?.state !== 'sending') return null;
+      const open = attempts
+        .filter(
+          (a) => a.workspaceId === w && a.replyId === replyId && !a.startedAt && !a.finishedAt,
+        )
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())[0];
+      if (open) {
+        open.startedAt = startedAt;
+        return open.id;
+      }
+      attempts.push({
+        id: attemptId,
+        workspaceId: w,
+        conversationId: c,
+        replyId,
+        kind: 'retry',
+        initiatedByAccountId: null,
+        createdAt: startedAt,
+        startedAt,
+        finishedAt: null,
+        outcome: null,
+      });
+      return attemptId;
+    },
+    async finishAttempt(w, c, attemptId, outcome, finishedAt) {
+      const a = attempts.find(
+        (x) => x.workspaceId === w && x.conversationId === c && x.id === attemptId,
+      );
+      if (!a || a.finishedAt) return null;
+      Object.assign(a, { outcome, finishedAt });
+      return { replyId: a.replyId };
+    },
+    async settleReply(w, c, replyId, settlement) {
+      const r = own(w, c).find((x) => x.id === replyId);
+      if (r?.state !== 'sending') return null;
+      if (settlement.state === 'sent') {
+        Object.assign(r, { state: 'sent', failureReason: null, sentAt: settlement.sentAt });
+      } else {
+        Object.assign(r, {
+          state: settlement.state,
+          failureReason: settlement.state === 'not_delivered' ? settlement.failureReason : null,
+        });
+      }
+      return strip(r);
+    },
+    async raiseReplySent(_w, _c, sentAt) {
+      raised.push(sentAt);
+    },
+    async skipAttempt(w, c, replyId, attemptId, finishedAt) {
+      const open = attempts.filter(
+        (a) => a.workspaceId === w && a.replyId === replyId && !a.startedAt && !a.finishedAt,
+      );
+      for (const a of open) Object.assign(a, { outcome: 'skipped', finishedAt });
+      if (open.length > 0) return;
+      attempts.push({
+        id: attemptId,
+        workspaceId: w,
+        conversationId: c,
+        replyId,
+        kind: 'retry',
+        initiatedByAccountId: null,
+        createdAt: finishedAt,
+        startedAt: null,
+        finishedAt,
+        outcome: 'skipped',
+      });
+    },
+    async inFlightAttempts(w, c, olderThan) {
+      return attempts
+        .filter(
+          (a) =>
+            a.workspaceId === w &&
+            a.conversationId === c &&
+            a.startedAt &&
+            !a.finishedAt &&
+            (!olderThan || a.startedAt < olderThan),
+        )
+        .map((a) => ({ id: a.id, replyId: a.replyId }));
     },
   };
 }
