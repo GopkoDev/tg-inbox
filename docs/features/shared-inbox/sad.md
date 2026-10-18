@@ -238,31 +238,140 @@ C4Container
 
 ## 6. Runtime view
 
-<!-- 🎯 Why: the RUNTIME FLOW of 1–2 critical scenarios — who talks to whom, when, in what order.
-     Without §6, §5 is just boxes with no life.
-     📋 Write: a Mermaid sequenceDiagram. Participants are names from §5 (don't invent new ones).
-     Messages are semantic («saves a draft»), NO HTTP verbs / paths / status codes — endpoint-level
-     sequences arrive at the `api` stage.
-     📌 e.g. «author → web: composes draft → web → content API: save». Seed the primary flow(s) here;
-     the `sequences` stage then covers every §5 AC (no cap). Never N/A for M+; XS/S keeps ≥1 happy-path flow. -->
+Seeded critical flows; the `sequences` stage extends this section until every spec §5 acceptance criterion maps to a flow or a branch. Participants are the §5 containers.
 
-**Critical flow 1: <flow name>**
+**Critical flow 1: Send a reply and deliver it at most once (US-03, US-04, US-05 — AC-06, AC-07, AC-10, AC-11, AC-12, AC-12b, AC-13, AC-16, AC-17)**
 
 ```mermaid
 sequenceDiagram
-    actor Actor
-    participant Web
-    participant Service
-    participant Store
-    Actor->>Web: <action>
-    Web->>Service: <call>
-    Service->>Store: <write>
-    Store-->>Service: ok
-    Service-->>Web: result
-    Web-->>Actor: confirmation
+    actor Member as Operator or Business owner
+    participant Web as Web panel
+    participant Http as API server
+    participant Inbox as inbox module
+    participant Conv as conversations module
+    participant Bots as bots module
+    participant Rt as realtime platform service
+    participant Tg as Telegram Bot API
+    Member->>Web: types a reply and presses Enter
+    Web->>Web: rejects empty, blank or over 4096 characters before sending
+    Web->>Http: send reply with client key and newest teammate reply seen
+    Http->>Inbox: send reply as this active member
+    Inbox->>Bots: can the bot carry replies
+    alt bot not connected or needs a new token
+        Bots-->>Inbox: cannot reply
+        Inbox-->>Web: refused, bot not working
+    else bot can carry replies
+        Inbox->>Conv: create reply in one transaction
+        alt same client key already stored
+            Conv-->>Inbox: the existing reply, nothing new sent
+        else 30 member-initiated sends in the last 60 s
+            Conv-->>Inbox: refused with the time sending resumes
+        else a teammate replied after the one seen and no confirmation flag
+            Conv-->>Inbox: refused, teammate replied, with who and when
+        else accepted
+            Conv->>Rt: signal reply created, inside the transaction
+            Conv-->>Inbox: reply stored as sending
+            Inbox->>Inbox: enqueue the drain for this conversation
+        end
+        Inbox-->>Web: reply or refusal
+    end
+    Web-->>Member: reply shown as sending, or the reason it was not sent
+    Note over Inbox,Tg: drain job, one at a time per conversation, oldest pending reply first
+    Note over Inbox,Bots: before each attempt the author must still be active and the bot able to carry replies, else not delivered with that reason
+    Inbox->>Conv: record attempt in flight
+    Inbox->>Bots: send text to the conversation's chat
+    Bots->>Tg: sendMessage as plain text
+    alt accepted
+        Tg-->>Bots: sent message id
+        Bots-->>Inbox: accepted
+        Inbox->>Conv: mark sent, update activity and waiting marker
+    else blocked bot, account gone or chat not found
+        Bots-->>Inbox: refused permanently with the reason
+        Inbox->>Conv: mark not delivered with the reason
+    else unavailable or slow down, within 5 minutes
+        Bots-->>Inbox: not accepted, retry after the back-off
+        Inbox->>Conv: keep sending, schedule the next drain, later replies wait
+    else unavailable or slow down, 5 minutes passed
+        Inbox->>Conv: mark not delivered, Telegram did not accept it
+    else timeout or broken connection after the request was written
+        Bots-->>Inbox: outcome unknown
+        Inbox->>Conv: mark not confirmed, never retried on its own
+    end
+    Conv->>Rt: signal reply state changed, inside the transaction
 ```
 
-**Critical flow 2: <e.g. async event propagation>** — <if applicable, otherwise N/A>.
+**Critical flow 2: A live change reaches every open inbox, and access ends within 5 s (US-06 — AC-09, AC-15, AC-01)**
+
+```mermaid
+sequenceDiagram
+    participant Tg as Telegram Bot API
+    participant Bots as bots module
+    participant Conv as conversations module
+    participant Rt as realtime platform service
+    participant Inbox as inbox module
+    participant Web as Web panel
+    actor Member as Operator or Business owner
+    Tg->>Bots: customer message for the workspace's bot
+    Bots->>Conv: capture message
+    Conv->>Conv: store message, update activity, waiting and last item
+    Conv->>Rt: signal conversation changed with message id, in the same transaction
+    Rt->>Inbox: signal delivered on commit to every instance
+    Inbox->>Web: push signal to the sockets of this workspace
+    Web->>Inbox: read the changed list row and, if open, the new thread item
+    Inbox-->>Web: row with this member's unread count, item with sender and kind
+    opt thread open in a visible tab
+        Web->>Inbox: mark read through the shown item's arrival
+    end
+    Web-->>Member: list re-ordered, thread updated, no reload
+    Note over Inbox,Web: every 5 s the hub re-checks session and active membership of its sockets
+    alt member deactivated
+        Inbox->>Web: close the socket with access removed
+        Web-->>Member: next action shows the access-removed notice
+    else member switches workspace in this tab
+        Web->>Web: reset the inbox store and close the socket
+        Web->>Inbox: open a socket for the other workspace
+    end
+```
+
+**Critical flow 3: Open a customer's media through the panel (US-02 — AC-04, AC-05, AC-08)**
+
+```mermaid
+sequenceDiagram
+    actor Member as Operator or Business owner
+    participant Web as Web panel
+    participant Http as API server
+    participant Inbox as inbox module
+    participant Conv as conversations module
+    participant Bots as bots module
+    participant Tg as Telegram Bot API
+    Member->>Web: opens a photo, plays a voice note or downloads a file
+    Web->>Http: media of this message in this conversation
+    Http->>Http: guard the workspace
+    Http->>Inbox: open media for this member
+    Inbox->>Conv: media reference of the message in this workspace
+    alt no such message in this workspace
+        Conv-->>Inbox: not found
+        Inbox-->>Web: not found, no hint it exists
+    else reference found
+        Conv-->>Inbox: file reference, kind, size, file name
+        Inbox->>Bots: open media stream
+        alt bot disconnected or not working, or file over 20 MB
+            Bots-->>Inbox: unavailable with the reason
+        else bot can download
+            Bots->>Tg: getFile with the stored token
+            alt Telegram no longer has the file or refuses its size
+                Tg-->>Bots: error
+                Bots-->>Inbox: unavailable with the reason
+            else file path returned
+                Bots->>Tg: download the file bytes, range forwarded
+                Tg-->>Bots: byte stream
+                Bots-->>Inbox: stream with kind and length
+            end
+        end
+        Inbox-->>Web: bytes with safe headers, or content unavailable with the reason
+    end
+    Web-->>Member: shown, played or downloaded, or content unavailable with the reason
+```
 
 ## 7. Deployment view
 
