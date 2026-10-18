@@ -1,0 +1,1580 @@
+# Derived contract for shared-inbox. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (conversations, messages, replies, reply_attempts, read_marks,
+#                           memberships) + the existing schema (contacts, messages.telegram_message, bots.state,
+#                           accounts.display_name)
+#   error responses       ← sad.md §6 flows 1–10 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The live socket frames,
+# the NOTIFY signals and the inbox.deliver-replies queue are in events.md.
+#
+# Deviations from the api-skill defaults follow the workspace-operators and bot-connection precedents and
+# are recorded in api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - idempotency: the client reply key in the body (data-model replies.client_key), not an
+#     Idempotency-Key header
+#   - cursors: opaque strings (keyset over two columns), not a bare uuid
+openapi: 3.1.0
+
+info:
+  title: shared-inbox API
+  version: 0.1.0
+  description: |
+    Turns the inbox preview into the real, shared inbox of a workspace. Every member, operators and
+    business owners alike, sees the workspace's captured conversations newest activity first, with
+    their own unread counts and a shared "waiting for a reply" marker. They can search the list by the
+    contact's name or username and read a conversation's whole history. The customer's media opens
+    through the panel. Members write text replies that the business bot sends to the end customer in
+    Telegram. Each reply carries a delivery state ("sending", "sent", "not delivered" with a reason,
+    "not confirmed"). The inbox never sends a reply twice unless a member chooses to, and never sends
+    one silently into a broken bot. Changes made by teammates and customers appear live through one
+    WebSocket per tab. The socket carries ids only, and the panel re-reads each change through these
+    routes.
+
+    Every route sits under `/api/workspaces/{workspaceId}/inbox…` behind the workspace-access guard of
+    workspace-operators, and both roles have the same rights here (AC-01). A caller who was never a
+    member gets `404 NOT_FOUND`, with no hint that the workspace exists. A deactivated member gets
+    `403 ACCESS_REMOVED`. A signed-out caller gets `401 UNAUTHENTICATED` (AC-08). A conversation,
+    message or reply id is always looked up together with the workspace id, so a foreign id is
+    `404 NOT_FOUND` too. Every JSON answer carries the `workspace_id` it belongs to, and the panel drops
+    any answer for another workspace (AC-09, AC-18). No answer, header or media byte stream contains
+    the bot token or a Telegram file URL (spec §6 token exposure).
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+# Global default: every operation needs a session cookie.
+security:
+  - SessionCookie: []
+
+tags:
+  - name: inbox
+    description: Inbox list, thread, replies, read state, media and the live socket. Module `inbox` (ADR-0007), which calls the app layers of `conversations`, `contacts`, `bots` and `workspaces`
+
+paths:
+  /api/workspaces/{workspaceId}/inbox/conversations:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [inbox]
+      summary: List the workspace's conversations, or search them (US-01)
+      description: |
+        Flow 4 (AC-01, AC-02, AC-18). One page of the workspace's conversations, newest activity first,
+        keyset-paged by (`last_activity_at`, `id`) descending. Activity is a captured customer message
+        (by arrival) or a reply marked "sent". An edit, a reply still sending and a failed reply never
+        move a conversation. Each row carries this member's unread count, the shared "waiting for a
+        reply" marker and the last item shown in the row.
+
+        With `q`, the server trims spaces and drops one leading `@`, then keeps only conversations whose
+        contact contains the text anywhere in "first name + space + last name" or in the username,
+        ignoring letter case in any alphabet. A `q` that is empty after trimming means no filter. An
+        empty `items` with `q` set is "nothing matches". An empty `items` without `q` is "no
+        conversations yet". The panel picks the empty state from that and from `getInboxBotStatus`.
+
+        The panel re-reads the first page on open, on socket (re)connect and on a `resync` frame
+        (events.md). It re-reads a single row with `getConversation` on a `conversation.changed` frame.
+      operationId: listConversations
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+        - in: query
+          name: q
+          required: false
+          description: Search text for the contact's full name or username. No column bound exists, so the 200-character bound is this contract's choice
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page. The page starts after it
+          schema: { $ref: "#/components/schemas/Cursor" }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of conversations
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationPage" }
+              examples:
+                firstPage:
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    items:
+                      - id: "01920000-0000-7000-8000-0000000000c1"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        contact:
+                          id: "01920000-0000-7000-8000-0000000000a1"
+                          first_name: "Test"
+                          last_name: "User"
+                          username: "test_user_1"
+                        last_activity_at: "2026-10-18T09:58:12Z"
+                        last_item:
+                          type: message
+                          id: "01920000-0000-7000-8000-0000000000e1"
+                          kind: photo
+                          body: "new bouquet?"
+                        unread_count: 2
+                        waiting_for_reply: true
+                    has_prev: false
+                    has_next: true
+                    next_cursor: "MjAyNi0xMC0xOFQwOTo1ODoxMlp8MDE5MjAwMDA"
+                nothingMatches:
+                  summary: A search that matches no contact (AC-02)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    items: []
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [inbox]
+      summary: Read one conversation, its thread header and list row (US-01, US-02)
+      description: |
+        Flows 5 and 2 (AC-03, AC-08, AC-15). It gives the same shape as one list row. The thread uses it
+        for its header (the contact's name), and the list uses it to refresh one row after a
+        `conversation.changed` frame. An unknown id, or an id of another workspace, is `404 NOT_FOUND`
+        with no hint, and the panel shows the not-found card (SCR-06).
+      operationId: getConversation
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The conversation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Conversation" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c1"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                contact:
+                  id: "01920000-0000-7000-8000-0000000000a1"
+                  first_name: "Test"
+                  last_name: null
+                  username: null
+                last_activity_at: "2026-10-18T10:02:40Z"
+                last_item:
+                  type: reply
+                  id: "01920000-0000-7000-8000-0000000000f1"
+                  body: "Yes, we deliver tomorrow"
+                unread_count: 0
+                waiting_for_reply: false
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/items:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [inbox]
+      summary: Read a page of the conversation's history (US-02)
+      description: |
+        Flow 5 (AC-03, AC-15). The thread is the customer's messages and the team's replies merged by
+        position time (ADR-0008). A message's position is its Telegram send time (`sent_at`, with
+        `telegram_message_id` as the tie-break). A reply's position is when a member last sent it
+        (`position_at`). Within the same second, a message comes before a reply. Items in a page are
+        always oldest first.
+
+        - No cursor: the latest page. Only this page carries `read_through_at`, which is the arrival
+          time of the newest customer message captured when the page was read. The panel passes it to
+          `markConversationRead` when the tab is visible. That way everything that has arrived so far is
+          marked read, including a late redelivery placed earlier in the history, and nothing that
+          arrives after the read is marked by mistake (ADR-0005).
+        - `before`: the older page (scroll up), until `has_prev` is false at the first message.
+        - `after`: the newer page, used to heal after a gap.
+
+        Sending `before` and `after` together is `400 VALIDATION_ERROR`, and so is a malformed cursor.
+      operationId: listThreadItems
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+        - in: query
+          name: before
+          required: false
+          description: The `prev_cursor` of a page. The answer holds the items just before it
+          schema: { $ref: "#/components/schemas/Cursor" }
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of a page. The answer holds the items just after it
+          schema: { $ref: "#/components/schemas/Cursor" }
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the thread, oldest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                items:
+                  - type: message
+                    id: "01920000-0000-7000-8000-0000000000e1"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    kind: photo
+                    body: "new bouquet?"
+                    sent_at: "2026-10-18T09:58:11Z"
+                    received_at: "2026-10-18T09:58:12Z"
+                    edited_at: null
+                    attachment: { file_name: null, mime_type: "image/jpeg", file_size: 183402 }
+                    location: null
+                    shared_contact: null
+                    poll: null
+                  - type: reply
+                    id: "01920000-0000-7000-8000-0000000000f1"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    client_key: "6f1c2b8e-0000-4000-8000-000000000001"
+                    body: "Yes, we deliver tomorrow"
+                    author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    state: sent
+                    failure_reason: null
+                    position_at: "2026-10-18T10:02:39Z"
+                    sent_at: "2026-10-18T10:02:40Z"
+                    created_at: "2026-10-18T10:02:39Z"
+                has_prev: true
+                has_next: false
+                prev_cursor: "MjAyNi0xMC0xOFQwOTo1ODoxMVp8bXwwMTky"
+                next_cursor: null
+                read_through_at: "2026-10-18T09:58:12Z"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/messages/{messageId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/MessageId"
+    get:
+      tags: [inbox]
+      summary: Read one customer message of the thread (US-06)
+      description: |
+        Flows 2 and 10 (AC-15). After a `conversation.changed` frame whose item is a message, the open
+        thread re-reads that message: a new one, an edit (new text, `edited_at` set, arrival
+        unchanged), or a late redelivery (an earlier `sent_at`, a fresh `received_at`). The panel places
+        it by position and, when the tab is visible, marks read through its `received_at`.
+      operationId: getThreadMessage
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadMessage" }
+              example:
+                type: message
+                id: "01920000-0000-7000-8000-0000000000e2"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                kind: location
+                body: null
+                sent_at: "2026-10-18T10:05:00Z"
+                received_at: "2026-10-18T10:05:01Z"
+                edited_at: null
+                attachment: null
+                location:
+                  latitude: 50.4501
+                  longitude: 30.5234
+                  venue: { title: "Test Venue", address: "1 Example Street" }
+                shared_contact: null
+                poll: null
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ItemNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/messages/{messageId}/media:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/MessageId"
+    get:
+      tags: [inbox]
+      summary: Open a customer's photo, video, voice note, audio, sticker or file (US-02)
+      description: |
+        Flow 3 (AC-04, AC-05, AC-08, ADR-0006). The browser asks for the media of a message it may see.
+        The server finds the message by (workspace, conversation, id) and reads its Telegram file
+        reference from the captured message. `bots` then calls `getFile` with the stored token and
+        streams the download through the API. Nothing is stored. No Telegram URL, redirect or file id
+        reaches the browser.
+
+        The response headers are forced:
+        - `Content-Type` comes from an allow-list chosen by the message kind (image, video and audio
+          types). Everything else is `application/octet-stream`.
+        - `Content-Disposition` is `inline` for the allow-listed kinds. A `document`, or anything outside
+          the allow-list, is `attachment` with the captured file name.
+        - Every answer also carries `X-Content-Type-Options: nosniff`, a sandboxing
+          `Content-Security-Policy` and `Cache-Control: private, no-store`.
+
+        A `Range` header is forwarded to Telegram's file server for seeking (sad.md §11). A message
+        whose kind has no file (text, location, venue, contact, poll, dice, other) is `404 NOT_FOUND`.
+        Content that cannot be opened is `409 MEDIA_UNAVAILABLE` with a plain-language `details.reason`,
+        and the thread shows "content unavailable" while the rest stays readable (AC-05). Because the
+        error is JSON, the panel fetches media with the API client and checks the status before it
+        shows the bytes.
+      operationId: openMessageMedia
+      parameters:
+        - in: header
+          name: Range
+          required: false
+          description: A single byte range, forwarded to Telegram's file server
+          schema: { type: string, maxLength: 100, pattern: "^bytes=[0-9]*-[0-9]*$" }
+      responses:
+        "200":
+          description: The whole file, streamed
+          headers:
+            Content-Type: { $ref: "#/components/headers/MediaContentType" }
+            Content-Disposition: { $ref: "#/components/headers/MediaContentDisposition" }
+            Content-Length: { $ref: "#/components/headers/ContentLength" }
+            Accept-Ranges: { $ref: "#/components/headers/AcceptRanges" }
+            X-Content-Type-Options: { $ref: "#/components/headers/NoSniff" }
+            Content-Security-Policy: { $ref: "#/components/headers/MediaCsp" }
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "206":
+          description: The requested byte range, streamed
+          headers:
+            Content-Type: { $ref: "#/components/headers/MediaContentType" }
+            Content-Disposition: { $ref: "#/components/headers/MediaContentDisposition" }
+            Content-Range:
+              description: The range Telegram's file server returned, forwarded unchanged
+              schema: { type: string }
+            Content-Length: { $ref: "#/components/headers/ContentLength" }
+            X-Content-Type-Options: { $ref: "#/components/headers/NoSniff" }
+            Content-Security-Policy: { $ref: "#/components/headers/MediaCsp" }
+            Cache-Control: { $ref: "#/components/headers/NoStore" }
+          content:
+            application/octet-stream:
+              schema: { type: string, contentMediaType: application/octet-stream }
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          description: No such message in this conversation of this workspace, or a message kind with no file. There is no hint that the message exists (AC-08)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: NOT_FOUND, message: "Not found" }
+        "409":
+          description: |
+            The content cannot be opened now (AC-05). `details.reason` is one of:
+            - `bot_not_connected`: no bot, or the bot was disconnected.
+            - `bot_not_working`: the bot needs a new token.
+            - `file_too_large`: the captured size, or Telegram's `getFile` answer, is over Telegram's 20 MB bot download limit.
+            - `file_gone`: Telegram no longer keeps this file.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MediaUnavailableError" }
+              examples:
+                botNotConnected:
+                  value:
+                    error:
+                      code: MEDIA_UNAVAILABLE
+                      message: "Content unavailable — the bot is disconnected"
+                      details: { reason: bot_not_connected }
+                tooLarge:
+                  value:
+                    error:
+                      code: MEDIA_UNAVAILABLE
+                      message: "Content unavailable — the file is too large to open in tg-inbox"
+                      details: { reason: file_too_large }
+                gone:
+                  value:
+                    error:
+                      code: MEDIA_UNAVAILABLE
+                      message: "Content unavailable — Telegram no longer keeps this file"
+                      details: { reason: file_gone }
+        "416":
+          description: Telegram's file server cannot satisfy the requested range. The status is forwarded, and the body is empty
+        "503":
+          $ref: "#/components/responses/TelegramUnavailable"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/read:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [inbox]
+      summary: Mark the conversation read for this member (US-02, US-06)
+      description: |
+        Flows 5 and 2 (AC-03, AC-15, ADR-0005). It raises this member's arrival watermark for the
+        conversation to `read_through_at` and never lowers it (`GREATEST`). It is also clamped to the
+        newest arrival in the conversation, so a time in the future marks nothing extra. Only this
+        member's unread count changes, and teammates' counts do not. The panel sends it when the thread
+        is open in a visible tab:
+        - on open, with the latest page's `read_through_at`;
+        - when a live message is shown, with its `received_at`.
+
+        A background tab never sends it. The write publishes a `conversation.changed` frame with
+        `change: read` to this member's own sockets only, so their other tabs update the count.
+        Repeating the request is harmless.
+      operationId: markConversationRead
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReadMarkRequest" }
+            example:
+              read_through_at: "2026-10-18T09:58:12Z"
+      responses:
+        "200":
+          description: The watermark is stored. The answer carries the member's unread count after it
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReadState" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                read_through_at: "2026-10-18T09:58:12Z"
+                unread_count: 0
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/replies:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [inbox]
+      summary: Send a text reply to the conversation's end customer (US-03, US-04, US-06)
+      description: |
+        Flows 1 and 6 (AC-06, AC-07, AC-11, AC-12b, AC-13, AC-16, AC-17, AC-18; ADR-0004). The reply is
+        stored as `sending`, and the business bot of this workspace sends it later, to this
+        conversation's chat only, as plain text with no operator name. Delivery happens in the
+        `inbox.deliver-replies` drain (events.md), and its outcome reaches the panel as
+        `conversation.changed` frames with `change: state`.
+
+        The checks run in flow 1's order. The first refusal wins, and nothing is stored on a refusal:
+        1. The body is a schema-valid text of 1–4096 characters that is not only spaces or new lines,
+           counted in UTF-16 units as Telegram counts them → otherwise `400 VALIDATION_ERROR` (AC-07).
+        2. The bot can carry replies (`connected` or `taken_over`) → otherwise `409 BOT_CANNOT_REPLY`
+           (AC-13).
+        3. In one transaction:
+           - **Same `client_key`, already stored in this conversation** → `200` with that reply. Nothing
+             new is stored or sent (AC-11, double press). Its body and flags are ignored.
+           - **30 member-initiated sends** by this member in this workspace in the last 60 s → `429
+             REPLY_LIMIT_REACHED` with the time sending resumes. This is counted under a (workspace,
+             member) lock, and automatic retries do not count (AC-12b).
+           - **A teammate's reply was added after `last_seen_reply_id`**, and `confirm_teammate_reply`
+             is not `true` → `409 TEAMMATE_REPLIED` with who and when (AC-16). The panel shows SCR-04.
+             "Send anyway" repeats the same request (same `client_key`) with
+             `confirm_teammate_reply: true`. "Keep editing" keeps the draft and takes
+             `details.reply.id` as the new `last_seen_reply_id`.
+           - **Otherwise** → `201`. The reply, its member-initiated attempt and the drain job are stored
+             in one transaction, and a `conversation.changed` signal is published with them.
+
+        Two replies a member deliberately sends, even with the same text, have different client keys
+        and are both sent (AC-11). The client key lives as long as the reply, so no TTL applies.
+      operationId: sendReply
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplySend" }
+            examples:
+              send:
+                value:
+                  client_key: "6f1c2b8e-0000-4000-8000-000000000002"
+                  body: "Hello!\nYour order is ready."
+                  last_seen_reply_id: "01920000-0000-7000-8000-0000000000f1"
+              sendAnyway:
+                summary: Resubmit after the teammate warning (SCR-04)
+                value:
+                  client_key: "6f1c2b8e-0000-4000-8000-000000000002"
+                  body: "Hello!\nYour order is ready."
+                  last_seen_reply_id: "01920000-0000-7000-8000-0000000000f1"
+                  confirm_teammate_reply: true
+      responses:
+        "201":
+          description: The reply is stored as `sending` and queued for delivery
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadReply" }
+              example:
+                type: reply
+                id: "01920000-0000-7000-8000-0000000000f2"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                client_key: "6f1c2b8e-0000-4000-8000-000000000002"
+                body: "Hello!\nYour order is ready."
+                author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state: sending
+                failure_reason: null
+                position_at: "2026-10-18T10:10:00Z"
+                sent_at: null
+                created_at: "2026-10-18T10:10:00Z"
+        "200":
+          description: A reply with this `client_key` already exists in this conversation. It is returned as it is now, and nothing new is stored or sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadReply" }
+              example:
+                type: reply
+                id: "01920000-0000-7000-8000-0000000000f2"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                client_key: "6f1c2b8e-0000-4000-8000-000000000002"
+                body: "Hello!\nYour order is ready."
+                author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state: sent
+                failure_reason: null
+                position_at: "2026-10-18T10:10:00Z"
+                sent_at: "2026-10-18T10:10:01Z"
+                created_at: "2026-10-18T10:10:00Z"
+        "400":
+          description: The body does not match the schema, or the text is blank or over 4096 UTF-16 units (AC-07). Nothing is sent, and the panel keeps the text
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                tooLong:
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: "Replies are limited to 4096 characters"
+                      details: { field: body, max_length: 4096 }
+                blank:
+                  value:
+                    error:
+                      code: VALIDATION_ERROR
+                      message: "Write a reply before sending"
+                      details: { field: body }
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ConversationNotFound"
+        "409":
+          description: |
+            One of two refusals. Nothing is stored or sent in either.
+            - `BOT_CANNOT_REPLY`: the bot is not connected, or needs a new token (AC-13). `details.bot`
+              carries the inbox bot status for the reply box's reason.
+            - `TEAMMATE_REPLIED`: a teammate's reply was added after the one the composer had seen, and
+              the send was not confirmed (AC-16). `details.reply` names the newest such reply, its author
+              and its time.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BotCannotReplyError" }
+                  - { $ref: "#/components/schemas/TeammateRepliedError" }
+              examples:
+                botCannotReply:
+                  value:
+                    error:
+                      code: BOT_CANNOT_REPLY
+                      message: "Replies cannot be sent until the bot works again"
+                      details:
+                        bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: needs_token, can_reply: false, receiving: false }
+                teammateReplied:
+                  value:
+                    error:
+                      code: TEAMMATE_REPLIED
+                      message: "A teammate has just replied to this customer"
+                      details:
+                        reply:
+                          id: "01920000-0000-7000-8000-0000000000f3"
+                          author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                          position_at: "2026-10-18T10:09:30Z"
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429":
+          $ref: "#/components/responses/ReplyLimitReached"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/replies/{replyId}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/ReplyId"
+    get:
+      tags: [inbox]
+      summary: Read one reply of the thread (US-05, US-06)
+      description: |
+        Flows 1, 2 and 9 (AC-06, AC-10, AC-11, AC-12, AC-15). After a `conversation.changed` frame whose
+        item is a reply, the panel re-reads it. The frame may mean a teammate's new reply, or a state
+        change: "sent", "not delivered" with its reason, "not confirmed", or back to "sending" after a
+        resend.
+      operationId: getThreadReply
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The reply
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadReply" }
+              example:
+                type: reply
+                id: "01920000-0000-7000-8000-0000000000f4"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                client_key: "6f1c2b8e-0000-4000-8000-000000000004"
+                body: "Are you there?"
+                author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state: not_delivered
+                failure_reason: customer_blocked
+                position_at: "2026-10-18T10:12:00Z"
+                sent_at: null
+                created_at: "2026-10-18T10:12:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ItemNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/replies/{replyId}/resend:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/ReplyId"
+    post:
+      tags: [inbox]
+      summary: Try again or send again (US-05)
+      description: |
+        Flow 7 (AC-11, AC-12, AC-12b; ADR-0004).
+        - On a `not_delivered` reply this is "Try again", attempt kind `try_again`.
+        - On a `not_confirmed` reply this is "Send again", attempt kind `send_again`. It needs
+          `confirm_duplicate_risk: true`, after the warning that the customer may receive the reply twice
+          (SCR-05).
+
+        Any member may do either, and the reply keeps its author. When accepted, the reply goes back to
+        `sending` at a new position time, so it moves to the end of the thread and its 5-minute retry
+        window restarts. A member-initiated attempt and the drain job are stored in the same transaction.
+
+        The checks run in this order. The first refusal wins, and nothing changes on a refusal:
+        1. The reply is not `not_delivered` or `not_confirmed` (it is already `sending` again, or `sent`)
+           → `409 REPLY_NOT_RESENDABLE`. This covers a double press, and two members pressing at once.
+        2. 30 member-initiated sends in the last 60 s → `429 REPLY_LIMIT_REACHED` (AC-12b). This check
+           is counted under the (workspace, member) lock.
+        3. `not_confirmed` without `confirm_duplicate_risk: true` →
+           `409 DUPLICATE_RISK_CONFIRMATION_REQUIRED` (AC-11).
+        4. The bot cannot carry replies → `409 BOT_CANNOT_REPLY` (AC-13).
+
+        The server accepts "Try again" for every `not_delivered` reason. The drain's pre-checks end a
+        reply again if its cause still holds (a blocked customer, a broken bot, a removed author). The
+        panel decides where to offer the button (`screens`).
+      operationId: resendReply
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReplyResend" }
+            examples:
+              tryAgain:
+                value: {}
+              sendAgain:
+                summary: After the duplicate-risk warning (SCR-05)
+                value: { confirm_duplicate_risk: true }
+      responses:
+        "200":
+          description: The reply is `sending` again at the end of the thread
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadReply" }
+              example:
+                type: reply
+                id: "01920000-0000-7000-8000-0000000000f5"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                client_key: "6f1c2b8e-0000-4000-8000-000000000005"
+                body: "Your order is ready"
+                author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state: sending
+                failure_reason: null
+                position_at: "2026-10-18T10:20:00Z"
+                sent_at: null
+                created_at: "2026-10-18T10:11:00Z"
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/ItemNotFound"
+        "409":
+          description: |
+            One of three refusals. Nothing changes in any of them.
+            - `REPLY_NOT_RESENDABLE`: the reply is `sending` or `sent`. `details.reply` carries its
+              current state, so the panel can update the thread.
+            - `DUPLICATE_RISK_CONFIRMATION_REQUIRED`: a `not_confirmed` reply was resent without the
+              confirmation (AC-11). The panel shows the warning again.
+            - `BOT_CANNOT_REPLY`: as for `sendReply` (AC-13).
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - { $ref: "#/components/schemas/ReplyNotResendableError" }
+                  - { $ref: "#/components/schemas/BotCannotReplyError" }
+                  - { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                notResendable:
+                  value:
+                    error:
+                      code: REPLY_NOT_RESENDABLE
+                      message: "This reply is already being sent"
+                      details:
+                        reply:
+                          type: reply
+                          id: "01920000-0000-7000-8000-0000000000f5"
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                          client_key: "6f1c2b8e-0000-4000-8000-000000000005"
+                          body: "Your order is ready"
+                          author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                          state: sending
+                          failure_reason: null
+                          position_at: "2026-10-18T10:20:00Z"
+                          sent_at: null
+                          created_at: "2026-10-18T10:11:00Z"
+                confirmationRequired:
+                  value:
+                    error:
+                      code: DUPLICATE_RISK_CONFIRMATION_REQUIRED
+                      message: "The customer may receive this reply twice — confirm to send it again"
+        "413": { $ref: "#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedMediaType" }
+        "429":
+          $ref: "#/components/responses/ReplyLimitReached"
+
+  /api/workspaces/{workspaceId}/inbox/bot:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [inbox]
+      summary: Can the bot carry replies, and is it receiving? Readable by every member (US-07)
+      description: |
+        Flows 4 and 8 (AC-02, AC-13, AC-14). This is a read-only view of `bots.state` for any active
+        member, while the bot settings stay owner-only (bot-connection AC-03). It closes bot-connection
+        §8 "should operators see the bot's state". The panel reads it when the inbox opens and after
+        every `bot.changed` frame. It uses the result for the reply box (unavailable, with the way to
+        the bot settings for owners and "ask a business owner" for operators), for the "not receiving"
+        notice, and for the empty inbox with no bot. A fixed bot re-enables replying without a reload.
+        It never carries the bot's name, the token or the secret.
+      operationId: getInboxBotStatus
+      parameters:
+        - $ref: "#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The inbox bot status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/InboxBotStatus" }
+              examples:
+                connected:
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                takenOver:
+                  summary: Replies still work, and new messages do not arrive (AC-14)
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", state: taken_over, can_reply: true, receiving: false }
+                needsToken:
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", state: needs_token, can_reply: false, receiving: false }
+                notConnected:
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", state: not_connected, can_reply: false, receiving: false }
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          $ref: "#/components/responses/AccessRemoved"
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+  /api/workspaces/{workspaceId}/inbox/live:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceId"
+    get:
+      tags: [inbox]
+      summary: Open this tab's live socket for one workspace (US-06, US-01, US-07)
+      description: |
+        Flow 2 (AC-09, AC-13, AC-14, AC-15; ADR-0002, ADR-0003). This is a WebSocket upgrade. One socket
+        is opened per tab for the workspace in its address. The upgrade passes the same session cookie
+        and workspace guard as every route. `Origin` must also be the panel's own origin
+        (`PUBLIC_WEB_URL`), and any other origin is `403 FORBIDDEN`. All refusals are plain HTTP answers
+        before the handshake.
+
+        Once open, the server sends only small JSON change signals that carry ids, never message text
+        or names. The panel re-reads the change through the routes above. The frames, close codes and
+        heartbeat are in events.md:
+        - On a deactivation the socket closes at once with code `4403`. Independently, every open socket
+          is re-checked every 5 s, so access ends within 5 s even if a signal is lost.
+        - On a switch to another workspace, the tab closes this socket and opens one for the other
+          workspace. Another tab is untouched.
+
+        After every (re)connect the panel re-reads the first list page and the open thread.
+      operationId: openLiveSocket
+      parameters:
+        - in: header
+          name: Upgrade
+          required: true
+          schema: { type: string, const: websocket }
+        - in: header
+          name: Origin
+          required: true
+          description: Must equal the panel's origin
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        "101":
+          description: Switching protocols. The socket carries the frames in events.md
+        "400":
+          $ref: "#/components/responses/ValidationFailed"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "403":
+          description: The membership is deactivated, or `Origin` is not the panel's origin
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+              examples:
+                accessRemoved:
+                  value:
+                    error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+                foreignOrigin:
+                  value:
+                    error: { code: FORBIDDEN, message: "Forbidden" }
+        "404":
+          $ref: "#/components/responses/WorkspaceNotFound"
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: The opaque session cookie of workspace-operators (its ADR-0002 and contract)
+
+  parameters:
+    WorkspaceId:
+      in: path
+      name: workspaceId
+      required: true
+      description: A malformed or unknown id answers 404, exactly like a workspace the caller never belonged to
+      schema: { type: string, format: uuid }
+    ConversationId:
+      in: path
+      name: conversationId
+      required: true
+      description: "`conversations.id`, always looked up together with the workspace id. A malformed, unknown or foreign id answers 404"
+      schema: { type: string, format: uuid }
+    MessageId:
+      in: path
+      name: messageId
+      required: true
+      description: "`messages.id`, looked up by (workspace, conversation, id)"
+      schema: { type: string, format: uuid }
+    ReplyId:
+      in: path
+      name: replyId
+      required: true
+      description: "`replies.id`, looked up by (workspace, conversation, id)"
+      schema: { type: string, format: uuid }
+    Limit:
+      in: query
+      name: limit
+      required: false
+      schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+    BackgroundRequest:
+      in: header
+      name: X-Background-Request
+      required: false
+      description: Sent as `1` on automatic requests (live refetches, marking read). Such a request does not extend the session (workspace-operators contract)
+      schema: { type: string, enum: ["1"] }
+
+  headers:
+    MediaContentType:
+      description: Chosen by the message kind from an allow-list (image, video, audio). Everything else is `application/octet-stream`. It is never taken from Telegram's answer
+      schema: { type: string }
+    MediaContentDisposition:
+      description: "`inline` for allow-listed kinds. `attachment; filename*=UTF-8''…` with the captured file name for documents and anything else"
+      schema: { type: string }
+    ContentLength:
+      schema: { type: integer, minimum: 0 }
+    AcceptRanges:
+      schema: { type: string, enum: [bytes] }
+    NoSniff:
+      schema: { type: string, const: nosniff }
+    MediaCsp:
+      description: A sandboxing policy, so a customer-supplied file can never run script on the panel's origin
+      schema: { type: string, example: "sandbox; default-src 'none'" }
+    NoStore:
+      schema: { type: string, const: "private, no-store" }
+
+  responses:
+    ValidationFailed:
+      description: The request does not match the schema (including a malformed id or cursor in the URL)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: VALIDATION_ERROR, message: "querystring/limit must be <= 100" }
+    Unauthenticated:
+      description: No session, or the session ended. The member signs in and returns to the same address (SCR-09)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNAUTHENTICATED, message: "Sign in to continue" }
+    AccessRemoved:
+      description: The membership is deactivated. The member knows the workspace but sees nothing of it, and the panel shows the access-removed landing (SCR-07, AC-08)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+    WorkspaceNotFound:
+      description: Never a member of this workspace, or no such workspace. The two cannot be told apart on purpose (AC-08)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    ConversationNotFound:
+      description: The workspace is unknown to the caller, or there is no such conversation in it. The two cannot be told apart, so there is no hint that either exists (AC-03, AC-08, SCR-06)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    ItemNotFound:
+      description: The workspace is unknown to the caller, or there is no such conversation, message or reply in it (AC-08)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    ReplyLimitReached:
+      description: |
+        This member made 30 member-initiated sends in this workspace within the last 60 s. New replies,
+        "Try again" and "Send again" count, and automatic retries do not. The limit is per workspace
+        (AC-12b). Nothing is stored, and the panel keeps the text. `details.retry_at` is when the oldest
+        of the 30 leaves the window. `Retry-After` gives the same time in whole seconds
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1, maximum: 60 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ReplyLimitReachedError" }
+          example:
+            error:
+              code: REPLY_LIMIT_REACHED
+              message: "Replies are limited to 30 per minute — you can send again in 12 seconds"
+              details: { limit: 30, window_seconds: 60, retry_at: "2026-10-18T10:21:12Z" }
+    TelegramUnavailable:
+      description: Telegram did not answer `getFile` or the download in time, or answered with a server error or a rate limit. Nothing is stored. The member can open the media again
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: TELEGRAM_UNAVAILABLE, message: "Telegram is not responding — try again" }
+    UnsupportedMediaType:
+      description: A mutating request whose body is not `application/json`
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: UNSUPPORTED_MEDIA_TYPE, message: "Only application/json request bodies are accepted" }
+    PayloadTooLarge:
+      description: The body is larger than the server's body limit
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: PAYLOAD_TOO_LARGE, message: "Request body is too large" }
+
+  schemas:
+    # ───────── paging ─────────
+    Cursor:
+      type: string
+      description: |
+        Opaque keyset cursor, issued by the server and passed back unchanged. In the list it encodes
+        (`last_activity_at`, `id`). In the thread it encodes (position time, item type, tie-break, `id`)
+        (ADR-0008). The panel never builds one
+      minLength: 1
+      maxLength: 200
+      pattern: "^[A-Za-z0-9_-]+$"
+
+    ConversationPage:
+      type: object
+      required: [workspace_id, items, has_prev, has_next, next_cursor]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Conversation" }
+        has_prev:
+          type: boolean
+          description: True when `after` was given
+        has_next: { type: boolean }
+        next_cursor: { anyOf: [{ $ref: "#/components/schemas/Cursor" }, { type: "null" }] }
+
+    ThreadPage:
+      type: object
+      required: [workspace_id, conversation_id, items, has_prev, has_next, prev_cursor, next_cursor, read_through_at]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        items:
+          type: array
+          description: Oldest first
+          items: { $ref: "#/components/schemas/ThreadItem" }
+        has_prev:
+          type: boolean
+          description: Older items exist. False at the first message
+        has_next:
+          type: boolean
+          description: Newer items exist. False on the latest page
+        prev_cursor: { anyOf: [{ $ref: "#/components/schemas/Cursor" }, { type: "null" }] }
+        next_cursor: { anyOf: [{ $ref: "#/components/schemas/Cursor" }, { type: "null" }] }
+        read_through_at:
+          type: [string, "null"]
+          format: date-time
+          description: |
+            Only on the latest page (no cursor). It is `conversations.last_message_received_at`, read in
+            the same snapshot as the page. It is the value to pass to `markConversationRead`. It is null on
+            older and newer pages
+
+    # ───────── list ─────────
+    Conversation:
+      type: object
+      description: One list row, also the thread header
+      required: [id, workspace_id, contact, last_activity_at, last_item, unread_count, waiting_for_reply]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        contact: { $ref: "#/components/schemas/ContactSummary" }
+        last_activity_at:
+          type: string
+          format: date-time
+          description: "`conversations.last_activity_at`: the later of the newest customer arrival and the newest reply marked sent. It is the list order and the row's \"how long ago\""
+        last_item: { $ref: "#/components/schemas/LastItem" }
+        unread_count:
+          type: integer
+          minimum: 0
+          description: Customer messages of this conversation whose `received_at` is after the later of this member's watermark (`read_marks.read_through_at`) and `memberships.active_since`. Replies never count (AC-01, ADR-0005)
+        waiting_for_reply:
+          type: boolean
+          description: "`last_reply_sent_at IS NULL OR last_message_received_at > last_reply_sent_at`. A reply that is sending, not confirmed or not delivered does not clear it (AC-01, AC-06, AC-10)"
+
+    ContactSummary:
+      type: object
+      description: From `contacts`, through the `contacts` app layer. The text comes from Telegram and is shown as plain text only
+      required: [id, first_name, last_name, username]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username:
+          type: [string, "null"]
+          description: Without the leading `@`
+
+    LastItem:
+      description: |
+        What the row shows. It is the later of the newest customer message by arrival and the newest
+        reply marked sent. A non-text message is shown by its kind and caption, for example
+        "Photo · new bouquet?" (AC-01)
+      oneOf:
+        - { $ref: "#/components/schemas/LastMessageItem" }
+        - { $ref: "#/components/schemas/LastReplyItem" }
+      discriminator:
+        propertyName: type
+        mapping:
+          message: "#/components/schemas/LastMessageItem"
+          reply: "#/components/schemas/LastReplyItem"
+
+    LastMessageItem:
+      type: object
+      required: [type, id, kind, body]
+      additionalProperties: false
+      properties:
+        type: { const: message }
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/MessageKind" }
+        body:
+          type: [string, "null"]
+          description: "`messages.body`: the text of a `text` message, or the caption of any other kind. Null when there is no caption"
+
+    LastReplyItem:
+      type: object
+      required: [type, id, body]
+      additionalProperties: false
+      properties:
+        type: { const: reply }
+        id: { type: string, format: uuid }
+        body: { $ref: "#/components/schemas/ReplyBody" }
+
+    # ───────── thread ─────────
+    ThreadItem:
+      oneOf:
+        - { $ref: "#/components/schemas/ThreadMessage" }
+        - { $ref: "#/components/schemas/ThreadReply" }
+      discriminator:
+        propertyName: type
+        mapping:
+          message: "#/components/schemas/ThreadMessage"
+          reply: "#/components/schemas/ThreadReply"
+
+    MessageKind:
+      type: string
+      description: "`messages.kind` (bot-connection). `other` is shown as \"unsupported message — tg-inbox cannot show this kind yet\" (AC-04)"
+      enum: [text, photo, video, animation, voice, audio, video_note, document, sticker, location, venue, contact, poll, dice, other]
+
+    ThreadMessage:
+      type: object
+      description: |
+        A customer's message as captured (bot-connection). `attachment`, `location`, `shared_contact` and
+        `poll` are projected from `messages.telegram_message` for the kinds that have them, and are null
+        otherwise. Every string is shown as plain text. The map link for a location is built by the panel
+        from the coordinates and opened only on click (AC-04)
+      required: [type, id, workspace_id, conversation_id, kind, body, sent_at, received_at, edited_at, attachment, location, shared_contact, poll]
+      additionalProperties: false
+      properties:
+        type: { const: message }
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/MessageKind" }
+        body:
+          type: [string, "null"]
+          description: Text or caption (`messages.body`). An edit replaces it
+        sent_at:
+          type: string
+          format: date-time
+          description: Telegram's send time (`messages.sent_at`), which is the thread position
+        received_at:
+          type: string
+          format: date-time
+          description: Arrival in tg-inbox (`messages.received_at`), which is the unread order. It is the value to pass to `markConversationRead` for a message shown live
+        edited_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`messages.edited_at`. Non-null means \"edited\" (AC-15)"
+        attachment:
+          anyOf: [{ $ref: "#/components/schemas/MessageAttachment" }, { type: "null" }]
+        location:
+          anyOf: [{ $ref: "#/components/schemas/MessageLocation" }, { type: "null" }]
+        shared_contact:
+          anyOf: [{ $ref: "#/components/schemas/SharedContact" }, { type: "null" }]
+        poll:
+          anyOf: [{ $ref: "#/components/schemas/MessagePoll" }, { type: "null" }]
+
+    MessageAttachment:
+      type: object
+      description: |
+        The file of a photo, video, animation, voice, audio, video_note, document or sticker. It comes
+        from `messages.telegram_message` (the largest photo size for a photo). The bytes are opened only
+        through `openMessageMedia`. The Telegram `file_id` is never exposed (ADR-0006)
+      required: [file_name, mime_type, file_size]
+      additionalProperties: false
+      properties:
+        file_name:
+          type: [string, "null"]
+          description: The captured file name (documents, audio, videos). It is used for the download and shown as plain text
+        mime_type:
+          type: [string, "null"]
+          description: Telegram's declared type. It is a hint for the player only. The media route picks its own `Content-Type`
+        file_size:
+          type: [integer, "null"]
+          minimum: 0
+          description: The size in bytes as captured. Over 20 MB (20 971 520 bytes) the media route answers `file_too_large`
+
+    MessageLocation:
+      type: object
+      required: [latitude, longitude, venue]
+      additionalProperties: false
+      properties:
+        latitude: { type: number, minimum: -90, maximum: 90 }
+        longitude: { type: number, minimum: -180, maximum: 180 }
+        venue:
+          description: Present for kind `venue`
+          anyOf:
+            - type: object
+              required: [title, address]
+              additionalProperties: false
+              properties:
+                title: { type: string }
+                address: { type: string }
+            - { type: "null" }
+
+    SharedContact:
+      type: object
+      required: [first_name, last_name, phone_number]
+      additionalProperties: false
+      properties:
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        phone_number: { type: string }
+
+    MessagePoll:
+      type: object
+      required: [question, options]
+      additionalProperties: false
+      properties:
+        question: { type: string }
+        options:
+          type: array
+          items: { type: string }
+
+    ThreadReply:
+      type: object
+      description: A reply written by a member (`replies`, ADR-0008). The customer sees only the bot, never the author
+      required: [type, id, workspace_id, conversation_id, client_key, body, author, state, failure_reason, position_at, sent_at, created_at]
+      additionalProperties: false
+      properties:
+        type: { const: reply }
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        client_key:
+          type: string
+          format: uuid
+          description: The key the panel gave this draft (`replies.client_key`). The panel matches its optimistic "sending" bubble by it
+        body: { $ref: "#/components/schemas/ReplyBody" }
+        author: { $ref: "#/components/schemas/MemberRef" }
+        state: { $ref: "#/components/schemas/ReplyState" }
+        failure_reason:
+          description: Non-null exactly when `state` is `not_delivered`
+          anyOf: [{ $ref: "#/components/schemas/ReplyFailureReason" }, { type: "null" }]
+        position_at:
+          type: string
+          format: date-time
+          description: "`replies.position_at`, when a member last sent it. It is the thread position, and it moves on Try again or Send again (AC-12)"
+        sent_at:
+          type: [string, "null"]
+          format: date-time
+          description: When Telegram accepted it. Non-null exactly when `state` is `sent`
+        created_at:
+          type: string
+          format: date-time
+          description: First submit
+
+    ReplyBody:
+      type: string
+      description: |
+        `replies.body`. It is 1–4096 characters and not only white space (AC-07). The schema bound counts
+        code points. The domain also checks 4096 UTF-16 units (Telegram's measure), which is never looser.
+        It is sent to Telegram as plain text with its line breaks (AC-17)
+      minLength: 1
+      maxLength: 4096
+      pattern: "\\S"
+
+    ReplyState:
+      type: string
+      description: |
+        `replies.state` (ADR-0004).
+        - `sending`: stored, waiting for delivery or a retry.
+        - `sent`: Telegram accepted it.
+        - `not_delivered`: refused, see `failure_reason`.
+        - `not_confirmed`: no answer came back, so it may or may not have reached the customer. It is
+          never resent without a member's confirmation (AC-11).
+      enum: [sending, sent, not_delivered, not_confirmed]
+
+    ReplyFailureReason:
+      type: string
+      description: |
+        `replies.failure_reason`, shown in plain language.
+        - `customer_blocked`: the customer blocked the bot (AC-10).
+        - `customer_account_gone`: the customer's Telegram account no longer exists (AC-10).
+        - `chat_not_found`: Telegram does not know the chat. It is shown like `customer_account_gone`.
+        - `bot_not_working`: the bot is not connected or needs a new token (AC-13).
+        - `author_access_removed`: the author was deactivated before it was sent (AC-09).
+        - `telegram_not_accepted`: Telegram did not accept it within 5 minutes, try again (AC-12).
+        - `delivery_interrupted`: the delivery job failed for good before this reply was tried, so it was
+          never sent and can be tried again (sad.md flow 9). It is pending a design decision, see
+          api-sync-report.md OQ-2.
+      enum: [customer_blocked, customer_account_gone, chat_not_found, bot_not_working, author_access_removed, telegram_not_accepted, delivery_interrupted]
+
+    MemberRef:
+      type: object
+      description: A member as the inbox names them. The display name comes through the `workspaces` app layer and is kept after a deactivation
+      required: [account_id, display_name]
+      additionalProperties: false
+      properties:
+        account_id: { type: string, format: uuid }
+        display_name: { type: string, minLength: 1, maxLength: 200 }
+
+    # ───────── requests ─────────
+    ReplySend:
+      type: object
+      required: [client_key, body, last_seen_reply_id]
+      additionalProperties: false
+      properties:
+        client_key:
+          type: string
+          format: uuid
+          description: Generated by the panel once per draft and kept until the draft is sent. A repeat finds the same reply (AC-11)
+        body: { $ref: "#/components/schemas/ReplyBody" }
+        last_seen_reply_id:
+          type: [string, "null"]
+          format: uuid
+          description: |
+            The newest reply (of any author) shown in the thread when the member began typing, or null
+            when there was none. A teammate's reply after it in thread order triggers `TEAMMATE_REPLIED`
+            (AC-16). An id that is not a reply of this conversation counts as null
+        confirm_teammate_reply:
+          type: boolean
+          default: false
+          description: '"Send anyway" on SCR-04. It skips only the teammate check, never the bot, limit or client-key checks'
+
+    ReplyResend:
+      type: object
+      additionalProperties: false
+      properties:
+        confirm_duplicate_risk:
+          type: boolean
+          default: false
+          description: The member confirmed SCR-05 ("the customer may receive it twice"). It is required to resend a `not_confirmed` reply, and it is ignored for `not_delivered`
+
+    ReadMarkRequest:
+      type: object
+      required: [read_through_at]
+      additionalProperties: false
+      properties:
+        read_through_at:
+          type: string
+          format: date-time
+          description: An arrival time the server issued (a page's `read_through_at`, or a shown message's `received_at`)
+
+    # ───────── other answers ─────────
+    ReadState:
+      type: object
+      required: [workspace_id, conversation_id, read_through_at, unread_count]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        read_through_at:
+          type: string
+          format: date-time
+          description: The stored watermark (`read_marks.read_through_at`) after the raise
+        unread_count: { type: integer, minimum: 0 }
+
+    InboxBotStatus:
+      type: object
+      required: [workspace_id, state, can_reply, receiving]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        state:
+          type: string
+          description: "`bots.state`. No row and `disconnected` are both `not_connected`, as in bot-connection's `BotSettings`"
+          enum: [connected, needs_token, taken_over, not_connected]
+        can_reply:
+          type: boolean
+          description: True for `connected` and `taken_over`. It is the reply box's availability (AC-13, AC-14)
+        receiving:
+          type: boolean
+          description: True only for `connected`. False with `can_reply` true is the "not receiving messages" notice (AC-14)
+
+    # ───────── error envelope (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts.
+
+        The codes used here that already exist are VALIDATION_ERROR 400, UNAUTHENTICATED 401,
+        FORBIDDEN 403, ACCESS_REMOVED 403, NOT_FOUND 404, PAYLOAD_TOO_LARGE 413,
+        UNSUPPORTED_MEDIA_TYPE 415, INTERNAL_ERROR 500 and TELEGRAM_UNAVAILABLE 503.
+
+        The codes added by this feature are BOT_CANNOT_REPLY 409, TEAMMATE_REPLIED 409,
+        DUPLICATE_RISK_CONFIRMATION_REQUIRED 409, REPLY_NOT_RESENDABLE 409, MEDIA_UNAVAILABLE 409 and
+        REPLY_LIMIT_REACHED 429.
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - FORBIDDEN
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - TELEGRAM_UNAVAILABLE
+        - BOT_CANNOT_REPLY
+        - TEAMMATE_REPLIED
+        - DUPLICATE_RISK_CONFIRMATION_REQUIRED
+        - REPLY_NOT_RESENDABLE
+        - MEDIA_UNAVAILABLE
+        - REPLY_LIMIT_REACHED
+
+    Error:
+      type: object
+      required: [code, message]
+      additionalProperties: false
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message:
+          type: string
+          description: Plain language. It never contains the token, a Telegram error text or URL, a reply text or a message text
+        details:
+          description: Optional structured context
+
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error: { $ref: "#/components/schemas/Error" }
+
+    BotCannotReplyError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BOT_CANNOT_REPLY }
+            message: { type: string }
+            details:
+              type: object
+              required: [bot]
+              additionalProperties: false
+              properties:
+                bot: { $ref: "#/components/schemas/InboxBotStatus" }
+
+    TeammateRepliedError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TEAMMATE_REPLIED }
+            message: { type: string }
+            details:
+              type: object
+              required: [reply]
+              additionalProperties: false
+              properties:
+                reply:
+                  type: object
+                  description: The newest teammate reply after `last_seen_reply_id`, for "<name> replied N minutes ago" (SCR-04)
+                  required: [id, author, position_at]
+                  additionalProperties: false
+                  properties:
+                    id: { type: string, format: uuid }
+                    author: { $ref: "#/components/schemas/MemberRef" }
+                    position_at: { type: string, format: date-time }
+
+    ReplyNotResendableError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: REPLY_NOT_RESENDABLE }
+            message: { type: string }
+            details:
+              type: object
+              required: [reply]
+              additionalProperties: false
+              properties:
+                reply: { $ref: "#/components/schemas/ThreadReply" }
+
+    ReplyLimitReachedError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: REPLY_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, window_seconds, retry_at]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 30 }
+                window_seconds: { type: integer, const: 60 }
+                retry_at:
+                  type: string
+                  format: date-time
+                  description: When the oldest of the counted sends (`reply_attempts.created_at`) leaves the 60 s window
+
+    MediaUnavailableError:
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: MEDIA_UNAVAILABLE }
+            message: { type: string }
+            details:
+              type: object
+              required: [reason]
+              additionalProperties: false
+              properties:
+                reason:
+                  type: string
+                  enum: [bot_not_connected, bot_not_working, file_too_large, file_gone]
