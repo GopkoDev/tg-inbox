@@ -5,6 +5,7 @@ import {
   AccessRemovedError,
   AssigneeNotActiveError,
   ChangeLimitReachedError,
+  CloseNeedsConfirmationError,
   ConversationStateChangedError,
   NotFoundError,
 } from '../../../platform/errors.js';
@@ -40,6 +41,7 @@ const activity: ActivityView = {
 };
 
 function setup(o: { active?: string[]; result?: ChangeResult } = {}) {
+  const statusCalls: unknown[] = [];
   const calls: string[] = [];
   const tx = { tag: 'tx' } as unknown as Executor;
   const active = o.active ?? [ME, MATE];
@@ -71,8 +73,13 @@ function setup(o: { active?: string[]; result?: ChangeResult } = {}) {
         calls.push(`change:${input.assigneeAccountId}:${input.expectedStateVersion}`);
         return o.result ?? { outcome: 'recorded', state, activity };
       },
-      async changeStatus() {
-        throw new Error('not used');
+      async changeStatus(t, input) {
+        expect(t).toBe(tx);
+        calls.push(`status:${input.to}:${input.expectedStateVersion}`);
+        statusCalls.push(input);
+        return (
+          o.result ?? { outcome: 'recorded', state, activity: { ...activity, kind: 'closed' } }
+        );
       },
     },
     reads: {
@@ -83,7 +90,7 @@ function setup(o: { active?: string[]; result?: ChangeResult } = {}) {
     },
     clock: fixedClock(NOW),
   });
-  return { calls, changeState, summary };
+  return { calls, changeState, summary, statusCalls };
 }
 
 const assign = (s: ReturnType<typeof setup>, pick: string | null = MATE) =>
@@ -183,6 +190,111 @@ describe('unassign', () => {
     const s = setup({ active: [] });
     await expect(
       s.changeState.unassign(WS, member, CONV, { expectedStateVersion: 4 }),
+    ).rejects.toBeInstanceOf(AccessRemovedError);
+  });
+});
+
+const snapshot = { customerMessageSeq: 3, latestReply: { id: 'r1', state: 'sent' as const } };
+const close = (s: ReturnType<typeof setup>, confirm = false) =>
+  s.changeState.close(WS, member, CONV, {
+    expectedStateVersion: 4,
+    expectedCloseSnapshot: snapshot,
+    confirm,
+  });
+
+describe('close', () => {
+  it('locks the caller, passes the watermark context, and answers recorded', async () => {
+    const s = setup();
+    const r = await close(s, true);
+    expect(s.calls).toEqual(['begin', `lock:${ME}`, 'status:closed:4', 'commit', 'summary']);
+    expect(s.statusCalls[0]).toMatchObject({
+      workspaceId: WS,
+      actorAccountId: ME,
+      conversationId: CONV,
+      to: 'closed',
+      expectedCloseSnapshot: snapshot,
+      confirm: true,
+      actorActiveSince: member.activeSince,
+    });
+    expect(r).toMatchObject({ outcome: 'recorded', activity: { kind: 'closed' } });
+  });
+
+  it('a deactivated caller gets ACCESS_REMOVED and nothing changes', async () => {
+    const s = setup({ active: [] });
+    await expect(close(s)).rejects.toBeInstanceOf(AccessRemovedError);
+    expect(s.calls.some((c) => c.startsWith('status'))).toBe(false);
+  });
+
+  it('needs_confirmation: CLOSE_NEEDS_CONFIRMATION with every reason, the latest change, the unread message and the summary', async () => {
+    const received = new Date('2026-10-18T09:30:00Z');
+    const s = setup({
+      result: {
+        outcome: 'needs_confirmation',
+        reasons: ['state_changed', 'customer_waiting'],
+        state,
+        snapshot,
+        latestChange: activity,
+        newestUnreadMessage: { id: 'm1', receivedAt: received },
+      },
+    });
+    const err = await close(s).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CloseNeedsConfirmationError);
+    expect((err as CloseNeedsConfirmationError).details).toMatchObject({
+      reasons: ['state_changed', 'customer_waiting'],
+      stale_change: { id: activity.id },
+      newest_unread_message: { id: 'm1', received_at: received.toISOString() },
+      conversation: s.summary,
+    });
+  });
+
+  it('needs_confirmation with nothing to show: null stale_change and null unread message', async () => {
+    const s = setup({
+      result: {
+        outcome: 'needs_confirmation',
+        reasons: ['reply_not_delivered'],
+        state,
+        snapshot,
+        latestChange: null,
+        newestUnreadMessage: null,
+      },
+    });
+    const err = (await close(s).catch((e: unknown) => e)) as CloseNeedsConfirmationError;
+    expect(err.details).toMatchObject({ stale_change: null, newest_unread_message: null });
+  });
+
+  it('unchanged, limited and not_found keep their answers', async () => {
+    const unchanged = setup({ result: { outcome: 'unchanged', state, latestChange: null } });
+    expect(await close(unchanged)).toMatchObject({ outcome: 'unchanged', activity: null });
+    const limited = setup({
+      result: { outcome: 'limited', retryAt: new Date(NOW.getTime() + 1000) },
+    });
+    await expect(close(limited)).rejects.toBeInstanceOf(ChangeLimitReachedError);
+    const missing = setup({ result: { outcome: 'not_found' } });
+    await expect(close(missing)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('reopen', () => {
+  it('locks the caller and reopens', async () => {
+    const s = setup({
+      result: { outcome: 'recorded', state, activity: { ...activity, kind: 'reopened' } },
+    });
+    const r = await s.changeState.reopen(WS, member, CONV, { expectedStateVersion: 4 });
+    expect(s.calls.slice(0, 3)).toEqual(['begin', `lock:${ME}`, 'status:open:4']);
+    expect(r).toMatchObject({ outcome: 'recorded', activity: { kind: 'reopened' } });
+  });
+
+  it('stale is CONVERSATION_STATE_CHANGED', async () => {
+    const s = setup({ result: { outcome: 'stale', state, latestChange: activity } });
+    await expect(
+      s.changeState.reopen(WS, member, CONV, { expectedStateVersion: 1 }),
+    ).rejects.toBeInstanceOf(ConversationStateChangedError);
+  });
+
+  it('a deactivated caller gets ACCESS_REMOVED', async () => {
+    const s = setup({ active: [] });
+    await expect(
+      s.changeState.reopen(WS, member, CONV, { expectedStateVersion: 4 }),
     ).rejects.toBeInstanceOf(AccessRemovedError);
   });
 });

@@ -15,6 +15,7 @@ import {
   ReplyResend,
   ReplySend,
   StateChangeRequest,
+  CloseRequest,
   StatusLens,
   ThreadActivity,
   ThreadMessage,
@@ -294,6 +295,59 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         { expectedStateVersion: request.body.expected_state_version },
       );
       logChange(request.log, result, request.params.conversationId, 'unassign');
+      return result;
+    },
+  );
+
+  // Close (flow 7) and reopen (flow 8): a close that may be early is refused until confirmed.
+  r.post(
+    `${base}/conversations/:conversationId/close`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: CloseRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const snapshot = request.body.expected_close_snapshot;
+      const result = await changes.close(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        {
+          expectedStateVersion: request.body.expected_state_version,
+          expectedCloseSnapshot: {
+            customerMessageSeq: snapshot.customer_message_seq,
+            latestReply: snapshot.latest_reply,
+          },
+          confirm: request.body.confirm_close_reasons,
+        },
+      );
+      logChange(request.log, result, request.params.conversationId, 'close');
+      return result;
+    },
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/reopen`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: StateChangeRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.reopen(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        { expectedStateVersion: request.body.expected_state_version },
+      );
+      logChange(request.log, result, request.params.conversationId, 'reopen');
       return result;
     },
   );

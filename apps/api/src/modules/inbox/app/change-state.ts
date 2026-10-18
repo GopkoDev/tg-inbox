@@ -3,10 +3,12 @@ import {
   AccessRemovedError,
   AssigneeNotActiveError,
   ChangeLimitReachedError,
+  CloseNeedsConfirmationError,
   ConversationStateChangedError,
   NotFoundError,
 } from '../../../platform/errors.js';
 import type { ActivityView } from '../../conversations/app/ports.js';
+import type { CloseSnapshot } from '../../conversations/domain/state.js';
 import type { ChangeResult } from '../../conversations/app/state-changes.js';
 import type { Member } from './reads.js';
 import { activityDto } from './reads.js';
@@ -55,9 +57,20 @@ export function createChangeState(deps: ChangeStateDeps) {
           result.latestChange && activityDto(workspaceId, result.latestChange, names),
         );
       }
-      case 'needs_confirmation':
-        // Only a close can need confirmation; the assignment routes never ask for one.
-        throw new Error('an assignment cannot need confirmation');
+      case 'needs_confirmation': {
+        const conversation = await reads.getConversation(workspaceId, member, conversationId);
+        const names = await namesOf(workspaceId, [result.latestChange]);
+        const unread = result.newestUnreadMessage;
+        throw new CloseNeedsConfirmationError({
+          reasons: result.reasons,
+          stale_change: result.latestChange && activityDto(workspaceId, result.latestChange, names),
+          newest_unread_message: unread && {
+            id: unread.id,
+            received_at: unread.receivedAt.toISOString(),
+          },
+          conversation,
+        });
+      }
       case 'recorded':
       case 'unchanged': {
         const conversation = await reads.getConversation(workspaceId, member, conversationId);
@@ -100,7 +113,67 @@ export function createChangeState(deps: ChangeStateDeps) {
     }).then((result) => answer(workspaceId, member, conversationId, result));
   }
 
+  /** Flow 7 and 8: the caller under `FOR SHARE`, then the status change on the conversation. */
+  function changeStatus(
+    workspaceId: string,
+    member: Member,
+    conversationId: string,
+    expectedStateVersion: number,
+    to: { to: 'open' } | { to: 'closed'; snapshot: CloseSnapshot; confirm: boolean },
+  ): Promise<ConversationStateChange> {
+    return transaction(async (tx) => {
+      const active = await workspaces.lockActiveMembers(tx, workspaceId, [member.accountId]);
+      if (!active.includes(member.accountId)) {
+        throw new AccessRemovedError('Your access to this workspace was removed');
+      }
+      const base = {
+        workspaceId,
+        actorAccountId: member.accountId,
+        conversationId,
+        expectedStateVersion,
+      };
+      return changes.changeStatus(
+        tx,
+        to.to === 'open'
+          ? { ...base, to: 'open' }
+          : {
+              ...base,
+              to: 'closed',
+              expectedCloseSnapshot: to.snapshot,
+              confirm: to.confirm,
+              actorActiveSince: member.activeSince,
+            },
+      );
+    }).then((result) => answer(workspaceId, member, conversationId, result));
+  }
+
   return {
+    close: (
+      workspaceId: string,
+      member: Member,
+      conversationId: string,
+      input: {
+        expectedStateVersion: number;
+        expectedCloseSnapshot: CloseSnapshot;
+        confirm: boolean;
+      },
+    ) =>
+      changeStatus(workspaceId, member, conversationId, input.expectedStateVersion, {
+        to: 'closed',
+        snapshot: input.expectedCloseSnapshot,
+        confirm: input.confirm,
+      }),
+
+    reopen: (
+      workspaceId: string,
+      member: Member,
+      conversationId: string,
+      input: { expectedStateVersion: number },
+    ) =>
+      changeStatus(workspaceId, member, conversationId, input.expectedStateVersion, {
+        to: 'open',
+      }),
+
     assign: (
       workspaceId: string,
       member: Member,
