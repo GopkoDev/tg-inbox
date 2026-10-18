@@ -190,6 +190,36 @@ describe('SCR-02 default (AC-03)', () => {
     expect(screen.getByText('<b>bold</b>')).toBeInTheDocument();
   });
 
+  it('shows a non-text message through MessageContent (kind, caption, unavailable reason)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              error: { code: 'MEDIA_UNAVAILABLE', message: 'x', details: { reason: 'file_gone' } },
+            }),
+            { status: 409, headers: { 'content-type': 'application/json' } },
+          ),
+        ),
+      ),
+    );
+    await openAndRender([
+      message(1, 1, {
+        kind: 'photo',
+        body: 'new bouquet?',
+        attachment: { file_name: null, mime_type: 'image/jpeg', file_size: 5 },
+      }),
+      message(2, 2),
+    ]);
+    expect(
+      await screen.findByText('Content unavailable — Telegram no longer keeps this file'),
+    ).toBeInTheDocument();
+    expect(screen.getByText('new bouquet?')).toBeInTheDocument();
+    expect(screen.getByText('customer 2')).toBeInTheDocument();
+    vi.unstubAllGlobals();
+  });
+
   it('shows no @username when the contact has none', async () => {
     api.getConversation.mockResolvedValue(
       summary({ contact: { id: id(900), first_name: 'Ada', last_name: null, username: null } }),

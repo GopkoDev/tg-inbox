@@ -12,6 +12,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import * as source from './api-source';
 import { contactName } from './ConversationList';
 import { MessageBubble } from './MessageBubble';
+import { MessageContent } from './MessageContent';
 import { useInboxStore } from './store';
 
 const TOP_THRESHOLD = 48;
@@ -20,7 +21,15 @@ const BOTTOM_THRESHOLD = 48;
 const timeOf = (iso: string) =>
   new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-function Item({ item }: { item: ThreadItem }) {
+function Item({
+  item,
+  workspaceId,
+  contactName,
+}: {
+  item: ThreadItem;
+  workspaceId: string;
+  contactName: string;
+}) {
   if (item.type === 'reply')
     return (
       <MessageBubble
@@ -30,12 +39,20 @@ function Item({ item }: { item: ThreadItem }) {
         author={item.author.display_name}
       />
     );
+  const at = timeOf(item.sent_at);
   return (
     <MessageBubble
       sender="customer"
-      text={item.body ?? (item.kind === 'text' ? '' : item.kind)}
-      at={timeOf(item.sent_at)}
+      at={at}
       edited={item.edited_at !== null}
+      content={
+        <MessageContent
+          message={item}
+          workspaceId={workspaceId}
+          contactName={contactName}
+          at={at}
+        />
+      }
     />
   );
 }
@@ -232,7 +249,7 @@ export function Thread() {
           <p className="text-center text-xs text-muted-foreground">Start of the conversation</p>
         ) : null}
         {open.items.map((item) => (
-          <Item key={item.id} item={item} />
+          <Item key={item.id} item={item} workspaceId={workspaceId} contactName={name} />
         ))}
       </div>
     );

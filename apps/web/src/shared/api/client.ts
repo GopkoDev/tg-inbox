@@ -68,3 +68,32 @@ export async function apiRequest(
   }
   return schema ? schema.parse(body) : undefined;
 }
+
+/**
+ * A binary GET (media): the status is checked before the bytes are used, because a refusal is
+ * the JSON error envelope. Same credentials and error mapping as `apiRequest`.
+ */
+export async function apiBlob(
+  path: string,
+  init: RequestOptions = {},
+): Promise<{ blob: Blob; contentType: string }> {
+  const { background, ...rest } = init;
+  const headers = new Headers(rest.headers);
+  if (background) headers.set('x-background-request', '1');
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: 'same-origin',
+    ...rest,
+    headers,
+  });
+  if (!response.ok) {
+    const body: unknown = await response.json().catch(() => undefined);
+    const parsed = ErrorEnvelope.safeParse(body);
+    if (parsed.success) {
+      const { code, message, details } = parsed.data.error;
+      throw new ApiError(response.status, toErrorCode(code), message, details);
+    }
+    throw new ApiError(response.status, ErrorCode.INTERNAL_ERROR, response.statusText);
+  }
+  const blob = await response.blob();
+  return { blob, contentType: response.headers.get('content-type') ?? blob.type };
+}
