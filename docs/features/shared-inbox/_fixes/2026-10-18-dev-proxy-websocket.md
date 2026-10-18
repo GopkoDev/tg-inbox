@@ -3,7 +3,7 @@ slug: shared-inbox
 date: 2026-10-18
 triage: regression
 acs: [AC-15, AC-06]
-commit: <filled after commit>
+commit: 77e2899
 recurrence_of: none
 ---
 
