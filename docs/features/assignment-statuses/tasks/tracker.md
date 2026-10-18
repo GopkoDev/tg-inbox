@@ -7,7 +7,7 @@
 |---|---|---|---|---|---|---|
 | T1 | [Promote the expand, backfill, activity-table and lens-index migrations 01–04, regenerate DB types and extend the test fixtures](./t01-promote-expand-migrations.md) | migration | Dmytro Hopko | M | — | done |
 | T2 | [Add the assignment zod contracts, the four error codes and the activity item type on the live frame and the realtime signal](./t02-assignment-contracts.md) | ports | Dmytro Hopko | M | — | done |
-| T3 | [Add the conversations domain change rules: no-op, stale and close-reason decision, snapshot equality, activity kinds and causes, position rule and the change-limit window](./t03-conversations-change-rules.md) | domain | Dmytro Hopko | S | — | todo |
+| T3 | [Add the conversations domain change rules: no-op, stale and close-reason decision, snapshot equality, activity kinds and causes, position rule and the change-limit window](./t03-conversations-change-rules.md) | domain | Dmytro Hopko | S | — | done |
 | T4 | [Extend the thread domain with the activity kind: merge order message < reply < activity and a three-kind cursor that still decodes old cursors](./t04-thread-activity-kind.md) | domain | Dmytro Hopko | S | — | todo |
 | T5 | [Give workspaces lockActiveMembers, activeMembers and the onMembershipDeactivated port called inside the deactivation transaction](./t05-workspaces-locks-and-port.md) | app | Dmytro Hopko | M | — | todo |
 | T6 | [Build the conversations persistence for state and activity: locked row read, versioned state update, activity repository and the close-reason reads](./t06-conversations-state-persistence.md) | infra | Dmytro Hopko | M | T1, T3 | todo |
