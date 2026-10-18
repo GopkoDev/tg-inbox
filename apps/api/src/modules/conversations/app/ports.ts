@@ -95,9 +95,18 @@ export interface ReadSignal {
   accountId: string;
 }
 
+export interface ReplySignal {
+  workspaceId: string;
+  conversationId: string;
+  replyId: string;
+  change: 'created' | 'state';
+}
+
 /** Live signals, published in the caller's transaction so they are delivered only on commit (ADR-0003). */
 export interface ConversationSignals {
   messageChanged(tx: Executor, signal: MessageSignal): Promise<void>;
+  /** `conversation.changed` with item type reply: a reply was created or changed state. */
+  replyChanged(tx: Executor, signal: ReplySignal): Promise<void>;
   /** `conversation.changed { change: read, account_id }` after a member's watermark was written. */
   conversationRead(tx: Executor, signal: ReadSignal): Promise<void>;
 }
@@ -234,4 +243,83 @@ export interface ReadMarkRepo {
    * newest arrival. Null when the conversation is not in the workspace (nothing is written).
    */
   markRead(workspaceId: string, input: MarkReadInput, tx?: Executor): Promise<ReadState | null>;
+}
+
+// ───────── reply requests (inbox send / resend) ─────────
+
+export type AttemptKind = 'send' | 'try_again' | 'send_again';
+
+/** Hands the conversation's drain job to the delivery queue in the request's own transaction (ADR-0004). */
+export type EnqueueDrain = (
+  tx: Executor,
+  workspaceId: string,
+  conversationId: string,
+) => Promise<void>;
+
+export interface NewReply {
+  id: string;
+  conversationId: string;
+  clientKey: string;
+  body: string;
+  authorAccountId: string;
+  positionAt: Date;
+}
+
+export interface ReplyRepo {
+  findByClientKey(
+    workspaceId: string,
+    conversationId: string,
+    clientKey: string,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
+  /** Row-locks the reply for the rest of the transaction. */
+  findForUpdate(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
+  /**
+   * Takes the transaction-level advisory lock on (workspace, member) and counts the member-initiated
+   * attempts created after `since`; `oldest` is the earliest of them. Automatic retries have no initiator.
+   */
+  lockAndCountAttempts(
+    workspaceId: string,
+    accountId: string,
+    since: Date,
+    tx?: Executor,
+  ): Promise<{ count: number; oldest: Date | null }>;
+  /**
+   * The newest reply by someone other than `accountId` that follows the reply `afterReplyId` in thread
+   * order (any reply when it is null or not a reply of this conversation).
+   */
+  newestTeammateReply(
+    workspaceId: string,
+    conversationId: string,
+    accountId: string,
+    afterReplyId: string | null,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
+  /** Stores a `sending` reply; null when the conversation is not in the workspace or the key is taken. */
+  insert(workspaceId: string, reply: NewReply, tx?: Executor): Promise<ReplyView | null>;
+  insertAttempt(
+    workspaceId: string,
+    attempt: {
+      id: string;
+      conversationId: string;
+      replyId: string;
+      kind: AttemptKind;
+      initiatedByAccountId: string;
+      createdAt: Date;
+    },
+    tx?: Executor,
+  ): Promise<void>;
+  /** not_delivered / not_confirmed -> sending at a new position; null when it is in neither state. */
+  requeue(
+    workspaceId: string,
+    conversationId: string,
+    replyId: string,
+    positionAt: Date,
+    tx?: Executor,
+  ): Promise<ReplyView | null>;
 }

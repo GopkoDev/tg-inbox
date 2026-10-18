@@ -9,6 +9,9 @@ import type {
   MessageSignal,
   ReadMarkRepo,
   ReadSignal,
+  ReplyRepo,
+  ReplySignal,
+  ReplyView,
 } from './ports.js';
 import { raise, unreadFloor } from '../domain/read-state.js';
 
@@ -125,12 +128,18 @@ export function fakeMessageRepo(): MessageRepo & { rows: FakeMessage[] } {
 export function fakeConversationSignals(): ConversationSignals & {
   sent: Array<MessageSignal & { tx: Executor }>;
   read: Array<ReadSignal & { tx: Executor }>;
+  replies: Array<ReplySignal & { tx: Executor }>;
 } {
+  const replies: Array<ReplySignal & { tx: Executor }> = [];
   const sent: Array<MessageSignal & { tx: Executor }> = [];
   const read: Array<ReadSignal & { tx: Executor }> = [];
   return {
     sent,
     read,
+    replies,
+    async replyChanged(tx, signal) {
+      replies.push({ ...signal, tx });
+    },
     async messageChanged(tx, signal) {
       sent.push({ ...signal, tx });
     },
@@ -164,6 +173,92 @@ export function fakeReadMarkRepo(o: {
         readThroughAt,
         unreadCount: o.arrivals.filter((d) => d.getTime() > floor.getTime()).length,
       };
+    },
+  };
+}
+
+export interface FakeAttempt {
+  id: string;
+  workspaceId: string;
+  conversationId: string;
+  replyId: string;
+  kind: string;
+  initiatedByAccountId: string | null;
+  createdAt: Date;
+}
+
+/** In-memory ReplyRepo for unit tests (one workspace's conversations are `known`). */
+export function fakeReplyRepo(o: {
+  conversations: Array<[workspaceId: string, id: string]>;
+}): ReplyRepo & {
+  replies: Array<ReplyView & { workspaceId: string }>;
+  attempts: FakeAttempt[];
+} {
+  const replies: Array<ReplyView & { workspaceId: string }> = [];
+  const attempts: FakeAttempt[] = [];
+  const own = (w: string, c: string) =>
+    replies.filter((r) => r.workspaceId === w && r.conversationId === c);
+
+  const strip = (row: ReplyView & { workspaceId: string }): ReplyView => {
+    const view: ReplyView & { workspaceId?: string } = { ...row };
+    delete view.workspaceId;
+    return view;
+  };
+  const order = (a: ReplyView, b: ReplyView) =>
+    a.positionAt.getTime() - b.positionAt.getTime() || (a.id === b.id ? 0 : a.id < b.id ? -1 : 1);
+  return {
+    replies,
+    attempts,
+    async findByClientKey(w, c, key) {
+      const r = own(w, c).find((x) => x.clientKey === key);
+      return r ? strip(r) : null;
+    },
+    async findForUpdate(w, c, id) {
+      const r = own(w, c).find((x) => x.id === id);
+      return r ? strip(r) : null;
+    },
+    async lockAndCountAttempts(w, account, since) {
+      const mine = attempts.filter(
+        (a) => a.workspaceId === w && a.initiatedByAccountId === account && a.createdAt > since,
+      );
+      const times = mine.map((a) => a.createdAt.getTime());
+      return { count: mine.length, oldest: times.length ? new Date(Math.min(...times)) : null };
+    },
+    async newestTeammateReply(w, c, account, afterId) {
+      const all = own(w, c).sort(order);
+      const seen = all.find((r) => r.id === afterId);
+      const found = all
+        .filter((r) => r.authorAccountId !== account && (!seen || order(r, seen) > 0))
+        .at(-1);
+      return found ? strip(found) : null;
+    },
+    async insert(w, reply) {
+      if (!o.conversations.some(([ws, id]) => ws === w && id === reply.conversationId)) return null;
+      if (own(w, reply.conversationId).some((r) => r.clientKey === reply.clientKey)) return null;
+      const row = {
+        id: reply.id,
+        workspaceId: w,
+        conversationId: reply.conversationId,
+        clientKey: reply.clientKey,
+        body: reply.body,
+        authorAccountId: reply.authorAccountId,
+        state: 'sending' as const,
+        failureReason: null,
+        positionAt: reply.positionAt,
+        sentAt: null,
+        createdAt: reply.positionAt,
+      };
+      replies.push(row);
+      return strip(row);
+    },
+    async insertAttempt(w, a) {
+      attempts.push({ ...a, workspaceId: w, initiatedByAccountId: a.initiatedByAccountId });
+    },
+    async requeue(w, c, id, positionAt) {
+      const r = own(w, c).find((x) => x.id === id);
+      if (!r || (r.state !== 'not_delivered' && r.state !== 'not_confirmed')) return null;
+      Object.assign(r, { state: 'sending', failureReason: null, positionAt });
+      return strip(r);
     },
   };
 }

@@ -14,7 +14,7 @@
 | T7 | [Give workspaces an active-since time, a richer guard result, active-member and display-name lookups and a deactivation signal; promote migration 09](./t07-workspaces-inbox-support.md) | app | Dmytro Hopko | M | T1, T3 | done |
 | T8 | [Maintain the conversation list columns on capture and edit, publish conversation.changed, and promote migration 10](./t08-capture-list-columns-and-signals.md) | app | Dmytro Hopko | M | T1, T3, T7 | done |
 | T9 | [Build the conversations read side: list page with unread counts, summary, thread page, single items, media reference and mark read](./t09-conversations-read-side.md) | infra | Dmytro Hopko | M | T5, T8 | done |
-| T10 | [Build reply creation and re-queueing in conversations: idempotent client key, per-member limit under an advisory lock, teammate check, attempt row and drain job in one transaction](./t10-conversations-reply-requests.md) | infra | Dmytro Hopko | M | T5, T8 | todo |
+| T10 | [Build reply creation and re-queueing in conversations: idempotent client key, per-member limit under an advisory lock, teammate check, attempt row and drain job in one transaction](./t10-conversations-reply-requests.md) | infra | Dmytro Hopko | M | T5, T8 | done |
 | T11 | [Build the delivery side in conversations: pending replies, in-flight mark, outcome recording, mark sent, stale in-flight and dead-letter resolution](./t11-conversations-delivery-side.md) | infra | Dmytro Hopko | M | T10 | todo |
 | T12 | [Add contact search ids and contacts by ids to the contacts module](./t12-contacts-search.md) | infra | Dmytro Hopko | S | — | done |
 | T13 | [Expose the inbox bot status to every member and publish bot.changed on every bot state transition](./t13-bots-inbox-status.md) | app | Dmytro Hopko | S | T3 | done |
