@@ -134,49 +134,106 @@ Each tactical decision in later sections traces to one of these choices; contrad
 
 ## 5. Building block view
 
-<!-- 🎯 Why: INTERNAL DECOMPOSITION — modules, containers, datastores. The static topology: who
-     may talk to whom. Without §5, §6 (the flows) has no vocabulary of participants.
-     📋 Write: 1 ¶ on the style (layered / hexagonal / clean / event-driven) + a folder tree + a
-     C4Container block.
-     📌 Draw ONE Container per declared `target_surface` (frontmatter): a fullstack
-     [backend-service, web-frontend] = a backend-API container + a web/SPA container; a
-     [backend-service, mobile-app] = the API + the mobile app. The Container(web, …) line below is
-     just one surface's container — swap/add per what was declared in §4. → _shared/surfaces.md
-     📌 e.g. «web app, content API, media worker, datastore, object store, CDN». -->
+The backend keeps the repo's modular-monolith layering (`domain → app → infra → http`) and adds one module, `inbox`, on top of the existing ones ([ADR-0007](adr/0007-add-an-inbox-module-that-orchestrates-conversations-contacts-bots-and-workspaces.md)). `inbox` owns the inbox's HTTP routes, the live socket hub, the reply-delivery worker and the inbox use cases (list, search, thread, mark read, send / try again / send again, media), and calls the app layers of `conversations`, `contacts`, `bots` and `workspaces`. It owns no tables: replies, their delivery attempts and read state are stored by `conversations`, beside the messages they interleave with, so the thread and the list stay single-module queries ([ADR-0008](adr/0008-store-replies-in-their-own-table-and-page-the-thread-by-position-time.md)). The dependency graph stays acyclic: `inbox → {conversations, contacts, bots, workspaces}`, `bots → conversations → contacts`, `bots → contacts`; nothing depends on `inbox`. Modules that commit a change the inbox must show publish a signal through `platform/realtime` inside their transaction ([ADR-0003](adr/0003-fan-out-live-signals-through-postgres-listen-notify-published-in-the-writing-transaction.md)) — a platform service, not a module dependency.
 
-<One paragraph: layered / hexagonal / clean / event-driven, and why.>
+**Table ownership** (names indicative; `data-model` fixes them):
+
+| Module | Tables (new or changed) | Tenancy |
+|---|---|---|
+| `conversations` | conversations **+** last activity time, last customer message time, last "sent" reply time, last shown item (§4); messages **+** index on (conversation, arrival); **replies** — author account, text, client reply key, delivery state and reason, position time, sent time, Telegram message id; **reply attempts** — reply, initiated by (member / automatic), started, outcome; **read marks** — (member account, conversation) → arrival watermark | Tenant-owned, non-null `workspace_id`; replies unique on (conversation, client reply key) |
+| `workspaces` | memberships **+** active-since time (set at join and on reactivation) | Tenant-owned (unchanged) |
+| `contacts` | contacts **+** search support over name and username within a workspace | Tenant-owned (unchanged) |
+| `bots`, `inbox` | none | — |
+
+No new controlled tenancy exception: the delivery job carries its workspace id; the socket re-validation reads memberships by (workspace id, account ids); every new repository method takes `workspaceId`.
+
+**Cross-module app-layer calls (new):**
+
+- `inbox` → `workspaces`: the existing workspace guard (now also returning the membership's role and active-since time) on every route and on the socket upgrade; *active members among accounts* (socket re-validation, delivery pre-check); *member display names* (reply authorship).
+- `inbox` → `conversations`: *list page* (keyset, optional contact-id filter, with this member's unread counts and the "waiting" marker), *conversation summary*, *thread page* (before / after a position cursor), *thread item*, *mark read through*, *create reply* (idempotent on the client key, with the collision and rate checks inside its transaction), *re-queue reply* (try again / send again), *pending replies of a conversation*, *record attempt start / outcome*, *media reference of a message*.
+- `inbox` → `contacts`: *search contact ids*, *contacts by ids* (names and usernames for list rows and thread headers).
+- `inbox` → `bots`: *inbox bot status* (can carry replies, is receiving — readable by any member), *send text* (workspace id, chat id, text → classified outcome), *open media stream* (workspace id, Telegram file reference, optional byte range → stream or typed unavailability).
+- `bots` and `workspaces` publish bot-state and membership-deactivation signals; `conversations` publishes message, edit, reply and read-mark signals.
 
 **Internal decomposition:**
 
 ```
-<e.g. modules/<feature>/>
-├── domain/       <entities + sentinel errors>
-├── app/          <use cases / services>
-├── infra/        <repository + integration impl>
-├── ports/        <handlers, DTOs, error mapping>
-└── wiring        <self-wiring entry point>
+apps/api/src/
+├── platform/realtime.ts   publisher (pg_notify inside the caller's transaction) + listener
+│                          (dedicated pg connection, reconnect with backoff, resync on gap)
+├── modules/inbox/
+│   ├── domain/       reply text rule (trimmed non-empty, ≤ 4096), delivery outcome → state + reason,
+│   │                 retry window, per-member limit window, signal types
+│   ├── app/          list / search / summary / thread / item, mark read, send reply, try again,
+│   │                 send again, deliver conversation (the drain), open media; socket session rules;
+│   │                 ports: conversations, contacts, bots, workspaces, realtime hub, job queue, clock
+│   ├── infra/        jobs.ts — inbox.deliver-replies worker (stately, singleton key = conversation id);
+│   │                 hub.ts — sockets by workspace, 5 s re-validation, signal dispatch
+│   └── http/         routes.ts → registerInbox(app, deps): reads, reply actions and media under
+│                     /api/workspaces/:workspaceId/…, and the live socket endpoint
+├── modules/conversations/
+│   ├── domain/       + reply delivery states and allowed transitions, thread position order,
+│   │                 arrival watermark rule
+│   ├── app/          + list, summary, thread, item, mark read, replies + attempts use cases;
+│   │                 capture/edit now also update list columns and publish signals
+│   └── infra/        + reply, reply-attempt and read-mark repositories; list/thread queries
+├── modules/contacts/  + search ids, by ids
+├── modules/bots/      + inbox bot status; gateway sendMessage, getFile, file download stream;
+│                        state transitions publish a signal
+├── modules/workspaces/ + active-since on memberships, active members among accounts, display names;
+│                         deactivation publishes a signal
+└── deps.ts / app.ts   wiring of inbox, the realtime listener and the delivery worker
+apps/web/src/
+├── features/inbox/    api-source.ts (replaces sample-source.ts), store.ts (keyed by workspace),
+│                      list / thread / composer / delivery-state / media components, the two dialogs
+├── shared/api/realtime.ts   one socket per tab for the current workspace; reconnect + resync
+└── pages/InboxPage.tsx      real data; not-found and access-removed handling as today
+packages/shared/src/  inbox.ts — list, thread, reply, media-unavailable and signal schemas;
+                      new error codes in errors.ts (e.g. teammate replied, reply limit, bot cannot reply)
 ```
 
-**C4 Container (L2):** <!-- syntax → references/c4-mermaid-syntax.md. Real names, no <placeholder> stubs. ONE Container per declared target_surface (frontmatter); the web container below is one example surface. -->
+**C4 Container (L2):**
 
 ```mermaid
 C4Container
-    title <feature> — Containers
+    title shared-inbox — Containers
 
-    Person(actor, "<Actor>")
+    Person(member, "Operator or Business owner")
+    Person(customer, "End customer")
 
-    Container_Boundary(app, "<Our system>") {
-        Container(web, "<Web/UI>", "<technology>", "<purpose>")
-        Container(api, "<API/handler>", "<technology>", "<purpose>")
-        ContainerDb(db, "<Datastore>", "<technology>", "<purpose>")
+    Container_Boundary(tginbox, "tg-inbox") {
+        Container(spa, "Web panel", "React 19, Vite, Zustand, shadcn/ui", "Inbox list, thread, composer, media viewer, confirmations")
+        Container(http, "API server", "Node 26, Fastify 5, zod, websocket, pg-boss", "Inbox routes, live socket endpoint, media proxy, webhook ingress, job workers")
+        Container(inbox, "inbox module", "TypeScript", "Inbox use cases, socket hub, reply-delivery worker")
+        Container(ws, "workspaces module", "TypeScript", "Workspace guard, active members, display names")
+        Container(conv, "conversations module", "TypeScript", "Conversations, messages, replies, attempts, read marks")
+        Container(contacts, "contacts module", "TypeScript", "Contacts and contact search")
+        Container(bots, "bots module", "TypeScript, grammY", "Bot state, webhook capture, sendMessage, media download")
+        Container(rt, "realtime platform service", "TypeScript, pg", "Publishes signals in transactions, listens on one connection")
     }
 
-    System_Ext(ext, "<External>", "<purpose>")
+    ContainerDb(db, "Database", "PostgreSQL 16", "Conversations, messages, replies, read marks, memberships, pg-boss jobs")
+    System_Ext(telegram, "Telegram Bot API", "Webhook delivery, sendMessage, getFile, file download")
 
-    Rel(actor, web, "<interaction>", "<protocol>")
-    Rel(web, api, "<calls>")
-    Rel(api, db, "<reads/writes>", "<driver>")
-    Rel(api, ext, "<emits>", "<protocol>")
+    Rel(member, spa, "Reads, searches, replies", "HTTPS")
+    Rel(customer, telegram, "Writes to and reads from the business bot", "Telegram app")
+    Rel(spa, http, "Inbox reads, reply actions, media", "JSON and bytes over HTTPS, same origin")
+    Rel(http, spa, "Pushes change signals", "WebSocket")
+    Rel(telegram, http, "Pushes customer messages and edits", "HTTPS webhook")
+    Rel(http, inbox, "Inbox requests, socket sessions, delivery jobs")
+    Rel(inbox, ws, "Guard, active members, names")
+    Rel(inbox, conv, "Lists, threads, replies, attempts, read marks")
+    Rel(inbox, contacts, "Search and names")
+    Rel(inbox, bots, "Bot status, send text, open media")
+    Rel(bots, conv, "Capture messages and edits")
+    Rel(conv, contacts, "Upsert contact on capture")
+    Rel(bots, telegram, "sendMessage, getFile, download", "HTTPS Bot API")
+    Rel(conv, rt, "Publishes message, reply and read signals")
+    Rel(bots, rt, "Publishes bot-state signals")
+    Rel(ws, rt, "Publishes deactivation signals")
+    Rel(rt, inbox, "Delivers signals to the hub")
+    Rel(conv, db, "Reads and writes", "SQL via Kysely")
+    Rel(rt, db, "NOTIFY in transactions, LISTEN on a dedicated connection", "pg")
 ```
 
 ## 6. Runtime view
