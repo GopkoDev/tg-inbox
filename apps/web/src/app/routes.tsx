@@ -5,6 +5,7 @@ import {
   type LoaderFunctionArgs,
   type RouteObject,
 } from 'react-router';
+import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
 import { getSampleContact } from '@/features/contacts/sample-source';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
@@ -53,7 +54,7 @@ const workspaceRoute: RouteObject = {
         { index: true, element: <InboxPage /> },
         {
           path: ':conversationId',
-          handle: { crumb: 'Conversation' },
+          handle: { crumb: 'Conversation', Crumb: ConversationCrumb },
           element: <InboxPage />,
         },
       ],

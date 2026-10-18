@@ -11,6 +11,7 @@ import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import * as source from './api-source';
 import { ConversationList, ConversationSkeletons } from './ConversationList';
+import { Thread } from './Thread';
 import { useInboxStore } from './store';
 
 const PAGE_SIZE = 30;
@@ -251,7 +252,9 @@ export function InboxList() {
     </div>
   );
 
-  const placeholder = (
+  const rightPane = conversationId ? (
+    <Thread key={conversationId} />
+  ) : (
     <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
       Pick a conversation to see it here
     </div>
@@ -260,11 +263,15 @@ export function InboxList() {
   return (
     <Card className="h-[calc(100svh-11rem)] min-h-96 flex-row gap-0 overflow-hidden py-0">
       {isMobile ? (
-        listPane
+        conversationId ? (
+          rightPane
+        ) : (
+          listPane
+        )
       ) : (
         <>
           <div className="flex w-80 shrink-0 flex-col border-r">{listPane}</div>
-          {placeholder}
+          {rightPane}
         </>
       )}
     </Card>

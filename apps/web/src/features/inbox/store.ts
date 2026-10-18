@@ -1,4 +1,5 @@
 import type {
+  ContactSummary,
   Conversation,
   InboxBotStatus,
   LiveFrame,
@@ -9,6 +10,7 @@ import type {
 } from '@tg/shared';
 import { create } from 'zustand';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ApiError } from '@/shared/api/client';
 import { openLiveSocket, type LiveClient } from '@/shared/api/realtime';
 import * as source from './api-source';
 
@@ -19,9 +21,14 @@ export type ListStatus = 'loading' | 'ready' | 'error';
 /** `stopped`: the server ended the session (4401/4403); no reconnect, the next request decides. */
 export type LiveStatus = 'idle' | 'live' | 'stopped';
 
+export type ThreadStatus = ListStatus | 'not_found';
+export type OlderStatus = 'idle' | 'loading' | 'error';
+
 export interface OpenThread {
   conversationId: string;
-  status: ListStatus;
+  status: ThreadStatus;
+  contact: ContactSummary | null;
+  older: OlderStatus;
   items: ThreadItem[];
   hasPrev: boolean;
   prevCursor: string | null;
@@ -45,10 +52,11 @@ interface InboxState {
   enter: (workspaceId: string) => Promise<void>;
   leave: () => void;
   openThread: (workspaceId: string, conversationId: string) => Promise<void>;
+  loadOlder: (workspaceId: string, conversationId: string) => Promise<void>;
   closeThread: () => void;
 }
 
-const EMPTY: Omit<InboxState, 'enter' | 'leave' | 'openThread' | 'closeThread'> = {
+const EMPTY: Omit<InboxState, 'enter' | 'leave' | 'openThread' | 'loadOlder' | 'closeThread'> = {
   workspaceId: null,
   listStatus: 'loading',
   conversations: [],
@@ -72,6 +80,7 @@ function itemKey(item: ThreadItem): string {
 }
 const byPosition = (a: ThreadItem, b: ThreadItem) =>
   (itemKey(a) ?? '').localeCompare(itemKey(b) ?? '') || a.id.localeCompare(b.id);
+const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
 function upsertItem(items: ThreadItem[], item: ThreadItem): ThreadItem[] {
   return [...items.filter((i) => i.id !== item.id), item].sort(byPosition);
@@ -173,22 +182,24 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         return;
       set({
         thread: {
+          ...open,
           conversationId,
           status: 'ready',
+          older: 'idle',
           items: [...page.items].sort(byPosition),
           hasPrev: page.has_prev,
           prevCursor: page.prev_cursor,
           readThroughAt: page.read_through_at,
         },
       });
-    } catch {
+    } catch (error) {
       const open = get().thread;
       if (
         current(workspaceId, startedAt) &&
         open?.conversationId === conversationId &&
-        !options.background
+        (!options.background || isNotFound(error))
       )
-        set({ thread: { ...open, status: 'error' } });
+        set({ thread: { ...open, status: isNotFound(error) ? 'not_found' : 'error' } });
     }
   };
 
@@ -212,6 +223,10 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     const open = get().thread;
     if (!open || item.workspace_id !== workspaceId || open.conversationId !== item.conversation_id)
       return;
+    const first = open.items[0];
+    const known = open.items.some((i) => i.id === item.id);
+    // Older than everything loaded while earlier pages exist: it shows once its page is loaded.
+    if (!known && open.hasPrev && first && byPosition(item, first) < 0) return;
     set({ thread: { ...open, items: upsertItem(open.items, item) } });
   };
 
@@ -289,17 +304,86 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     leave: reset,
     async openThread(workspaceId, conversationId) {
       if (get().workspaceId !== workspaceId) return;
+      const row = get().conversations.find((c) => c.id === conversationId);
       set({
         thread: {
           conversationId,
           status: 'loading',
+          contact: row?.contact ?? null,
+          older: 'idle',
           items: [],
           hasPrev: false,
           prevCursor: null,
           readThroughAt: null,
         },
       });
+      const startedAt = epoch;
+      void Promise.resolve()
+        .then(() => source.getConversation(workspaceId, conversationId))
+        .then((summary) => {
+          const open = get().thread;
+          if (
+            !summary ||
+            !current(workspaceId, startedAt) ||
+            summary.workspace_id !== workspaceId ||
+            open?.conversationId !== conversationId
+          )
+            return;
+          set({ thread: { ...open, contact: summary.contact } });
+        })
+        .catch((error: unknown) => {
+          const open = get().thread;
+          if (
+            isNotFound(error) &&
+            current(workspaceId, startedAt) &&
+            open?.conversationId === conversationId
+          )
+            set({ thread: { ...open, status: 'not_found' } });
+        });
       await loadThread(workspaceId, conversationId, { background: false });
+    },
+    async loadOlder(workspaceId, conversationId) {
+      const open = get().thread;
+      if (
+        get().workspaceId !== workspaceId ||
+        open?.conversationId !== conversationId ||
+        open.status !== 'ready' ||
+        !open.hasPrev ||
+        !open.prevCursor ||
+        open.older === 'loading'
+      )
+        return;
+      const startedAt = epoch;
+      set({ thread: { ...open, older: 'loading' } });
+      try {
+        const page = await source.listThreadItems(
+          workspaceId,
+          conversationId,
+          { before: open.prevCursor, limit: PAGE_SIZE },
+          {},
+        );
+        const now = get().thread;
+        if (
+          !current(workspaceId, startedAt) ||
+          page.workspace_id !== workspaceId ||
+          now?.conversationId !== conversationId
+        )
+          return;
+        const known = new Set(now.items.map((i) => i.id));
+        set({
+          thread: {
+            ...now,
+            older: 'idle',
+            items: [...page.items.filter((i) => !known.has(i.id)), ...now.items].sort(byPosition),
+            hasPrev: page.has_prev,
+            prevCursor: page.prev_cursor,
+          },
+        });
+      } catch {
+        const now = get().thread;
+        if (current(workspaceId, startedAt) && now?.conversationId === conversationId)
+          set({ thread: { ...now, older: 'error' } });
+      }
     },
     closeThread: () => set({ thread: null }),
   };

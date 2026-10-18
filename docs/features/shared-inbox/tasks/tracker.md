@@ -29,7 +29,7 @@
 | T22 | [Update CLAUDE.md, the architecture map and the design-system canon for the inbox module, platform/realtime, the delivery queue and the new components](./t22-docs-and-canon.md) | docs | Dmytro Hopko | S | T18, T20, T26, T27, T28 | todo |
 | T23 | [Replace the inbox sample source with the API source, a workspace-keyed store and the realtime client](./t23-web-inbox-foundation.md) | ui | Dmytro Hopko | M | T2 | done |
 | T24 | [Build SCR-01, the conversation list, on real data: rows, search, empty states, the not-receiving notice and live updates](./t24-inbox-list-screen.md) | ui | Dmytro Hopko | M | T23 | done |
-| T25 | [Build SCR-02's reading side: thread header, paged history, mark read when visible, live items, edits, late redeliveries and phone layout](./t25-inbox-thread-screen.md) | ui | Dmytro Hopko | M | T23 | todo |
+| T25 | [Build SCR-02's reading side: thread header, paged history, mark read when visible, live items, edits, late redeliveries and phone layout](./t25-inbox-thread-screen.md) | ui | Dmytro Hopko | M | T23 | done |
 | T26 | [Build MessageContent for every message kind with media fetched through the API client, and SCR-03, the media viewer](./t26-message-content-and-viewer.md) | ui | Dmytro Hopko | M | T25 | todo |
 | T27 | [Build the real reply composer and SCR-04: client key and drafts, sending lock, validation, rate limit, bot-unavailable states and the teammate confirmation](./t27-reply-composer-and-teammate-dialog.md) | ui | Dmytro Hopko | M | T25 | todo |
 | T28 | [Build ReplyDeliveryState with Try again and Send again, and SCR-05, the duplicate-risk confirmation](./t28-delivery-state-and-resend.md) | ui | Dmytro Hopko | M | T26, T27 | todo |
