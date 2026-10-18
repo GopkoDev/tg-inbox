@@ -3,7 +3,7 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -59,6 +59,9 @@ export interface Conversations {
   contact_id: string;
   created_at: Timestamp;
   id: string;
+  last_activity_at: Timestamp | null;
+  last_message_received_at: Timestamp | null;
+  last_reply_sent_at: Timestamp | null;
   telegram_chat_id: Int8;
   workspace_id: string;
 }
@@ -77,6 +80,7 @@ export interface Invitations {
 
 export interface Memberships {
   account_id: string;
+  active_since: Timestamp | null;
   created_at: Timestamp;
   deactivated_at: Timestamp | null;
   id: string;
@@ -110,6 +114,43 @@ export interface PasswordResetLinks {
   token_hash: Buffer;
 }
 
+export interface ReadMarks {
+  account_id: string;
+  conversation_id: string;
+  created_at: Timestamp;
+  id: string;
+  read_through_at: Timestamp;
+  workspace_id: string;
+}
+
+export interface Replies {
+  author_account_id: string;
+  body: string;
+  client_key: string;
+  conversation_id: string;
+  created_at: Timestamp;
+  failure_reason: string | null;
+  id: string;
+  position_at: Timestamp;
+  sent_at: Timestamp | null;
+  state: string;
+  telegram_message_id: Int8 | null;
+  workspace_id: string;
+}
+
+export interface ReplyAttempts {
+  conversation_id: string;
+  created_at: Timestamp;
+  finished_at: Timestamp | null;
+  id: string;
+  initiated_by_account_id: string | null;
+  kind: string;
+  outcome: string | null;
+  reply_id: string;
+  started_at: Timestamp | null;
+  workspace_id: string;
+}
+
 export interface Sessions {
   account_id: string;
   created_at: Timestamp;
@@ -139,6 +180,9 @@ export interface DB {
   memberships: Memberships;
   messages: Messages;
   password_reset_links: PasswordResetLinks;
+  read_marks: ReadMarks;
+  replies: Replies;
+  reply_attempts: ReplyAttempts;
   sessions: Sessions;
   sign_in_failures: SignInFailures;
   workspaces: Workspaces;

@@ -5,7 +5,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | [Promote the expand, backfill and new-table migrations 01–08, regenerate DB types and add the inbox test fixtures](./t01-promote-expand-migrations.md) | migration | Dmytro Hopko | M | — | todo |
+| T1 | [Promote the expand, backfill and new-table migrations 01–08, regenerate DB types and add the inbox test fixtures](./t01-promote-expand-migrations.md) | migration | Dmytro Hopko | M | — | done |
 | T2 | [Define the inbox zod contracts, the live-frame schemas and the six new error codes](./t02-shared-inbox-contracts.md) | ports | Dmytro Hopko | M | — | todo |
 | T3 | [Build platform/realtime: an in-transaction pg_notify publisher and a dedicated-connection listener with reconnect and gap resync](./t03-platform-realtime.md) | infra | Dmytro Hopko | M | — | todo |
 | T4 | [Extend the fake Bot API with sendMessage, getFile and the file download, scriptable per call](./t04-fake-telegram-send-and-files.md) | tests | Dmytro Hopko | S | — | todo |

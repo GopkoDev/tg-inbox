@@ -43,6 +43,9 @@ describe('conversation repository', () => {
         contact_id: contactId,
         telegram_chat_id: '5001',
         created_at: NOW,
+        last_activity_at: null,
+        last_message_received_at: null,
+        last_reply_sent_at: null,
       },
     ]);
   });
