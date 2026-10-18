@@ -58,6 +58,8 @@ export async function insertMessage(
     receivedAt?: Date;
     editedAt?: Date;
     editUpdateId?: bigint;
+    /** The raw Telegram message object (media file ids, names, sizes). */
+    telegramMessage?: Record<string, unknown>;
   },
 ): Promise<string> {
   const id = newId();
@@ -72,7 +74,9 @@ export async function insertMessage(
       telegram_message_id: o.telegramMessageId,
       kind,
       body,
-      telegram_message: JSON.stringify({ message_id: Number(o.telegramMessageId) }),
+      telegram_message: JSON.stringify(
+        o.telegramMessage ?? { message_id: Number(o.telegramMessageId) },
+      ),
       sent_at: o.sentAt ?? T,
       received_at: o.receivedAt ?? T,
       edited_at: o.editedAt ?? null,

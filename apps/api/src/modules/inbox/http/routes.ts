@@ -16,11 +16,13 @@ import {
 } from '@tg/shared';
 import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/http/guard.js';
 import type { InboxReadUseCases } from '../app/reads.js';
+import type { OpenMessageMedia } from '../app/open-media.js';
 import type { SendReplyUseCases } from '../app/send-reply.js';
 
 export interface InboxDeps {
   reads: InboxReadUseCases;
   replies: SendReplyUseCases;
+  media: OpenMessageMedia;
   /** The workspaces guard dependency (membership check on every request). */
   access: WorkspaceGuardDeps;
   /** The auth module's session resolver (preHandler setting `request.account`). */
@@ -31,6 +33,11 @@ const Limit = z.coerce.number().int().min(1).max(100).default(50);
 const workspace = { workspaceId: z.uuid() };
 const conversation = { ...workspace, conversationId: z.uuid() };
 // The text rules (blank, 4096 UTF-16 units) are answered by the use case with their own messages.
+// A single byte range, forwarded to Telegram's file server (openapi.yaml, openMessageMedia).
+const RangeHeader = z
+  .string()
+  .max(100)
+  .regex(/^bytes=[0-9]*-[0-9]*$/);
 const SendBody = ReplySend.extend({ body: z.string() });
 
 /**
@@ -38,7 +45,7 @@ const SendBody = ReplySend.extend({ body: z.string() });
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, replies, access, authenticate } = deps;
+  const { reads, replies, media, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -199,5 +206,38 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         request.params.replyId,
         request.body,
       ),
+  );
+
+  r.get(
+    `${base}/conversations/:conversationId/messages/:messageId/media`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...conversation, messageId: z.uuid() }),
+        headers: z.object({ range: RangeHeader.optional() }),
+      },
+    },
+    async (request, reply) => {
+      const opened = await media.openMessageMedia(
+        request.workspace.workspaceId,
+        request.params.conversationId,
+        request.params.messageId,
+        request.headers.range,
+      );
+      if (opened.outcome === 'range_not_satisfiable') return reply.status(416).send();
+      // The download is dropped as soon as the client goes away (or the response ends).
+      reply.raw.once('close', () => opened.body.destroy());
+      reply
+        .status(opened.status)
+        .header('content-type', opened.contentType)
+        .header('content-disposition', opened.contentDisposition)
+        .header('x-content-type-options', 'nosniff')
+        .header('content-security-policy', "sandbox; default-src 'none'")
+        .header('cache-control', 'private, no-store');
+      if (opened.contentLength !== null) reply.header('content-length', opened.contentLength);
+      if (opened.status === 200) reply.header('accept-ranges', 'bytes');
+      if (opened.contentRange) reply.header('content-range', opened.contentRange);
+      return reply.send(opened.body);
+    },
   );
 }

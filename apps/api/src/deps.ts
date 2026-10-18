@@ -43,6 +43,7 @@ import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
 import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
+import { createOpenMessageMedia } from './modules/inbox/app/open-media.js';
 import { createInboxReadUseCases } from './modules/inbox/app/reads.js';
 import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
 import { createMessageRepo } from './modules/conversations/infra/message-repo.js';
@@ -188,19 +189,24 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   const replyDelivery = createReplyDelivery(replyDeps);
 
   // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
+  const inboxConversations = createInboxReads({
+    transaction,
+    lists: createListQueries(db),
+    threads: createThreadQueries(db),
+    marks: createReadMarkRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
   const inboxReads = createInboxReadUseCases({
-    conversations: createInboxReads({
-      transaction,
-      lists: createListQueries(db),
-      threads: createThreadQueries(db),
-      marks: createReadMarkRepo(db),
-      signals: createConversationSignals(),
-      clock,
-    }),
+    conversations: inboxConversations,
     contacts,
     workspaces: workspaceAccess,
     bots: bots.inboxStatus,
     clock,
+  });
+  const inboxMedia = createOpenMessageMedia({
+    conversations: inboxConversations,
+    bots: { openMedia: bots.openMedia },
   });
   // --- end inbox dependencies ---
 
@@ -222,6 +228,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations,
     bots,
     inboxReads,
+    inboxMedia,
     conversationReplies,
     replyDelivery,
     /** Releases the database pool. */

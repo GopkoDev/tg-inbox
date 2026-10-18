@@ -145,6 +145,7 @@ export async function buildApp(
       registerInbox(api, {
         reads: inboxReads,
         replies: inboxReplies,
+        media: deps.inboxMedia,
         access: workspaceAccess,
         authenticate,
       }),
