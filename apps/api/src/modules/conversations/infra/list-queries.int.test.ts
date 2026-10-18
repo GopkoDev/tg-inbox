@@ -292,7 +292,9 @@ describe('list queries', () => {
       after: null,
       limit: 50,
     });
-    expect(listB.rows.map((r) => r.id)).toEqual([b.conversationId]);
+    expect(listB.rows.map((r) => r.id).sort()).toEqual(
+      [b.conversationId, b.assignedConversationId].sort(),
+    );
     const filtered = await lists.listPage(b.workspaceId, {
       ...viewerB,
       contactIds: [a.contactId],

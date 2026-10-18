@@ -46,6 +46,11 @@ describe('conversation repository', () => {
         last_activity_at: NOW,
         last_message_received_at: NOW,
         last_reply_sent_at: null,
+        // NULL until capture writes them and contract migration 05 makes them NOT NULL (T8)
+        status: null,
+        assignee_account_id: null,
+        state_version: null,
+        customer_message_seq: null,
       },
     ]);
   });

@@ -5,7 +5,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | [Promote the expand, backfill, activity-table and lens-index migrations 01–04, regenerate DB types and extend the test fixtures](./t01-promote-expand-migrations.md) | migration | Dmytro Hopko | M | — | todo |
+| T1 | [Promote the expand, backfill, activity-table and lens-index migrations 01–04, regenerate DB types and extend the test fixtures](./t01-promote-expand-migrations.md) | migration | Dmytro Hopko | M | — | done |
 | T2 | [Add the assignment zod contracts, the four error codes and the activity item type on the live frame and the realtime signal](./t02-assignment-contracts.md) | ports | Dmytro Hopko | M | — | todo |
 | T3 | [Add the conversations domain change rules: no-op, stale and close-reason decision, snapshot equality, activity kinds and causes, position rule and the change-limit window](./t03-conversations-change-rules.md) | domain | Dmytro Hopko | S | — | todo |
 | T4 | [Extend the thread domain with the activity kind: merge order message < reply < activity and a three-kind cursor that still decodes old cursors](./t04-thread-activity-kind.md) | domain | Dmytro Hopko | S | — | todo |

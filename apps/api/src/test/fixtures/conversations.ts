@@ -2,7 +2,7 @@ import type { Kysely } from 'kysely';
 import type { DB } from '../../platform/db.types.gen.js';
 import { newId } from '../../platform/ids.js';
 import { insertContact } from './contacts.js';
-import { insertMembership, insertWorkspace } from './workspaces.js';
+import { insertAccountRow, insertMembership, insertWorkspace } from './workspaces.js';
 
 const T = new Date('2026-10-11T10:00:00Z');
 
@@ -17,6 +17,14 @@ export async function insertConversation(
     lastActivityAt?: Date;
     lastMessageReceivedAt?: Date;
     lastReplySentAt?: Date | null;
+    /** Defaults to 'open'. */
+    status?: 'open' | 'closed';
+    /** A member of the workspace; defaults to unassigned. */
+    assigneeAccountId?: string | null;
+    /** Defaults to 0. */
+    stateVersion?: number;
+    /** Defaults to 0. */
+    customerMessageSeq?: number;
   },
 ): Promise<string> {
   const id = newId();
@@ -40,6 +48,10 @@ export async function insertConversation(
       last_activity_at: o.lastActivityAt ?? T,
       last_message_received_at: o.lastMessageReceivedAt ?? T,
       last_reply_sent_at: o.lastReplySentAt ?? null,
+      status: o.status ?? 'open',
+      assignee_account_id: o.assigneeAccountId ?? null,
+      state_version: o.stateVersion ?? 0,
+      customer_message_seq: o.customerMessageSeq ?? 0,
     })
     .execute();
   return id;
@@ -184,12 +196,55 @@ export async function insertReadMark(
   return id;
 }
 
+type ActivityKind = 'assigned' | 'reassigned' | 'unassigned' | 'closed' | 'reopened';
+type ActivityCause = 'member' | 'customer_wrote' | 'reply_not_delivered' | 'member_deactivated';
+
+/**
+ * A conversation_activities row (default cause `member`; a member entry needs `actorAccountId`, an
+ * automatic one must not have it; the assignee pair must match `kind`).
+ */
+export async function insertActivity(
+  db: Kysely<DB>,
+  o: {
+    workspaceId: string;
+    conversationId: string;
+    kind: ActivityKind;
+    cause?: ActivityCause;
+    actorAccountId?: string | null;
+    previousAssigneeAccountId?: string | null;
+    newAssigneeAccountId?: string | null;
+    positionAt?: Date;
+    createdAt?: Date;
+  },
+): Promise<string> {
+  const id = newId();
+  const positionAt = o.positionAt ?? T;
+  await db
+    .insertInto('conversation_activities')
+    .values({
+      id,
+      workspace_id: o.workspaceId,
+      conversation_id: o.conversationId,
+      kind: o.kind,
+      cause: o.cause ?? 'member',
+      actor_account_id: o.actorAccountId ?? null,
+      previous_assignee_account_id: o.previousAssigneeAccountId ?? null,
+      new_assignee_account_id: o.newAssigneeAccountId ?? null,
+      position_at: positionAt,
+      created_at: o.createdAt ?? positionAt,
+    })
+    .execute();
+  return id;
+}
+
 /**
  * Two workspaces sharing one Telegram user (AC-18); each has a member, a conversation,
- * a customer message and a reply.
+ * a customer message, a reply, an assigned conversation and one activity entry. One account is a
+ * member of both workspaces (`sharedAccountId`).
  */
 export async function twoWorkspacesWithInbox(db: Kysely<DB>) {
   const telegramUserId = 700001n;
+  const sharedAccountId = await insertAccountRow(db);
   async function build(name: string) {
     const workspaceId = await insertWorkspace(db, name);
     const { accountId } = await insertMembership(db, workspaceId);
@@ -205,7 +260,33 @@ export async function twoWorkspacesWithInbox(db: Kysely<DB>) {
       conversationId,
       authorAccountId: accountId,
     });
-    return { workspaceId, accountId, contactId, conversationId, messageId, replyId };
+    await insertMembership(db, workspaceId, { accountId: sharedAccountId });
+    const assignedContactId = await insertContact(db, {
+      workspaceId,
+      telegramUserId: telegramUserId + 1n,
+    });
+    const assignedConversationId = await insertConversation(db, {
+      workspaceId,
+      contactId: assignedContactId,
+      assigneeAccountId: sharedAccountId,
+    });
+    const activityId = await insertActivity(db, {
+      workspaceId,
+      conversationId: assignedConversationId,
+      kind: 'assigned',
+      actorAccountId: accountId,
+      newAssigneeAccountId: sharedAccountId,
+    });
+    return {
+      workspaceId,
+      accountId,
+      contactId,
+      conversationId,
+      messageId,
+      replyId,
+      assignedConversationId,
+      activityId,
+    };
   }
-  return { a: await build('A'), b: await build('B') };
+  return { a: await build('A'), b: await build('B'), sharedAccountId };
 }

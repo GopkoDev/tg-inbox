@@ -544,3 +544,263 @@ describe('shared-inbox migrations 01-08', () => {
     }
   });
 });
+
+const LAST_PRE_ASSIGNMENT = '1791681109992_contract_conversations_list_columns';
+
+describe('assignment-statuses migrations 01-04', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const now = new Date('2026-01-01T00:00:00Z');
+  const later = new Date('2026-01-02T00:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  async function member(handle: Kysely<unknown>, ws: string): Promise<string> {
+    const account = newId();
+    await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
+      VALUES (${account}, ${`${account}@example.test`}, 'Test User', 'h', ${now})`.execute(handle);
+    await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+      VALUES (${newId()}, ${ws}, ${account}, 'operator', 'active', ${now}, ${now})`.execute(handle);
+    return account;
+  }
+
+  async function workspace(handle: Kysely<unknown>): Promise<string> {
+    const ws = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${now})`.execute(
+      handle,
+    );
+    return ws;
+  }
+
+  async function conversation(
+    handle: Kysely<unknown>,
+    ws: string,
+    o: {
+      status?: string | null;
+      version?: number | null;
+      seq?: number | null;
+      assignee?: string;
+    } = {},
+  ): Promise<string> {
+    const contact = newId();
+    const id = newId();
+    const tg = Math.floor(Math.random() * 1e9);
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, ${tg}, 'Test User', ${now}, ${now})`.execute(handle);
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at, status, state_version, customer_message_seq,
+        assignee_account_id)
+      VALUES (${id}, ${ws}, ${contact}, ${tg}, ${now}, ${now}, ${now}, ${o.status === undefined ? 'open' : o.status},
+        ${o.version === undefined ? 0 : o.version}, ${o.seq === undefined ? 0 : o.seq},
+        ${o.assignee ?? null})`.execute(handle);
+    return id;
+  }
+
+  function activity(
+    s: { ws: string; conv: string },
+    o: {
+      kind: string;
+      cause?: string;
+      actor?: string | null;
+      previous?: string | null;
+      next?: string | null;
+    },
+  ) {
+    return sql`INSERT INTO conversation_activities (id, workspace_id, conversation_id, kind, cause,
+        actor_account_id, previous_assignee_account_id, new_assignee_account_id, position_at, created_at)
+      VALUES (${newId()}, ${s.ws}, ${s.conv}, ${o.kind}, ${o.cause ?? 'member'}, ${o.actor ?? null},
+        ${o.previous ?? null}, ${o.next ?? null}, ${now}, ${now})`.execute(db);
+  }
+
+  async function columns(handle: Kysely<unknown>, table: string): Promise<string[]> {
+    const { rows } = await sql<{ column_name: string }>`
+      SELECT column_name FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = ${table}`.execute(handle);
+    return rows.map((r) => r.column_name);
+  }
+
+  async function indexes(handle: Kysely<unknown>): Promise<string[]> {
+    const { rows } = await sql<{ indexname: string }>`
+      SELECT indexname FROM pg_indexes WHERE schemaname = 'public'`.execute(handle);
+    return rows.map((r) => r.indexname);
+  }
+
+  it('adds the state columns, the activity table and the lens indexes', async () => {
+    const conv = await columns(db, 'conversations');
+    for (const c of ['status', 'assignee_account_id', 'state_version', 'customer_message_seq'])
+      expect(conv).toContain(c);
+    expect(await columns(db, 'conversation_activities')).toEqual(
+      expect.arrayContaining(['kind', 'cause', 'actor_account_id', 'position_at']),
+    );
+    const idx = await indexes(db);
+    for (const i of [
+      'conversations_workspace_id_status_idx',
+      'conversations_workspace_id_assignee_status_idx',
+      'conversation_activities_conversation_id_position_at_idx',
+      'conversation_activities_workspace_id_actor_created_at_idx',
+    ])
+      expect(idx).toContain(i);
+  });
+
+  it('rejects a bad conversation status, a negative version or counter (AC-04)', async () => {
+    const ws = await workspace(db);
+    await expect(conversation(db, ws, { status: 'archived' })).rejects.toThrow(
+      /conversations_status_check/,
+    );
+    await expect(conversation(db, ws, { version: -1 })).rejects.toThrow(
+      /conversations_state_version_check/,
+    );
+    await expect(conversation(db, ws, { seq: -1 })).rejects.toThrow(
+      /conversations_customer_message_seq_check/,
+    );
+    await conversation(db, ws, { status: 'closed', version: 3, seq: 2 });
+    await conversation(db, ws, { status: null, version: null, seq: null });
+  });
+
+  it('accepts only a member of the same workspace as assignee (AC-04)', async () => {
+    const ws = await workspace(db);
+    const other = await workspace(db);
+    const mine = await member(db, ws);
+    const foreign = await member(db, other);
+    await expect(conversation(db, ws, { assignee: foreign })).rejects.toThrow(
+      /conversations_workspace_id_assignee_account_id_fkey/,
+    );
+    await conversation(db, ws, { assignee: mine });
+  });
+
+  it('rejects activity entries that break the kind, cause, actor and assignee rules (AC-09)', async () => {
+    const ws = await workspace(db);
+    const other = await workspace(db);
+    const a = await member(db, ws);
+    const b = await member(db, ws);
+    const foreign = await member(db, other);
+    const s = { ws, conv: await conversation(db, ws) };
+    await expect(activity(s, { kind: 'archived', actor: a })).rejects.toThrow(
+      // Postgres reports the first failing CHECK by name; an unknown kind also fails the assignee pair
+      /conversation_activities_(assignees|kind)_check/,
+    );
+    await expect(activity(s, { kind: 'closed', cause: 'bogus' })).rejects.toThrow(
+      /conversation_activities_cause_check/,
+    );
+    await expect(activity(s, { kind: 'closed', cause: 'customer_wrote' })).rejects.toThrow(
+      /conversation_activities_kind_cause_check/,
+    );
+    await expect(
+      activity(s, { kind: 'assigned', cause: 'member_deactivated', next: a }),
+    ).rejects.toThrow(/conversation_activities_kind_cause_check/);
+    await expect(activity(s, { kind: 'closed' })).rejects.toThrow(
+      /conversation_activities_actor_cause_check/,
+    );
+    await expect(
+      activity(s, { kind: 'reopened', cause: 'customer_wrote', actor: a }),
+    ).rejects.toThrow(/conversation_activities_actor_cause_check/);
+    await expect(
+      activity(s, { kind: 'reassigned', actor: a, previous: a, next: a }),
+    ).rejects.toThrow(/conversation_activities_assignees_check/);
+    await expect(activity(s, { kind: 'closed', actor: a, previous: b })).rejects.toThrow(
+      /conversation_activities_assignees_check/,
+    );
+    await expect(activity(s, { kind: 'assigned', actor: foreign, next: a })).rejects.toThrow(
+      /conversation_activities_actor_fkey/,
+    );
+    await expect(activity(s, { kind: 'assigned', actor: a, next: foreign })).rejects.toThrow(
+      /conversation_activities_new_assignee_fkey/,
+    );
+    await activity(s, { kind: 'assigned', actor: a, next: a });
+    await activity(s, { kind: 'reassigned', actor: a, previous: a, next: b });
+    await activity(s, { kind: 'unassigned', actor: a, previous: b });
+    await activity(s, { kind: 'unassigned', cause: 'member_deactivated', previous: b });
+    await activity(s, { kind: 'closed', actor: a });
+    await activity(s, { kind: 'reopened', cause: 'reply_not_delivered' });
+  });
+
+  it('backfills existing conversations to open, version 0, counter = message count', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const down = await migrator.migrateTo(LAST_PRE_ASSIGNMENT);
+      expect(down.error).toBeUndefined();
+      const ws = await workspace(freshDb);
+      const contact = newId();
+      const conv = newId();
+      await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+        VALUES (${contact}, ${ws}, 1, 'Test User', ${now}, ${now})`.execute(freshDb);
+      await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+          last_activity_at, last_message_received_at)
+        VALUES (${conv}, ${ws}, ${contact}, 1, ${now}, ${later}, ${later})`.execute(freshDb);
+      for (const n of [1, 2, 3])
+        await sql`INSERT INTO messages (id, workspace_id, conversation_id, telegram_message_id, kind, body,
+            telegram_message, sent_at, received_at)
+          VALUES (${newId()}, ${ws}, ${conv}, ${n}, 'text', 'hi',
+            ${JSON.stringify({ message_id: n })}::jsonb, ${now}, ${now})`.execute(freshDb);
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      const { rows } = await sql<{
+        status: string;
+        assignee_account_id: string | null;
+        state_version: number;
+        customer_message_seq: number;
+      }>`SELECT status, assignee_account_id, state_version, customer_message_seq FROM conversations`.execute(
+        freshDb,
+      );
+      expect(rows[0]).toEqual({
+        status: 'open',
+        assignee_account_id: null,
+        state_version: 0,
+        customer_message_seq: 3,
+      });
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('reverts 04 to 01 back to the shared-inbox shape and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const down = await migrator.migrateTo(LAST_PRE_ASSIGNMENT);
+      expect(down.error).toBeUndefined();
+      const conv = await columns(freshDb, 'conversations');
+      for (const c of ['status', 'assignee_account_id', 'state_version', 'customer_message_seq'])
+        expect(conv).not.toContain(c);
+      expect(await columns(freshDb, 'conversation_activities')).toEqual([]);
+      const idx = await indexes(freshDb);
+      expect(idx).not.toContain('conversations_workspace_id_status_idx');
+      expect(idx).not.toContain('conversations_workspace_id_assignee_status_idx');
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await columns(freshDb, 'conversations')).toContain('state_version');
+      expect(await columns(freshDb, 'conversation_activities')).toContain('kind');
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
