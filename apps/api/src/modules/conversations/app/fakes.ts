@@ -2,6 +2,8 @@ import { newId } from '../../../platform/ids.js';
 import { isLaterEdit } from '../domain/edit.js';
 import type { MessageKind } from '../domain/message.js';
 import type {
+  ActivityRepo,
+  ActivityView,
   ConversationRepo,
   ConversationSignals,
   Executor,
@@ -24,6 +26,10 @@ export interface FakeConversation {
   lastActivityAt: Date;
   lastMessageReceivedAt: Date;
   lastReplySentAt: Date | null;
+  status: 'open' | 'closed';
+  assigneeAccountId: string | null;
+  stateVersion: number;
+  customerMessageSeq: number;
 }
 
 /** In-memory ConversationRepo for unit tests. */
@@ -46,6 +52,10 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
         lastActivityAt: now,
         lastMessageReceivedAt: now,
         lastReplySentAt: null,
+        status: 'open',
+        assigneeAccountId: null,
+        stateVersion: 0,
+        customerMessageSeq: 0,
       });
       return { conversationId: id, created: true };
     },
@@ -64,6 +74,79 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
     },
     async hasAny(workspaceId) {
       return rows.some((r) => r.workspaceId === workspaceId);
+    },
+    async lockState(workspaceId, conversationId) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row) return null;
+      return {
+        status: row.status,
+        assigneeAccountId: row.assigneeAccountId,
+        stateVersion: row.stateVersion,
+        customerMessageSeq: row.customerMessageSeq,
+        lastActivityAt: row.lastActivityAt,
+        waitingForReply:
+          row.lastReplySentAt === null ||
+          row.lastMessageReceivedAt.getTime() > row.lastReplySentAt.getTime(),
+      };
+    },
+    async writeState(workspaceId, conversationId, change) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row) return null;
+      if (change.status !== undefined) row.status = change.status;
+      if (change.assigneeAccountId !== undefined) row.assigneeAccountId = change.assigneeAccountId;
+      row.stateVersion += 1;
+      return row.stateVersion;
+    },
+    // Close-reason reads are set by the test that needs them (the fake has no message or reply rows).
+    async newestUnreadCustomerMessage() {
+      return null;
+    },
+    async latestReply() {
+      return null;
+    },
+  };
+}
+
+/** In-memory ActivityRepo for unit tests. */
+export function fakeActivityRepo(): ActivityRepo & {
+  rows: Array<ActivityView & { workspaceId: string }>;
+} {
+  const rows: Array<ActivityView & { workspaceId: string }> = [];
+  const scoped = (w: string) => rows.filter((r) => r.workspaceId === w);
+  const strip = (row: ActivityView & { workspaceId: string }): ActivityView => {
+    const { workspaceId, ...view } = row;
+    void workspaceId;
+    return view;
+  };
+  return {
+    rows,
+    async insert(workspaceId, activity) {
+      rows.push({ ...activity, workspaceId });
+    },
+    async latestFor(workspaceId, conversationId) {
+      const mine = scoped(workspaceId)
+        .filter((r) => r.conversationId === conversationId)
+        .sort(
+          (x, y) =>
+            y.positionAt.getTime() - x.positionAt.getTime() ||
+            (x.id < y.id ? 1 : x.id > y.id ? -1 : 0),
+        );
+      return mine[0] ? strip(mine[0]) : null;
+    },
+    async byId(workspaceId, activityId) {
+      const row = scoped(workspaceId).find((r) => r.id === activityId);
+      return row ? strip(row) : null;
+    },
+    async countByActorSince(workspaceId, accountId, since) {
+      const mine = scoped(workspaceId).filter(
+        (r) => r.actorAccountId === accountId && r.createdAt.getTime() > since.getTime(),
+      );
+      return {
+        count: mine.length,
+        oldestCreatedAt: mine.length
+          ? new Date(Math.min(...mine.map((r) => r.createdAt.getTime())))
+          : null,
+      };
     },
   };
 }

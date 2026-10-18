@@ -1,6 +1,8 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
+import { unreadFloor } from '../domain/read-state.js';
+import type { LatestReply } from '../domain/state.js';
 import type { ConversationRepo } from '../app/ports.js';
 
 export function createConversationRepo(db: Db): ConversationRepo {
@@ -54,6 +56,89 @@ export function createConversationRepo(db: Db): ConversationRepo {
         .limit(1)
         .executeTakeFirst();
       return row !== undefined;
+    },
+
+    async lockState(workspaceId, conversationId, tx) {
+      const row = await tx
+        .selectFrom('conversations')
+        .select([
+          'status',
+          'assignee_account_id',
+          'state_version',
+          'customer_message_seq',
+          'last_activity_at',
+          'last_message_received_at',
+          'last_reply_sent_at',
+        ])
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .forUpdate()
+        .executeTakeFirst();
+      if (!row) return null;
+      return {
+        // NOT NULL after contract migration 05 (T8); the types stay nullable until then
+        status: row.status as 'open' | 'closed',
+        assigneeAccountId: row.assignee_account_id,
+        stateVersion: row.state_version as number,
+        customerMessageSeq: row.customer_message_seq as number,
+        lastActivityAt: row.last_activity_at,
+        waitingForReply:
+          row.last_reply_sent_at === null ||
+          row.last_message_received_at.getTime() > row.last_reply_sent_at.getTime(),
+      };
+    },
+
+    async writeState(workspaceId, conversationId, change, tx) {
+      const row = await (tx ?? db)
+        .updateTable('conversations')
+        .set({
+          ...(change.status !== undefined ? { status: change.status } : {}),
+          ...(change.assigneeAccountId !== undefined
+            ? { assignee_account_id: change.assigneeAccountId }
+            : {}),
+          state_version: sql<number>`state_version + 1`,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .returning('state_version')
+        .executeTakeFirst();
+      return row ? (row.state_version as number) : null;
+    },
+
+    async newestUnreadCustomerMessage(workspaceId, conversationId, accountId, activeSince, tx) {
+      const exec = tx ?? db;
+      const mark = await exec
+        .selectFrom('read_marks')
+        .select('read_through_at')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('account_id', '=', accountId)
+        .executeTakeFirst();
+      const floor = unreadFloor(mark?.read_through_at ?? null, activeSince);
+      const row = await exec
+        .selectFrom('messages')
+        .select(['id', 'received_at'])
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('received_at', '>', floor)
+        .orderBy('received_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? { id: row.id, receivedAt: row.received_at } : null;
+    },
+
+    async latestReply(workspaceId, conversationId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('replies')
+        .select(['id', 'state'])
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .orderBy('position_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? { id: row.id, state: row.state as LatestReply['state'] } : null;
     },
   };
 }

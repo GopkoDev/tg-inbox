@@ -1,4 +1,6 @@
 import type { Db } from '../../../platform/db.js';
+import type { ActivityCause, ActivityKind } from '../domain/activity.js';
+import type { ConversationState, LatestReply } from '../domain/state.js';
 import type { MessageKind } from '../domain/message.js';
 import type { MediaFile, MessageProjection } from '../domain/projection.js';
 import type { ListPosition, ThreadPosition } from '../domain/thread.js';
@@ -34,6 +36,86 @@ export interface ConversationRepo {
   ): Promise<void>;
   findByChat(workspaceId: string, telegramChatId: bigint, tx?: Executor): Promise<string | null>;
   hasAny(workspaceId: string, tx?: Executor): Promise<boolean>;
+  /**
+   * Reads the state columns and takes the row lock (`FOR UPDATE`) for the rest of the transaction.
+   * Null when the conversation is not in the workspace (nothing is locked).
+   */
+  lockState(workspaceId: string, conversationId: string, tx: Executor): Promise<LockedState | null>;
+  /**
+   * Writes the given state fields and raises `state_version` by one in the same UPDATE; never touches
+   * `last_activity_at`. Returns the new version, null when the conversation is not in the workspace.
+   */
+  writeState(
+    workspaceId: string,
+    conversationId: string,
+    change: StateChange,
+    tx?: Executor,
+  ): Promise<number | null>;
+  /**
+   * The newest customer message that arrived after `max(the member's arrival watermark, activeSince)`;
+   * null when there is none.
+   */
+  newestUnreadCustomerMessage(
+    workspaceId: string,
+    conversationId: string,
+    accountId: string,
+    activeSince: Date,
+    tx?: Executor,
+  ): Promise<{ id: string; receivedAt: Date } | null>;
+  /** The newest reply in thread order (position, then id); null when there is none. */
+  latestReply(
+    workspaceId: string,
+    conversationId: string,
+    tx?: Executor,
+  ): Promise<LatestReply | null>;
+}
+
+/** The state columns read under the row lock, plus what the close reasons need from the row itself. */
+export interface LockedState extends ConversationState {
+  lastActivityAt: Date;
+  /** No reply yet, or the last customer message is newer than the last sent reply. */
+  waitingForReply: boolean;
+}
+
+/** Fields to write; an absent field is left as it is. */
+export interface StateChange {
+  status?: ConversationState['status'];
+  assigneeAccountId?: string | null;
+}
+
+export interface NewActivity {
+  id: string;
+  conversationId: string;
+  kind: ActivityKind;
+  cause: ActivityCause;
+  actorAccountId: string | null;
+  previousAssigneeAccountId: string | null;
+  newAssigneeAccountId: string | null;
+  positionAt: Date;
+  createdAt: Date;
+}
+
+export type ActivityView = NewActivity;
+
+export interface ActivityRepo {
+  insert(workspaceId: string, activity: NewActivity, tx?: Executor): Promise<void>;
+  /** The conversation's newest entry by position, ties broken by id. */
+  latestFor(
+    workspaceId: string,
+    conversationId: string,
+    tx?: Executor,
+  ): Promise<ActivityView | null>;
+  byId(workspaceId: string, activityId: string, tx?: Executor): Promise<ActivityView | null>;
+  /**
+   * Takes the transaction-level advisory lock `changes:<workspace>:<account>` and counts the member's
+   * entries created strictly after `since`; `oldestCreatedAt` is the earliest of them.
+   */
+  countByActorSince(
+    workspaceId: string,
+    accountId: string,
+    since: Date,
+    tx: Executor,
+  ): Promise<{ count: number; oldestCreatedAt: Date | null }>;
 }
 
 export interface NewMessage {
