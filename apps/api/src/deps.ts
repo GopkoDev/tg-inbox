@@ -37,6 +37,11 @@ import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
+import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
+import { createListQueries } from './modules/conversations/infra/list-queries.js';
+import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
+import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
+import { createInboxReadUseCases } from './modules/inbox/app/reads.js';
 import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
 import { createMessageRepo } from './modules/conversations/infra/message-repo.js';
 import { systemClock, type Clock } from './platform/clock.js';
@@ -171,6 +176,23 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   };
   // --- end bots dependencies ---
 
+  // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
+  const inboxReads = createInboxReadUseCases({
+    conversations: createInboxReads({
+      transaction,
+      lists: createListQueries(db),
+      threads: createThreadQueries(db),
+      marks: createReadMarkRepo(db),
+      signals: createConversationSignals(),
+      clock,
+    }),
+    contacts,
+    workspaces: workspaceAccess,
+    bots: bots.inboxStatus,
+    clock,
+  });
+  // --- end inbox dependencies ---
+
   return {
     config,
     clock,
@@ -188,6 +210,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     contacts,
     conversations,
     bots,
+    inboxReads,
     /** Releases the database pool. */
     destroy: () => db.destroy(),
   };

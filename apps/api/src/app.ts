@@ -7,6 +7,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
+import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
 import type { Config } from './platform/config.js';
@@ -56,6 +57,7 @@ export async function buildApp(
     team,
     optionalAccount,
     bots,
+    inboxReads,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
   app.addHook('onClose', async () => {
@@ -105,6 +107,10 @@ export async function buildApp(
         access: workspaceAccess,
         authenticate,
       }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) => registerInbox(api, { reads: inboxReads, access: workspaceAccess, authenticate }),
     { prefix: '/api' },
   );
 
