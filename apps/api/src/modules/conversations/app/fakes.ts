@@ -7,7 +7,10 @@ import type {
   Executor,
   MessageRepo,
   MessageSignal,
+  ReadMarkRepo,
+  ReadSignal,
 } from './ports.js';
+import { raise, unreadFloor } from '../domain/read-state.js';
 
 export interface FakeConversation {
   id: string;
@@ -121,12 +124,46 @@ export function fakeMessageRepo(): MessageRepo & { rows: FakeMessage[] } {
 /** Records every signal with the executor it was published in. */
 export function fakeConversationSignals(): ConversationSignals & {
   sent: Array<MessageSignal & { tx: Executor }>;
+  read: Array<ReadSignal & { tx: Executor }>;
 } {
   const sent: Array<MessageSignal & { tx: Executor }> = [];
+  const read: Array<ReadSignal & { tx: Executor }> = [];
   return {
     sent,
+    read,
     async messageChanged(tx, signal) {
       sent.push({ ...signal, tx });
+    },
+    async conversationRead(tx, signal) {
+      read.push({ ...signal, tx });
+    },
+  };
+}
+
+/**
+ * In-memory ReadMarkRepo over one conversation whose messages arrived at `arrivals`
+ * (null: the conversation is not in the workspace). Applies the same raise / floor rules as the SQL.
+ */
+export function fakeReadMarkRepo(o: {
+  arrivals: Date[] | null;
+}): ReadMarkRepo & { marks: Map<string, Date> } {
+  const marks = new Map<string, Date>();
+  return {
+    marks,
+    async markRead(_workspaceId, input) {
+      if (o.arrivals === null) return null;
+      const newest = o.arrivals.reduce<Date | null>(
+        (m, d) => (m && m.getTime() > d.getTime() ? m : d),
+        null,
+      );
+      if (newest === null) return null;
+      const readThroughAt = raise(marks.get(input.accountId) ?? null, input.proposed, newest);
+      marks.set(input.accountId, readThroughAt);
+      const floor = unreadFloor(readThroughAt, input.activeSince);
+      return {
+        readThroughAt,
+        unreadCount: o.arrivals.filter((d) => d.getTime() > floor.getTime()).length,
+      };
     },
   };
 }

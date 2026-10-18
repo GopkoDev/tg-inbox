@@ -1,5 +1,7 @@
 import type { Db } from '../../../platform/db.js';
 import type { MessageKind } from '../domain/message.js';
+import type { MediaFile, MessageProjection } from '../domain/projection.js';
+import type { ListPosition, ThreadPosition } from '../domain/thread.js';
 
 /** A Kysely handle or a transaction (the capture transaction). */
 export type Executor = Db;
@@ -86,7 +88,150 @@ export interface MessageSignal {
   change: 'created' | 'edited';
 }
 
+export interface ReadSignal {
+  workspaceId: string;
+  conversationId: string;
+  /** The member who read; the frame goes to this member's own sockets only. */
+  accountId: string;
+}
+
 /** Live signals, published in the caller's transaction so they are delivered only on commit (ADR-0003). */
 export interface ConversationSignals {
   messageChanged(tx: Executor, signal: MessageSignal): Promise<void>;
+  /** `conversation.changed { change: read, account_id }` after a member's watermark was written. */
+  conversationRead(tx: Executor, signal: ReadSignal): Promise<void>;
+}
+
+// ───────── read side (inbox) ─────────
+
+/** The member whose unread counts a read is computed for. */
+export interface Viewer {
+  accountId: string;
+  /** Join or reactivation time: messages that arrived before it count as read. */
+  activeSince: Date;
+}
+
+export type LastItemView =
+  | { type: 'message'; id: string; kind: MessageKind; body: string | null }
+  | { type: 'reply'; id: string; body: string };
+
+export interface ConversationRow {
+  id: string;
+  contactId: string;
+  lastActivityAt: Date;
+  /** Null only for a conversation with no message and no sent reply (not produced by capture). */
+  lastItem: LastItemView | null;
+  unreadCount: number;
+  waitingForReply: boolean;
+}
+
+export interface ListPageQuery extends Viewer {
+  /** Null: no filter. An empty list matches nothing. */
+  contactIds: string[] | null;
+  after: ListPosition | null;
+  limit: number;
+}
+
+export interface ConversationListReads {
+  /** Newest activity first; `hasNext` says more rows follow the returned ones. */
+  listPage(
+    workspaceId: string,
+    query: ListPageQuery,
+  ): Promise<{ rows: ConversationRow[]; hasNext: boolean }>;
+  summary(
+    workspaceId: string,
+    conversationId: string,
+    viewer: Viewer,
+  ): Promise<ConversationRow | null>;
+}
+
+export interface MessageView extends MessageProjection {
+  id: string;
+  conversationId: string;
+  kind: MessageKind;
+  body: string | null;
+  sentAt: Date;
+  receivedAt: Date;
+  editedAt: Date | null;
+}
+
+export type ReplyStateValue = 'sending' | 'sent' | 'not_delivered' | 'not_confirmed';
+
+export interface ReplyView {
+  id: string;
+  conversationId: string;
+  clientKey: string;
+  body: string;
+  /** Names are joined by `inbox` through `workspaces`. */
+  authorAccountId: string;
+  state: ReplyStateValue;
+  failureReason: string | null;
+  positionAt: Date;
+  sentAt: Date | null;
+  createdAt: Date;
+}
+
+export type ThreadEntry =
+  | { type: 'message'; position: ThreadPosition; message: MessageView }
+  | { type: 'reply'; position: ThreadPosition; reply: ReplyView };
+
+export interface ThreadPageQuery {
+  /** Items strictly before this position (older page). */
+  before: ThreadPosition | null;
+  /** Items strictly after this position (newer page). Not combined with `before`. */
+  after: ThreadPosition | null;
+  limit: number;
+}
+
+export interface ThreadPageRows {
+  /** Oldest first. */
+  entries: ThreadEntry[];
+  hasPrev: boolean;
+  hasNext: boolean;
+  /** The conversation's newest arrival, read in the same snapshot; the latest page only. */
+  readThroughAt: Date | null;
+}
+
+export interface MediaReference extends MediaFile {
+  kind: MessageKind;
+}
+
+export interface ThreadReads {
+  /** Null when the conversation is not in the workspace. */
+  page(
+    workspaceId: string,
+    conversationId: string,
+    query: ThreadPageQuery,
+  ): Promise<ThreadPageRows | null>;
+  message(
+    workspaceId: string,
+    conversationId: string,
+    messageId: string,
+  ): Promise<MessageView | null>;
+  reply(workspaceId: string, conversationId: string, replyId: string): Promise<ReplyView | null>;
+  /** Null for an unknown message and for a kind with no file. */
+  mediaReference(
+    workspaceId: string,
+    conversationId: string,
+    messageId: string,
+  ): Promise<MediaReference | null>;
+}
+
+export interface MarkReadInput extends Viewer {
+  conversationId: string;
+  proposed: Date;
+  now: Date;
+}
+
+export interface ReadState {
+  readThroughAt: Date;
+  unreadCount: number;
+}
+
+export interface ReadMarkRepo {
+  /**
+   * Raises this member's arrival watermark to `proposed`: never lowered, never past the conversation's
+   * newest arrival. Null when the conversation is not in the workspace (nothing is written).
+   */
+  markRead(workspaceId: string, input: MarkReadInput, tx?: Executor): Promise<ReadState | null>;
 }
