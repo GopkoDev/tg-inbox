@@ -252,6 +252,35 @@ describe('SCR-02 loading and errors', () => {
     expect(screen.getByText('customer 1')).toBeInTheDocument();
   });
 
+  it('error: a summary failure (not 404) with no known contact shows the error with Retry (W2)', async () => {
+    api.getConversation.mockRejectedValueOnce(new ApiError(500, 'INTERNAL_ERROR' as never, 'boom'));
+    api.listThreadItems.mockResolvedValue(page([message(1, 1)]));
+    renderThread();
+    await flush();
+    expect(screen.getByText('Something went wrong')).toBeInTheDocument();
+    expect(screen.queryByTestId('thread-loading')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(screen.getByRole('heading', { name: 'Ada Lovelace' })).toBeInTheDocument();
+    expect(screen.getByText('customer 1')).toBeInTheDocument();
+  });
+
+  it('a summary failure while the contact is known from the list row keeps the thread', async () => {
+    api.listConversations.mockResolvedValue({
+      workspace_id: WS,
+      items: [summary()],
+      has_prev: false,
+      has_next: false,
+      next_cursor: null,
+    });
+    useInboxStore.getState().leave();
+    await useInboxStore.getState().enter(WS);
+    api.getConversation.mockRejectedValueOnce(new ApiError(500, 'INTERNAL_ERROR' as never, 'boom'));
+    await openAndRender([message(1, 1)]);
+    expect(screen.queryByText('Something went wrong')).toBeNull();
+    expect(screen.getByRole('heading', { name: 'Ada Lovelace' })).toBeInTheDocument();
+  });
+
   it('not found: a 404 shows the not-found card without a hint', async () => {
     const notFound = new ApiError(404, 'NOT_FOUND' as never, 'nope');
     api.getConversation.mockRejectedValue(notFound);
@@ -483,9 +512,10 @@ describe('SCR-02 reply composer (AC-06)', () => {
     expect(screen.queryByText(/nothing is sent to customers/)).not.toBeInTheDocument();
   });
 
-  it('is not shown while the thread loads', () => {
+  it('is shown disabled while the thread loads (screens.md SCR-02 loading)', () => {
     api.listThreadItems.mockReturnValue(new Promise(() => undefined));
     renderThread();
-    expect(screen.queryByRole('textbox', { name: 'Reply' })).not.toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Reply' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: /^Send$/ })).toBeDisabled();
   });
 });

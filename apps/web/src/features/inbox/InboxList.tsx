@@ -42,11 +42,21 @@ export function InboxList() {
   const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
   const [results, setResults] = useState<Extra | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
-  const request = useRef(0);
+  // Separate counters: a search never strands a page load, and a page load never drops a search.
+  const searchRequest = useRef(0);
+  const pageRequest = useRef(0);
+  const query = useRef('');
+  /** A new query starts paging afresh: a page in flight belongs to the old one. */
+  const restartPaging = () => {
+    pageRequest.current++;
+    setMoreState('idle');
+  };
 
   useEffect(() => {
     const t = setTimeout(() => {
       const text = input.trim();
+      if (text !== query.current) restartPaging();
+      query.current = text;
       setQ(text);
       if (!text) setResults(null);
     }, DEBOUNCE_MS);
@@ -55,16 +65,17 @@ export function InboxList() {
 
   const search = useCallback(
     (text: string) => {
-      const id = ++request.current;
+      const id = ++searchRequest.current;
       source
         .listConversations(workspaceId, { q: text, limit: PAGE_SIZE })
         .then((page) => {
-          if (request.current !== id || page.workspace_id !== workspaceId) return;
+          if (searchRequest.current !== id || page.workspace_id !== workspaceId) return;
           setSearchError(null);
           setResults({ rows: page.items, hasNext: page.has_next, cursor: page.next_cursor });
         })
-        .catch(() => {
-          if (request.current === id) setSearchError(text);
+        .catch((error: unknown) => {
+          useInboxStore.getState().reportGuard(error, workspaceId);
+          if (searchRequest.current === id) setSearchError(text);
         });
     },
     [workspaceId],
@@ -78,7 +89,7 @@ export function InboxList() {
     const filtered = q !== '';
     const cursor = filtered ? results?.cursor : (more.cursor ?? nextCursor);
     if (!cursor || moreState === 'loading') return;
-    const id = ++request.current;
+    const id = ++pageRequest.current;
     setMoreState('loading');
     source
       .listConversations(workspaceId, {
@@ -87,7 +98,7 @@ export function InboxList() {
         limit: PAGE_SIZE,
       })
       .then((page) => {
-        if (request.current !== id || page.workspace_id !== workspaceId) return;
+        if (pageRequest.current !== id || page.workspace_id !== workspaceId) return;
         const next = (prev: Extra | null): Extra => ({
           rows: merge(prev?.rows ?? [], page.items),
           hasNext: page.has_next,
@@ -97,8 +108,9 @@ export function InboxList() {
         else setMore(next);
         setMoreState('idle');
       })
-      .catch(() => {
-        if (request.current === id) setMoreState('error');
+      .catch((error: unknown) => {
+        useInboxStore.getState().reportGuard(error, workspaceId);
+        if (pageRequest.current === id) setMoreState('error');
       });
   }, [q, results, more.cursor, nextCursor, moreState, workspaceId]);
 
@@ -128,6 +140,8 @@ export function InboxList() {
 
   const clearSearch = () => {
     setInput('');
+    if (query.current !== '') restartPaging();
+    query.current = '';
     setQ('');
     setResults(null);
   };

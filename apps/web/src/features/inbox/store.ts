@@ -40,6 +40,11 @@ export interface OpenThread {
   hasPrev: boolean;
   prevCursor: string | null;
   readThroughAt: string | null;
+  /**
+   * The newest reply of the whole conversation (the page's `newest_reply_id`, then live replies),
+   * which may sit on a page not loaded yet; `undefined` = unknown, the loaded items decide.
+   */
+  newestReplyId?: string | null;
 }
 
 /** What the reply box of one conversation keeps for this tab (sad.md §4). */
@@ -47,6 +52,8 @@ export interface Draft {
   text: string;
   clientKey: string;
   lastSeenReplyId: string | null;
+  /** The body last sent with `clientKey`: only an identical retry may reuse the key. */
+  attemptedBody?: string | null;
 }
 
 /** How a `sendReply` attempt ended; the composer maps each to a state of SCR-02 / SCR-04. */
@@ -88,6 +95,8 @@ interface InboxState {
   live: LiveStatus;
   /** A 401/403 any inbox request got: the shared guard (`handleGuardError`) decides what it means. */
   guardError: ApiError | null;
+  /** Hands a 401/403 of a call made for `workspaceId` (still the current one) to the guard. */
+  reportGuard: (error: unknown, workspaceId: string) => boolean;
   setDraftText: (conversationId: string, text: string) => void;
   keepEditing: (conversationId: string, lastSeenReplyId: string) => void;
   sendReply: (
@@ -119,6 +128,7 @@ const EMPTY: Omit<
   | 'keepEditing'
   | 'sendReply'
   | 'resendReply'
+  | 'reportGuard'
 > = {
   workspaceId: null,
   listStatus: 'loading',
@@ -137,6 +147,10 @@ let client: LiveClient | null = null;
 const sending = new Set<string>();
 const newestReplyId = (items: ThreadItem[] | undefined): string | null =>
   items?.filter((i) => i.type === 'reply').at(-1)?.id ?? null;
+const newestSeen = (thread: OpenThread): string | null =>
+  thread.newestReplyId !== undefined ? thread.newestReplyId : newestReplyId(thread.items);
+const isGuardAnswer = (error: unknown): error is ApiError =>
+  error instanceof ApiError && (error.status === 401 || error.status === 403);
 /** Bumped on every reset: a request started before it is stale. */
 let epoch = 0;
 const running = new Map<string, { again: boolean }>();
@@ -159,6 +173,26 @@ function upsertConversation(list: Conversation[], row: Conversation): Conversati
   return [...list.filter((c) => c.id !== row.id), row].sort(byActivity);
 }
 
+/** A re-read page merged into what is shown: page rows win unless the shown row is newer. */
+function mergeConversations(list: Conversation[], page: readonly Conversation[]): Conversation[] {
+  const byId = new Map(list.map((c) => [c.id, c]));
+  for (const row of page) {
+    const shown = byId.get(row.id);
+    if (!shown || shown.last_activity_at <= row.last_activity_at) byId.set(row.id, row);
+  }
+  return [...byId.values()].sort(byActivity);
+}
+
+/** A newly placed reply that is the last reply shown becomes the newest one seen. */
+function newestAfter(
+  thread: OpenThread,
+  items: ThreadItem[],
+  item: ThreadItem,
+): string | null | undefined {
+  if (item.type !== 'reply') return thread.newestReplyId;
+  return newestReplyId(items) === item.id ? item.id : thread.newestReplyId;
+}
+
 export const useInboxStore = create<InboxState>()((set, get) => {
   const closeSocket = () => {
     client?.close();
@@ -174,12 +208,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
 
   /** Hands a session-ended / access-removed answer to the guard (InboxPage), whatever call got it. */
   const noteGuard = (error: unknown, workspaceId: string, startedAt: number) => {
-    if (
-      error instanceof ApiError &&
-      (error.status === 401 || error.status === 403) &&
-      current(workspaceId, startedAt)
-    )
-      set({ guardError: error });
+    if (isGuardAnswer(error) && current(workspaceId, startedAt)) set({ guardError: error });
   };
 
   /** True while the request's workspace is still the store's (not left, not switched). */
@@ -219,12 +248,14 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         options.background ? BACKGROUND : {},
       );
       if (!current(workspaceId, startedAt) || page.workspace_id !== workspaceId) return;
-      set({
-        conversations: [...page.items].sort(byActivity),
+      set((s) => ({
+        conversations: options.background
+          ? mergeConversations(s.conversations, page.items)
+          : [...page.items].sort(byActivity),
         hasNext: page.has_next,
         nextCursor: page.next_cursor,
         listStatus: 'ready',
-      });
+      }));
     } catch (error) {
       noteGuard(error, workspaceId, startedAt);
       if (current(workspaceId, startedAt) && !options.background) set({ listStatus: 'error' });
@@ -261,16 +292,32 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         open?.conversationId !== conversationId
       )
         return;
+      const fresh = [...page.items].sort(byPosition);
+      // A background re-read merges: earlier loaded pages and newer live items stay.
+      const items = options.background
+        ? fresh.reduce((all, item) => upsertItem(all, item), open.items)
+        : fresh;
+      const keepsEarlier =
+        options.background &&
+        open.items[0] !== undefined &&
+        (fresh[0] === undefined || byPosition(open.items[0], fresh[0]) < 0);
+      const pageNewest =
+        page.newest_reply_id !== undefined ? page.newest_reply_id : newestReplyId(fresh);
       set({
         thread: {
           ...open,
           conversationId,
-          status: 'ready',
-          older: 'idle',
-          items: [...page.items].sort(byPosition),
-          hasPrev: page.has_prev,
-          prevCursor: page.prev_cursor,
+          // a failed summary with no contact to show, or a 404, outlives the page
+          status:
+            open.status === 'not_found' || (open.status === 'error' && !open.contact)
+              ? open.status
+              : 'ready',
+          older: options.background ? open.older : 'idle',
+          items,
+          hasPrev: keepsEarlier ? open.hasPrev : page.has_prev,
+          prevCursor: keepsEarlier ? open.prevCursor : page.prev_cursor,
           readThroughAt: page.read_through_at,
+          newestReplyId: newestOfMerge(pageNewest, open, items),
         },
       });
     } catch (error) {
@@ -283,6 +330,18 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       )
         set({ thread: { ...open, status: isNotFound(error) ? 'not_found' : 'error' } });
     }
+  };
+
+  /** The page's newest reply, unless a reply placed live since is shown after it. */
+  const newestOfMerge = (
+    pageNewest: string | null,
+    open: OpenThread,
+    items: ThreadItem[],
+  ): string | null => {
+    const known = open.newestReplyId;
+    if (!known || known === pageNewest) return pageNewest;
+    const pos = (rid: string | null) => (rid ? items.findIndex((i) => i.id === rid) : -1);
+    return pos(known) > pos(pageNewest) && pos(known) >= 0 ? known : pageNewest;
   };
 
   /** After a (re)connect or `resync`: the three authoritative re-reads. */
@@ -309,7 +368,14 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     const known = open.items.some((i) => i.id === item.id);
     // Older than everything loaded while earlier pages exist: it shows once its page is loaded.
     if (!known && open.hasPrev && first && byPosition(item, first) < 0) return;
-    set({ thread: { ...open, items: upsertItem(open.items, item) } });
+    const items = upsertItem(open.items, item);
+    set({
+      thread: {
+        ...open,
+        items,
+        newestReplyId: known ? open.newestReplyId : newestAfter(open, items, item),
+      },
+    });
   };
 
   const refetchItem = (
@@ -378,6 +444,11 @@ export const useInboxStore = create<InboxState>()((set, get) => {
 
   return {
     ...EMPTY,
+    reportGuard(error, workspaceId) {
+      if (!isGuardAnswer(error) || get().workspaceId !== workspaceId) return false;
+      set({ guardError: error });
+      return true;
+    },
     setDraftText(conversationId, text) {
       const draft = draftOf(conversationId);
       const thread = get().thread;
@@ -388,7 +459,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         text,
         lastSeenReplyId:
           began && thread?.conversationId === conversationId
-            ? newestReplyId(thread.items)
+            ? newestSeen(thread)
             : draft.lastSeenReplyId,
       });
     },
@@ -402,23 +473,35 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       if (sending.has(conversationId)) return { kind: 'busy' };
       sending.add(conversationId);
       const startedAt = epoch;
+      const body = draft.text.trim();
+      // The key stands for one body: an edited draft is a new reply, not a retry of the old one.
+      const clientKey =
+        draft.attemptedBody != null && draft.attemptedBody !== body
+          ? crypto.randomUUID()
+          : draft.clientKey;
+      putDraft(conversationId, { ...draft, clientKey, attemptedBody: body });
       try {
         const sent = await source.sendReply(workspaceId, conversationId, {
-          client_key: draft.clientKey,
-          body: draft.text.trim(),
+          client_key: clientKey,
+          body,
           last_seen_reply_id: draft.lastSeenReplyId,
           ...(options.confirmTeammate ? { confirm_teammate_reply: true } : {}),
         });
         if (!current(workspaceId, startedAt) || sent.workspace_id !== workspaceId)
           return { kind: 'failed' };
         const open = get().thread;
-        const items =
-          open?.conversationId === conversationId ? upsertItem(open.items, sent) : undefined;
-        if (open && items) set({ thread: { ...open, items } });
+        let lastSeen: string | null = sent.id;
+        if (open?.conversationId === conversationId) {
+          const items = upsertItem(open.items, sent);
+          const thread = { ...open, items, newestReplyId: newestAfter(open, items, sent) };
+          set({ thread });
+          lastSeen = newestSeen(thread) ?? sent.id;
+        }
         putDraft(conversationId, {
           text: '',
           clientKey: crypto.randomUUID(),
-          lastSeenReplyId: newestReplyId(items) ?? sent.id,
+          lastSeenReplyId: lastSeen,
+          attemptedBody: null,
         });
         return { kind: 'sent' };
       } catch (error) {
@@ -466,8 +549,9 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       const startedAt = epoch;
       const place = (reply: ThreadReply) => {
         const open = get().thread;
-        if (open?.conversationId === conversationId)
-          set({ thread: { ...open, items: upsertItem(open.items, reply) } });
+        if (open?.conversationId !== conversationId) return;
+        const items = upsertItem(open.items, reply);
+        set({ thread: { ...open, items, newestReplyId: newestAfter(open, items, reply) } });
       };
       try {
         const resent = await source.resendReply(
@@ -541,6 +625,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           hasPrev: false,
           prevCursor: null,
           readThroughAt: null,
+          newestReplyId: undefined,
         },
       });
       const startedAt = epoch;
@@ -558,13 +643,13 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           set({ thread: { ...open, contact: summary.contact } });
         })
         .catch((error: unknown) => {
+          noteGuard(error, workspaceId, startedAt);
           const open = get().thread;
-          if (
-            isNotFound(error) &&
-            current(workspaceId, startedAt) &&
-            open?.conversationId === conversationId
-          )
-            set({ thread: { ...open, status: 'not_found' } });
+          if (!current(workspaceId, startedAt) || open?.conversationId !== conversationId) return;
+          if (isNotFound(error)) set({ thread: { ...open, status: 'not_found' } });
+          // No contact to show in the header: SCR-02 error with Retry, not a skeleton forever.
+          else if (!open.contact && open.status !== 'not_found')
+            set({ thread: { ...open, status: 'error' } });
         });
       await loadThread(workspaceId, conversationId, { background: false });
     },
@@ -603,9 +688,14 @@ export const useInboxStore = create<InboxState>()((set, get) => {
             items: [...page.items.filter((i) => !known.has(i.id)), ...now.items].sort(byPosition),
             hasPrev: page.has_prev,
             prevCursor: page.prev_cursor,
+            newestReplyId:
+              page.newest_reply_id !== undefined && now.newestReplyId === undefined
+                ? page.newest_reply_id
+                : now.newestReplyId,
           },
         });
-      } catch {
+      } catch (error) {
+        noteGuard(error, workspaceId, startedAt);
         const now = get().thread;
         if (current(workspaceId, startedAt) && now?.conversationId === conversationId)
           set({ thread: { ...now, older: 'error' } });

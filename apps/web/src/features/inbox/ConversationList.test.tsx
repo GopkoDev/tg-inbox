@@ -3,6 +3,7 @@ import type { Conversation, InboxBotStatus } from '@tg/shared';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ApiError } from '@/shared/api/client';
 
 const api = { listConversations: vi.fn() };
 vi.mock('./api-source', () => ({
@@ -53,6 +54,7 @@ const seed = (patch: Partial<ReturnType<typeof useInboxStore.getState>>) =>
     bot: bot('connected'),
     thread: null,
     live: 'live',
+    guardError: null,
     ...patch,
   });
 
@@ -372,6 +374,95 @@ describe('SCR-01 paging', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await flush();
     expect(screen.getByRole('link', { name: /Name5/ })).toBeInTheDocument();
+  });
+});
+
+describe('SCR-01 search and paging together (W6) and guard answers (W1)', () => {
+  const observers: { cb: IntersectionObserverCallback }[] = [];
+  beforeEach(() => {
+    observers.length = 0;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          observers.push({ cb });
+        }
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+  });
+  // Only the newest observer is live: earlier ones were disconnected on re-render.
+  const reach = () =>
+    act(async () => {
+      observers
+        .at(-1)
+        ?.cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+  const page = (items: Conversation[], extra = {}) => ({
+    workspace_id: WS,
+    items,
+    has_prev: false,
+    has_next: false,
+    next_cursor: null,
+    ...extra,
+  });
+  const typeSearch = async (text: string) => {
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: text } });
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+  };
+
+  it('a search started while a page is loading resets paging; the results page further', async () => {
+    api.listConversations.mockReturnValueOnce(new Promise(() => undefined)); // load-more hangs
+    seed({ conversations: [conv(1)], hasNext: true, nextCursor: 'abc' });
+    renderList();
+    await reach();
+    expect(api.listConversations.mock.calls[0]![1]).toMatchObject({ after: 'abc' });
+    api.listConversations.mockResolvedValueOnce(
+      page([conv(2)], { has_next: true, next_cursor: 'q1' }),
+    );
+    await typeSearch('Name2');
+    expect(screen.getByRole('link', { name: /Name2/ })).toBeInTheDocument();
+    expect(screen.queryAllByTestId('conversation-skeleton')).toHaveLength(0);
+    api.listConversations.mockResolvedValueOnce(page([conv(3)]));
+    await reach();
+    expect(api.listConversations).toHaveBeenCalledTimes(3);
+    expect(api.listConversations.mock.calls[2]![1]).toMatchObject({ q: 'Name2', after: 'q1' });
+    expect(screen.getByRole('link', { name: /Name3/ })).toBeInTheDocument();
+  });
+
+  it('a load-more started while a search is in flight does not drop the search answer', async () => {
+    let resolveSearch!: (p: unknown) => void;
+    seed({ conversations: [conv(1)], hasNext: true, nextCursor: 'abc' });
+    renderList();
+    api.listConversations.mockReturnValueOnce(new Promise((r) => (resolveSearch = r)));
+    await typeSearch('Name2');
+    api.listConversations.mockResolvedValueOnce(page([conv(5)]));
+    await reach();
+    await act(async () => resolveSearch(page([conv(2)])));
+    expect(screen.getByRole('link', { name: /Name2/ })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Name1/ })).toBeNull();
+  });
+
+  it('a 403 on search is handed to the guard', async () => {
+    seed({ conversations: [conv(1)] });
+    renderList();
+    const removed = new ApiError(403, 'ACCESS_REMOVED' as never, 'removed');
+    api.listConversations.mockRejectedValueOnce(removed);
+    await typeSearch('Name');
+    expect(useInboxStore.getState().guardError).toBe(removed);
+  });
+
+  it('a 401 on loading more is handed to the guard', async () => {
+    seed({ conversations: [conv(1)], hasNext: true, nextCursor: 'abc' });
+    renderList();
+    const gone = new ApiError(401, 'UNAUTHENTICATED' as never, 'gone');
+    api.listConversations.mockRejectedValueOnce(gone);
+    await reach();
+    expect(useInboxStore.getState().guardError).toBe(gone);
   });
 });
 

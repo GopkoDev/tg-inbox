@@ -12,7 +12,7 @@ export interface SocketLike {
 
 export interface LiveHandlers {
   onFrame: (frame: LiveFrame) => void;
-  /** The socket opened again after a drop: signals may have been missed. */
+  /** The socket opened after a drop or a failed attempt: signals may have been missed. */
   onReconnected: () => void;
   /** The server ended the session for good (4401 session gone, 4403 access removed). */
   onClosed: (code: number) => void;
@@ -54,7 +54,6 @@ export function openLiveSocket(
   const backoff = options.backoffMs ?? defaultBackoff;
   let stopped = false;
   let attempt = 0;
-  let everOpened = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let socket: SocketLike | undefined;
 
@@ -63,9 +62,11 @@ export function openLiveSocket(
     socket = current;
     current.onopen = () => {
       if (stopped) return;
+      // Any failed attempt before this open (a drop, or a first try that never opened) may have
+      // missed signals.
+      const missed = attempt > 0;
       attempt = 0;
-      if (everOpened) handlers.onReconnected();
-      everOpened = true;
+      if (missed) handlers.onReconnected();
     };
     current.onmessage = (event) => {
       if (stopped || typeof event.data !== 'string') return;
@@ -85,7 +86,6 @@ export function openLiveSocket(
         handlers.onClosed(event.code);
         return;
       }
-      // A first connection that never opened still counts as "may have missed signals" later.
       timer = setTimeout(connect, backoff(attempt++));
     };
     current.onerror = () => undefined; // the close event follows and drives the reconnect

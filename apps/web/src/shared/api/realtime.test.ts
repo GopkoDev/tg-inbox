@@ -51,6 +51,15 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('openLiveSocket', () => {
+  it('a first attempt that never opened: the first successful open reports reconnected (W8)', () => {
+    const { handlers } = start();
+    FakeSocket.all[0]!.drop(1006);
+    vi.advanceTimersByTime(100);
+    expect(FakeSocket.all).toHaveLength(2);
+    FakeSocket.all[1]!.open();
+    expect(handlers.onReconnected).toHaveBeenCalledTimes(1);
+  });
+
   it('opens one socket for the workspace at /api/workspaces/:ws/inbox/live', () => {
     start();
     expect(FakeSocket.all).toHaveLength(1);

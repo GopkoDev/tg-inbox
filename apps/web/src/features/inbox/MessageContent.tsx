@@ -1,6 +1,6 @@
 import type { MessageKind, ThreadMessage } from '@tg/shared';
 import { Download, FileText, Maximize2, MapPin } from 'lucide-react';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
@@ -12,6 +12,7 @@ import {
   useMessageMedia,
   type MediaState,
 } from './media';
+import { useInboxStore } from './store';
 
 const KIND_LABEL: Partial<Record<MessageKind, string>> = {
   photo: 'Photo',
@@ -63,10 +64,7 @@ function Failure({ state, retry }: { state: MediaState; retry: () => void }) {
 }
 
 const isFailure = (s: MediaState) =>
-  s.status === 'unavailable' ||
-  s.status === 'not_responding' ||
-  s.status === 'error' ||
-  s.status === 'forbidden';
+  s.status === 'unavailable' || s.status === 'not_responding' || s.status === 'error';
 
 /** Inline media (photo, video, animation, video note, voice, audio, sticker) fetched on render. */
 function InlineMedia({
@@ -87,6 +85,14 @@ function InlineMedia({
     messageId: message.id,
   });
   const [viewing, setViewing] = useState(false);
+  // A 401/403 handed to the guard means the inbox is being left: the viewer closes with it.
+  useEffect(
+    () =>
+      useInboxStore.subscribe((s, prev) => {
+        if (s.guardError && s.guardError !== prev.guardError) setViewing(false);
+      }),
+    [],
+  );
   const inline = useRef<HTMLVideoElement>(null);
   const opener = useRef<HTMLElement>(null);
   const label = KIND_LABEL[kind] ?? 'Message';
@@ -218,7 +224,7 @@ function FileRow({ message, workspaceId }: { message: ThreadMessage; workspaceId
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (error) {
-      setFailure(failureState(error));
+      setFailure(failureState(error, workspaceId));
     } finally {
       setBusy(false);
     }

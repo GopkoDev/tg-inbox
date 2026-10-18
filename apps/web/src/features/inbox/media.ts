@@ -1,6 +1,7 @@
 import { ErrorCode, MediaUnavailableReason } from '@tg/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { ApiError, apiBlob } from '@/shared/api/client';
+import { useInboxStore } from './store';
 
 /** What the panel can show for one message's media (SCR-02 content rows, SCR-03 states). */
 export type MediaState =
@@ -8,7 +9,6 @@ export type MediaState =
   | { status: 'ready'; url: string; contentType: string }
   | { status: 'unavailable'; reason: MediaUnavailableReason }
   | { status: 'not_responding' }
-  | { status: 'forbidden' }
   | { status: 'error' };
 
 export interface MediaRef {
@@ -27,17 +27,30 @@ export const UNAVAILABLE_REASON_TEXT: Record<MediaUnavailableReason, string> = {
 export const mediaPath = ({ workspaceId, conversationId, messageId }: MediaRef) =>
   `/api/workspaces/${encodeURIComponent(workspaceId)}/inbox/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/media`;
 
-/** Fetch the bytes through the API client; the caller owns (and must revoke) the object URL. */
+/**
+ * Fetch the bytes through the API client; the caller owns (and must revoke) the object URL.
+ * `background`: an automatic fetch (inline media on render) that must not extend the session.
+ */
 export async function fetchMedia(
   ref: MediaRef,
-  signal?: AbortSignal,
+  options: { signal?: AbortSignal; background?: boolean } = {},
 ): Promise<{ url: string; contentType: string }> {
-  const { blob, contentType } = await apiBlob(mediaPath(ref), { signal });
+  const { blob, contentType } = await apiBlob(mediaPath(ref), {
+    signal: options.signal,
+    ...(options.background ? { background: true } : {}),
+  });
   return { url: URL.createObjectURL(blob), contentType };
 }
 
-/** Map a failed fetch to the view state of the contract's refusals. */
-export function failureState(error: unknown): Exclude<MediaState, { status: 'ready' | 'loading' }> {
+/**
+ * Map a failed fetch to the view state of the contract's refusals. A 401/403 goes to the shell
+ * guard (which ends the session or shows the access-removed notice); here it is a plain error.
+ */
+export function failureState(
+  error: unknown,
+  workspaceId: string,
+): Exclude<MediaState, { status: 'ready' | 'loading' }> {
+  useInboxStore.getState().reportGuard(error, workspaceId);
   if (error instanceof ApiError) {
     if (error.status === 409 && error.code === ErrorCode.MEDIA_UNAVAILABLE) {
       const reason = MediaUnavailableReason.safeParse(
@@ -46,7 +59,6 @@ export function failureState(error: unknown): Exclude<MediaState, { status: 'rea
       if (reason.success) return { status: 'unavailable', reason: reason.data };
     }
     if (error.status === 503 || error.status === 416) return { status: 'not_responding' };
-    if (error.status === 401 || error.status === 403) return { status: 'forbidden' };
   }
   return { status: 'error' };
 }
@@ -64,7 +76,11 @@ export function useMessageMedia(ref: MediaRef, enabled = true) {
     if (!enabled) return;
     const controller = new AbortController();
     let url: string | null = null;
-    fetchMedia({ workspaceId, conversationId, messageId }, controller.signal).then(
+    // Only the automatic first fetch is background; a Try again is the member's own action.
+    fetchMedia(
+      { workspaceId, conversationId, messageId },
+      { signal: controller.signal, background: attempt === 0 },
+    ).then(
       (media) => {
         if (controller.signal.aborted) URL.revokeObjectURL(media.url);
         else {
@@ -73,7 +89,7 @@ export function useMessageMedia(ref: MediaRef, enabled = true) {
         }
       },
       (error: unknown) => {
-        if (!controller.signal.aborted) setState(failureState(error));
+        if (!controller.signal.aborted) setState(failureState(error, workspaceId));
       },
     );
     return () => {

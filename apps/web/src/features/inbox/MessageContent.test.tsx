@@ -3,6 +3,7 @@ import type { ThreadMessage } from '@tg/shared';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { stubRadixDom } from '@/test/radix';
 import { MessageContent } from './MessageContent';
+import { useInboxStore } from './store';
 
 const WS = '0198f0c0-0000-7000-8000-000000000001';
 const CONV = '0198f0c0-0000-7000-8000-000000000101';
@@ -26,8 +27,10 @@ const message = (over: Partial<ThreadMessage> = {}): ThreadMessage => ({
   ...over,
 });
 
+// A string body: importing the store pulls in a module graph under which jsdom's Blob is not
+// accepted by undici's Response.
 const bytes = (type: string) =>
-  new Response(new Blob(['x'], { type }), { status: 200, headers: { 'content-type': type } });
+  new Response('x', { status: 200, headers: { 'content-type': type } });
 const problem = (status: number, code: string, details?: unknown) =>
   new Response(JSON.stringify({ error: { code, message: code, details } }), {
     status,
@@ -370,5 +373,65 @@ describe('MessageContent: opening the viewer', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Open video' }));
     await screen.findByRole('dialog');
     expect(HTMLMediaElement.prototype.pause).toHaveBeenCalled();
+  });
+});
+
+const headerOf = (call: unknown[]) => new Headers((call[1] as RequestInit).headers);
+
+describe('MessageContent: background media fetches (W10)', () => {
+  it('an inline fetch is a background request; a file Download is not', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(bytes('image/jpeg')));
+    const first = show(message());
+    await screen.findByRole('img');
+    expect(headerOf(fetchMock.mock.calls[0]!).get('x-background-request')).toBe('1');
+    first.unmount();
+    fetchMock.mockImplementation(() => Promise.resolve(bytes('application/pdf')));
+    show(
+      message({
+        kind: 'document',
+        attachment: { file_name: 'a.pdf', mime_type: 'application/pdf', file_size: 10 },
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(headerOf(fetchMock.mock.calls[1]!).get('x-background-request')).toBeNull();
+  });
+});
+
+describe('MessageContent: 401/403 go to the shell guard (W1)', () => {
+  beforeEach(() => {
+    useInboxStore.getState().leave();
+    useInboxStore.setState({ workspaceId: WS });
+  });
+  afterEach(() => useInboxStore.getState().leave());
+
+  it('inline media: a 401 is handed to the guard', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(problem(401, 'UNAUTHENTICATED')));
+    show(message());
+    await waitFor(() => expect(useInboxStore.getState().guardError).toMatchObject({ status: 401 }));
+  });
+
+  it('file download: a 403 is handed to the guard', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(problem(403, 'ACCESS_REMOVED')));
+    show(
+      message({
+        kind: 'document',
+        attachment: { file_name: 'a.pdf', mime_type: 'application/pdf', file_size: 10 },
+      }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Download' }));
+    await waitFor(() => expect(useInboxStore.getState().guardError).toMatchObject({ status: 403 }));
+  });
+
+  it('viewer: a 403 on Try again is handed to the guard and the viewer closes', async () => {
+    fetchMock.mockImplementation(() => Promise.resolve(bytes('video/mp4')));
+    show(message({ kind: 'video' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Open video' }));
+    await screen.findByRole('dialog');
+    fireEvent.error(screen.getByTestId('viewer-video'));
+    fetchMock.mockImplementation(() => Promise.resolve(problem(403, 'ACCESS_REMOVED')));
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(useInboxStore.getState().guardError).toMatchObject({ status: 403 }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 });

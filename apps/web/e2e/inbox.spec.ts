@@ -1,4 +1,4 @@
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Page, WebSocket } from '@playwright/test';
 import { expect, PASSWORD, test, type World } from './support/world.ts';
 
 /**
@@ -19,13 +19,22 @@ async function signIn(page: Page, email: string) {
   await page.waitForURL((url) => !url.pathname.startsWith('/sign-in'));
 }
 
-/** A signed-in browser context (its own cookie jar) on the workspace inbox. */
+/**
+ * A signed-in browser context (its own cookie jar) on the workspace inbox; `sockets` are its live
+ * sockets and `frames` every live frame they received, in order.
+ */
 async function openInbox(browser: Browser, email: string, workspaceId: string) {
   const context = await browser.newContext();
   const page = await context.newPage();
+  const sockets: WebSocket[] = [];
+  const frames: string[] = [];
+  page.on('websocket', (ws) => {
+    sockets.push(ws);
+    ws.on('framereceived', (frame) => frames.push(String(frame.payload)));
+  });
   await signIn(page, email);
   await page.goto(`/w/${workspaceId}/inbox`);
-  return { context, page };
+  return { context, page, sockets, frames };
 }
 
 const rows = (page: Page) =>
@@ -220,13 +229,25 @@ test('deactivating the operator stops their open inbox and the next action shows
   expect(await world.customerWrites(token, 734_001, 'Hello there', 'Zoe')).toBe(200);
 
   const operator = await openInbox(browser, OPERATOR, workspaceId);
-  await expect(rows(operator.page)).toHaveCount(1, WAIT);
+  // The owner's open inbox is the control: it proves the next message is published live.
+  const owner = await openInbox(browser, OWNER, workspaceId);
+  for (const { page } of [operator, owner]) await expect(rows(page)).toHaveCount(1, WAIT);
+  await expect.poll(() => operator.sockets.some((ws) => !ws.isClosed()), WAIT).toBe(true);
 
+  const framesBefore = operator.frames.length;
   await world.deactivate(OWNER, workspaceId, OPERATOR);
+  // Within 5 s (AC-09) the server ends the operator's live stream (4403) and it is not reopened.
+  await expect.poll(() => operator.sockets.every((ws) => ws.isClosed()), WAIT).toBe(true);
   expect(await world.customerWrites(token, 734_002, 'Anyone around?', 'Yan')).toBe(200);
 
-  // Nothing new arrives in the open inbox; the next action lands on the notice.
+  // The owner gets it live; the operator's open inbox, which would have got it too, does not.
+  await expect(rows(owner.page)).toHaveCount(2, WAIT);
+  await expect(owner.page.getByText('Anyone around?')).toBeVisible();
   await expect(operator.page.getByText('Anyone around?')).toHaveCount(0);
+  await expect(rows(operator.page)).toHaveCount(1);
+  expect(operator.frames.slice(framesBefore)).toEqual([]);
+  expect(operator.sockets.every((ws) => ws.isClosed())).toBe(true);
+  // The next action lands on the notice.
   await rows(operator.page).first().click();
   await expect(operator.page.getByText('Your access to Acme Flowers was removed')).toBeVisible(
     WAIT,
@@ -234,5 +255,6 @@ test('deactivating the operator stops their open inbox and the next action shows
   await expect(operator.page.getByText('Yan')).toHaveCount(0);
   await expect(operator.page.getByText('Zoe')).toHaveCount(0);
 
+  await owner.context.close();
   await operator.context.close();
 });

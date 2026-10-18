@@ -21,9 +21,12 @@ const NO_DRAFT = { text: '', clientKey: '', lastSeenReplyId: null };
 export function ReplyComposer({
   workspaceId,
   conversationId,
+  disabled = false,
 }: {
   workspaceId: string;
   conversationId: string;
+  /** SCR-02 `loading`: shown, but nothing can be typed or sent yet. */
+  disabled?: boolean;
 }) {
   const draft = useInboxStore((s) => s.drafts[conversationId]) ?? NO_DRAFT;
   const bot = useInboxStore((s) => s.bot);
@@ -55,7 +58,7 @@ export function ReplyComposer({
   const tooLong = isTooLong(draft.text);
   const seconds = retryAt ? secondsUntil(retryAt, now) : 0;
   const limited = retryAt !== null && seconds > 0;
-  const canSend = canSendReply(draft.text) && !sending && !unavailable && !limited;
+  const canSend = canSendReply(draft.text) && !sending && !unavailable && !limited && !disabled;
 
   function apply(result: SendResult) {
     switch (result.kind) {
@@ -166,6 +169,7 @@ export function ReplyComposer({
           placeholder="Write a reply…"
           value={draft.text}
           rows={1}
+          disabled={disabled}
           readOnly={sending}
           className="max-h-40 min-h-10 resize-none"
           aria-invalid={problem ? true : undefined}

@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useState, type RefObject } from 'react';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import {
@@ -35,9 +35,6 @@ export function MediaViewer({
   returnFocus?: RefObject<HTMLElement | null>;
 }) {
   const [playerFailed, setPlayerFailed] = useState(false);
-  useEffect(() => {
-    if (open && media.status === 'forbidden') onOpenChange(false);
-  }, [open, media.status, onOpenChange]);
 
   const retry = () => {
     setPlayerFailed(false);
@@ -65,7 +62,7 @@ export function MediaViewer({
         </AlertDescription>
       </Alert>
     );
-  else if (media.status === 'error' || media.status === 'forbidden')
+  else if (media.status === 'error')
     body = (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-2">

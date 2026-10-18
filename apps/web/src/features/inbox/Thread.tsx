@@ -184,7 +184,7 @@ export function Thread() {
           </Link>
         </Button>
       ) : null}
-      {status === 'loading' || !contact ? (
+      {status === 'error' && !contact ? null : status === 'loading' || !contact ? (
         <div data-testid="thread-loading" className="flex items-center gap-3">
           <Skeleton className="size-8 rounded-full" />
           <Skeleton className="h-4 w-32" />
@@ -268,11 +268,12 @@ export function Thread() {
       >
         {body}
       </div>
-      {status === 'ready' && open ? (
+      {status === 'loading' || (status === 'ready' && open) ? (
         <ReplyComposer
           key={`${workspaceId}:${conversationId}`}
           workspaceId={workspaceId}
           conversationId={conversationId}
+          disabled={status !== 'ready'}
         />
       ) : null}
     </div>

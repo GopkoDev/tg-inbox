@@ -71,9 +71,4 @@ describe('MediaViewer (SCR-03)', () => {
       screen.getByText('Content unavailable — Telegram no longer keeps this file'),
     ).toBeInTheDocument();
   });
-
-  it('a 403 closes the dialog', () => {
-    const { onOpenChange } = show({ status: 'forbidden' });
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
 });

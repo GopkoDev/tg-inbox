@@ -1,6 +1,7 @@
 import type { Conversation, InboxBotStatus, ThreadMessage, ThreadPage } from '@tg/shared';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ApiError } from '@/shared/api/client';
 
 const api = {
   listConversations: vi.fn(),
@@ -10,6 +11,7 @@ const api = {
   getThreadReply: vi.fn(),
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
+  sendReply: vi.fn(),
 };
 vi.mock('./api-source', () => ({
   listConversations: (...a: unknown[]) => api.listConversations(...a),
@@ -19,6 +21,7 @@ vi.mock('./api-source', () => ({
   getThreadReply: (...a: unknown[]) => api.getThreadReply(...a),
   markConversationRead: (...a: unknown[]) => api.markConversationRead(...a),
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
+  sendReply: (...a: unknown[]) => api.sendReply(...a),
 }));
 
 interface Handlers {
@@ -391,5 +394,147 @@ describe('inbox store: recovery', () => {
       conversations: [],
       thread: null,
     });
+  });
+});
+
+const replyItem = (ws: string, cid: string, rid: string, at: string) => ({
+  type: 'reply' as const,
+  id: rid,
+  workspace_id: ws,
+  conversation_id: cid,
+  client_key: id(990),
+  body: 'team',
+  author: { account_id: id(950), display_name: 'Olena Operator' },
+  state: 'sent' as const,
+  failure_reason: null,
+  position_at: at,
+  sent_at: at,
+  created_at: at,
+});
+
+describe('inbox store: guard answers (W1)', () => {
+  it('a 401 on loading older history reaches the guard', async () => {
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(500))]),
+      has_prev: true,
+      prev_cursor: 'cur',
+    });
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    const gone = new ApiError(401, 'UNAUTHENTICATED' as never, 'gone');
+    api.listThreadItems.mockRejectedValueOnce(gone);
+    await useInboxStore.getState().loadOlder(A, C1);
+    expect(useInboxStore.getState().guardError).toBe(gone);
+  });
+
+  it('reportGuard hands a 403 of the current workspace to the guard, ignores other answers', async () => {
+    await useInboxStore.getState().enter(A);
+    useInboxStore.getState().reportGuard(new ApiError(500, 'INTERNAL_ERROR' as never, 'x'), A);
+    expect(useInboxStore.getState().guardError).toBeNull();
+    const removed = new ApiError(403, 'ACCESS_REMOVED' as never, 'removed');
+    useInboxStore.getState().reportGuard(removed, B);
+    expect(useInboxStore.getState().guardError).toBeNull();
+    useInboxStore.getState().reportGuard(removed, A);
+    expect(useInboxStore.getState().guardError).toBe(removed);
+  });
+});
+
+describe('inbox store: drafts (W5, W9)', () => {
+  it('an edited draft after a failed send gets a fresh client_key; an identical retry keeps it', async () => {
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    api.sendReply.mockRejectedValue(new TypeError('network'));
+    useInboxStore.getState().setDraftText(C1, 'Hello');
+    await useInboxStore.getState().sendReply(A, C1);
+    await useInboxStore.getState().sendReply(A, C1);
+    const [first, retry] = api.sendReply.mock.calls.map((c) => c[2]);
+    expect(retry.client_key).toBe(first.client_key);
+    useInboxStore.getState().setDraftText(C1, 'Hello, we open at 9');
+    await useInboxStore.getState().sendReply(A, C1);
+    const edited = api.sendReply.mock.calls[2]![2];
+    expect(edited.body).toBe('Hello, we open at 9');
+    expect(edited.client_key).not.toBe(first.client_key);
+  });
+
+  it('last_seen_reply_id is the page newest_reply_id even when that reply is on an earlier page', async () => {
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(500))]),
+      has_prev: true,
+      prev_cursor: 'cur',
+      newest_reply_id: id(777),
+    });
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    api.sendReply.mockRejectedValue(new TypeError('network'));
+    useInboxStore.getState().setDraftText(C1, 'Hi');
+    await useInboxStore.getState().sendReply(A, C1);
+    expect(api.sendReply.mock.calls[0]![2].last_seen_reply_id).toBe(id(777));
+  });
+
+  it('a live reply arriving later becomes the newest reply seen', async () => {
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(500))]),
+      newest_reply_id: id(777),
+    });
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    api.getThreadReply.mockResolvedValue(replyItem(A, C1, id(778), '2026-10-18T11:00:00.000Z'));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'created', { type: 'reply', id: id(778) }));
+    await flush();
+    api.sendReply.mockRejectedValue(new TypeError('network'));
+    useInboxStore.getState().setDraftText(C1, 'Hi');
+    await useInboxStore.getState().sendReply(A, C1);
+    expect(api.sendReply.mock.calls[0]![2].last_seen_reply_id).toBe(id(778));
+  });
+});
+
+describe('inbox store: background re-reads merge (W7)', () => {
+  it('a reconnect keeps earlier loaded pages and newer live items of the open thread', async () => {
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [message(A, C1, id(510), '2026-10-18T10:10:00.000Z')]),
+      has_prev: true,
+      prev_cursor: 'cur-1',
+    });
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    api.listThreadItems.mockResolvedValueOnce(
+      threadPage(A, C1, [message(A, C1, id(505), '2026-10-18T10:05:00.000Z')]),
+    );
+    await useInboxStore.getState().loadOlder(A, C1);
+    api.getThreadMessage.mockResolvedValue(message(A, C1, id(520), '2026-10-18T10:20:00.000Z'));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'created', { type: 'message', id: id(520) }));
+    await flush();
+    // The re-read answers with a page that started before the live item arrived.
+    api.listThreadItems.mockResolvedValueOnce({
+      ...threadPage(A, C1, [
+        { ...message(A, C1, id(510), '2026-10-18T10:10:00.000Z'), body: 'edited' },
+      ]),
+      has_prev: true,
+      prev_cursor: 'cur-1',
+    });
+    sockets[0]!.handlers.onReconnected();
+    await flush();
+    const open = useInboxStore.getState().thread!;
+    expect(open.items.map((i) => i.id)).toEqual([id(505), id(510), id(520)]);
+    expect(open.items[1]).toMatchObject({ body: 'edited' });
+    expect(open.hasPrev).toBe(false);
+  });
+
+  it('a resync keeps list rows that are not on the re-read first page and updates the rest', async () => {
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z')]),
+    );
+    await useInboxStore.getState().enter(A);
+    api.getConversation.mockResolvedValue(conv(A, C2, '2026-10-18T12:00:00.000Z'));
+    sockets[0]!.handlers.onFrame(changed(A, C2, 'created', { type: 'message', id: id(501) }));
+    await flush();
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z', { unread_count: 0 })]),
+    );
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    await flush();
+    const rows = useInboxStore.getState().conversations;
+    expect(rows.map((c) => c.id)).toEqual([C2, C1]);
+    expect(rows[1]!.unread_count).toBe(0);
   });
 });
