@@ -6,7 +6,8 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   envDir: '../..',
-  server: { proxy: { '/api': 'http://localhost:3000' } },
+  // `ws` also proxies the inbox live socket (a WebSocket upgrade on /api/…/inbox/live).
+  server: { proxy: { '/api': { target: 'http://localhost:3000', ws: true } } },
   resolve: {
     alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
   },
