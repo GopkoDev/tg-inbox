@@ -15,29 +15,23 @@ target_surfaces: []  # filled in §4 — subset of: backend-service | web-fronte
 
 ## 1. Introduction and goals
 
-<!-- 🎯 Why: durable memory of «what + the three dominant qualities + who cares». A year from
-     now nobody recalls which three qualities were critical for this system.
-     📋 Write: 1 ¶ intent + 3 lines of top-3 quality goals + a stakeholders table.
-     ¶4 is the override slot — critic `Override` resolutions emit «Decision override: <headline>
-     — rationale: <reason>» bullets here so downstream skills see the deliberate choice. -->
-
-**Intent.** <One paragraph from spec §2 Goals — what we're building and for whom.>
+**Intent.** shared-inbox turns the inbox preview into the real, shared inbox of a workspace. Every member — operators and business owners alike — sees the workspace's captured conversations live, newest activity first, with their own unread counts and a shared "waiting for a reply" marker; searches them by the contact's name or username; reads the whole history, including the customer's media opened through the panel; and writes text replies that the business bot sends to the end customer in Telegram. Each reply carries a visible delivery state with a plain-language reason when it fails; the inbox never sends a reply twice without a member choosing so and never sends one silently into a broken bot. This is the first step that lets a pilot team drop its forwarder bot; assignment and statuses (step 5), notifications (step 6) and AI drafts (step 9) build on it.
 
 **Top-3 quality goals (1-liners; full scenarios in §10):**
 
-1. <e.g. "Availability under partial failure of a downstream module">
-2. <e.g. "Read performance for the dashboard under data-scale growth">
-3. <e.g. "Recoverability with <30 min RTO">
+1. **Reply integrity** — a reply reaches the end customer at most once, in the order it was written within its conversation, and its shown state ("sending", "sent", "not delivered", "not confirmed") always tells the truth about what Telegram accepted.
+2. **Tenant, access and secret isolation** — no member sees another workspace's conversations or media, a deactivated or switched-away member's live stream stops within 5 s, and the bot token never reaches the browser or the logs, including on the media path.
+3. **Live, responsive inbox** — customer messages and teammates' replies appear in every open inbox within the live-update target, and the list, thread, reply and media paths stay within the spec's latency targets at pilot scale.
 
 **Stakeholders.**
 
 | Role | Interest | Sign-off owner? |
 |---|---|---|
-| <author role from glossary> | <feature usage> | No |
-| <consumer role from glossary> | <read usage> | No |
+| Operator | Reads every conversation of the workspace, replies, sees delivery states and teammates' replies live | No |
+| Business owner | Does everything an operator does in the inbox; is pointed to the bot settings when the bot cannot carry replies | No |
+| End customer | Receives the team's replies as messages from the business bot in their Telegram chat; never sees tg-inbox | No |
 | Tech Lead | SAD approval | Yes |
-
-<!-- Decision overrides (¶4) — populated by the critic resolution loop, empty otherwise. -->
+| Security Lead | Security review of reply texts (new personal data), the new outbound action through the business bot, the media proxy next to the bot token and the live stream's access checks (spec §6.1: review required) | Yes |
 
 ## 2. Constraints
 
