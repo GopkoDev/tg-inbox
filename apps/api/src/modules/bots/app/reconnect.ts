@@ -9,7 +9,9 @@ import {
 import {
   OWNER_ACTION_TIMEOUT,
   type BotRepo,
+  type BotSignals,
   type TelegramGateway,
+  type Transaction,
   type WebhookSecrets,
 } from './ports.js';
 import type { BotSettingsReader } from './settings.js';
@@ -21,6 +23,8 @@ export interface ReconnectDeps {
   secrets: WebhookSecrets;
   clock: Clock;
   settings: BotSettingsReader;
+  transaction: Transaction;
+  signals: BotSignals;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
 }
@@ -34,7 +38,20 @@ export interface Reconnect {
 }
 
 export function createReconnect(deps: ReconnectDeps): Reconnect {
-  const { bots, telegram, secrets, clock, settings, webhookBaseUrl } = deps;
+  const { bots, telegram, secrets, clock, settings, transaction, signals, webhookBaseUrl } = deps;
+
+  // The state write and its `bot.changed` signal commit together.
+  const writeState = (
+    workspaceId: string,
+    botId: string,
+    state: 'connected' | 'needs_token',
+    options?: { identity: { name: string; username: string } },
+  ) =>
+    transaction(async (tx) => {
+      if (await bots.setState(workspaceId, botId, state, clock.now(), options, tx)) {
+        await signals.botChanged(tx, workspaceId);
+      }
+    });
 
   return {
     async reconnect(workspaceId, confirmTakeover) {
@@ -49,7 +66,7 @@ export function createReconnect(deps: ReconnectDeps): Reconnect {
 
       // A rejected stored token is an outcome: written at once (ADR-0008, AC-15).
       const needsToken = async () => {
-        await bots.setState(workspaceId, bot.id, 'needs_token', clock.now());
+        await writeState(workspaceId, bot.id, 'needs_token');
         return new BotNeedsNewTokenError(await settings.getSettings(workspaceId));
       };
 
@@ -75,7 +92,7 @@ export function createReconnect(deps: ReconnectDeps): Reconnect {
       );
       if (set === 'failed') throw new TelegramUnavailableError();
 
-      await bots.setState(workspaceId, bot.id, 'connected', clock.now(), { identity });
+      await writeState(workspaceId, bot.id, 'connected', { identity });
       return settings.getSettings(workspaceId);
     },
   };

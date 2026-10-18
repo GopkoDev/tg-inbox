@@ -10,6 +10,7 @@ import { fakeBotToken, testBotKey } from '../../../test/fixtures/bots.js';
 import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createBotRepo } from '../infra/bot-repo.js';
+import { createBotSignals } from '../infra/bot-signals.js';
 import { createTelegramGateway } from '../infra/telegram-gateway.js';
 import { createTokenCipher } from '../infra/token-cipher.js';
 import { createWebhookSecrets } from '../infra/webhook-secret.js';
@@ -35,6 +36,7 @@ describe('pasteToken (Postgres + fake Bot API)', () => {
       secrets: createWebhookSecrets(testBotKey.key),
       clock: fixedClock(new Date('2026-10-11T10:00:00Z')),
       transaction: (fn) => db.transaction().execute(fn),
+      signals: createBotSignals(),
       settings: createBotSettings({
         bots,
         conversations: fakeConversationsApi(),

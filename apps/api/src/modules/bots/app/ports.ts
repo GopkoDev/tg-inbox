@@ -171,6 +171,14 @@ export interface TelegramGateway {
 /** Runs `fn` in one database transaction; a throw rolls it back. No Telegram call runs inside. */
 export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
 
+/**
+ * Tells every open inbox of the workspace that its bot changed (`bot.changed`). It runs in the
+ * transaction of the state write, so the signal is delivered only if that write commits.
+ */
+export interface BotSignals {
+  botChanged(tx: Executor, workspaceId: string): Promise<void>;
+}
+
 /** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
 export interface ConversationsApi {
   /** Contact, conversation and message in one transaction; a redelivery is `already_present`. */

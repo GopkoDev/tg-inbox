@@ -14,6 +14,7 @@ import {
   OWNER_ACTION_TIMEOUT,
   type BotRecord,
   type BotRepo,
+  type BotSignals,
   type ConversationsApi,
   type LiveRowGuard,
   type TelegramGateway,
@@ -30,6 +31,7 @@ export interface PasteTokenDeps {
   secrets: WebhookSecrets;
   clock: Clock;
   transaction: Transaction;
+  signals: BotSignals;
   settings: BotSettingsReader;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
@@ -50,8 +52,17 @@ export interface PasteToken {
 class RowChanged extends Error {}
 
 export function createPasteToken(deps: PasteTokenDeps): PasteToken {
-  const { bots, conversations, telegram, secrets, clock, transaction, settings, webhookBaseUrl } =
-    deps;
+  const {
+    bots,
+    conversations,
+    telegram,
+    secrets,
+    clock,
+    transaction,
+    signals,
+    settings,
+    webhookBaseUrl,
+  } = deps;
   const newId = deps.newId ?? defaultNewId;
 
   return {
@@ -162,6 +173,7 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
       if (target === 'foreign' && !confirmTakeover) {
         throw new TakeoverConfirmationRequiredError(identity);
       }
+      await signals.botChanged(tx, workspaceId);
     });
 
     const set = await telegram.setWebhook(
@@ -190,7 +202,11 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
     written: LiveRowGuard,
   ) {
     if (action === 'connect') {
-      await bots.delete(workspaceId, botId, undefined, written);
+      await transaction(async (tx) => {
+        if (await bots.delete(workspaceId, botId, tx, written)) {
+          await signals.botChanged(tx, workspaceId);
+        }
+      });
       return;
     }
     if (!row) return;
@@ -198,7 +214,7 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
       if (action === 'connectAgain') {
         if (!(await bots.clearOnDisconnect(workspaceId, botId, tx, written))) return;
       }
-      await bots.update(
+      const undone = await bots.update(
         workspaceId,
         botId,
         {
@@ -216,6 +232,8 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
         tx,
         action === 'connectAgain' ? 'disconnected' : written,
       );
+      // The paste's write was visible to every open inbox, so its undo is signalled too.
+      if (undone.ok || action === 'connectAgain') await signals.botChanged(tx, workspaceId);
     });
   }
 }

@@ -8,6 +8,7 @@ import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js'
 import { fakeGateway } from '../app/fakes.js';
 import { createHealthCheck, type CheckOutcome } from '../app/health-check.js';
 import { createBotRepo } from './bot-repo.js';
+import { createBotSignals } from './bot-signals.js';
 import {
   BotHealthCheckJob,
   CHECK_HEALTH_QUEUE,
@@ -36,6 +37,8 @@ describe('bots health-check jobs (pg-boss)', () => {
       bots: createBotRepo(db, createTokenCipher(testBotKey)),
       telegram,
       clock: fixedClock(NOW),
+      transaction: (fn) => db.transaction().execute(fn),
+      signals: createBotSignals(),
       webhookBaseUrl: 'https://inbox.example.test',
     });
     const recording = {

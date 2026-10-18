@@ -14,10 +14,12 @@ import { createConversations } from '../../conversations/app/conversations.js';
 import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
 import { createMessageRepo } from '../../conversations/infra/message-repo.js';
 import { createBotRepo } from '../infra/bot-repo.js';
+import { createBotSignals } from '../infra/bot-signals.js';
 import { createTelegramGateway } from '../infra/telegram-gateway.js';
 import { createTokenCipher } from '../infra/token-cipher.js';
 import { createWebhookSecrets } from '../infra/webhook-secret.js';
 import { createDisconnect } from './disconnect.js';
+import type { Transaction } from './ports.js';
 import { createPasteToken } from './paste-token.js';
 import { createReconnect } from './reconnect.js';
 import { createBotSettings } from './settings.js';
@@ -50,19 +52,23 @@ describe('reconnect and disconnect (Postgres + fake Bot API)', () => {
       clock,
     });
     const settings = createBotSettings({ bots, conversations, contacts });
+    const transaction: Transaction = (fn) => db.transaction().execute(fn);
     const common = {
       bots,
       telegram: createTelegramGateway({ apiRoot: fake.apiRoot, maxConnections: 5 }),
       secrets: createWebhookSecrets(testBotKey.key),
       clock,
       settings,
+      transaction,
+      signals: createBotSignals(),
       webhookBaseUrl: BASE,
     };
     owner = {
       paste: createPasteToken({
         ...common,
         conversations,
-        transaction: (fn) => db.transaction().execute(fn),
+        transaction,
+        signals: common.signals,
       }),
       reconnect: createReconnect(common),
       disconnect: createDisconnect({ ...common, conversations }),

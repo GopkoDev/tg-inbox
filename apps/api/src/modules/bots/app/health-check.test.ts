@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
-import { fakeBotRepo, fakeGateway, type FakeBotRow } from './fakes.js';
+import {
+  fakeBotRepo,
+  fakeBotSignals,
+  fakeBotTransaction,
+  fakeGateway,
+  type FakeBotRow,
+} from './fakes.js';
 import { createHealthCheck } from './health-check.js';
 import { HEALTH_CHECK_TIMEOUT } from './ports.js';
 import { webhookUrl } from './webhook-url.js';
@@ -31,8 +37,16 @@ function setup(rows: FakeBotRow[] = [row()]) {
   bots.rows.push(...rows);
   const telegram = fakeGateway();
   const clock = fixedClock(at(600));
-  const health = createHealthCheck({ bots, telegram, clock, webhookBaseUrl: BASE });
-  return { bots, telegram, clock, health };
+  const signals = fakeBotSignals();
+  const health = createHealthCheck({
+    bots,
+    telegram,
+    clock,
+    webhookBaseUrl: BASE,
+    transaction: fakeBotTransaction(bots, signals),
+    signals,
+  });
+  return { bots, telegram, clock, health, signals };
 }
 
 describe('webhookUrl', () => {
@@ -166,5 +180,42 @@ describe('checkOne — each outcome row of events.md', () => {
     const { telegram, health } = setup();
     telegram.webhook = 'stale';
     expect(await health.checkOne('ws-a', row().id)).toBe('taken_over');
+  });
+});
+
+describe('checkOne publishes bot.changed on a state change only (AC-13, AC-14)', () => {
+  it('taken over by another service → one signal', async () => {
+    const { telegram, health, signals } = setup();
+    telegram.webhook = 'foreign';
+    expect(await health.checkOne('ws-a', row().id)).toBe('taken_over');
+    expect(signals.published).toEqual(['ws-a']);
+  });
+
+  it('token rejected → one signal', async () => {
+    const { telegram, health, signals } = setup();
+    telegram.me = 'unauthorized';
+    await health.checkOne('ws-a', row().id);
+    expect(signals.published).toEqual(['ws-a']);
+  });
+
+  it('taken_over back to connected → one signal', async () => {
+    const { health, signals } = setup([row({ state: 'taken_over' })]);
+    await health.checkOne('ws-a', row().id);
+    expect(signals.published).toEqual(['ws-a']);
+  });
+
+  it('no change (still connected), transient or skipped → no signal', async () => {
+    const same = setup();
+    expect(await same.health.checkOne('ws-a', row().id)).toBe('connected');
+    expect(same.signals.published).toEqual([]);
+
+    const transient = setup();
+    transient.telegram.me = 'transient';
+    await transient.health.checkOne('ws-a', row().id);
+    const skipped = setup([
+      row({ state: 'disconnected', token: null, webhookSecret: null, connectedAt: null }),
+    ]);
+    await skipped.health.checkOne('ws-a', row().id);
+    expect([...transient.signals.published, ...skipped.signals.published]).toEqual([]);
   });
 });

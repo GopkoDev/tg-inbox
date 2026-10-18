@@ -1,11 +1,19 @@
 import type { Clock } from '../../../platform/clock.js';
-import { HEALTH_CHECK_TIMEOUT, type BotRepo, type TelegramGateway } from './ports.js';
+import {
+  HEALTH_CHECK_TIMEOUT,
+  type BotRepo,
+  type BotSignals,
+  type TelegramGateway,
+  type Transaction,
+} from './ports.js';
 import { webhookUrl } from './webhook-url.js';
 
 export interface HealthCheckDeps {
   bots: BotRepo;
   telegram: TelegramGateway;
   clock: Clock;
+  transaction: Transaction;
+  signals: BotSignals;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
 }
@@ -32,6 +40,8 @@ export function createHealthCheck({
   bots,
   telegram,
   clock,
+  transaction,
+  signals,
   webhookBaseUrl,
 }: HealthCheckDeps): HealthCheck {
   return {
@@ -49,9 +59,18 @@ export function createHealthCheck({
         state: 'connected' | 'needs_token' | 'taken_over',
         identity?: { name: string; username: string },
       ): Promise<CheckOutcome> =>
-        (await bots.setState(workspaceId, botId, state, clock.now(), {
-          ...(identity && { identity }),
-          ifLastCheckedAt: found.bot.lastCheckedAt,
+        (await transaction(async (tx) => {
+          const written = await bots.setState(
+            workspaceId,
+            botId,
+            state,
+            clock.now(),
+            { ...(identity && { identity }), ifLastCheckedAt: found.bot.lastCheckedAt },
+            tx,
+          );
+          // A check that finds the same state refreshes the check time only: nothing to tell.
+          if (written && state !== found.bot.state) await signals.botChanged(tx, workspaceId);
+          return written;
         }))
           ? state
           : 'skipped';

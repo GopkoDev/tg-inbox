@@ -1,6 +1,7 @@
 import { fixedClock } from '../../../platform/clock.js';
 import {
   fakeBotRepo,
+  fakeBotSignals,
   fakeBotTransaction,
   fakeContactsApi,
   fakeConversationsApi,
@@ -48,7 +49,8 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
   const secrets: WebhookSecrets = {
     secretFor: (botId, connectedAt) => `secret-${botId}-${connectedAt.getTime()}`,
   };
-  const transaction = fakeBotTransaction(bots);
+  const signals = fakeBotSignals();
+  const transaction = fakeBotTransaction(bots, signals);
   const settings = createBotSettings({ bots, conversations, contacts });
   const paste = createPasteToken({
     bots,
@@ -57,10 +59,20 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     secrets,
     clock,
     transaction,
+    signals,
     settings,
     webhookBaseUrl: BASE_URL,
   });
-  const ownerDeps = { bots, telegram, secrets, clock, settings, webhookBaseUrl: BASE_URL };
+  const ownerDeps = {
+    bots,
+    telegram,
+    secrets,
+    clock,
+    settings,
+    transaction,
+    signals,
+    webhookBaseUrl: BASE_URL,
+  };
   const reconnect = createReconnect(ownerDeps);
   const disconnect = createDisconnect({ ...ownerDeps, conversations });
   return {
@@ -71,6 +83,7 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     contacts,
     secrets,
     transaction,
+    signals,
     settings,
     paste,
     reconnect,

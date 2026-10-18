@@ -4,6 +4,7 @@ import type {
   LiveRowGuard,
   BotRecord,
   BotRepo,
+  BotSignals,
   ContactsApi,
   ConversationsApi,
   GetMeResult,
@@ -183,15 +184,32 @@ export function fakeGateway(): TelegramGateway & {
  * A fake transaction over a fake BotRepo: runs `fn` and, when it throws, restores the rows it
  * started from — the rollback the real transaction gives.
  */
-export function fakeBotTransaction(repo: { rows: FakeBotRow[] }): Transaction {
+export function fakeBotTransaction(
+  repo: { rows: FakeBotRow[] },
+  signals?: { published: string[] },
+): Transaction {
   return async (fn) => {
     const snapshot = repo.rows.map((r) => ({ ...r }));
+    const published = signals?.published.length ?? 0;
     try {
       return await fn(undefined as never);
     } catch (err) {
       repo.rows.splice(0, repo.rows.length, ...snapshot);
+      // A signal published in a rolled-back transaction is never delivered.
+      signals?.published.splice(published);
       throw err;
     }
+  };
+}
+
+/** Records the workspace of every `bot.changed` signal published. */
+export function fakeBotSignals(): BotSignals & { published: string[] } {
+  const published: string[] = [];
+  return {
+    published,
+    async botChanged(_tx, workspaceId) {
+      published.push(workspaceId);
+    },
   };
 }
 

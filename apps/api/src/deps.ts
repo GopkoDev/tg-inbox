@@ -24,6 +24,8 @@ import { createHealthCheck } from './modules/bots/app/health-check.js';
 import { createPasteToken } from './modules/bots/app/paste-token.js';
 import { createReconnect } from './modules/bots/app/reconnect.js';
 import { createBotSettings } from './modules/bots/app/settings.js';
+import { createBotSignals } from './modules/bots/infra/bot-signals.js';
+import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
@@ -133,15 +135,25 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     secrets,
     clock,
     settings: botSettings,
+    transaction,
+    signals: createBotSignals(),
     webhookBaseUrl,
   };
   const bots = {
     settings: botSettings,
-    paste: createPasteToken({ ...botOwnerDeps, conversations, transaction }),
+    inboxStatus: createInboxBotStatus({ bots: botRepo }),
+    paste: createPasteToken({ ...botOwnerDeps, conversations }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
     acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),
-    healthCheck: createHealthCheck({ bots: botRepo, telegram, clock, webhookBaseUrl }),
+    healthCheck: createHealthCheck({
+      bots: botRepo,
+      telegram,
+      clock,
+      transaction,
+      signals: botOwnerDeps.signals,
+      webhookBaseUrl,
+    }),
   };
   // --- end bots dependencies ---
 

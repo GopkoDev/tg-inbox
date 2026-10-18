@@ -3,8 +3,10 @@ import { NoBotConnectedError, TelegramUnavailableError } from '../../../platform
 import {
   OWNER_ACTION_TIMEOUT,
   type BotRepo,
+  type BotSignals,
   type ConversationsApi,
   type TelegramGateway,
+  type Transaction,
 } from './ports.js';
 import type { BotSettingsReader } from './settings.js';
 import { webhookUrl } from './webhook-url.js';
@@ -14,6 +16,8 @@ export interface DisconnectDeps {
   telegram: TelegramGateway;
   conversations: Pick<ConversationsApi, 'hasConversations'>;
   settings: BotSettingsReader;
+  transaction: Transaction;
+  signals: BotSignals;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
 }
@@ -28,7 +32,7 @@ export interface Disconnect {
 }
 
 export function createDisconnect(deps: DisconnectDeps): Disconnect {
-  const { bots, telegram, conversations, settings, webhookBaseUrl } = deps;
+  const { bots, telegram, conversations, settings, transaction, signals, webhookBaseUrl } = deps;
 
   return {
     async disconnect(workspaceId) {
@@ -66,7 +70,13 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
       // the clear and the check is seen by it; only one still in flight past the check remains
       // (a sub-millisecond window, accepted). Should the check fail after the clear, running
       // disconnect again (or the next paste) finishes the delete of a row nobody wrote through.
-      await bots.clearOnDisconnect(workspaceId, bot.id);
+      // The clear is the state change (the delete below leaves the workspace `not_connected`
+      // either way), so it carries the one `bot.changed` signal.
+      await transaction(async (tx) => {
+        if (await bots.clearOnDisconnect(workspaceId, bot.id, tx)) {
+          await signals.botChanged(tx, workspaceId);
+        }
+      });
       if (!(await conversations.hasConversations(workspaceId))) {
         await bots.delete(workspaceId, bot.id);
       }
