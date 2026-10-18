@@ -25,6 +25,15 @@ export function createConversationSignals(): ConversationSignals {
         item: { type: 'reply', id: s.replyId },
         change: s.change,
       }),
+    activityChanged: (tx, s) =>
+      publish(tx as Transaction<DB>, {
+        type: 'conversation.changed',
+        v: 1,
+        workspace_id: s.workspaceId,
+        conversation_id: s.conversationId,
+        item: { type: 'activity', id: s.activityId },
+        change: 'created',
+      }),
     conversationRead: (tx, s) =>
       publish(tx as Transaction<DB>, {
         type: 'conversation.changed',

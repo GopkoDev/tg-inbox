@@ -23,20 +23,40 @@ function toView(row: Row): ActivityView {
 export function createActivityRepo(db: Db): ActivityRepo {
   return {
     async insert(workspaceId, a, tx) {
+      // Selecting from `conversations` keeps the entry in the conversation's own workspace: a
+      // conversation of another workspace inserts nothing.
       await (tx ?? db)
         .insertInto('conversation_activities')
-        .values({
-          id: a.id,
-          workspace_id: workspaceId,
-          conversation_id: a.conversationId,
-          kind: a.kind,
-          cause: a.cause,
-          actor_account_id: a.actorAccountId,
-          previous_assignee_account_id: a.previousAssigneeAccountId,
-          new_assignee_account_id: a.newAssigneeAccountId,
-          position_at: a.positionAt,
-          created_at: a.createdAt,
-        })
+        .columns([
+          'id',
+          'workspace_id',
+          'conversation_id',
+          'kind',
+          'cause',
+          'actor_account_id',
+          'previous_assignee_account_id',
+          'new_assignee_account_id',
+          'position_at',
+          'created_at',
+        ])
+        .expression((eb) =>
+          eb
+            .selectFrom('conversations')
+            .select([
+              eb.val(a.id).as('id'),
+              'workspace_id',
+              'id as conversation_id',
+              eb.val(a.kind).as('kind'),
+              eb.val(a.cause).as('cause'),
+              eb.val(a.actorAccountId).as('actor_account_id'),
+              eb.val(a.previousAssigneeAccountId).as('previous_assignee_account_id'),
+              eb.val(a.newAssigneeAccountId).as('new_assignee_account_id'),
+              eb.val(a.positionAt).as('position_at'),
+              eb.val(a.createdAt).as('created_at'),
+            ])
+            .where('workspace_id', '=', workspaceId)
+            .where('id', '=', a.conversationId),
+        )
         .execute();
     },
 

@@ -184,6 +184,12 @@ export interface ReplySignal {
   change: 'created' | 'state';
 }
 
+export interface ActivitySignal {
+  workspaceId: string;
+  conversationId: string;
+  activityId: string;
+}
+
 /** Live signals, published in the caller's transaction so they are delivered only on commit (ADR-0003). */
 export interface ConversationSignals {
   messageChanged(tx: Executor, signal: MessageSignal): Promise<void>;
@@ -191,6 +197,8 @@ export interface ConversationSignals {
   replyChanged(tx: Executor, signal: ReplySignal): Promise<void>;
   /** `conversation.changed { change: read, account_id }` after a member's watermark was written. */
   conversationRead(tx: Executor, signal: ReadSignal): Promise<void>;
+  /** `conversation.changed` with item type activity (created): one per recorded state change. */
+  activityChanged(tx: Executor, signal: ActivitySignal): Promise<void>;
 }
 
 // ───────── read side (inbox) ─────────

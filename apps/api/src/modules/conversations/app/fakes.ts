@@ -3,6 +3,7 @@ import { isLaterEdit } from '../domain/edit.js';
 import type { MessageKind } from '../domain/message.js';
 import type {
   ActivityRepo,
+  ActivitySignal,
   ActivityView,
   ConversationRepo,
   ConversationSignals,
@@ -15,6 +16,7 @@ import type {
   ReplySignal,
   ReplyView,
 } from './ports.js';
+import type { ReplyState } from '../domain/state.js';
 import { raise, unreadFloor } from '../domain/read-state.js';
 
 export interface FakeConversation {
@@ -33,12 +35,24 @@ export interface FakeConversation {
 }
 
 /** In-memory ConversationRepo for unit tests. */
-export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversation[] } {
+export function fakeConversationRepo(): ConversationRepo & {
+  rows: FakeConversation[];
+  /** What the close-reason reads answer; the fake has no message or reply rows. */
+  reads: {
+    unread: { id: string; receivedAt: Date } | null;
+    latestReply: { id: string; state: ReplyState } | null;
+  };
+} {
   const rows: FakeConversation[] = [];
+  const reads: {
+    unread: { id: string; receivedAt: Date } | null;
+    latestReply: { id: string; state: ReplyState } | null;
+  } = { unread: null, latestReply: null };
   const find = (w: string, chat: bigint) =>
     rows.find((r) => r.workspaceId === w && r.telegramChatId === chat);
   return {
     rows,
+    reads,
     async upsert(workspaceId, { contactId, telegramChatId }, now) {
       const existing = find(workspaceId, telegramChatId);
       if (existing) return { conversationId: existing.id, created: false };
@@ -97,12 +111,11 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
       row.stateVersion += 1;
       return row.stateVersion;
     },
-    // Close-reason reads are set by the test that needs them (the fake has no message or reply rows).
     async newestUnreadCustomerMessage() {
-      return null;
+      return reads.unread;
     },
     async latestReply() {
-      return null;
+      return reads.latestReply;
     },
   };
 }
@@ -212,7 +225,9 @@ export function fakeConversationSignals(): ConversationSignals & {
   sent: Array<MessageSignal & { tx: Executor }>;
   read: Array<ReadSignal & { tx: Executor }>;
   replies: Array<ReplySignal & { tx: Executor }>;
+  activities: Array<ActivitySignal & { tx: Executor }>;
 } {
+  const activities: Array<ActivitySignal & { tx: Executor }> = [];
   const replies: Array<ReplySignal & { tx: Executor }> = [];
   const sent: Array<MessageSignal & { tx: Executor }> = [];
   const read: Array<ReadSignal & { tx: Executor }> = [];
@@ -220,6 +235,10 @@ export function fakeConversationSignals(): ConversationSignals & {
     sent,
     read,
     replies,
+    activities,
+    async activityChanged(tx, signal) {
+      activities.push({ ...signal, tx });
+    },
     async replyChanged(tx, signal) {
       replies.push({ ...signal, tx });
     },

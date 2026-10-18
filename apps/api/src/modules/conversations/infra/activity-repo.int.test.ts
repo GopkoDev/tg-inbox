@@ -72,6 +72,28 @@ describe('activity repository', () => {
     expect((await repo.byId(b.workspaceId, mine))?.conversationId).toBe(b.conversationId);
   });
 
+  it('isolation: insert for a conversation of another workspace writes nothing', async () => {
+    const { a, b } = await twoWorkspacesWithInbox(db);
+    const id = newId();
+    await repo.insert(a.workspaceId, {
+      id,
+      conversationId: b.conversationId,
+      kind: 'closed',
+      cause: 'member',
+      actorAccountId: a.accountId,
+      previousAssigneeAccountId: null,
+      newAssigneeAccountId: null,
+      positionAt: at(1),
+      createdAt: at(1),
+    });
+    const rows = await db
+      .selectFrom('conversation_activities')
+      .select('id')
+      .where('id', '=', id)
+      .execute();
+    expect(rows).toEqual([]);
+  });
+
   it('latestFor returns the newest by position, ties broken by id, null when none', async () => {
     const { a } = await twoWorkspacesWithInbox(db);
     const w = a.workspaceId;
