@@ -48,6 +48,7 @@ export interface SessionRepo {
     tx?: Executor,
   ): Promise<Session>;
   findByTokenHash(tokenHash: Buffer, tx?: Executor): Promise<Session | undefined>;
+  findByIds(ids: readonly string[], tx?: Executor): Promise<Session[]>;
   deleteByTokenHash(tokenHash: Buffer, tx?: Executor): Promise<void>;
   /** Deletes every session of the account, optionally sparing one; returns the number removed. */
   deleteByAccount(

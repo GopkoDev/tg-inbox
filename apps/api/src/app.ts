@@ -15,6 +15,7 @@ import {
   createInboxQueues,
   registerInboxJobs,
 } from './modules/inbox/infra/jobs.js';
+import { createLiveHub } from './modules/inbox/infra/hub.js';
 import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
@@ -22,6 +23,7 @@ import type { Config } from './platform/config.js';
 import { requireJsonBodies } from './platform/content-type.js';
 import { frameworkErrors, registerErrorHandler } from './platform/errors.js';
 import { startJobs } from './platform/jobs.js';
+import { startRealtimeListener } from './platform/realtime.js';
 import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
 import type { Clock } from './platform/clock.js';
@@ -70,7 +72,19 @@ export async function buildApp(
     replyDelivery,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL);
+  // Live sockets: the hub fans realtime signals out to the open inbox tabs (ADR-0002, ADR-0003).
+  const liveHub = createLiveHub({
+    sessions: sessionUseCases,
+    members: workspaceAccess,
+    logger: app.log,
+  });
+  const realtime = await startRealtimeListener(config.DATABASE_URL, app.log);
+  realtime.onSignal((signal) => liveHub.dispatch(signal));
+  realtime.onGap(() => liveHub.resync());
+  liveHub.start();
   app.addHook('onClose', async () => {
+    await realtime.stop();
+    await liveHub.stop();
     await jobs.stop({ graceful: true });
     await deps.destroy();
   });
@@ -146,6 +160,8 @@ export async function buildApp(
         reads: inboxReads,
         replies: inboxReplies,
         media: deps.inboxMedia,
+        live: liveHub,
+        webOrigin: new URL(config.PUBLIC_WEB_URL).origin,
         access: workspaceAccess,
         authenticate,
       }),

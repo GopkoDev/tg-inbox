@@ -70,7 +70,7 @@ export interface RealtimeListener {
 
 export async function startRealtimeListener(
   connectionString: string,
-  logger: Logger,
+  logger: Pick<Logger, 'info' | 'warn' | 'error'>,
   opts: { reconnectDelayMs?: number } = {},
 ): Promise<RealtimeListener> {
   const baseDelay = opts.reconnectDelayMs ?? 500;

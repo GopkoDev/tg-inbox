@@ -18,11 +18,16 @@ import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/
 import type { InboxReadUseCases } from '../app/reads.js';
 import type { OpenMessageMedia } from '../app/open-media.js';
 import type { SendReplyUseCases } from '../app/send-reply.js';
+import { ForbiddenError } from '../../../platform/errors.js';
+import type { LiveHub } from '../infra/hub.js';
 
 export interface InboxDeps {
   reads: InboxReadUseCases;
   replies: SendReplyUseCases;
   media: OpenMessageMedia;
+  live: LiveHub;
+  /** The panel's own origin (`PUBLIC_WEB_URL`); the only `Origin` a live socket may be opened from. */
+  webOrigin: string;
   /** The workspaces guard dependency (membership check on every request). */
   access: WorkspaceGuardDeps;
   /** The auth module's session resolver (preHandler setting `request.account`). */
@@ -45,7 +50,7 @@ const SendBody = ReplySend.extend({ body: z.string() });
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, replies, media, access, authenticate } = deps;
+  const { reads, replies, media, live, webOrigin, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -53,6 +58,31 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
     accountId: request.account.id,
     activeSince: request.workspace.activeSince,
   });
+
+  // One socket per tab for one workspace (ADR-0002). Refusals are plain HTTP before the handshake.
+  const requirePanelOrigin: preHandlerAsyncHookHandler = async (request) => {
+    if (request.headers.origin !== webOrigin) throw new ForbiddenError('Forbidden');
+  };
+  r.get(
+    `${base}/live`,
+    {
+      websocket: true,
+      preHandler: [requirePanelOrigin, ...pre],
+      schema: { params: z.object(workspace) },
+    },
+    (socket, request) => {
+      const owner = {
+        workspaceId: request.workspace.workspaceId,
+        accountId: request.account.id,
+        sessionId: request.sessionId,
+      };
+      live.attach(socket, owner);
+      socket.on('close', () => live.detach(socket));
+      socket.on('error', () => live.detach(socket));
+      // The channel is server → client only: inbound frames are ignored.
+      socket.on('message', () => undefined);
+    },
+  );
 
   r.get(
     `${base}/conversations`,

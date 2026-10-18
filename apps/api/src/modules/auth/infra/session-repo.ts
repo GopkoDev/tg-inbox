@@ -40,6 +40,16 @@ export function createSessionRepo(db: Db): SessionRepo {
       return row && toSession(row);
     },
 
+    async findByIds(ids, tx) {
+      if (ids.length === 0) return [];
+      const rows = await (tx ?? db)
+        .selectFrom('sessions')
+        .selectAll()
+        .where('id', 'in', ids)
+        .execute();
+      return rows.map(toSession);
+    },
+
     async deleteByTokenHash(tokenHash, tx) {
       await (tx ?? db).deleteFrom('sessions').where('token_hash', '=', tokenHash).execute();
     },
