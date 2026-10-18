@@ -86,6 +86,8 @@ interface InboxState {
   /** Reply drafts of this tab, by conversation id. */
   drafts: Record<string, Draft>;
   live: LiveStatus;
+  /** A 401/403 any inbox request got: the shared guard (`handleGuardError`) decides what it means. */
+  guardError: ApiError | null;
   setDraftText: (conversationId: string, text: string) => void;
   keepEditing: (conversationId: string, lastSeenReplyId: string) => void;
   sendReply: (
@@ -127,6 +129,7 @@ const EMPTY: Omit<
   thread: null,
   drafts: {},
   live: 'idle',
+  guardError: null,
 };
 
 let client: LiveClient | null = null;
@@ -167,6 +170,16 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     running.clear();
     sending.clear();
     set({ ...EMPTY });
+  };
+
+  /** Hands a session-ended / access-removed answer to the guard (InboxPage), whatever call got it. */
+  const noteGuard = (error: unknown, workspaceId: string, startedAt: number) => {
+    if (
+      error instanceof ApiError &&
+      (error.status === 401 || error.status === 403) &&
+      current(workspaceId, startedAt)
+    )
+      set({ guardError: error });
   };
 
   /** True while the request's workspace is still the store's (not left, not switched). */
@@ -212,7 +225,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         nextCursor: page.next_cursor,
         listStatus: 'ready',
       });
-    } catch {
+    } catch (error) {
+      noteGuard(error, workspaceId, startedAt);
       if (current(workspaceId, startedAt) && !options.background) set({ listStatus: 'error' });
     }
   };
@@ -260,6 +274,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         },
       });
     } catch (error) {
+      noteGuard(error, workspaceId, startedAt);
       const open = get().thread;
       if (
         current(workspaceId, startedAt) &&
@@ -407,6 +422,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         });
         return { kind: 'sent' };
       } catch (error) {
+        noteGuard(error, workspaceId, startedAt);
         if (!current(workspaceId, startedAt)) return { kind: 'failed' };
         if (error instanceof ApiError) {
           const envelope = (code: string) => ({
@@ -466,6 +482,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         place(resent);
         return { kind: 'sent' };
       } catch (error) {
+        noteGuard(error, workspaceId, startedAt);
         if (!current(workspaceId, startedAt)) return { kind: 'failed' };
         if (error instanceof ApiError) {
           const envelope = (code: string) => ({

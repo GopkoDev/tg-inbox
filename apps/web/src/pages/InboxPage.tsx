@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useParams } from 'react-router';
 import { InboxList } from '@/features/inbox/InboxList';
 import { useInboxStore } from '@/features/inbox/store';
+import { useGuard } from '@/features/workspaces/guard';
 
 /**
  * SCR-01/SCR-02 host. Joins the workspace's live inbox (one socket per tab, closed on leaving)
@@ -9,6 +10,12 @@ import { useInboxStore } from '@/features/inbox/store';
  */
 export function InboxPage() {
   const { workspaceId } = useParams();
+  const guard = useGuard();
+  const guardError = useInboxStore((s) => s.guardError);
+  // A 401/403 from any inbox call ends the session or shows the access-removed notice (AC-09).
+  useEffect(() => {
+    if (guardError) void guard(guardError, workspaceId).catch(() => undefined);
+  }, [guardError, guard, workspaceId]);
   useEffect(() => {
     if (!workspaceId) return;
     void useInboxStore.getState().enter(workspaceId);
