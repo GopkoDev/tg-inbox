@@ -17,9 +17,9 @@ The web panel works but does not yet look or navigate like a product. Today ever
 
 Why now: the design canon was fixed today (`docs/design-system.md`, "Visual direction"): centred entry screens, a workspace frame with a collapsible side navigation, list pages as a table inside a card, a two-pane inbox, a contact profile with sections, settings with a section menu. None of the shipped screens follow it yet. Building the inbox (step 4) on the old frame would mean building it twice; moving the frame first means every next feature only fills in data.
 
-Committed approach: move every existing screen onto the canon without changing what any of them does — the entry screens (sign in, accept invitation, set new password, link unavailable, workspace picker, no access) take the centred layout; every workspace screen lives inside one frame with a side navigation (workspace switcher, Inbox, Contacts, owner-only Settings, account menu) that collapses into a drawer at phone width; the business owner's Bot and Team pages become two sections of one Settings screen. Next to them come three preview screens — the shared inbox, the contact list and a contact's profile — filled with clearly labelled sample data that is never saved and never reaches Telegram, so the product direction is visible to pilots and the next features only replace the sample data with real data. When the screens are done, every component added on the way is registered in the canon's component inventory, the local reference markup is deleted and the canon no longer points at it; feature work continues on the new frame.
+Committed approach: move every existing screen onto the canon without changing what any of them does — the entry screens (sign in, accept invitation, set new password, link unavailable, workspace picker, no access) take the centred layout; every workspace screen lives inside one frame with a side navigation (workspace switcher, Inbox, Contacts, owner-only Settings, account menu) that collapses into a drawer at phone width; the business owner's Bot and Team pages become two sections of one Settings screen. Next to them come three preview screens — the shared inbox, the contact list and a contact's profile — filled with clearly labelled sample data that is never saved and never reaches Telegram, so the product direction is visible to pilots and the next features only replace the sample data with real data. When the screens are done, every component added on the way — each newly added library primitive and each reusable screen part built for these screens (the workspace frame, the settings layout, the conversation list, the message bubble, the sample-data label) — is registered in the canon's component inventory, the local reference markup is deleted and the canon no longer points at it; feature work continues on the new frame.
 
-Traceability: the canon's "Visual direction", "Component inventory" and "Interaction & writing conventions" are the source of every layout decision here; the redesigned screens are SCR-01…SCR-10 of `workspace-operators` and SCR-02…SCR-05 of `bot-connection` (its SCR-01 and SCR-06 are the same workspace home and not-found screens), whose acceptance criteria keep holding unchanged. The decisions taken in the interview (easy depth, assumptions accepted as a batch): workspace entry lands on the inbox preview; Settings is owner-only and holds Bot + Team; old Team/Bot links lead to the matching Settings section; sample data is the same for every workspace and a message "sent" in the preview lives only until the page is reloaded; no dark-mode switch and no translations.
+Traceability: the canon's "Visual direction", "Component inventory" and "Interaction & writing conventions" are the source of every layout decision here; the redesigned screens are SCR-01…SCR-10 of `workspace-operators` and SCR-02…SCR-05 of `bot-connection` (its SCR-01 and SCR-06 are the same workspace home and not-found screens), whose acceptance criteria keep holding unchanged. The decisions taken in the interview (easy depth, assumptions accepted as a batch): workspace entry lands on the inbox preview; Settings is owner-only and holds Bot + Team; old Team/Bot links lead to the matching Settings section; sample data is the same for every workspace and a message "sent" in the preview lives only while that conversation stays open; no dark-mode switch and no translations. Clarify (easy depth, decided by the author's delegate and logged here): Settings opens on its Bot section; each sample conversation and sample contact has its own address, so reload, back and saved links reopen it — the pattern steps 4 and 7 inherit; Enter sends a reply and Shift+Enter starts a new line; wide tables may scroll sideways inside their own card at phone width, the page never does.
 
 ## 2. Goals
 
@@ -86,7 +86,7 @@ Traceability: the canon's "Visual direction", "Component inventory" and "Interac
 
 **Given** an Operator using the panel on a phone-width screen
 **When** they open any workspace screen
-**Then** the side navigation is hidden behind a menu button, opens as a drawer over the page, closes once they pick a section, and no screen scrolls sideways
+**Then** the side navigation is hidden behind a menu button, opens as a drawer over the page, closes once they pick a section; the page itself never scrolls sideways — a wide table may scroll sideways only inside its own card
 
 ### AC-03 (US-01) — cross-context
 
@@ -116,25 +116,25 @@ Traceability: the canon's "Visual direction", "Component inventory" and "Interac
 
 **Given** a Business owner of "Acme Flowers"
 **When** they open Settings from the side navigation
-**Then** they see a Settings title with a short description, a section menu with Bot and Team (stacked above the content on narrow screens), and the Bot section shows the bot's state and every action it offers today — connect, replace the token, reconnect, disconnect
+**Then** Settings opens on its Bot section: a Settings title with a short description, a section menu with Bot and Team (stacked above the content on narrow screens), and the Bot section shows the bot's state and every action it offers today — connect, replace the token, reconnect, disconnect
 
 ### AC-08 (US-03) — happy path
 
 **Given** a Business owner of "Acme Flowers" whose team has 6 members and 2 pending invitations
 **When** they open the Team section, type part of a member's email in the search box and filter by role "operator" and state "active"
-**Then** the table shows only the members and pending invitations already listed that match all three — each member row with an avatar, the name, the email, a role badge, a state badge and a row-actions menu; each invitation row with its email, role and expiry but never its link — while **Show more** still loads the next part of a long list; clearing the search and filters shows every listed row again
+**Then** the members table and the pending-invitations table both narrow to the rows loaded so far that match — search and role apply to both tables, the state filter (active / deactivated) applies to members only and leaves invitations unfiltered — each member row with an avatar, the name, the email, a role badge, a state badge and a row-actions menu; each invitation row with its email, role and expiry but never its link; **Show more** stays available under a table while more rows exist and the newly loaded rows are filtered the same way; clearing the search and filters shows every loaded row again
 
 ### AC-09 (US-03) — error
 
 **Given** a Business owner on the Team section
 **When** their search and filters match nobody
-**Then** the table is replaced by one sentence saying no member matches, with a button that clears the search and filters
+**Then** each table with no match shows one sentence saying nothing matches among the rows loaded so far, with a button that clears the search and filters, and **Show more** stays available under it while more rows exist
 
 ### AC-10 (US-03) — authorization
 
 **Given** an Operator of "Acme Flowers" who is not a business owner
-**When** they look for Settings in the navigation, or open a saved link to the Settings, Team or Bot screen
-**Then** Settings is not in their navigation, and the saved link shows the same refusal as before the redesign — only business owners manage the team, or only business owners manage the bot — without showing any team or bot details
+**When** they look for Settings in the navigation, or open a saved link to Settings, its Team section or its Bot section
+**Then** Settings is not in their navigation; a link to the Team section shows the existing refusal that only business owners manage the team, a link to Settings or its Bot section shows the existing refusal that only business owners manage the bot, no team or bot detail is shown, and the refusal's way back leads to the inbox preview
 
 ### AC-11 (US-03) — happy path
 
@@ -146,25 +146,31 @@ Traceability: the canon's "Visual direction", "Component inventory" and "Interac
 
 **Given** an Operator on the inbox preview
 **When** they look at the conversation list and pick a conversation
-**Then** the list shows each sample conversation with an avatar, the contact's name, a relative time, the last message and an unread count, the chosen conversation opens as a thread (contact header, messages grouped by sender, a reply box), and a visible "Sample data" label says these are not real conversations
+**Then** the list shows each sample conversation with an avatar, the contact's name, a relative time, the last message and an unread count, the chosen conversation opens as a thread (contact header, messages grouped by sender, a reply box), and a visible "Sample data" label in the page title row says these are not real conversations; opening a conversation clears its unread count for this visit, and the chosen conversation can be reopened by reload, the browser's back button or a saved link — a link to a sample conversation that does not exist shows the not-found card inside the frame
+
+### AC-12b (US-04) — happy path
+
+**Given** an Operator on the inbox preview on a phone-width screen
+**When** they pick a conversation and then go back
+**Then** the list fills the screen, picking a conversation replaces the list with its thread, and a back control in the thread header returns to the list
 
 ### AC-13 (US-04) — error
 
 **Given** an Operator in a sample conversation thread
-**When** they try to send with an empty reply box, or one holding only spaces
-**Then** nothing is added to the thread and the send button stays unavailable until they type text
+**When** they try to send with an empty reply box, one holding only spaces, or one longer than 4096 characters
+**Then** nothing is added to the thread and sending stays unavailable — for an over-long reply the box says replies are limited to 4096 characters; Enter sends a valid reply and Shift+Enter starts a new line
 
 ### AC-14 (US-04) — domain invariant
 
 **Given** an Operator in a sample conversation thread
 **When** they type a reply and send it
-**Then** the reply appears at the end of the thread on this screen only, a note in the reply area says that preview screens send nothing to customers, and after reloading the page the reply is gone — a preview screen never saves anything and never writes to any end customer
+**Then** the reply appears at the end of the thread, and that conversation's list entry shows it as the last message and moves to the top; a note always visible in the reply area says that preview screens send nothing to customers; the reply is gone once they pick another conversation, leave the inbox, switch workspace or reload, and it never appears in any other workspace's preview — a preview screen never saves anything and never writes to any end customer
 
 ### AC-15 (US-05) — happy path
 
 **Given** an Operator on the contacts preview
 **When** they search by name and filter by a tag, then open a contact from the table
-**Then** the table narrows to the matching sample contacts, and the contact opens on a profile screen with a header card (avatar, name, username, key facts) and Overview / Conversation history sections, both carrying the "Sample data" label
+**Then** the table narrows to the matching sample contacts, and the contact opens on a profile screen with a header card (avatar, name, username, key facts) and Overview / Conversation history sections, carrying the "Sample data" label; the profile can be reopened by reload, back or a saved link, and a link to a sample contact that does not exist shows the not-found card inside the frame
 
 ### AC-16 (US-05) — error
 
@@ -203,9 +209,9 @@ Traceability: the canon's "Visual direction", "Component inventory" and "Interac
 | Phone-width layout | 0 screens with sideways page scroll at 360px width; every screen also checked at 1280px | manual walk through every screen at both widths before ship, recorded in the ship notes |
 | Behaviour preserved | 100% of the existing web-panel tests pass, changed only where they locate elements on the page, never in what they assert happens | CI test run on the feature branch; test diffs reviewed |
 | Accessibility | 100% of navigation items and actions reachable and operable by keyboard; every control has an accessible name (screen tests locate them by role and name) | screen tests query controls by role and name; manual keyboard pass over every screen before ship |
-| Initial download size | ≤ +120 KB gzipped over the `main` baseline for the panel's first load | build output size compared against `main` in the review |
-| Loading feedback | every screen shows a content-shaped placeholder within 100 ms of opening while its data loads; no full-page spinner | screen tests for the loading state; manual check on a throttled connection |
-| Reference markup left | 0 reference files in the repository's reference folder and 0 mentions of it in the design canon at ship; 100% of components added by this feature listed in the canon's component inventory | repository check before ship |
+| Initial download size | ≤ +120 KB gzipped, over the `main` baseline, of everything downloaded on the path "a signed-in operator opens the panel and arrives at a workspace's first screen" (the inbox preview here, the home placeholder on `main`) | build output of the files that path loads, compared against `main` in the review |
+| Loading feedback | 100% of screens that load workspace data (the frame entering a workspace, the Bot and Team sections) render a content-shaped placeholder before the data arrives; 0 full-page spinners; preview and entry screens render at once with no simulated loading | screen tests holding the data request pending and asserting the placeholder |
+| Reference markup left | 0 reference files in the repository's reference folder and 0 mentions of it in the design canon at ship; 100% of library primitives and reusable screen parts added by this feature listed in the canon's component inventory | repository check before ship |
 
 ## 6.1 Security / privacy
 
