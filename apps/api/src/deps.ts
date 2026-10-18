@@ -190,7 +190,11 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     clock,
   };
   const conversationReplies = createReplies(replyDeps);
-  const replyDelivery = createReplyDelivery(replyDeps);
+  const replyDelivery = createReplyDelivery({
+    ...replyDeps,
+    conversations: createConversationRepo(db),
+    activities: createActivityRepo(db),
+  });
 
   // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
   const inboxConversations = createInboxReads({

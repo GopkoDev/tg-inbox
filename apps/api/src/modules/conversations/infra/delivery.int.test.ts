@@ -12,6 +12,8 @@ import { insertMembership, insertWorkspace } from '../../../test/fixtures/worksp
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { fakeConversationSignals } from '../app/fakes.js';
 import { createReplies, createReplyDelivery } from '../app/replies.js';
+import { createActivityRepo } from './activity-repo.js';
+import { createConversationRepo } from './conversation-repo.js';
 import { createReplyRepo } from './reply-repo.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -37,11 +39,13 @@ describe('reply delivery (Postgres)', () => {
     createReplyDelivery({
       transaction: (fn) => db.transaction().execute(fn),
       replies: createReplyRepo(db),
+      conversations: createConversationRepo(db),
+      activities: createActivityRepo(db),
       signals,
       clock,
     });
 
-  async function setup(conversation: { received?: Date } = {}) {
+  async function setup(conversation: { received?: Date; closed?: boolean } = {}) {
     const workspaceId = await insertWorkspace(db);
     const { accountId } = await insertMembership(db, workspaceId);
     const contactId = await insertContact(db, { workspaceId });
@@ -51,6 +55,9 @@ describe('reply delivery (Postgres)', () => {
       contactId,
       lastActivityAt: received,
       lastMessageReceivedAt: received,
+      ...(conversation.closed
+        ? { status: 'closed' as const, assigneeAccountId: accountId, stateVersion: 3 }
+        : {}),
     });
     return { workspaceId, accountId, conversationId };
   }
@@ -549,5 +556,118 @@ describe('reply delivery (Postgres)', () => {
     expect(await conversation(a.conversationId)).toMatchObject({ last_reply_sent_at: null });
     expect(await reply(replyId)).toMatchObject({ state: 'sending' });
     expect(await attempt(attemptId)).toMatchObject({ outcome: null });
+  });
+
+  describe('a failed reply reopens a closed conversation (AC-08)', () => {
+    const activitiesOf = (s: S) =>
+      db
+        .selectFrom('conversation_activities')
+        .selectAll()
+        .where('conversation_id', '=', s.conversationId)
+        .execute();
+    const expectReopenedOnce = async (s: S, signalsBefore: number) => {
+      expect(await conversation(s.conversationId)).toMatchObject({
+        status: 'open',
+        assignee_account_id: s.accountId,
+        state_version: 4,
+      });
+      expect(await activitiesOf(s)).toMatchObject([
+        { kind: 'reopened', cause: 'reply_not_delivered', actor_account_id: null },
+      ]);
+      expect(signals.activities.length - signalsBefore).toBe(1);
+    };
+
+    it('finishAttempt not_delivered and not_confirmed', async () => {
+      for (const [outcome, replyState] of [
+        ['refused', 'not_delivered'],
+        ['unknown', 'not_confirmed'],
+      ] as const) {
+        const s = await setup({ closed: true });
+        const { replyId, attemptId } = await pending(s);
+        await delivery().startAttempt({ ...ids(s), replyId });
+        const before = signals.activities.length;
+        const input = {
+          ...ids(s),
+          attemptId,
+          attemptOutcome: outcome,
+          replyState,
+          ...(replyState === 'not_delivered' ? { failureReason: 'telegram_not_accepted' } : {}),
+        };
+        expect(await delivery().finishAttempt(input)).toBe(true);
+        expect(await delivery().finishAttempt(input)).toBe(false);
+        await expectReopenedOnce(s, before);
+      }
+    });
+
+    it('skipReply, once', async () => {
+      const s = await setup({ closed: true });
+      const { replyId } = await pending(s);
+      const before = signals.activities.length;
+      const input = { ...ids(s), replyId, failureReason: 'bot_not_working' };
+      expect(await delivery().skipReply(input)).toBe(true);
+      expect(await delivery().skipReply(input)).toBe(false);
+      await expectReopenedOnce(s, before);
+    });
+
+    it('resolveStaleInFlight, once', async () => {
+      const s = await setup({ closed: true });
+      const { replyId } = await pending(s);
+      await delivery().startAttempt({ ...ids(s), replyId });
+      const before = signals.activities.length;
+      expect(
+        await delivery().resolveStaleInFlight(s.workspaceId, s.conversationId, at(2000)),
+      ).toEqual([replyId]);
+      await delivery().resolveStaleInFlight(s.workspaceId, s.conversationId, at(2000));
+      await expectReopenedOnce(s, before);
+    });
+
+    it('dead letter: a not confirmed and an interrupted reply, each run twice', async () => {
+      const a = await setup({ closed: true });
+      const started = await pending(a);
+      await delivery().startAttempt({ ...ids(a), replyId: started.replyId });
+      const beforeA = signals.activities.length;
+      await delivery().resolveDeadLetter(a.workspaceId, a.conversationId, dead());
+      await delivery().resolveDeadLetter(a.workspaceId, a.conversationId, dead());
+      await expectReopenedOnce(a, beforeA);
+
+      const b = await setup({ closed: true });
+      await pending(b);
+      const beforeB = signals.activities.length;
+      await delivery().resolveDeadLetter(b.workspaceId, b.conversationId, dead());
+      await delivery().resolveDeadLetter(b.workspaceId, b.conversationId, dead());
+      await expectReopenedOnce(b, beforeB);
+    });
+
+    it('an accepted reply leaves it closed; a failure in an open conversation records nothing', async () => {
+      const s = await setup({ closed: true });
+      const { replyId, attemptId } = await pending(s);
+      await delivery().startAttempt({ ...ids(s), replyId });
+      await delivery().finishAttempt({
+        ...ids(s),
+        attemptId,
+        attemptOutcome: 'accepted',
+        replyState: 'sent',
+        telegramMessageId: 9n,
+        sentAt: at(999),
+      });
+      expect(await conversation(s.conversationId)).toMatchObject({
+        status: 'closed',
+        state_version: 3,
+      });
+      expect(await activitiesOf(s)).toHaveLength(0);
+
+      const open = await setup();
+      const second = await pending(open);
+      await delivery().skipReply({
+        ...ids(open),
+        replyId: second.replyId,
+        failureReason: 'bot_not_working',
+      });
+      expect(await conversation(open.conversationId)).toMatchObject({
+        status: 'open',
+        state_version: 0,
+      });
+      expect(await activitiesOf(open)).toHaveLength(0);
+    });
   });
 });

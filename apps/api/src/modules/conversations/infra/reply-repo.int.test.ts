@@ -14,6 +14,8 @@ import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js'
 import { fakeConversationSignals } from '../app/fakes.js';
 import type { EnqueueDrain } from '../app/ports.js';
 import { createReplies, createReplyDelivery } from '../app/replies.js';
+import { createActivityRepo } from './activity-repo.js';
+import { createConversationRepo } from './conversation-repo.js';
 import { createReplyRepo } from './reply-repo.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -117,6 +119,8 @@ describe('reply requests (Postgres)', () => {
     const delivery = createReplyDelivery({
       transaction: (fn) => db.transaction().execute(fn),
       replies: repo(),
+      conversations: createConversationRepo(db),
+      activities: createActivityRepo(db),
       signals,
       clock,
     });
@@ -138,6 +142,8 @@ describe('reply requests (Postgres)', () => {
     const delivery = createReplyDelivery({
       transaction: (fn) => db.transaction().execute(fn),
       replies: repo(),
+      conversations: createConversationRepo(db),
+      activities: createActivityRepo(db),
       signals,
       clock,
     });
@@ -448,5 +454,53 @@ describe('reply requests (Postgres)', () => {
           .execute(),
       ).toHaveLength(1);
     });
+  });
+
+  it('creating and requeueing replies while others fail in a closed conversation never deadlocks (lock order: drain, reply rows, conversation row)', async () => {
+    const s = await setup();
+    await db
+      .updateTable('conversations')
+      .set({ status: 'closed' })
+      .where('id', '=', s.conversationId)
+      .execute();
+    const delivery = createReplyDelivery({
+      transaction: (fn) => db.transaction().execute(fn),
+      replies: repo(),
+      conversations: createConversationRepo(db),
+      activities: createActivityRepo(db),
+      signals,
+      clock,
+    });
+    const failing = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const replyId = await insertReply(db, {
+          workspaceId: s.workspaceId,
+          conversationId: s.conversationId,
+          authorAccountId: s.accountId,
+        });
+        await insertReplyAttempt(db, {
+          workspaceId: s.workspaceId,
+          conversationId: s.conversationId,
+          replyId,
+          initiatedByAccountId: s.accountId,
+        });
+        return replyId;
+      }),
+    );
+    const results = await Promise.all([
+      ...failing.map((replyId) =>
+        delivery.skipReply({
+          workspaceId: s.workspaceId,
+          conversationId: s.conversationId,
+          replyId,
+          failureReason: 'bot_not_working',
+        }),
+      ),
+      ...Array.from({ length: 8 }, () => service().createReply(input(s, { limit: 100 }))),
+    ]);
+    expect(results.slice(0, 8)).toEqual(Array(8).fill(true));
+    expect(results.slice(8).map((r) => (r as { status: string }).status)).toEqual(
+      Array(8).fill('created'),
+    );
   });
 });
