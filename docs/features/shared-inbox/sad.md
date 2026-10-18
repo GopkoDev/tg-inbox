@@ -426,29 +426,22 @@ ADR files live under `docs/features/shared-inbox/adr/NNNN-<title>.md`. Repo-wide
 
 ## 10. Quality requirements
 
-<!-- 🎯 Why: the QUALITY TREE — take a goal from §1 and break it into concrete leaves: tests,
-     metrics, configs, drills. ⭐ Without §10, §1 is a manifesto. With §10 each declaration maps
-     to something PROVABLE.
-     📋 Write: per §1 goal — When / Then / How-verify. Numbers from spec §6 NFR VERBATIM (don't
-     round ≤250ms to ≤300ms — that's a critic F6 hit).
-     📌 e.g. «p95 ≤ 500 ms on a block update, verified by a 100 req/s load test». -->
+Each top-3 goal from §1 expanded into scenarios; every number is quoted from spec §6.
 
-Each top-3 goal from §1 expanded into a full scenario:
+**QG-1. Reply integrity**
+- **When:** an operator double-presses send, loses the connection right after sending, Telegram times out mid-send, the process dies with an attempt in flight, or Telegram answers 429/5xx for a while
+- **Then:** duplicate replies: "0 replies delivered twice without a member's explicit 'send again'"; a double press creates one reply; an unknown outcome ends "not confirmed" and is never retried on its own; refusals are retried for up to 5 minutes with later replies of the same conversation waiting and other conversations not held up; with Telegram healthy, reply latency p95 — operator presses send → marked "sent" — is "≤ 2 s"
+- **How verify:** integration tests against the fake Bot API in `src/test/fake-telegram.ts` (extended with `sendMessage`): double submit with one client key → one `sendMessage`; a fake that hangs past the 10 s timeout → "not confirmed" and no second call; a job killed between "in flight" and the answer → re-run resolves "not confirmed"; scripted 429 then success → order kept per conversation while a second conversation delivers; the spec's delivery-log reconciliation over the reply attempts log in CI and as a daily production check; reply latency from the per-reply timing log, plus a seeded test asserting p95 ≤ 2 s with the queue's 0.5 s polling
 
-**QG-1. <quality attribute>**
-- **When:** <trigger condition>
-- **Then:** <expected behaviour with numbers from spec §6 NFR>
-- **How verify:** <test / chaos drill / load test / metric>
+**QG-2. Tenant, access and secret isolation**
+- **When:** an account of another workspace, a deactivated member or a signed-out visitor requests a list, thread, item, media or reply action of "Acme Flowers"; a business owner deactivates an operator whose inbox is open; the operator switches workspace in one tab; any member opens customer media
+- **Then:** refused with no data and no hint of existence for other workspaces (AC-08); access revocation: "live stream of a deactivated or switched-away member stops ≤ 5 s"; bot token exposure: "0 occurrences of a bot token in anything the web panel receives (pages, data, media addresses, redirects) or in logs"; reply rate per member: "≤ 30 replies per rolling 60 s per member per workspace (AC-12b)"
+- **How verify:** a cross-workspace isolation test per new repository method and per route (including the media route and the socket upgrade); integration test: deactivate → no further signals for that member within 5 s even with the deactivation signal suppressed (the 5 s re-validation alone must close it); the bot-connection secrecy test extended to inbox responses, media responses, socket frames and captured logs; integration test: "the 31st reply within a minute is refused", including 31 concurrent sends
 
-**QG-2. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
-
-**QG-3. <quality attribute>**
-- **When:** <trigger>
-- **Then:** <expected>
-- **How verify:** <how>
+**QG-3. Live, responsive inbox**
+- **When:** a customer message is captured or a teammate's reply is sent while other members have the inbox open; a member opens the list of a workspace with 1 000 conversations, the latest page of a 5 000-message conversation, or a ≤ 5 MB file with the bot connected
+- **Then:** live update p95 "≤ 3 s"; inbox list p95 "≤ 500 ms server time"; thread open p95 "≤ 500 ms server time"; media open p95 "≤ 3 s"; availability "99.5 % monthly (as bot-connection §6)"
+- **How verify:** server-side timing from commit to socket write logged per signal, and a CI integration test that asserts the push reaches a connected test socket; request timing logs on the list, thread and media paths; seeded integration tests with 1 000 conversations and a 5 000-message conversation asserting the server time; a media test streaming a 5 MB file from the fake Bot API; uptime check on the health endpoint
 
 ## 11. Risks and technical debt
 
