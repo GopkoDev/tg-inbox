@@ -138,12 +138,12 @@ flowchart TD
     A[SCR-01 List or a conversation address] -->|open| T[SCR-02 Thread: messages, replies and activity lines in time order]
     T --> Q{Who made the change?}
     Q -->|a member| M[SCR-02 Line names the member and the time]
-    Q -->|automatic| AU[SCR-02 Line names the cause: the customer wrote, a reply was not delivered, the member was deactivated]
+    Q -->|automatic| AU[SCR-02 Line names the cause: the customer wrote, a reply was not delivered, the assignee was deactivated]
     T -->|a teammate or automatic change while my thread is open| LV[SCR-02 New line appears live, unread unchanged]
     T -->|no active membership| NA[SCR-06 Not found or SCR-07 Access removed]
 ```
 
-Any member opening a conversation — from the list or a saved address — sees each assign, reassign, unassign, close and reopen as a short activity line at the time it happened, among the messages and replies (AC-09). A member's change names that member; an automatic one names its cause — "the customer wrote", "a reply was not delivered", "the member was deactivated". When a change happens while the thread is open in another member's tab, the new line appears there live. Activity lines never count as unread and are never sent to the end customer. Someone without an active membership never sees the conversation's assignee, status or activity: an account of another workspace gets the not-found card, a deactivated member the access-removed landing (AC-11).
+Any member opening a conversation — from the list or a saved address — sees each assign, reassign, unassign, close and reopen as a short activity line at the time it happened, among the messages and replies (AC-09). A member's change names that member; an automatic one names its cause — "the customer wrote", "a reply was not delivered", "the assignee was deactivated". When a change happens while the thread is open in another member's tab, the new line appears there live. Activity lines never count as unread and are never sent to the end customer. Someone without an active membership never sees the conversation's assignee, status or activity: an account of another workspace gets the not-found card, a deactivated member the access-removed landing (AC-11).
 
 ### Flow: US-06 — Ownership follows the team
 

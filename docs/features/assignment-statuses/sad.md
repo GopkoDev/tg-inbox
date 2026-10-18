@@ -388,6 +388,576 @@ sequenceDiagram
     end
 ```
 
+Flows 4–13 below were added by the `sequences` stage. They use the generic runtime vocabulary: `<user>` (an operator or business owner), `<ui>` (the web panel), `<service>` (tg-inbox's backend), `<data-store>`, `<message-bus>` (the live-signal fan-out and the drain job queue) and `<external-system>` (the Telegram Bot API). `SCR-NN` ids refer to [`ux-flows.md`](ux-flows.md). Every persist or read note is a hint for `data-model`. Version V / W is the state version (ADR-0002); snapshot P / Q is the close snapshot (ADR-0003).
+
+**Assumptions (autonomous run 2026-10-18, `sequences`)**, each can be vetoed at review:
+
+- Depth = medium, size M (`.size`), route `standard` (`.route`). The pipeline confirmed every flow itself against spec §5, `ux-flows.md` and ADR-0001…0007. Each flow's prose account is the paragraph under it.
+- The same session guard (signed out, another workspace, deactivated) fronts every flow that starts in the panel. It is drawn in full in flows 4, 5 and 11 and referred to elsewhere.
+- A close always goes through one confirmation (SCR-12), also when only the version is stale (ux-flows assumption). Assign, reassign, unassign and reopen use SCR-11 (flow 6).
+- The "already in the requested state" check runs before the version check, so a request that matches the current state is a no-op even when the version moved (AC-03).
+- The change-limit check runs last, just before the write (§4), so refused, declined and no-op requests never count.
+
+### Flow 4: Open the list through its lenses and search it (US-01 — AC-01, AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over U,S: Precondition: the person opens an inbox address of one workspace, with or without lenses in it (SCR-01)
+    U->>UI: opens the inbox, picks a lens, reloads, goes back or follows a saved link
+    UI->>UI: read the status and assignee lenses from the address, default open and all
+    UI->>S: ask for the first list page with the status and assignee lenses
+    S->>D: check the session and the membership in this workspace
+    alt not signed in
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back to the same address with its lenses (SCR-09)
+    else account of another workspace, or an unknown workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member of either role
+        alt no search query
+            S->>D: read one page of the workspace's conversations with the chosen status and assignee, newest activity first
+            Note over S,D: reads conversations by (workspace, status, last activity, id) and by (workspace, assignee, status, last activity, id) - mine is the caller, unassigned is no assignee - informs the lens indexes
+        else search query present
+            S->>D: find the matching contacts, then read the page within the assignee lens across both statuses
+            Note over S,D: the status lens is set aside while searching - reads conversations by (workspace, last activity, id) limited to the matching contacts
+        end
+        S->>D: read unread counts, waiting markers and last items as before, and the assignees' display names
+        D-->>S: rows with last item and time, status, assignee and state version
+        S-->>UI: list page tagged with the workspace id and the lenses it answers
+        alt the lens holds nothing
+            UI-->>U: the empty state of this lens, or nothing matches with a control to clear the search
+        else rows found
+            UI-->>U: rows newest activity first, each with its assignee name or unassigned, closed rows in search results marked closed
+        end
+    end
+    opt the member switches to another workspace
+        U->>UI: picks another workspace in the switcher
+        UI->>UI: navigate to the other workspace's inbox without lenses and reset the store
+        UI-->>U: the other workspace's list at open and all
+    end
+    Note over U,S: Postcondition: nothing was written - an assignee or status change never becomes a row's preview or time, and the lenses live only in the address
+```
+
+The panel reads the lenses from the address (open · all when none are given) and asks for the first page. The guard sends a signed-out visitor to sign in and back to the same address, gives another workspace's account the not-found card, and gives a deactivated member the access-removed landing (AC-11). For an active member of either role, the page comes from the status and assignee lens indexes, newest activity first. While a search query is present, the status lens is set aside and matches of both statuses within the assignee lens are returned, with closed rows marked. Each row keeps its last message and time and shows its assignee's name or "unassigned". An empty lens says so (AC-01). Switching workspace drops the lenses and starts at open · all.
+
+### Flow 5: Take or hand over a conversation (US-02 — AC-02, AC-04, AC-11, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the member has a conversation open in its thread (SCR-02), open or closed, in any state of the bot, showing its assignee, status and version V
+    U->>UI: chooses change assignee
+    UI->>S: ask for the active members of this workspace
+    S->>D: read the workspace's active memberships with display names
+    Note over S,D: reads memberships by (workspace, state) - informs the active-members read
+    S-->>UI: active members only
+    UI-->>U: chooser with me first, then active teammates, then unassign when it has an assignee (SCR-10)
+    alt picks the assignee it already has
+        UI-->>U: chooser closes, nothing sent, nothing recorded
+    else picks a member or unassign
+        U->>UI: picks
+        UI->>S: change the assignee to the pick, with version V
+        S->>D: check the session and the membership in this workspace
+        alt not signed in, or the caller deactivated
+            S-->>UI: sign in first, or access removed
+            UI-->>U: sign-in (SCR-09) or access-removed landing (SCR-07)
+        else active member
+            S->>D: one transaction - share-lock the caller's and the pick's memberships in this workspace
+            Note over S,D: reads memberships by (workspace, account) FOR SHARE - conflicts with a deactivation's update
+            alt the caller was deactivated meanwhile
+                S-->>UI: access removed, nothing changed
+                UI-->>U: access-removed landing (SCR-07)
+            else pick not an active member of this workspace, or an account of another workspace
+                S-->>UI: refused, assignee not active, nothing changed
+                UI-->>U: only active members of this workspace can be assigned, the chooser reloads them (SCR-10)
+            else memberships active
+                S->>D: lock the conversation row by workspace and id, read status, assignee and version
+                Note over S,D: reads conversations by (workspace, id) FOR UPDATE
+                alt no such conversation in this workspace
+                    S-->>UI: not found, no hint it exists
+                    UI-->>U: not-found card (SCR-06)
+                else already assigned as asked
+                    S-->>UI: unchanged, nothing recorded, with the current state
+                    UI-->>U: the thread shows the current state
+                else version differs from V
+                    S-->>UI: refused, state changed - continues in flow 6
+                else version is V
+                    S->>D: take this member's change lock in this workspace and count their entries of the last 60 s
+                    Note over S,D: reads activity entries by (workspace, actor, position time) - informs the change-limit index
+                    alt 60 recorded changes in the window
+                        S-->>UI: refused, change limit, with the time changes resume
+                        UI-->>U: the limit and when they can continue, in the thread (SCR-02)
+                    else allowed
+                        S->>D: set the assignee, raise the version, leave last activity as it is
+                        S->>D: insert one activity entry assigned, reassigned or unassigned with the actor and the previous and new assignee
+                        Note over S,D: persists conversation assignee and state version, and activity entry (workspace, conversation, position time)
+                        S->>B: activity item created signal, published with the write
+                        S-->>UI: new assignee, status and version
+                        UI-->>U: the header shows the new assignee, the activity line appears, the row keeps its place
+                    end
+                end
+            end
+        end
+    end
+    Note over B,UI: every teammate's open list and thread follow live - cross-cutting flow 13
+    Note over U,S: Postcondition: at most one assignee, always an active member of this workspace - one recorded change is one activity entry and one count toward the limit
+```
+
+The member opens the chooser over the thread. It lists only the active members of this workspace: "me" first, then teammates, then "unassign" when the conversation has an assignee (SCR-10). Picking the current assignee closes the chooser and sends nothing (AC-02). Otherwise the change carries the version on screen. Inside one transaction the service share-locks the caller's and the pick's memberships. A caller deactivated meanwhile gets the access-removed landing (AC-11). A pick that is not an active member of this workspace, which includes a foreign account, is refused with the same "active members only" answer, and the chooser reloads (AC-04). Under the conversation row lock, a request that matches the current state is a no-op and a version mismatch goes to flow 6. A member with 60 recorded changes in this workspace in the last 60 s is refused with the resume time (AC-12). Otherwise the assignee is written, the version raised and one activity entry inserted, without moving last activity. The thread shows the new assignee and its line, and teammates follow live (AC-02, flow 13). This works on a closed conversation too, and it stays closed.
+
+### Flow 6: Confirm over a recent change (US-02, US-03 — AC-03)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the thread shows version V, and since then a teammate, the customer, a failed reply or a deactivation changed the assignee or status (version now W), or a teammate acts at the same moment
+    U->>UI: assigns, reassigns, unassigns or reopens
+    UI->>S: the change with version V
+    S->>D: share-lock the memberships, then lock the conversation row
+    Note over S,D: two members acting at once serialise on this row lock - the second one reads W and counts as having seen the old state
+    alt already in the state asked for
+        S-->>UI: unchanged, nothing recorded, with the current state and version W
+        UI-->>U: the thread simply shows the current state
+    else version W differs from V
+        S->>D: read the conversation's latest activity entry
+        Note over S,D: reads activity entries by (workspace, conversation, position time desc) - the latest one
+        S-->>UI: refused, state changed, with the current assignee and status, who or what changed them, when, and version W
+        UI-->>U: confirm over a recent change - the current state, who and how long ago, go ahead or leave it (SCR-11)
+        alt leave it
+            U->>UI: chooses leave it
+            UI->>UI: take W as the version on screen
+            UI-->>U: the thread shows the current state, nothing changed
+        else go ahead
+            U->>UI: chooses go ahead
+            UI->>S: the same change with version W
+            S->>D: share-lock the memberships, then lock the conversation row
+            alt already in the state asked for
+                S-->>UI: unchanged, nothing recorded
+                UI-->>U: the thread shows the current state
+            else a third change raised the version past W
+                S-->>UI: refused, state changed, with the newer state
+                UI-->>U: the dialog asks again with the newer state (SCR-11)
+            else version still W
+                S->>D: write the change, raise the version, insert its activity entry, as in flow 5
+                Note over S,D: persists conversation state and version, and activity entry - the assignee and change-limit checks of flow 5 still apply
+                S->>B: activity item created signal, published with the write
+                S-->>UI: new state and version
+                UI-->>U: the change shown with its activity line
+            end
+        end
+    end
+    Note over U,S: Postcondition: no change is applied over a state the member had not seen - a close goes through flow 7, whose single dialog also names the stale change
+```
+
+The member acts on a conversation whose assignee or status changed since the screen showed it, by a teammate, the customer, a failed reply or a deactivation, or a teammate acts at the same moment. Both requests serialise on the conversation row lock, so the second one sees the newer version (AC-03). If the conversation is already in the state asked for, nothing is recorded and the thread shows it. Otherwise the refusal carries the current assignee and status, who or what changed them and when, and the current version. The dialog (SCR-11) offers "go ahead" or "leave it". "Leave it" keeps the current state on screen. "Go ahead" resends with the version from the refusal. It is recorded only if nothing changed again, and a third change asks again.
+
+### Flow 7: Close a conversation, asking first when it may be early (US-03 — AC-05, AC-06, AC-08, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: an open conversation in the thread (SCR-02) with version V and close snapshot P, the customer message counter plus the latest reply's id and state
+    Note over UI,S: the session guard, not-found and access-removed branches are as in flow 5
+    U->>UI: chooses close
+    UI->>S: close with version V and snapshot P, no confirm
+    S->>D: share-lock the caller's membership, then lock the conversation row
+    Note over S,D: reads conversations by (workspace, id) FOR UPDATE - status, version, customer message counter
+    S->>D: read the waiting marker, the latest reply's id and state, and this member's arrival watermark and active-since
+    Note over S,D: reads the latest reply by (workspace, conversation, position time desc), the read mark by (workspace, member, conversation) and customer messages by (conversation, arrival) after the watermark
+    alt already closed
+        S-->>UI: unchanged, nothing recorded
+        UI-->>U: the thread shows it closed
+    else version moved, customer waiting, an unread customer message, the counter grew past P, or the latest reply not delivered or not confirmed
+        S-->>UI: refused, close needs confirmation, with every reason, the stale change if any, current snapshot Q and version W
+        UI-->>U: confirm close - every reason that applies, close anyway or keep it open (SCR-12)
+        alt keep it open
+            U->>UI: chooses keep it open
+            UI-->>U: the thread stays open, nothing changed
+        else close anyway
+            U->>UI: chooses close anyway
+            UI->>S: close with version W, snapshot Q and confirm
+            S->>D: share-lock the membership, lock the conversation row, evaluate the reasons again
+            alt already closed by someone else
+                S-->>UI: unchanged, nothing recorded
+                UI-->>U: the thread shows it closed
+            else a customer message or a failed reply recorded since Q, or the version moved past W
+                S-->>UI: refused again, close needs confirmation, with the new reasons and snapshot
+                UI-->>U: the dialog asks again with what is new (SCR-12)
+            else snapshot still Q and version still W
+                S->>D: take this member's change lock and count their changes of the last 60 s
+                alt 60 recorded changes in the window
+                    S-->>UI: refused, change limit, with the time changes resume
+                    UI-->>U: the limit and when they can continue (SCR-02)
+                else allowed
+                    S->>D: set closed, keep the assignee, raise the version, insert activity entry closed
+                    Note over S,D: persists conversation status and state version, and activity entry - last activity and read marks untouched
+                    S->>B: activity item created signal, published with the write
+                    S-->>UI: closed, with the new version
+                    UI-->>U: the thread shows closed with its activity line
+                end
+            end
+        end
+    else no reason holds and the version is V
+        S->>D: take this member's change lock and count their changes of the last 60 s
+        alt 60 recorded changes in the window
+            S-->>UI: refused, change limit, with the time changes resume
+            UI-->>U: the limit and when they can continue (SCR-02)
+        else allowed
+            S->>D: set closed, keep the assignee, raise the version, insert activity entry closed
+            Note over S,D: persists conversation status and state version, and activity entry (workspace, conversation, position time)
+            S->>B: activity item created signal, published with the write
+            S-->>UI: closed, with the new version
+            UI-->>U: the thread shows closed with its activity line
+        end
+    end
+    Note over B,UI: the row leaves the open lenses and appears under closed for the whole team - cross-cutting flow 13
+    Note over U,S: Postcondition: a close over a waiting, unread or failed-reply condition was confirmed against the snapshot current at record time - a customer message recorded after the close reopens it (flow 9)
+```
+
+The close carries the version and the close snapshot on screen. Under the conversation row lock the service evaluates the reasons. These are: the customer is waiting for a reply; this member has a customer message they have not read (after the later of their watermark and active-since); the counter grew past the snapshot; the latest reply is "not delivered" or "not confirmed" (AC-06, AC-08); and the version moved (AC-03). With no reason, the close is recorded at once (AC-05). With any reason, the single confirmation (SCR-12) names all of them. "Keep it open" changes nothing. "Close anyway" resends with the refusal's snapshot and version and `confirm`. The reasons are evaluated again at record time, so a customer message or failed reply recorded in between asks again. The change limit applies just before the write (AC-12). A recorded close keeps the assignee, does not move last activity or anyone's unread count, inserts "closed", and moves the row to the closed lens for the team (flow 13).
+
+### Flow 8: A member reopens a closed conversation (US-03 — AC-05, AC-03, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: a closed conversation in the thread (SCR-02) with version V, reached from the closed lens, a search result or a saved address
+    Note over UI,S: the session guard, not-found and access-removed branches are as in flow 5
+    U->>UI: chooses reopen
+    UI->>S: reopen with version V
+    S->>D: share-lock the caller's membership, then lock the conversation row
+    Note over S,D: reads conversations by (workspace, id) FOR UPDATE
+    alt already open again - the customer wrote, a reply failed or a teammate reopened
+        S-->>UI: unchanged, nothing recorded, with the current state
+        UI-->>U: the thread shows it open
+    else version differs from V
+        S-->>UI: refused, state changed - confirm over a recent change as in flow 6 (SCR-11)
+    else version is V
+        S->>D: take this member's change lock and count their changes of the last 60 s
+        alt 60 recorded changes in the window
+            S-->>UI: refused, change limit, with the time changes resume
+            UI-->>U: the limit and when they can continue (SCR-02)
+        else allowed
+            S->>D: set open, keep the assignee, raise the version, insert activity entry reopened with the member as actor
+            Note over S,D: persists conversation status and state version, and activity entry
+            S->>B: activity item created signal, published with the write
+            S-->>UI: open, with the new version
+            UI-->>U: the thread shows open with the reopened line and the same assignee
+        end
+    end
+    Note over B,UI: back in the open lenses with the same assignee for the whole team - cross-cutting flow 13
+    Note over U,S: Postcondition: a member's reopen needs no close-reason check and keeps the assignee
+```
+
+Any member can reopen a closed conversation from its thread. If it is already open again, nothing is recorded and the thread shows it. If its state changed since the screen showed it, the flow 6 confirmation applies (AC-03). Past the change limit it is refused (AC-12). Otherwise it opens with the same assignee, records "<member> reopened this", and returns to the open lenses for the team (AC-05).
+
+### Flow 9: A customer's new message reopens a closed conversation (US-04 — AC-07, AC-06, AC-09)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant X as #lt;external-system#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    participant UI as #lt;ui#gt;
+    actor U as #lt;user#gt;
+    Note over X,S: Trigger: the end customer writes to the business bot about a closed conversation, and Telegram pushes the update to the bot's webhook
+    X->>S: update for the workspace's bot, with the per-bot secret
+    S->>D: one transaction - idempotency check, is this message already captured
+    Note over S,D: reads messages by (workspace, chat, Telegram message id) - the unique key
+    alt already captured - a duplicate redelivery
+        S-->>X: acknowledged, nothing moves, the status stays
+    else edit of an earlier message
+        S->>D: replace the text and mark it edited, as in shared-inbox flow 10
+        S-->>X: acknowledged, the conversation stays closed
+    else a new message, including a late redelivery of an earlier one
+        S->>D: insert the message at its Telegram send time, arrival now
+        S->>D: raise arrival and the customer message counter in one row update, which locks the conversation row and returns status and assignee
+        Note over S,D: persists message, conversation arrival and customer message counter - the reopen reads status only from this locked update, never from the earlier upsert
+        Note over S,D: a close waiting on this row lock then sees the grown counter and asks again (flow 7)
+        alt the locked status is closed
+            S->>D: set open, keep the assignee, raise the version
+            S->>D: insert activity entry reopened, the customer wrote, no actor, positioned now and never before the latest entry
+            Note over S,D: persists conversation status and state version, and activity entry - no actor, so never counted toward any limit
+            S->>B: message created and activity item created signals, published with the write
+        else the locked status is open
+            S->>B: message created signal, as today
+        end
+        S-->>X: acknowledged
+    else capture fails
+        S-->>X: not acknowledged, the transaction rolled back, nothing reopened
+    end
+    Note over X,S: retry - Telegram redelivers an unacknowledged update by itself, and the idempotency check keeps the message and the reopen single
+    alt Telegram's own retries are exhausted
+        X->>X: dead-letter - Telegram drops the update outside tg-inbox, as in bot-connection
+    end
+    B->>S: signals delivered on commit to every instance
+    S->>UI: push to the open sockets of this workspace
+    UI->>S: read the message, the activity item, the row and the summary
+    S-->>UI: items, the row with this member's unread count and waiting marker, status open, new version
+    UI-->>U: back in the open lenses with the same assignee, the thread shows reopened - the customer wrote at its arrival, the message unread and waiting (SCR-01, SCR-02)
+    Note over U,S: Postcondition: no closed conversation has a customer message that arrived after its close - a late redelivery keeps its earlier place, the reopen line sits at its arrival
+```
+
+A customer message reaches the webhook of a closed conversation. Capture's first step is the idempotency check on the message's unique key, so a duplicate redelivery moves nothing. An edit of an earlier message does not reopen (AC-07). A new message, including a late redelivery that keeps its earlier place in the history, raises arrival and the customer message counter in one row update. That update locks the conversation row and returns its status. If the status is closed, the same transaction reopens it with the same assignee, raises the version and inserts "reopened — the customer wrote" at the moment of capture, never before the close it undoes (AC-07, AC-09, ADR-0004, ADR-0006). A close waiting on the same lock sees the grown counter and asks again (AC-06). A failed capture rolls back and is not acknowledged, and Telegram redelivers it. Once Telegram gives up, the update is dropped outside tg-inbox. After commit, every open tab sees the conversation back in the open lenses, its message unread and waiting as for an open conversation (flow 13).
+
+### Flow 10: A failed reply reopens a closed conversation (US-04 — AC-08, AC-09)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as #lt;message-bus#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    participant UI as #lt;ui#gt;
+    actor U as #lt;user#gt;
+    Note over B,S: Trigger: a drain job runs for a conversation that was closed while one of its replies was still sending
+    B->>S: deliver the drain job, one at a time per conversation
+    S->>D: idempotency check - the reply's current state and its attempts still in flight
+    alt the reply already has its final state
+        S-->>B: done, nothing settles twice and nothing reopens
+    else pending or in flight
+        S->>X: send the text as plain text, after the drain's pre-checks of shared-inbox flow 9
+        X-->>S: accepted, refused, not accepted, or no answer within 10 s
+        alt accepted
+            S->>D: mark the reply sent, the conversation stays closed
+            Note over S,D: persists reply state - the waiting marker keeps its meaning
+        else refused permanently, a pre-check failed, not accepted past 5 minutes, or the outcome unknown
+            S->>D: settle - set the reply not delivered or not confirmed, then lock the conversation row
+            Note over S,D: persists reply state - reads conversations by (workspace, id) FOR UPDATE, after the reply and attempt rows
+            alt the conversation is closed
+                S->>D: set open, keep the assignee, raise the version, insert activity entry reopened, a reply was not delivered, no actor
+                Note over S,D: persists conversation status and state version, and activity entry - never counted toward any limit
+                S->>B: reply state changed and activity item created signals, published with the write
+            else the conversation is open
+                S->>B: reply state changed signal, as today
+            end
+        end
+    end
+    Note over S,X: retry - not accepted schedules a delayed drain for up to 5 minutes, and the job itself re-runs up to 3 times only when the process dies, as in shared-inbox flow 9
+    alt job re-runs exhausted, or a stale in-flight attempt found
+        B->>S: route the job to the dead-letter handler, or resolve the stale attempt
+        S->>D: settle each affected reply as not confirmed or not delivered, which reopens a closed conversation the same way
+        Note over S,D: persists reply states, conversation status and state version, and activity entries - settle is the single reopen point for failed replies
+        S->>B: reply state changed and activity item created signals, published with the write
+    end
+    B->>S: signals delivered on commit to every instance
+    S->>UI: push to the open sockets of this workspace
+    UI->>S: read the reply, the activity item, the row and the summary
+    S-->>UI: the failed reply, the reopened line, the row and the new version
+    UI-->>U: back in the open lenses with its assignee, the thread shows the failed reply and reopened - a reply was not delivered, so the team can try again (SCR-01, SCR-02)
+    Note over U,S: Postcondition: a reply that ends not delivered or not confirmed never sits unseen in a closed conversation
+```
+
+A conversation was closed while one of its replies was still sending. The drain's idempotency step reads the reply's current state, so a reply that already ended never settles twice. A reply that is accepted leaves the conversation closed. Every failed outcome passes `settle()`: a permanent refusal, a failed pre-check, "not accepted" past 5 minutes, an unknown outcome, a stale in-flight attempt or a dead-lettered job. `settle()` sets the reply state and then locks the conversation row. In a closed conversation it reopens with the same assignee, raises the version and inserts "reopened — a reply was not delivered" (AC-08, AC-09, ADR-0004). The team then sees the conversation back in the open lenses with the failed reply, ready to try again (flow 13).
+
+### Flow 11: Read a conversation's history of changes (US-05 — AC-09, AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the conversation has been assigned, reassigned, unassigned, closed and reopened - a member opens its thread from the list or a saved address (SCR-02)
+    U->>UI: opens the conversation
+    UI->>S: ask for the summary and the latest thread page
+    S->>D: check the session and the membership in this workspace
+    alt not signed in, an account of another workspace, or deactivated
+        S-->>UI: sign in first, not found with no hint, or access removed - no assignee, status or activity revealed
+        UI-->>U: sign-in (SCR-09), not-found card (SCR-06) or access-removed landing (SCR-07)
+    else active member
+        S->>D: look up the conversation by workspace and id
+        alt no such conversation in this workspace
+            S-->>UI: not found, no hint it exists
+            UI-->>U: not-found card (SCR-06)
+        else found
+            S->>D: read the latest page of messages, replies and activity entries by position time
+            Note over S,D: reads activity entries by (workspace, conversation, position time, id) - the third keyset half, informs the activity index
+            S->>D: read the display names of reply authors, actors and assignees
+            D-->>S: items, ties ordered message, then reply, then activity
+            S-->>UI: summary with assignee, status, version and close snapshot, and the page
+            UI-->>U: activity lines among messages and replies at their own time - a member's change names the member, an automatic one its cause, names shown as plain text
+            loop the member scrolls up, until the first item
+                UI->>S: ask for the page before the oldest position shown, with the three-kind cursor
+                S->>D: read the previous page of the three kinds
+                D-->>S: older items
+                S-->>UI: older page
+                UI-->>U: older history added above
+            end
+        end
+    end
+    opt a teammate's or an automatic change happens while the thread is open
+        B->>S: activity item created signal
+        S->>UI: push to this tab's socket
+        UI->>S: read the activity item and the summary
+        S-->>UI: the item and the new state
+        UI-->>U: the new line appears live, unread counts unchanged
+    end
+    Note over U,S: Postcondition: activity entries are never unread, never move last activity and are never sent to Telegram
+```
+
+Opening a thread passes the same guard as the list, so someone without an active membership sees no assignee, status or activity (AC-11). For a member, the thread page merges three keyset halves (messages, replies, activity entries) by position time, with ties ordered message, reply, activity (ADR-0006). Each activity line names the member who made the change, or the automatic cause: the customer wrote, a reply was not delivered, the assignee was deactivated. Names are rendered as plain text. Older pages load with the three-kind cursor. A change made while the thread is open in another tab arrives live as one new line, and unread counts do not change (AC-09, ADR-0007).
+
+### Flow 12: Deactivating a member returns their conversations to the team (US-06 — AC-10, AC-04, AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor O as #lt;user#gt; business owner
+    actor M as #lt;user#gt; teammate
+    actor F as #lt;user#gt; deactivated member
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over O,S: Precondition: an operator is the assignee of open and closed conversations in this workspace, and possibly in another workspace the same account belongs to
+    O->>UI: deactivates the member in Settings - Team and confirms (SCR-13, SCR-14)
+    UI->>S: deactivate the membership
+    S->>D: one transaction - lock the workspace row, check that another active business owner remains
+    alt it would leave no active business owner, or the member is already deactivated
+        S-->>UI: refused as today, nothing changed
+        UI-->>O: the existing refusal on Settings - Team
+    else allowed
+        S->>D: set the membership deactivated, which row-locks it against concurrent share locks
+        S->>D: unassign every conversation of this workspace assigned to the account, open and closed, raise each version
+        Note over S,D: reads conversations by (workspace, assignee) - the assignee lens index - other workspaces untouched
+        S->>D: insert activity entry unassigned, the member was deactivated, per conversation, no actor
+        Note over S,D: persists membership state, conversation assignee and state version, and activity entries - never counted toward any limit
+        S->>B: one activity item signal per conversation and membership deactivated, published with the write
+        S-->>UI: the member shown deactivated
+        UI-->>O: Settings - Team shows the member deactivated
+    end
+    Note over S,D: a concurrent assignment to this member is refused or cleared by this same transaction - seeded flow 3
+    B->>S: signals delivered on commit to every instance
+    S->>UI: push to the open sockets of this workspace
+    UI-->>M: their open conversations appear under unassigned, each thread records unassigned - the member was deactivated (SCR-01, SCR-02)
+    opt a teammate picks the deactivated member in a chooser loaded earlier
+        M->>UI: picks them
+        UI->>S: change the assignee to them
+        S-->>UI: refused, assignee not active
+        UI-->>M: only active members of this workspace, the chooser reloads (SCR-10)
+    end
+    opt the deactivated member acts next
+        F->>UI: any inbox action
+        UI->>S: the request
+        S-->>UI: access removed
+        UI-->>F: access-removed landing (SCR-07)
+    end
+    opt the owner reactivates the member later
+        O->>UI: reactivates the member (SCR-13)
+        UI->>S: reactivate the membership
+        S->>D: set the membership active, conversations untouched
+        Note over S,D: persists membership state only
+        S-->>UI: the member active again
+        UI-->>O: the member active, their former conversations stay unassigned
+    end
+    Note over O,S: Postcondition: no conversation of this workspace is assigned to a deactivated member at any committed moment
+```
+
+A business owner deactivates a member from Settings — Team and confirms (SCR-13, SCR-14). The existing refusals (last active owner, already deactivated) are unchanged. In the same transaction that updates the membership, the `onMembershipDeactivated` port unassigns every conversation of this workspace assigned to that account, open and closed. It raises each version, inserts "unassigned — the member was deactivated" per conversation and publishes one signal per conversation (AC-10, ADR-0005). Another workspace's assignments of the same account are untouched. The team sees the open ones under "unassigned" live. A racing assignment is refused or cleared by the same transaction (flow 3). A later pick from an old chooser is refused (AC-04). The deactivated member's next action lands on access removed (AC-11). Reactivation changes only the membership, and the conversations stay unassigned.
+
+### Cross-cutting: Flow 13 — a change signal moves a row between lenses (US-01, US-02, US-03, US-06 — AC-02, AC-05, AC-07, AC-08, AC-10)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as #lt;message-bus#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant UI as #lt;ui#gt;
+    actor U as #lt;user#gt;
+    Note over B,S: Trigger: a recorded change, by a member or automatic, published an activity item signal inside its transaction
+    B->>S: signal delivered on commit to every instance
+    S->>UI: push conversation changed with the activity item id to every open socket of the workspace
+    UI->>UI: idempotency - ignore a frame of another workspace or an item already shown
+    UI->>S: read the changed row, the conversation summary and the activity item
+    S->>D: read the row by workspace and id with status, assignee, version and this member's unread count
+    Note over S,D: reads conversations by (workspace, id) and the activity entry by (workspace, id) - no write
+    D-->>S: row, summary and item
+    S-->>UI: row, summary and item
+    UI->>UI: re-evaluate whether the row belongs to the current lenses - only the assignee lens while searching
+    alt the row now matches the lenses
+        UI-->>U: row inserted or updated at its activity place, with its assignee
+    else the row no longer matches
+        UI-->>U: the row leaves this list
+    end
+    opt this member has the conversation's thread open
+        UI-->>U: the thread stays open, the header shows the new assignee and status, version and close snapshot replaced, the activity line appears
+    end
+    Note over B,UI: retry - on a listener reconnect or a signal gap the hub sends a resync and the tab refetches its list page and the open summary
+    alt a frame cannot be parsed, or the socket is lost
+        UI->>S: dead-letter - drop the frame, reconnect and resync the list page and the summary
+    end
+    Note over U,S: Postcondition: within 3 s every open list shows the row in the right lens, and the next change this tab sends carries the version it now shows
+```
+
+Every recorded change publishes one activity item signal inside its transaction. That covers a member's assign, close or reopen, a customer or failed-reply reopen, and each conversation a deactivation unassigns (ADR-0007). After commit, the hub pushes it to every open socket of the workspace. The tab ignores frames of another workspace and items it already shows, then refetches the row, the summary and the item. It then decides whether the row still belongs to the current lenses (only the assignee lens while searching). The row is inserted, updated or dropped accordingly. A thread open on that conversation stays open with the new header, version and close snapshot (AC-02). A gap or reconnect triggers a resync. A frame the tab cannot parse, for example in an old bundle (§11), is dropped and resynced rather than breaking the socket.
+
+**Coverage — every spec §4 user story and §5 acceptance criterion → where §6 shows it:**
+
+| Spec item | Shown by |
+|---|---|
+| US-01 | Flow 4, plus flow 13 (rows move between lenses live) |
+| US-02 | Flow 5, flow 6, seeded flow 1 |
+| US-03 | Flow 7, flow 8, seeded flow 1 |
+| US-04 | Flow 9, flow 10, seeded flow 2 (no web screen for the end customer: these are the panel effects, as in `ux-flows.md`) |
+| US-05 | Flow 11, plus the activity-entry inserts in flows 5–10 and 12 |
+| US-06 | Flow 12, seeded flow 3 |
+| AC-01 | Flow 4: lenses from the address, defaults, lens reads, search across statuses with the closed mark, empty lens, workspace switch reset. "Newest activity first" plus the postcondition that a change never becomes a row's preview or time |
+| AC-02 | Flow 5: same-assignee no-op, recorded assign / reassign / unassign, last activity untouched, closed stays closed, any bot state (precondition). Flow 13: lens moves and the thread that stays open |
+| AC-03 | Flow 6: stale refusal, go ahead or leave it, third change asks again, concurrent members serialise on the row lock, already-in-state no-op. Flow 7: stale version folded into the close dialog. Flow 8: reopen over a stale state. Seeded flow 1 |
+| AC-04 | Flow 5: assignee-not-active branch for a deactivated or foreign account, chooser lists active members only. Flow 12 and seeded flow 3: the racing and the later pick |
+| AC-05 | Flow 7: close with no reason. Flow 8: member reopen with the same assignee. Flow 13: leaves and re-enters the open lenses |
+| AC-06 | Flow 7: every reason, confirm with the snapshot, re-check at record time, asks again. Flow 9: the capture that serialises on the same row lock |
+| AC-07 | Flow 9: reopen on a new message with the same assignee, at its arrival, late redelivery keeps its place, duplicate and edit do not reopen, unread and waiting as for an open conversation. Seeded flow 2 |
+| AC-08 | Flow 10: every failed outcome through `settle()`, including dead-letter and stale in-flight. Flow 7: closing over a failed latest reply asks first. Seeded flow 2 |
+| AC-09 | Flow 11: three-way thread merge, member or cause named, live line, never unread. Flows 9, 10 and 12: automatic causes. "Never sent to the end customer" is a structural rule (§8 *Events*, no Telegram call on any change path), not a runtime step |
+| AC-10 | Flow 12: unassign in the deactivation transaction, open and closed, other workspaces untouched, live under unassigned, reactivation does not give back. Seeded flow 3: the race in both lock orders |
+| AC-11 | Flows 4, 5 and 11: guard branches (sign in, not found with no hint, access removed). Flow 5: the caller deactivated mid-request under the share lock. Flow 12: the deactivated member's next action. The same guard fronts every inbox route and the socket (§8 *Authorization*) |
+| AC-12 | Flows 5, 7 and 8: limit branch just before the write, counted per workspace and actor. Flows 9, 10 and 12: automatic entries have no actor and are never counted or refused |
+
+**Flagged by `sequences` (for `design` / `data-model` to reconcile, no ADR written):**
+
+- **No new participants.** Every flow stays within §5's containers: `<message-bus>` is `platform/realtime` (signals) and the pg-boss queue (drain jobs), and `<external-system>` is the Telegram Bot API.
+- **The no-op check runs before the version check (flows 5, 6, 8).** AC-03 asks that a request matching the current state change nothing even if the state moved meanwhile. §4 choice 2 lists the no-op first, and the flows keep that order. `api` should make "unchanged" a success that returns the current state and version, so the screen updates its version.
+- **A member reopen does not evaluate close reasons (flow 8)**, and a member close that is already closed is a no-op even with `confirm` (flow 7). Both follow from AC-03 and AC-05, and no ADR is needed.
+- **Activity-entry indexes for `data-model`.** The flows read activity entries three ways: by (workspace, conversation, position time, id) for the thread half and the latest entry, by (workspace, actor, position time) for the change limit, and by (workspace, id) for the live item. The list and deactivation paths read conversations by (workspace, status, …) and (workspace, assignee, status, …), as §4 already names.
+- **The active-members read (flow 5)** reads memberships by (workspace, state). It is a new `workspaces` app-layer read (§5 `activeMembers`), not a tenancy exception.
+- **Unparseable frames (flow 13)** are dropped and resynced. This is the mitigation §11 already asks `tasks` to verify, drawn here as the flow's dead-letter branch.
+
 ## 7. Deployment view
 
 Nothing changes in the topology. The feature runs in the one Node 26 process (Fastify API, the built web panel, webhook ingress, the live socket and pg-boss workers) against one PostgreSQL 16 database. No queue, no configuration key and no external dependency is added. The change routes, reopen and unassign run inside existing request or job transactions. A second replica needs no change: the version guard and the limit are enforced in the database (row locks, advisory locks), and signals still fan out through `LISTEN/NOTIFY`.
