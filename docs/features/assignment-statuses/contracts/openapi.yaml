@@ -1,0 +1,1330 @@
+# Derived contract for assignment-statuses. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (conversations.status / assignee_account_id / state_version /
+#                           customer_message_seq, conversation_activities) + the existing schema
+#                           (memberships.state, accounts.display_name, replies.state)
+#   error responses       ← sad.md §6 flows 1–13 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The live frame change
+# (item type `activity` on conversation.changed, ADR-0007) is in events.md.
+#
+# THIS IS A DELTA over the shipped shared-inbox contract
+# (../../shared-inbox/contracts/openapi.yaml, live code packages/shared/src/inbox.ts +
+# apps/api/src/modules/inbox/http/routes.ts):
+#   - Every operation and schema here carries `x-delta: added` or `x-delta: changed`. An operation or
+#     schema that is not listed here is unchanged and stays defined in the shared-inbox contract.
+#   - A changed schema is restated in full (its post-feature shape), because the shipped schemas are
+#     closed (`additionalProperties: false` / zod strictObject) and cannot be extended with allOf. Each
+#     restated schema names the fields it adds in `x-delta-fields`.
+#   - Unchanged shared pieces (parameters, the guard responses, Cursor, MemberRef, ContactSummary,
+#     LastItem, ThreadMessage, ThreadReply, ReplyState, ErrorEnvelope) are external $refs, never copies.
+#
+# Deviations from the api-skill defaults are the shared-inbox ones, recorded in api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - no Idempotency-Key header: every change is idempotent by state (already-in-place is a 200 no-op)
+#     and guarded by the echoed state version (ADR-0002)
+#   - listActiveMembers is not paged (tens of rows per workspace, data-model "Reused" indexes)
+openapi: 3.1.0
+
+info:
+  title: assignment-statuses API (delta over shared-inbox)
+  version: 0.1.0
+  description: |
+    Gives the shared inbox an owner and a done-state for every conversation. Each conversation is open
+    or closed and has at most one assignee, an active member of its workspace, or none. With three or
+    more operators, members otherwise pick up the same customer twice, or each assumes the other did,
+    and finished conversations bury the ones that still need work (spec §1).
+
+    The list gets two lenses, status (open by default, or closed) and assignee (all, mine,
+    unassigned), passed as query parameters. Every row and the conversation summary carry the status,
+    the assignee and the conversation's **state version**. Members assign, reassign, unassign, close
+    and reopen from the thread through four action routes. Each change echoes the state version the
+    screen shows, and a close also echoes the **close snapshot** the screen shows. A change made over a
+    state the member has not seen is refused with the current state (`409 CONVERSATION_STATE_CHANGED`),
+    and a close over a waiting, unread or failed-reply condition is refused with every reason
+    (`409 CLOSE_NEEDS_CONFIRMATION`) until the member confirms against the current snapshot. A request
+    that matches the current state is a `200` that records nothing. Every recorded change is one
+    activity entry in the thread and one live `conversation.changed` frame with item type `activity`.
+
+    Every route sits under `/api/workspaces/{workspaceId}/inbox…` behind the workspace-access guard,
+    and both roles have the same rights (spec §1, AC-11). A caller who was never a member gets
+    `404 NOT_FOUND` with no hint, a deactivated member `403 ACCESS_REMOVED`, a signed-out caller
+    `401 UNAUTHENTICATED`. Conversation and activity ids are always looked up with the workspace id.
+    Names are returned as data and shown as plain text only (spec §6.1).
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+security:
+  - SessionCookie: []
+
+tags:
+  - name: inbox
+    description: Module `inbox` (assignment-statuses ADR-0001). It share-locks memberships through `workspaces` and calls the `conversations` change use cases in one transaction
+
+paths:
+  # ───────────────────────── changed operations ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/conversations:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: [query.status, query.assignee, response.lens, "response.items[].status", "response.items[].assignee", "response.items[].state_version"]
+      tags: [inbox]
+      summary: List the workspace's conversations through the status and assignee lenses, or search them (US-01)
+      description: |
+        Flow 4 (AC-01, AC-11). As in shared-inbox, one page newest activity first, keyset-paged by
+        (`last_activity_at`, `id`) descending. An assignee or status change never moves
+        `last_activity_at` and never becomes `last_item` (AC-01, AC-02, AC-05).
+
+        **Added:** two lens parameters.
+        - `status` — `open` (default) or `closed`.
+        - `assignee` — `all` (default), `mine` (assigned to the caller) or `unassigned` (no assignee).
+
+        While a search is present (`q` non-empty after trimming), the status lens is set aside: matches
+        of **both** statuses within the assignee lens are returned, and each row's `status` lets the
+        panel mark closed rows "closed" (AC-01, spec §1 assumption). The page echoes the lenses it
+        answers in `lens` (`lens.status` is null while searching), so the panel drops a late answer
+        for a lens it has already left. An empty `items` is the empty state of that lens (no `q`) or
+        "nothing matches" (`q` set).
+
+        Lenses are part of the page address (`?status=closed&assignee=mine`, defaults omitted); the
+        panel maps them one to one. A cursor is valid only with the lenses and `q` it was issued for.
+      operationId: listConversations
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: status
+          required: false
+          description: Status lens. Ignored while `q` is non-empty after trimming
+          schema: { $ref: "#/components/schemas/StatusLens" }
+        - in: query
+          name: assignee
+          required: false
+          description: Assignee lens. Kept while searching
+          schema: { $ref: "#/components/schemas/AssigneeLens" }
+        - in: query
+          name: q
+          required: false
+          description: Unchanged (shared-inbox). Search text for the contact's full name or username
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page, issued for the same lenses and `q`
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of conversations in the requested lenses
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationPage" }
+              examples:
+                openMine:
+                  summary: "?assignee=mine — open conversations assigned to the caller"
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    lens: { status: open, assignee: mine }
+                    items:
+                      - id: "01920000-0000-7000-8000-0000000000c1"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                        last_activity_at: "2026-10-18T09:58:12Z"
+                        last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                        unread_count: 1
+                        waiting_for_reply: true
+                        status: open
+                        assignee: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                        state_version: 3
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+                searchBothStatuses:
+                  summary: "?q=test&assignee=all — the status lens is set aside, a closed match is returned"
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    lens: { status: null, assignee: all }
+                    items:
+                      - id: "01920000-0000-7000-8000-0000000000c2"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        contact: { id: "01920000-0000-7000-8000-0000000000a2", first_name: "Test", last_name: "User 2", username: null }
+                        last_activity_at: "2026-10-17T16:20:00Z"
+                        last_item: { type: reply, id: "01920000-0000-7000-8000-0000000000f2", body: "Thank you, see you!" }
+                        unread_count: 0
+                        waiting_for_reply: false
+                        status: closed
+                        assignee: null
+                        state_version: 5
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+                emptyLens:
+                  summary: "?status=closed&assignee=unassigned — the lens holds nothing"
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    lens: { status: closed, assignee: unassigned }
+                    items: []
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+        "400":
+          description: A lens value outside its enum, or another schema violation (shared-inbox `ValidationFailed`)
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: VALIDATION_ERROR, message: "querystring/status must be equal to one of the allowed values", details: { field: status } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    get:
+      x-delta: changed
+      x-delta-fields: [response.status, response.assignee, response.state_version, response.close_snapshot]
+      tags: [inbox]
+      summary: Read one conversation — its thread header and list row, now with assignee, status, version and close snapshot (US-01, US-02, US-03)
+      description: |
+        Flows 11 and 13 (AC-02, AC-05, AC-09, AC-11). The thread header and the live row refresh read
+        it. **Changed:** the answer is a `ConversationSummary`, the list row (`Conversation`, which now
+        carries `status`, `assignee` and `state_version`) plus the `close_snapshot`. The panel keeps
+        the `state_version` and the `close_snapshot` it last rendered and sends them with the next
+        change (ADR-0002, ADR-0003). After a live frame the panel re-reads it and re-evaluates whether
+        the row still belongs to the current lenses (only the assignee lens while searching); an open
+        thread stays open (AC-02).
+      operationId: getConversation
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The conversation summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationSummary" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c1"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                last_activity_at: "2026-10-18T09:58:12Z"
+                last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                unread_count: 0
+                waiting_for_reply: true
+                status: open
+                assignee: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state_version: 3
+                close_snapshot:
+                  customer_message_seq: 7
+                  latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent }
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/items:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["response.items[] gains type activity"]
+      tags: [inbox]
+      summary: Read a page of the conversation's history — messages, replies and now activity entries (US-02, US-05)
+      description: |
+        Flow 11 (AC-09, AC-11; ADR-0006). **Changed:** the thread merges three keyset halves by position
+        time: messages (Telegram `sent_at`), replies (`position_at`) and activity entries
+        (`conversation_activities.position_at`, when the change happened). At equal positions the order
+        is message < reply < activity. The opaque cursor now also encodes the kind `activity`; its
+        format stays server-private, and a cursor issued before this feature still decodes.
+
+        Activity items never count as unread and never move `read_through_at` (it stays the newest
+        customer arrival). The panel composes each line from `kind`, `cause` and the names (AC-09):
+        - `assigned` — "<actor> assigned this to <new_assignee>";
+        - `reassigned` — "<actor> reassigned this from <previous_assignee> to <new_assignee>";
+        - `unassigned` — "<actor> unassigned this", or with `cause: member_deactivated`
+          "unassigned — <previous_assignee> was deactivated";
+        - `closed` — "<actor> closed this";
+        - `reopened` — "<actor> reopened this", or with `cause: customer_wrote` "reopened — the customer
+          wrote", or with `cause: reply_not_delivered` "reopened — a reply was not delivered".
+
+        Parameters and the other answers are unchanged (shared-inbox `listThreadItems`).
+      operationId: listThreadItems
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: before
+          required: false
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+        - in: query
+          name: after
+          required: false
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the thread, oldest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                items:
+                  - type: activity
+                    id: "01920000-0000-7000-8000-0000000000d1"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    kind: closed
+                    cause: member
+                    actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    previous_assignee: null
+                    new_assignee: null
+                    position_at: "2026-10-18T09:40:00Z"
+                  - type: message
+                    id: "01920000-0000-7000-8000-0000000000e1"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    kind: text
+                    body: "Do you deliver on Sunday?"
+                    sent_at: "2026-10-18T09:58:11Z"
+                    received_at: "2026-10-18T09:58:12Z"
+                    edited_at: null
+                    attachment: null
+                    location: null
+                    shared_contact: null
+                    poll: null
+                  - type: activity
+                    id: "01920000-0000-7000-8000-0000000000d2"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    kind: reopened
+                    cause: customer_wrote
+                    actor: null
+                    previous_assignee: null
+                    new_assignee: null
+                    position_at: "2026-10-18T09:58:12Z"
+                has_prev: true
+                has_next: false
+                prev_cursor: "MjAyNi0xMC0xOFQwOTo0MDowMFp8YXwwMTky"
+                next_cursor: null
+                read_through_at: "2026-10-18T09:58:12Z"
+                newest_reply_id: "01920000-0000-7000-8000-0000000000f1"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+
+  # ───────────────────────── added operations ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/activities/{activityId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/ActivityId"
+    get:
+      x-delta: added
+      tags: [inbox]
+      summary: Read one activity entry of the thread (US-05)
+      description: |
+        Flows 11 and 13 (AC-09; ADR-0007). After a `conversation.changed` frame whose item is an
+        `activity`, the panel re-reads it (together with `getConversation`) and shows the new line in
+        an open thread. Twin of `getThreadMessage` / `getThreadReply`. Looked up by (workspace,
+        conversation, id); a foreign or unknown id is `404 NOT_FOUND` with no hint.
+      operationId: getThreadActivity
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The activity entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadActivity" }
+              example:
+                type: activity
+                id: "01920000-0000-7000-8000-0000000000d3"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                kind: reassigned
+                cause: member
+                actor: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                previous_assignee: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                new_assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                position_at: "2026-10-18T10:05:00Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ItemNotFound" }
+
+  /api/workspaces/{workspaceId}/inbox/members:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [inbox]
+      summary: List the active members of the workspace, for the assignee chooser (US-02)
+      description: |
+        Flow 5 (AC-04, AC-11; SCR-10). Every active member of this workspace, either role, with the
+        display name — nothing else (no email, no role, no state). Readable by any active member.
+
+        The existing `GET /api/workspaces/{workspaceId}/memberships` (workspace-operators) does **not**
+        serve this: it is owner-only, lists deactivated members too, carries emails and is paged. This
+        read is the `workspaces` app-layer `activeMembers(workspaceId)` behind an inbox route (sad.md
+        §5), not a new tenancy exception.
+
+        Not paged: a workspace has tens of members, read through `memberships_workspace_id_account_id_key`
+        (data-model "Reused"). Ordered by `display_name`, then `account_id`; the panel puts "me" first
+        and adds "unassign" when the conversation has an assignee (SCR-10). The panel re-reads it each
+        time the chooser opens and after an `ASSIGNEE_NOT_ACTIVE` refusal (AC-04).
+      operationId: listActiveMembers
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The active members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ActiveMemberList" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                items:
+                  - { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  - { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/assign:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    post:
+      x-delta: added
+      tags: [inbox]
+      summary: Assign the conversation to a member, or reassign it (US-02)
+      description: |
+        Flows 5, 6 and 3 (AC-02, AC-03, AC-04, AC-10, AC-11, AC-12; ADR-0002, ADR-0005). Assigns an
+        unassigned conversation (activity `assigned`) or reassigns an assigned one (`reassigned`, one
+        change). Open or closed, in any state of the bot; a closed conversation stays closed. Never
+        moves `last_activity_at` or anyone's unread count.
+
+        The checks run in flow 5's order, in one transaction. The first outcome wins, and nothing is
+        recorded on a refusal:
+        1. The caller's and the pick's memberships of this workspace are share-locked. The caller
+           deactivated meanwhile → `403 ACCESS_REMOVED`. The pick is not an active member of **this**
+           workspace (deactivated, or an account of another workspace, or no account) →
+           `400 ASSIGNEE_NOT_ACTIVE`, the same answer in every case, so it never hints at another
+           workspace (AC-04).
+        2. The conversation row is locked by (workspace, id). None → `404 NOT_FOUND`.
+        3. The assignee is already the pick → `200` with `outcome: unchanged`, nothing recorded, even
+           when the version moved (AC-02, AC-03).
+        4. `expected_state_version` differs from the current version → `409 CONVERSATION_STATE_CHANGED`
+           with the current state and the latest change (AC-03). "Go ahead" (SCR-11) repeats the request
+           with `details.conversation.state_version`; a third change in between asks again.
+        5. 60 recorded changes by the caller in this workspace in the last 60 s →
+           `429 CHANGE_LIMIT_REACHED` (AC-12).
+        6. Otherwise → `200` with `outcome: recorded`: the assignee is written, the version raised,
+           one activity entry inserted and one live frame published in the same transaction.
+      operationId: assignConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssignRequest" }
+            examples:
+              assign:
+                value: { assignee_account_id: "01920000-0000-7000-8000-0000000000b2", expected_state_version: 3 }
+              goAhead:
+                summary: '"Go ahead" after CONVERSATION_STATE_CHANGED (SCR-11) — the version from the refusal'
+                value: { assignee_account_id: "01920000-0000-7000-8000-0000000000b2", expected_state_version: 4 }
+      responses:
+        "200":
+          description: Recorded, or unchanged because the conversation already has this assignee
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationStateChange" }
+              examples:
+                recorded:
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    outcome: recorded
+                    conversation:
+                      id: "01920000-0000-7000-8000-0000000000c1"
+                      workspace_id: "01920000-0000-7000-8000-000000000001"
+                      contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                      last_activity_at: "2026-10-18T09:58:12Z"
+                      last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                      unread_count: 0
+                      waiting_for_reply: true
+                      status: open
+                      assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                      state_version: 4
+                      close_snapshot: { customer_message_seq: 7, latest_reply: null }
+                    activity:
+                      type: activity
+                      id: "01920000-0000-7000-8000-0000000000d4"
+                      workspace_id: "01920000-0000-7000-8000-000000000001"
+                      conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                      kind: reassigned
+                      cause: member
+                      actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                      previous_assignee: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                      new_assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                      position_at: "2026-10-18T10:06:00Z"
+                unchanged:
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    outcome: unchanged
+                    conversation:
+                      id: "01920000-0000-7000-8000-0000000000c1"
+                      workspace_id: "01920000-0000-7000-8000-000000000001"
+                      contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                      last_activity_at: "2026-10-18T09:58:12Z"
+                      last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                      unread_count: 0
+                      waiting_for_reply: true
+                      status: open
+                      assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                      state_version: 4
+                      close_snapshot: { customer_message_seq: 7, latest_reply: null }
+                    activity: null
+        "400":
+          description: |
+            One of two refusals. Nothing changes in either.
+            - `ASSIGNEE_NOT_ACTIVE`: the pick is not an active member of this workspace (AC-04). The
+              panel says "a conversation can be assigned only to an active member of this workspace"
+              and reloads `listActiveMembers`.
+            - `VALIDATION_ERROR`: the body does not match the schema.
+          content:
+            application/json:
+              schema:
+                anyOf:
+                  - { $ref: "#/components/schemas/AssigneeNotActiveError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                assigneeNotActive:
+                  value:
+                    error:
+                      code: ASSIGNEE_NOT_ACTIVE
+                      message: "A conversation can be assigned only to an active member of this workspace"
+                      details: { field: assignee_account_id }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/CallerAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+        "409": { $ref: "#/components/responses/ConversationStateChanged" }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/ChangeLimitReached" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/unassign:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    post:
+      x-delta: added
+      tags: [inbox]
+      summary: Unassign the conversation (US-02)
+      description: |
+        Flows 5 and 6 (AC-02, AC-03, AC-11, AC-12). Removes the assignee (activity `unassigned`,
+        `cause: member`). Open or closed; a closed conversation stays closed. The checks run as for
+        `assignConversation` without the pick: caller share-lock (`403 ACCESS_REMOVED`) → row lock
+        (`404`) → already unassigned (`200 unchanged`) → version (`409 CONVERSATION_STATE_CHANGED`) →
+        limit (`429 CHANGE_LIMIT_REACHED`) → recorded.
+      operationId: unassignConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StateChangeRequest" }
+            example: { expected_state_version: 4 }
+      responses:
+        "200":
+          description: Recorded, or unchanged because the conversation has no assignee
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationStateChange" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                outcome: recorded
+                conversation:
+                  id: "01920000-0000-7000-8000-0000000000c1"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                  last_activity_at: "2026-10-18T09:58:12Z"
+                  last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                  unread_count: 0
+                  waiting_for_reply: true
+                  status: open
+                  assignee: null
+                  state_version: 5
+                  close_snapshot: { customer_message_seq: 7, latest_reply: null }
+                activity:
+                  type: activity
+                  id: "01920000-0000-7000-8000-0000000000d5"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                  kind: unassigned
+                  cause: member
+                  actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  previous_assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                  new_assignee: null
+                  position_at: "2026-10-18T10:07:00Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/CallerAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+        "409": { $ref: "#/components/responses/ConversationStateChanged" }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/ChangeLimitReached" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/close:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    post:
+      x-delta: added
+      tags: [inbox]
+      summary: Close the conversation, asking first when it may be early (US-03)
+      description: |
+        Flows 7 and 1 (AC-03, AC-05, AC-06, AC-08, AC-11, AC-12; ADR-0002, ADR-0003). Closes an open
+        conversation and keeps its assignee (activity `closed`). Never moves `last_activity_at` or
+        anyone's unread count.
+
+        The request echoes the `state_version` and the `close_snapshot` the screen shows. Under the
+        conversation row lock the server evaluates the **close reasons** (`CloseReason`):
+        `state_changed` (the version moved), `customer_waiting`, `unread_customer_message` (for this
+        caller: a customer message after the later of their arrival watermark and active-since),
+        `new_customer_message` (the customer message counter grew past the echoed snapshot),
+        `reply_not_delivered` / `reply_not_confirmed` (the latest reply's state).
+
+        The checks run in flow 7's order, in one transaction:
+        1. Caller share-lock → `403 ACCESS_REMOVED`; row lock → `404 NOT_FOUND`.
+        2. Already closed → `200 unchanged`, nothing recorded, also with `confirm_close_reasons`.
+        3. Recorded at once when the version matches and no reason holds (AC-05).
+        4. Recorded with `confirm_close_reasons: true` only when the version still matches **and** the
+           current close snapshot equals `expected_close_snapshot` (both as the refusal returned them).
+        5. Otherwise → `409 CLOSE_NEEDS_CONFIRMATION` with every reason that applies, the stale change
+           if any, and the current summary (version + snapshot). A close is never refused with
+           `CONVERSATION_STATE_CHANGED`: a stale version is one of the reasons, so the member sees one
+           dialog (SCR-12). "Close anyway" resends with `details.conversation.state_version`,
+           `details.conversation.close_snapshot` and `confirm_close_reasons: true`; a customer message
+           or failed reply recorded in between changes the snapshot and asks again (AC-06).
+        6. Just before the write: 60 recorded changes in 60 s → `429 CHANGE_LIMIT_REACHED` (AC-12).
+
+        A customer message captured after the close reopens it (flow 9, events.md).
+      operationId: closeConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CloseRequest" }
+            examples:
+              close:
+                value:
+                  expected_state_version: 5
+                  expected_close_snapshot: { customer_message_seq: 7, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+              closeAnyway:
+                summary: '"Close anyway" (SCR-12) — the version and snapshot from the refusal'
+                value:
+                  expected_state_version: 5
+                  expected_close_snapshot: { customer_message_seq: 8, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+                  confirm_close_reasons: true
+      responses:
+        "200":
+          description: Closed, or unchanged because it was already closed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationStateChange" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                outcome: recorded
+                conversation:
+                  id: "01920000-0000-7000-8000-0000000000c1"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                  last_activity_at: "2026-10-18T10:02:40Z"
+                  last_item: { type: reply, id: "01920000-0000-7000-8000-0000000000f1", body: "Yes, we deliver on Sunday" }
+                  unread_count: 0
+                  waiting_for_reply: false
+                  status: closed
+                  assignee: null
+                  state_version: 6
+                  close_snapshot: { customer_message_seq: 7, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+                activity:
+                  type: activity
+                  id: "01920000-0000-7000-8000-0000000000d6"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                  kind: closed
+                  cause: member
+                  actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  previous_assignee: null
+                  new_assignee: null
+                  position_at: "2026-10-18T10:08:00Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/CallerAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+        "409":
+          description: |
+            `CLOSE_NEEDS_CONFIRMATION` — at least one close reason holds and the close was not confirmed
+            against the current snapshot and version. Nothing changes. `details.reasons` lists every
+            reason that applies (at least one); `details.stale_change` is the latest activity entry when
+            `state_changed` is a reason, else null; `details.newest_unread_message` names the newest
+            customer message this caller has not read when `unread_customer_message` is a reason, else
+            null; `details.conversation` is the current summary whose `state_version` and
+            `close_snapshot` "close anyway" sends back (SCR-12).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CloseNeedsConfirmationError" }
+              examples:
+                waitingAndUnread:
+                  value:
+                    error:
+                      code: CLOSE_NEEDS_CONFIRMATION
+                      message: "The customer may still need an answer — close anyway?"
+                      details:
+                        reasons: [customer_waiting, unread_customer_message, new_customer_message]
+                        stale_change: null
+                        newest_unread_message: { id: "01920000-0000-7000-8000-0000000000e3", received_at: "2026-10-18T10:07:30Z" }
+                        conversation:
+                          id: "01920000-0000-7000-8000-0000000000c1"
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                          last_activity_at: "2026-10-18T10:07:30Z"
+                          last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e3", kind: text, body: "One more question" }
+                          unread_count: 1
+                          waiting_for_reply: true
+                          status: open
+                          assignee: null
+                          state_version: 5
+                          close_snapshot: { customer_message_seq: 8, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+                staleAndFailedReply:
+                  value:
+                    error:
+                      code: CLOSE_NEEDS_CONFIRMATION
+                      message: "This conversation changed and its latest reply was not delivered — close anyway?"
+                      details:
+                        reasons: [state_changed, reply_not_delivered]
+                        stale_change:
+                          type: activity
+                          id: "01920000-0000-7000-8000-0000000000d7"
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                          kind: assigned
+                          cause: member
+                          actor: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                          previous_assignee: null
+                          new_assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                          position_at: "2026-10-18T10:09:00Z"
+                        newest_unread_message: null
+                        conversation:
+                          id: "01920000-0000-7000-8000-0000000000c1"
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                          last_activity_at: "2026-10-18T09:58:12Z"
+                          last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                          unread_count: 0
+                          waiting_for_reply: true
+                          status: open
+                          assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                          state_version: 6
+                          close_snapshot: { customer_message_seq: 7, latest_reply: { id: "01920000-0000-7000-8000-0000000000f4", state: not_delivered } }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/ChangeLimitReached" }
+
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/reopen:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    post:
+      x-delta: added
+      tags: [inbox]
+      summary: Reopen a closed conversation (US-03)
+      description: |
+        Flow 8 (AC-03, AC-05, AC-11, AC-12). Any member reopens a closed conversation; it keeps its
+        assignee (activity `reopened`, `cause: member`) and returns to the open lenses. No close reason
+        is evaluated. The checks: caller share-lock (`403 ACCESS_REMOVED`) → row lock (`404`) → already
+        open — the customer wrote, a reply failed or a teammate reopened — (`200 unchanged`) → version
+        (`409 CONVERSATION_STATE_CHANGED`, SCR-11) → limit (`429 CHANGE_LIMIT_REACHED`) → recorded.
+      operationId: reopenConversation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StateChangeRequest" }
+            example: { expected_state_version: 6 }
+      responses:
+        "200":
+          description: Reopened, or unchanged because it is already open
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ConversationStateChange" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                outcome: unchanged
+                conversation:
+                  id: "01920000-0000-7000-8000-0000000000c1"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                  last_activity_at: "2026-10-18T10:15:00Z"
+                  last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e5", kind: sticker, body: null }
+                  unread_count: 1
+                  waiting_for_reply: true
+                  status: open
+                  assignee: null
+                  state_version: 7
+                  close_snapshot: { customer_message_seq: 8, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+                activity: null
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/CallerAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+        "409": { $ref: "#/components/responses/ConversationStateChanged" }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/ChangeLimitReached" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Restated only because a security requirement names a local scheme. Identical to the shared-inbox / workspace-operators scheme (workspace-operators ADR-0002)
+
+  parameters:
+    ActivityId:
+      in: path
+      name: activityId
+      required: true
+      description: "`conversation_activities.id` (UUIDv7), looked up by (workspace, conversation, id). A malformed, unknown or foreign id answers 404"
+      schema: { type: string, format: uuid }
+
+  responses:
+    CallerAccessRemoved:
+      description: |
+        The caller's membership is deactivated — at the guard, or between the guard and the share lock
+        taken inside the change transaction (flow 5, ADR-0005). Nothing is recorded, and the panel shows
+        the access-removed landing (SCR-07, AC-11). Same envelope as shared-inbox `AccessRemoved`
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+    ConversationStateChanged:
+      description: |
+        `CONVERSATION_STATE_CHANGED` — the conversation's assignee or status changed since the version
+        the screen shows (a teammate, the customer, a failed reply or a deactivation), and the request
+        does not match the current state. Nothing changes. `details.conversation` is the current
+        summary (assignee, status, `state_version`, `close_snapshot`); `details.latest_change` is the
+        conversation's latest activity entry, for "who and how long ago" (SCR-11, AC-03). "Go ahead"
+        repeats the same request with `details.conversation.state_version`; "leave it" takes that
+        version as the one on screen.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ConversationStateChangedError" }
+          example:
+            error:
+              code: CONVERSATION_STATE_CHANGED
+              message: "This conversation changed since you looked"
+              details:
+                latest_change:
+                  type: activity
+                  id: "01920000-0000-7000-8000-0000000000d8"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                  kind: reopened
+                  cause: customer_wrote
+                  actor: null
+                  previous_assignee: null
+                  new_assignee: null
+                  position_at: "2026-10-18T10:15:00Z"
+                conversation:
+                  id: "01920000-0000-7000-8000-0000000000c1"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                  last_activity_at: "2026-10-18T10:15:00Z"
+                  last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e5", kind: sticker, body: null }
+                  unread_count: 1
+                  waiting_for_reply: true
+                  status: open
+                  assignee: null
+                  state_version: 7
+                  close_snapshot: { customer_message_seq: 8, latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent } }
+    ChangeLimitReached:
+      description: |
+        `CHANGE_LIMIT_REACHED` — the caller recorded 60 assignment or status changes in this workspace
+        within the last 60 s (AC-12). Only recorded changes count (a reassignment is one; a refused,
+        declined or unchanged request is none); automatic changes are never counted or refused; the
+        limit is per workspace. Nothing changes. `details.retry_at` is when the oldest counted change
+        (`conversation_activities.created_at`) leaves the window; `Retry-After` gives the same time in
+        whole seconds. Mirrors shared-inbox `ReplyLimitReached`
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1, maximum: 60 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ChangeLimitReachedError" }
+          example:
+            error:
+              code: CHANGE_LIMIT_REACHED
+              message: "Changes are limited to 60 per minute — you can continue in 14 seconds"
+              details: { limit: 60, window_seconds: 60, retry_at: "2026-10-18T10:21:14Z" }
+
+  schemas:
+    # ───────── lenses ─────────
+    StatusLens:
+      x-delta: added
+      type: string
+      description: "Status lens of the list (AC-01). Default `open`. Matches `conversations.status`"
+      enum: [open, closed]
+      default: open
+
+    AssigneeLens:
+      x-delta: added
+      type: string
+      description: |
+        Assignee lens of the list (AC-01). Default `all`.
+        - `all`: any assignee or none.
+        - `mine`: `assignee_account_id` = the caller.
+        - `unassigned`: `assignee_account_id IS NULL`.
+      enum: [all, mine, unassigned]
+      default: all
+
+    ConversationStatus:
+      x-delta: added
+      type: string
+      description: "`conversations.status` (CHECK `open`, `closed`). Capture creates a conversation `open`"
+      enum: [open, closed]
+
+    StateVersion:
+      x-delta: added
+      type: integer
+      description: |
+        `conversations.state_version` (ADR-0002). Raised by one with every assignee or status change,
+        by a member or automatic. The panel echoes the version it shows with each change
+      minimum: 0
+      maximum: 2147483647
+
+    CloseSnapshot:
+      x-delta: added
+      type: object
+      description: |
+        The close snapshot (ADR-0003), derived, not stored: the customer message counter plus the latest
+        reply's id and state. The screen sends the one it shows with every close, and "close anyway"
+        sends back the one from the refusal. Compared field by field
+      required: [customer_message_seq, latest_reply]
+      additionalProperties: false
+      properties:
+        customer_message_seq:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: "`conversations.customer_message_seq`, raised by capture under the row lock for every newly captured customer message"
+        latest_reply:
+          description: The conversation's latest reply in thread order (`replies_conversation_id_position_at_idx`, backward, limit 1), any author and state; null when it has none
+          anyOf:
+            - type: object
+              required: [id, state]
+              additionalProperties: false
+              properties:
+                id: { type: string, format: uuid }
+                state: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ReplyState" }
+            - { type: "null" }
+
+    # ───────── list ─────────
+    ConversationPage:
+      x-delta: changed
+      x-delta-fields: [lens]
+      type: object
+      required: [workspace_id, lens, items, has_prev, has_next, next_cursor]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        lens:
+          type: object
+          description: The lenses this page answers (flow 4 "tagged with the workspace id and the lenses it answers"). `status` is null while searching, because the status lens is set aside
+          required: [status, assignee]
+          additionalProperties: false
+          properties:
+            status:
+              anyOf: [{ $ref: "#/components/schemas/StatusLens" }, { type: "null" }]
+            assignee: { $ref: "#/components/schemas/AssigneeLens" }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Conversation" }
+        has_prev: { type: boolean, description: True when `after` was given }
+        has_next: { type: boolean }
+        next_cursor:
+          anyOf: [{ $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }, { type: "null" }]
+
+    Conversation:
+      x-delta: changed
+      x-delta-fields: [status, assignee, state_version]
+      type: object
+      description: One list row. The fields up to `waiting_for_reply` are unchanged from shared-inbox
+      required: [id, workspace_id, contact, last_activity_at, last_item, unread_count, waiting_for_reply, status, assignee, state_version]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        contact: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ContactSummary" }
+        last_activity_at:
+          type: string
+          format: date-time
+          description: Unchanged. An assignee or status change never moves it (AC-01)
+        last_item:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/LastItem"
+        unread_count: { type: integer, minimum: 0, description: Unchanged. Activity entries never count }
+        waiting_for_reply: { type: boolean, description: Unchanged. Still derived; one of the close reasons }
+        status: { $ref: "#/components/schemas/ConversationStatus" }
+        assignee:
+          description: "`conversations.assignee_account_id` with the display name through the `workspaces` app layer; null when unassigned. Always an active member of this workspace (ADR-0005)"
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        state_version: { $ref: "#/components/schemas/StateVersion" }
+
+    ConversationSummary:
+      x-delta: added
+      type: object
+      description: |
+        The conversation as the thread header shows it: every `Conversation` field plus the
+        `close_snapshot`. Answer of `getConversation` (which answered `Conversation` before) and the
+        `conversation` of every change answer and change refusal
+      required: [id, workspace_id, contact, last_activity_at, last_item, unread_count, waiting_for_reply, status, assignee, state_version, close_snapshot]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        contact: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ContactSummary" }
+        last_activity_at: { type: string, format: date-time }
+        last_item: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/LastItem" }
+        unread_count: { type: integer, minimum: 0 }
+        waiting_for_reply: { type: boolean }
+        status: { $ref: "#/components/schemas/ConversationStatus" }
+        assignee:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        state_version: { $ref: "#/components/schemas/StateVersion" }
+        close_snapshot: { $ref: "#/components/schemas/CloseSnapshot" }
+
+    # ───────── thread ─────────
+    ThreadPage:
+      x-delta: changed
+      x-delta-fields: ["items[] gains ThreadActivity"]
+      type: object
+      description: Unchanged from shared-inbox except that `items` may hold activity entries
+      required: [workspace_id, conversation_id, items, has_prev, has_next, prev_cursor, next_cursor, read_through_at]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        items:
+          type: array
+          description: Oldest first; ties ordered message, reply, activity
+          items: { $ref: "#/components/schemas/ThreadItem" }
+        has_prev: { type: boolean }
+        has_next: { type: boolean }
+        prev_cursor:
+          anyOf: [{ $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }, { type: "null" }]
+        next_cursor:
+          anyOf: [{ $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }, { type: "null" }]
+        read_through_at:
+          type: [string, "null"]
+          format: date-time
+          description: Unchanged — the newest customer arrival; activity entries never move it
+        newest_reply_id:
+          type: [string, "null"]
+          format: uuid
+          description: Unchanged (shared-inbox)
+
+    ThreadItem:
+      x-delta: changed
+      x-delta-fields: [activity]
+      oneOf:
+        - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadMessage" }
+        - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadReply" }
+        - { $ref: "#/components/schemas/ThreadActivity" }
+      discriminator:
+        propertyName: type
+        mapping:
+          message: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadMessage"
+          reply: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadReply"
+          activity: "#/components/schemas/ThreadActivity"
+
+    ActivityKind:
+      x-delta: added
+      type: string
+      description: "`conversation_activities.kind` (CHECK). The line the thread renders (AC-02, AC-05, AC-09)"
+      enum: [assigned, reassigned, unassigned, closed, reopened]
+
+    ActivityCause:
+      x-delta: added
+      type: string
+      description: |
+        `conversation_activities.cause` (CHECK + kind↔cause CHECK).
+        - `member`: a member's change; `actor` is set. The only cause of `assigned`, `reassigned`, `closed`.
+        - `customer_wrote`: a newly captured customer message reopened it (`reopened` only, AC-07).
+        - `reply_not_delivered`: a reply ended "not delivered" or "not confirmed" (`reopened` only, AC-08).
+        - `member_deactivated`: the assignee was deactivated (`unassigned` only, AC-10).
+      enum: [member, customer_wrote, reply_not_delivered, member_deactivated]
+
+    ThreadActivity:
+      x-delta: added
+      type: object
+      description: |
+        One activity entry (`conversation_activities`, ADR-0006): a recorded assignee or status change.
+        Never sent to the end customer, never unread, never the row's `last_item` (AC-09). Names are
+        resolved at read time through the `workspaces` app layer, kept after a deactivation, and shown
+        as plain text. The pairs follow the data-model CHECKs:
+        - `actor` non-null ⇔ `cause` = `member`;
+        - `assigned` → (`previous_assignee` null, `new_assignee` set); `reassigned` → (set, set,
+          different); `unassigned` → (set, null); `closed` / `reopened` → (null, null).
+      required: [type, id, workspace_id, conversation_id, kind, cause, actor, previous_assignee, new_assignee, position_at]
+      additionalProperties: false
+      properties:
+        type: { const: activity }
+        id: { type: string, format: uuid, description: "`conversation_activities.id`, also the live frame's item id (ADR-0007)" }
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ActivityKind" }
+        cause: { $ref: "#/components/schemas/ActivityCause" }
+        actor:
+          description: "`actor_account_id` + display name; null for an automatic change"
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        previous_assignee:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        new_assignee:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        position_at:
+          type: string
+          format: date-time
+          description: "`conversation_activities.position_at`: when the change happened, the thread position and the line's time. A customer reopen sits at the message's arrival (AC-07)"
+
+    # ───────── members ─────────
+    ActiveMemberList:
+      x-delta: added
+      type: object
+      required: [workspace_id, items]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        items:
+          type: array
+          description: Active members only (`memberships.state = 'active'`), ordered by display name, then account id. Not paged
+          items: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+
+    # ───────── requests ─────────
+    StateChangeRequest:
+      x-delta: added
+      type: object
+      description: Body of `unassignConversation` and `reopenConversation`
+      required: [expected_state_version]
+      additionalProperties: false
+      properties:
+        expected_state_version:
+          $ref: "#/components/schemas/StateVersion"
+          description: The version the screen shows (summary or row), or the one from a `CONVERSATION_STATE_CHANGED` refusal after "go ahead"
+
+    AssignRequest:
+      x-delta: added
+      type: object
+      required: [assignee_account_id, expected_state_version]
+      additionalProperties: false
+      properties:
+        assignee_account_id:
+          type: string
+          format: uuid
+          description: The pick from `listActiveMembers` (the caller for "me"). Must be an active member of this workspace at record time, else `ASSIGNEE_NOT_ACTIVE`. Unassigning is `unassignConversation`, never a null here
+        expected_state_version: { $ref: "#/components/schemas/StateVersion" }
+
+    CloseRequest:
+      x-delta: added
+      type: object
+      required: [expected_state_version, expected_close_snapshot]
+      additionalProperties: false
+      properties:
+        expected_state_version: { $ref: "#/components/schemas/StateVersion" }
+        expected_close_snapshot: { $ref: "#/components/schemas/CloseSnapshot" }
+        confirm_close_reasons:
+          type: boolean
+          default: false
+          description: '"Close anyway" on SCR-12. Accepted only together with the version and snapshot that are still current; it never skips the change limit'
+
+    # ───────── answers ─────────
+    ConversationStateChange:
+      x-delta: added
+      type: object
+      description: |
+        The answer of every change. `outcome: recorded` — the change was written with exactly one
+        activity entry (`activity` set). `outcome: unchanged` — the conversation was already in the
+        requested state; nothing recorded, not counted toward the limit, `activity` null (AC-02, AC-03).
+        In both, `conversation` is the current summary, so the screen takes its version and snapshot
+      required: [workspace_id, outcome, conversation, activity]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        outcome: { type: string, enum: [recorded, unchanged] }
+        conversation: { $ref: "#/components/schemas/ConversationSummary" }
+        activity:
+          anyOf: [{ $ref: "#/components/schemas/ThreadActivity" }, { type: "null" }]
+
+    # ───────── errors (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      x-delta: changed
+      x-delta-fields: [CONVERSATION_STATE_CHANGED, CLOSE_NEEDS_CONFIRMATION, ASSIGNEE_NOT_ACTIVE, CHANGE_LIMIT_REACHED]
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts — the codes this delta uses.
+
+        Existing: VALIDATION_ERROR 400, UNAUTHENTICATED 401, ACCESS_REMOVED 403, NOT_FOUND 404,
+        PAYLOAD_TOO_LARGE 413, UNSUPPORTED_MEDIA_TYPE 415, INTERNAL_ERROR 500.
+
+        Added by this feature: CONVERSATION_STATE_CHANGED 409, CLOSE_NEEDS_CONFIRMATION 409,
+        ASSIGNEE_NOT_ACTIVE 400, CHANGE_LIMIT_REACHED 429.
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - CONVERSATION_STATE_CHANGED
+        - CLOSE_NEEDS_CONFIRMATION
+        - ASSIGNEE_NOT_ACTIVE
+        - CHANGE_LIMIT_REACHED
+
+    CloseReason:
+      x-delta: added
+      type: string
+      description: |
+        Why a close may be early (ADR-0003, AC-03, AC-06, AC-08), evaluated under the row lock.
+        - `state_changed`: the version moved since `expected_state_version`.
+        - `customer_waiting`: `last_reply_sent_at IS NULL OR last_message_received_at > last_reply_sent_at`.
+        - `unread_customer_message`: a customer message with `received_at` after the later of the
+          caller's `read_marks.read_through_at` and `memberships.active_since`.
+        - `new_customer_message`: `customer_message_seq` grew past `expected_close_snapshot`.
+        - `reply_not_delivered` / `reply_not_confirmed`: the latest reply's `state`.
+      enum: [state_changed, customer_waiting, unread_customer_message, new_customer_message, reply_not_delivered, reply_not_confirmed]
+
+    ConversationStateChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: CONVERSATION_STATE_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [conversation, latest_change]
+              additionalProperties: false
+              properties:
+                conversation: { $ref: "#/components/schemas/ConversationSummary" }
+                latest_change:
+                  description: The conversation's latest activity entry (`conversation_activities_conversation_id_position_at_idx`, backward, limit 1) — who or what changed it and when. Null only if none exists (a version echoed wrong for a never-changed conversation)
+                  anyOf: [{ $ref: "#/components/schemas/ThreadActivity" }, { type: "null" }]
+
+    CloseNeedsConfirmationError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: CLOSE_NEEDS_CONFIRMATION }
+            message: { type: string }
+            details:
+              type: object
+              required: [reasons, stale_change, newest_unread_message, conversation]
+              additionalProperties: false
+              properties:
+                reasons:
+                  type: array
+                  minItems: 1
+                  uniqueItems: true
+                  items: { $ref: "#/components/schemas/CloseReason" }
+                stale_change:
+                  description: The latest activity entry when `state_changed` is a reason, else null
+                  anyOf: [{ $ref: "#/components/schemas/ThreadActivity" }, { type: "null" }]
+                newest_unread_message:
+                  description: The newest customer message this caller has not read when `unread_customer_message` is a reason, else null. The panel can read it with `getThreadMessage`
+                  anyOf:
+                    - type: object
+                      required: [id, received_at]
+                      additionalProperties: false
+                      properties:
+                        id: { type: string, format: uuid }
+                        received_at: { type: string, format: date-time }
+                    - { type: "null" }
+                conversation: { $ref: "#/components/schemas/ConversationSummary" }
+
+    AssigneeNotActiveError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: ASSIGNEE_NOT_ACTIVE }
+            message: { type: string }
+            details:
+              type: object
+              required: [field]
+              additionalProperties: false
+              properties:
+                field: { const: assignee_account_id }
+
+    ChangeLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: CHANGE_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, window_seconds, retry_at]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 60 }
+                window_seconds: { type: integer, const: 60 }
+                retry_at:
+                  type: string
+                  format: date-time
+                  description: When the oldest counted change (`conversation_activities.created_at`) leaves the 60 s window
