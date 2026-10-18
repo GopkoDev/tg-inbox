@@ -5,15 +5,16 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { cn } from '@/shared/lib/utils';
+import { AssigneeChooser } from './AssigneeChooser';
 import { useInboxStore, type ChangeResult } from './store';
 
-export type ActionName = 'close' | 'reopen';
+export type ActionName = 'close' | 'reopen' | 'assign' | 'unassign';
 
 const secondsLeft = (retryAt: string) =>
   Math.max(0, Math.ceil((new Date(retryAt).getTime() - Date.now()) / 1000));
 
 /**
- * SCR-02 actions bar: status badge, assignee button (opens SCR-10 through `onChooseAssignee`),
+ * SCR-02 actions bar: status badge, assignee button (opens SCR-10, the AssigneeChooser),
  * Close / Reopen. One change is in flight per conversation: every control is locked meanwhile.
  * Refusals that open a dialog (stale, needs confirmation) are handed to `onResult`.
  */
@@ -21,15 +22,14 @@ export function ConversationActions({
   workspaceId,
   conversationId,
   compact = false,
-  onChooseAssignee,
   onResult,
 }: {
   workspaceId: string;
   conversationId: string;
   /** Phone: its own row, the assignee button takes the free width. */
   compact?: boolean;
-  onChooseAssignee?: () => void;
-  onResult?: (action: ActionName, result: ChangeResult) => void;
+  /** `pick` is the chosen assignee id (null = unassign) for assign / unassign: SCR-11 keeps it. */
+  onResult?: (action: ActionName, result: ChangeResult, pick?: string | null) => void;
 }) {
   const summary = useInboxStore((s) =>
     s.thread?.conversationId === conversationId ? (s.thread.summary ?? null) : null,
@@ -68,20 +68,26 @@ export function ConversationActions({
   const locked = pending !== null || limited;
   const closed = summary.status === 'closed';
 
-  const run = async (action: ActionName) => {
+  const run = async (action: ActionName, pick: string | null = null): Promise<ChangeResult> => {
     setPending(action);
     setFailed(false);
     const store = useInboxStore.getState();
     const result =
       action === 'close'
         ? await store.close(workspaceId, conversationId)
-        : await store.reopen(workspaceId, conversationId);
+        : action === 'reopen'
+          ? await store.reopen(workspaceId, conversationId)
+          : action === 'assign' && pick
+            ? await store.assign(workspaceId, conversationId, pick)
+            : await store.unassign(workspaceId, conversationId);
     setPending(null);
     if (result.kind === 'limited') {
       setRetryAt(result.retryAt);
       setSeconds(secondsLeft(result.retryAt));
     } else if (result.kind === 'failed') setFailed(true);
-    onResult?.(action, result);
+    if (action === 'assign' || action === 'unassign') onResult?.(action, result, pick);
+    else onResult?.(action, result);
+    return result;
   };
 
   const spinner = <Loader2 data-testid="action-spinner" className="animate-spin" aria-hidden />;
@@ -91,18 +97,23 @@ export function ConversationActions({
     <div data-testid="conversation-actions" className={wrap}>
       <div className={cn('flex items-center gap-2', compact && 'w-full')}>
         <Badge variant={closed ? 'secondary' : 'outline'}>{closed ? 'Closed' : 'Open'}</Badge>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={locked}
-          onClick={onChooseAssignee}
-          className={cn('min-w-0 justify-between', compact && 'flex-1')}
+        <AssigneeChooser
+          workspaceId={workspaceId}
+          assigneeId={summary.assignee?.account_id ?? null}
+          onPick={(pick) => run(pick ? 'assign' : 'unassign', pick)}
         >
-          <UserRound aria-hidden />
-          <span className="truncate">{assignee}</span>
-          <ChevronDown aria-hidden />
-        </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={locked}
+            className={cn('min-w-0 justify-between', compact && 'flex-1')}
+          >
+            <UserRound aria-hidden />
+            <span className="truncate">{assignee}</span>
+            <ChevronDown aria-hidden />
+          </Button>
+        </AssigneeChooser>
         {closed ? (
           <Button
             type="button"

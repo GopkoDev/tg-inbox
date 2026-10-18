@@ -97,14 +97,6 @@ describe('SCR-02 actions bar', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  it('the assignee button asks its owner to open the chooser', () => {
-    show(summary());
-    const onChooseAssignee = vi.fn();
-    renderBar({ onChooseAssignee });
-    fireEvent.click(screen.getByRole('button', { name: /Unassigned/ }));
-    expect(onChooseAssignee).toHaveBeenCalled();
-  });
-
   it('pending: the used control spins and all three are disabled', async () => {
     show(summary());
     let finish: (v: unknown) => void = () => {};
