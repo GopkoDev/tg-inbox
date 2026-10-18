@@ -391,21 +391,23 @@ No production target is chosen yet (architecture map: deferred until the first p
 
 ## 8. Crosscutting concepts
 
-<!-- 🎯 Why: CROSS-CUTTING PATTERNS spanning several modules: logging, errors, authorization, ID
-     strategy, events, caching. ⭐ The second-densest section. A pattern inside one module is NOT
-     here; a project-wide convention belongs in the convention file.
-     📋 Write: a table — concept / convention / where defined. One row per concept.
-     📌 e.g. «sortable time-based IDs generated in the app layer» as a default from the convention file. -->
-
 | Concept | Convention | Where defined |
 |---|---|---|
-| Logging | <e.g. structured, fields `module=<name>`> | <convention file §X or here> |
-| Authentication | <e.g. token-based via middleware> | <convention file §X> |
-| Error handling | <e.g. domain sentinel → ports error mapping → JSON> | <convention file §X> |
-| ID strategy | <e.g. sortable time-based ID in the app layer> | <convention file §X> |
-| Internationalisation | <e.g. N/A, single language> | — |
-| Observability | <e.g. tracing on the request boundary> | — |
-| Events | <module-specific patterns, if any> | <here> |
+| Logging | pino via `platform/logger.ts`; existing redactions kept; reply text, message text and captions, file names, Telegram file paths and download URLs, the token and NOTIFY payloads are never logged — delivery and media logs carry ids, kinds, states and durations only; gateway errors are mapped to typed outcomes without copying Telegram's text | `CLAUDE.md` + here |
+| Authentication | Every inbox route and the socket upgrade use the session cookie resolved by `auth`; the socket also requires `Origin` = the panel's origin (no cross-site socket hijacking); automatic live refetches send the background-request marker so they do not extend the idle session | workspace-operators ADR-0002 |
+| Authorization | Everything under `/api/workspaces/:workspaceId/…` behind the `workspaces` guard — another workspace's account → not found with no hint, deactivated → `ACCESS_REMOVED`, signed out → sign in (AC-08); both roles have the same inbox rights; open sockets re-validated every 5 s and closed at once on a deactivation signal (AC-09); the delivery worker re-checks the author's active membership before every attempt | workspace-operators ADR-0003, [ADR-0002](adr/0002-push-change-signals-over-a-per-tab-workspace-bound-websocket-and-refetch-through-the-reads.md) |
+| Tenancy | Every new repository method takes `workspaceId`; conversation, message and reply ids from the URL are always looked up together with the workspace id, so a foreign id is "not found"; signals carry the workspace id and the hub dispatches only to that workspace's sockets; no new controlled exception | `CLAUDE.md`, §5 |
+| Secrets | The bot token is decrypted only in `bots` infra for `sendMessage`, `getFile` and the file download; the download URL never leaves the gateway; media responses are bytes from our origin, never a redirect | bot-connection ADR-0006, [ADR-0006](adr/0006-stream-customer-media-through-a-guarded-api-route-addressed-by-message.md) |
+| Untrusted content | Customer text, captions, names, file names, poll and venue text and reply texts are rendered as plain text (React escaping, no HTML rendering, links only as plain-text map links built by us from coordinates); replies go to Telegram without `parse_mode`; media served with an allow-listed content type, `nosniff`, a sandboxing CSP and `attachment` for documents | spec §6.1, ADR-0006 |
+| Error handling | `AppError` subclasses with codes in `packages/shared/src/errors.ts`; new refusals: reply invalid (`ValidationError`), teammate replied (`ConflictError` with who / when), duplicate-risk confirmation required (`ConflictError`), reply limit (`TooManyRequestsError` with the time sending resumes), bot cannot carry replies (`ConflictError`); delivery outcomes are reply states, not HTTP errors; media unavailability is a typed answer the thread renders | `CLAUDE.md` + here |
+| ID strategy | UUIDv7 from `newId()` for replies, attempts and read marks; the client reply key is a client-generated UUID stored beside the id (unique per conversation), never used as the primary key; Telegram message ids of sent replies stored as `bigint` | `CLAUDE.md` |
+| Time and order | Server clock (UTC) for arrival, reply position, sent and attempt times; customer messages keep Telegram's send time for their place in the thread; unread counts by arrival, the thread by position ([ADR-0005](adr/0005-track-read-state-as-a-per-member-arrival-watermark-per-conversation.md), [ADR-0008](adr/0008-store-replies-in-their-own-table-and-page-the-thread-by-position-time.md)) | here |
+| Telegram calls | Every call through `telegramApi(token)` behind the `bots` gateway; `sendMessage` timeout 10 s, `getFile` 5 s, download streamed with a 30 s idle timeout; outcomes: accepted / refused permanently (blocked, account gone, chat not found) / bot unauthorised / not accepted (429 with `retry_after`, 5xx, connection refused) / unknown (timeout or broken connection after the request was written) | `CLAUDE.md` + [ADR-0004](adr/0004-send-replies-at-most-once-through-a-per-conversation-delivery-queue-with-an-in-flight-mark.md) |
+| Jobs | `inbox.deliver-replies` (pg-boss, `stately`, singleton key = conversation id, `retryLimit` 0 — the drain schedules its own back-off; an expired active job is re-run by pg-boss and resolves any "in flight" attempt as "not confirmed") | `CLAUDE.md` + ADR-0004 |
+| Events | `platform/realtime`: one NOTIFY channel; signals `conversation.changed` (conversation id, item kind + id, change: created / edited / state / read — read only to the member's own sockets), `bot.changed`, `membership.deactivated`; published inside the writing transaction; payload ids only | [ADR-0003](adr/0003-fan-out-live-signals-through-postgres-listen-notify-published-in-the-writing-transaction.md) |
+| Rate limiting | Per-member 30 initiated sends per rolling 60 s per workspace, counted from the reply attempts log under an advisory lock on (workspace, member); automatic retries excluded | §4 |
+| Internationalisation | The panel's UI language is unchanged (English); search folds case with Postgres' Unicode-aware lower-casing, so Cyrillic and Latin names match case-insensitively; texts are stored and sent as received | — |
+| Observability | See §7 metrics; per-reply attempt rows double as the delivery log the spec's duplicate reconciliation reads | §7 |
 
 ## 9. Architecture decisions
 
