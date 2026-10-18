@@ -411,17 +411,18 @@ No production target is chosen yet (architecture map: deferred until the first p
 
 ## 9. Architecture decisions
 
-<!-- 🎯 Why: the REVERSE INDEX onto the adr/ folder. `ls adr/` gives the files; §9 gives the
-     semantics — why they exist, which SAD section they attach to, what status.
-     📋 Write: a 4-column table, one row per ADR. Mixed status is fine.
-     📌 e.g. «0001 | Store content as a table of typed blocks | Accepted | §4». -->
-
 | # | Title | Status | Section |
 |---|---|---|---|
-| <NNNN> | <imperative — e.g. "Use a sliding-window counter for rate limiting"> | Accepted | §<N> |
-| <NNNN> | <imperative — e.g. "Co-locate the worker in the API process"> | Accepted | §<N> |
+| [0001](adr/0001-build-the-inbox-as-api-routes-a-live-socket-and-in-process-delivery-jobs-behind-the-existing-spa.md) | Build the inbox as API routes, a live socket and in-process delivery jobs behind the existing SPA | Accepted | §4 |
+| [0002](adr/0002-push-change-signals-over-a-per-tab-workspace-bound-websocket-and-refetch-through-the-reads.md) | Push change signals over a per-tab, workspace-bound WebSocket and refetch through the reads | Accepted | §4 |
+| [0003](adr/0003-fan-out-live-signals-through-postgres-listen-notify-published-in-the-writing-transaction.md) | Fan out live signals through Postgres LISTEN/NOTIFY, published in the writing transaction | Accepted | §4 |
+| [0004](adr/0004-send-replies-at-most-once-through-a-per-conversation-delivery-queue-with-an-in-flight-mark.md) | Send replies at most once through a per-conversation delivery queue with an in-flight mark | Accepted | §4 |
+| [0005](adr/0005-track-read-state-as-a-per-member-arrival-watermark-per-conversation.md) | Track read state as a per-member arrival watermark per conversation | Accepted | §4 |
+| [0006](adr/0006-stream-customer-media-through-a-guarded-api-route-addressed-by-message.md) | Stream customer media through a guarded API route, addressed by message | Accepted | §4 |
+| [0007](adr/0007-add-an-inbox-module-that-orchestrates-conversations-contacts-bots-and-workspaces.md) | Add an inbox module that orchestrates conversations, contacts, bots and workspaces | Accepted | §5 |
+| [0008](adr/0008-store-replies-in-their-own-table-and-page-the-thread-by-position-time.md) | Store replies in their own table and page the thread by position time | Accepted | §5 |
 
-ADR files live under `docs/features/<slug>/adr/NNNN-<title>.md`.
+ADR files live under `docs/features/shared-inbox/adr/NNNN-<title>.md`. Repo-wide decisions this design builds on: [`docs/adr/`](../../adr/) 0001, 0002, 0004; workspace-operators ADR-0002…0004; bot-connection ADR-0004…0008; ui-redesign ADR-0001…0002.
 
 ## 10. Quality requirements
 
