@@ -88,19 +88,19 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 **Given** an operator of "Acme Flowers" whose workspace has 30 conversations — some assigned to them, some to a teammate, some unassigned, some closed
 **When** they open the inbox
-**Then** the list shows the open conversations of every assignee, newest activity first as before, each row showing its assignee's name (or "unassigned"); choosing "mine" shows only open conversations assigned to them, "unassigned" only open conversations with no assignee, and "closed" the closed conversations in the chosen assignee lens; searching finds matching conversations in both statuses, each row marked "closed" when it is; when a lens holds nothing the inbox says so; the chosen lenses survive a reload in that browser tab; a business owner sees and does the same
+**Then** the list shows the open conversations of every assignee, newest activity first as before, each row showing its assignee's name (or "unassigned") and keeping its last message and time — an assignee or status change never becomes a row's preview or time; choosing "mine" shows only open conversations assigned to them, "unassigned" only open conversations with no assignee, and "closed" the closed conversations in the chosen assignee lens, also newest activity first; while searching, the status lens is set aside and matches of both statuses are shown within the chosen assignee lens, each closed row marked "closed"; when a lens holds nothing the inbox says so; the chosen lenses are part of the page's address, so a reload, the back button or a saved link opens the same lenses, and switching to another workspace starts again at open · all; a business owner sees and does the same
 
 ### AC-02 (US-02) — happy path
 
-**Given** an operator in an open conversation of "Acme Flowers" that is unassigned
-**When** they assign it to themselves — or to a teammate who is an active member of "Acme Flowers"
-**Then** the conversation shows that assignee in its header and in the list for the whole team without reloading (within the live-update target of §6), it moves into the assignee's "mine" and out of "unassigned", the thread records "<member> assigned this to <assignee>" with the time, and the conversation keeps its place in the activity order — assigning does not count as activity; assigning and unassigning work whether or not the bot is connected
+**Given** an operator with a conversation of "Acme Flowers" open in its thread (assignee, status and their changes are made from the thread; list rows only show them)
+**When** they assign it to themselves or to a teammate who is an active member of "Acme Flowers", reassign it from one member to another, or unassign it
+**Then** the conversation shows the new assignee in its header and in the list for the whole team without reloading (within the live-update target of §6), it moves between the "mine" and "unassigned" lenses accordingly, the thread records one line — "<member> assigned this to <assignee>", "<member> reassigned this from <previous> to <assignee>" or "<member> unassigned this" — with the time, and the conversation keeps its place in the activity order (assigning does not count as activity); a closed conversation can be assigned or unassigned too and stays closed; a teammate reading the thread while it drops out of their current lens keeps it open with the new assignee shown, and only its row leaves their list; choosing the assignee it already has changes nothing and records nothing; assignment, closing and reopening work in every state of the bot
 
 ### AC-03 (US-02) — domain invariant
 
-**Given** an operator of "Acme Flowers" looking at a conversation they see as unassigned, or assigned to themselves
-**When** a teammate has assigned it to someone else in the meantime, and the operator now assigns it to themselves, unassigns it or closes it
-**Then** before anything changes the inbox shows who took the conversation and how long ago, and asks whether to take it over (or go ahead) or leave it; the change happens only if the operator confirms — a conversation has at most one assignee, and two members never take one conversation by accident
+**Given** an operator of "Acme Flowers" looking at a conversation with the assignee and status they last saw
+**When** its assignee or status has changed since then — by a teammate or automatically (reopened by the customer, unassigned by a deactivation) — and the operator now assigns, reassigns, unassigns, closes or reopens it; including when two members act at the same moment, where one change is recorded first and the other member counts as having seen the old state
+**Then** nothing changes yet: the inbox shows the current assignee and status, who changed them and how long ago, and asks whether to go ahead (take it over, close anyway…) or leave it; the change happens only if the operator confirms; when the conversation is already in the state the operator asked for, nothing changes, no line is recorded and the inbox simply shows it — a conversation has at most one assignee, and two members never take or close one conversation by accident
 
 ### AC-04 (US-02) — error
 
@@ -118,19 +118,19 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 **Given** an operator of "Acme Flowers" about to close a conversation
 **When** its customer is still waiting for a reply, or a customer message arrived after the operator's own arrival watermark (they have not read it — a thread in a background tab marks nothing read)
-**Then** before closing the inbox shows that the customer is waiting (and the newest message they have not seen), and asks whether to close anyway or keep it open; the conversation is closed only if the operator confirms — a customer is never put out of sight by a close made over a message the closer had not read
+**Then** before closing the inbox shows why — the customer is waiting for a reply, the newest message the operator has not read, or the conversation's latest reply was "not delivered" / "not confirmed" — and asks whether to close anyway or keep it open; the conversation is closed only if the operator confirms; the condition is checked again at the moment the close is recorded, so a customer message recorded between the question and the close asks again — a customer is never put out of sight by a close made over a message the closer had not read; a customer message recorded after the close reopens it (AC-07)
 
 ### AC-07 (US-04) — cross-context
 
 **Given** a closed conversation of "Acme Flowers" assigned to an operator
 **When** its end customer sends a new message to the business bot
-**Then** the conversation opens again and returns to the open lenses for the whole team without reloading, with the same assignee if they are still an active member of "Acme Flowers" (otherwise unassigned), the thread records "reopened — the customer wrote" with the time, and the message counts as unread and as waiting for a reply exactly as for an open conversation; this holds for a customer message that arrives late and takes an earlier place in the history (a late redelivery) — it reopens by its arrival, the message keeps its earlier place, and the "reopened" line sits at the time it arrived; an edit of an earlier message does not reopen
+**Then** the conversation opens again and returns to the open lenses for the whole team without reloading, with the same assignee (an assignee is always an active member — AC-10), the thread records "reopened — the customer wrote" with the time, and the message counts as unread and as waiting for a reply exactly as for an open conversation; this holds for a customer message that arrives late and takes an earlier place in the history (a late redelivery) — it reopens by its arrival, the message keeps its earlier place, and the "reopened" line sits at the time it arrived; an edit of an earlier message does not reopen
 
 ### AC-08 (US-04) — cross-context
 
 **Given** a closed conversation of "Acme Flowers" holding a reply that is still sending (the conversation was closed right after the reply was sent)
 **When** that reply ends "not delivered" or "not confirmed"
-**Then** the conversation opens again and returns to the open lenses for the whole team without reloading, with its assignee (or unassigned if they are no longer an active member), and the thread records "reopened — a reply was not delivered" with the time, so the team sees it and can try again; a reply that was already "not delivered" or "not confirmed" before the close counts as a waiting customer, so closing over it asks first (AC-06)
+**Then** the conversation opens again and returns to the open lenses for the whole team without reloading, with its assignee, and the thread records "reopened — a reply was not delivered" with the time, so the team sees it and can try again; closing a conversation whose latest reply is already "not delivered" or "not confirmed" asks first (AC-06) — the "waiting for a reply" marker itself keeps its meaning (the customer wrote after the last reply marked sent)
 
 ### AC-09 (US-05) — happy path
 
@@ -142,7 +142,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 **Given** an operator of "Acme Flowers" who is the assignee of open and closed conversations
 **When** a business owner deactivates their membership
-**Then** every conversation of "Acme Flowers" assigned to them becomes unassigned at once — open ones appear under "unassigned" for the team without reloading — and each thread records "unassigned — <member> was deactivated"; conversations of another workspace the same account belongs to keep that assignee; reactivating the member later does not give the conversations back
+**Then** every conversation of "Acme Flowers" assigned to them, open and closed, becomes unassigned as part of the deactivation itself — there is no moment when a deactivated member is anyone's assignee, and an assignment to them made at the same moment is refused (AC-04) — open ones appear under "unassigned" for the team without reloading, and each thread records "unassigned — <member> was deactivated"; conversations of another workspace the same account belongs to keep that assignee; reactivating the member later does not give the conversations back
 
 ### AC-11 (US-02, US-03) — authorization
 
@@ -154,7 +154,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 **Given** an operator of "Acme Flowers" who has assigned, unassigned, closed or reopened 60 conversations within the last 60 seconds
 **When** they try to make another such change
-**Then** nothing changes, the inbox says that changes are limited to 60 per minute per member and when they can continue; the limit is per workspace, so changes in another workspace of the same account are not affected; automatic changes (a customer's message, a failed reply, a deactivation) never count and are never refused
+**Then** nothing changes, the inbox says that changes are limited to 60 per minute per member and when they can continue; only recorded changes count (a reassignment is one change; a refused, declined or already-in-place request is none); the limit is per workspace, so changes in another workspace of the same account are not affected; automatic changes (a customer's message, a failed reply, a deactivation) never count and are never refused
 
 ## 6. Non-functional requirements
 
@@ -165,6 +165,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 | Reopen on customer message p95 — message captured → conversation shown open to the team | ≤ 3 s | timing from capture to push; integration test |
 | Inbox list p95 — first page of any lens, workspace with 1 000 conversations | ≤ 500 ms server time (as shared-inbox §6) | request timing log; seeded integration test per lens |
 | Single assignee | 0 conversations with more than one assignee or with an assignee who is not an active member | integrity check in the integration suite and a periodic reconciliation query in the run book |
+| Deactivation unassign | 0 conversations assigned to a deactivated member at any moment — unassigning is part of the deactivation itself (AC-10) | integration test: deactivate during a concurrent assign → the assign is refused, no assignment remains |
 | Lost customers | 0 closed conversations whose latest customer message arrived after the close | integrity check: closed conversations with a later customer arrival must not exist |
 | Change rate per member | ≤ 60 assignment/status changes per rolling 60 s per member per workspace (AC-12) | integration test: the 61st change within a minute is refused |
 | Availability | 99.5 % monthly (as shared-inbox §6) | uptime check on the health endpoint |
@@ -183,9 +184,9 @@ Assumptions taken in the autonomous pipeline run (2026-10-18) — each can be ve
 
 ## 7. Metrics / KPIs
 
-- **Open conversations with an assignee** — baseline: 0 % (no assignment exists), target: ≥ 80 % of open conversations in active pilot workspaces have an assignee within 30 days of release.
-- **Duplicate first answers** — baseline: TBD — measured from release (share of customer messages answered by "sent" replies from two different members within 10 minutes); target: ≤ 2 % within 30 days of release.
-- **Closed conversations reopened by the customer within 24 h** — baseline: 0 (new), target: tracked, alert if > 30 % in a workspace (a sign conversations are closed too early) within 30 days of release.
+- **Open conversations with an assignee** — baseline: 0 % (no assignment exists), target: ≥ 80 % of open conversations in active pilot workspaces have an assignee, as a daily snapshot at 18:00 server time, on every day of the week 30 days after release.
+- **Duplicate first answers** — baseline: TBD — measured from release (share of customer messages followed, before the customer's next message and within 10 minutes, by "sent" replies from two or more different members; per workspace, rolling 7 days); target: ≤ 2 % within 30 days of release.
+- **Closed conversations reopened by the customer within 24 h** — baseline: 0 (new), target: tracked from release; alert when, over a rolling 7 days, more than 30 % of a workspace's closes are followed by a customer reopen within 24 h (a sign conversations are closed too early).
 - **Customer messages left without a reply** (shared-inbox §7, now counted across open and closed conversations) — target unchanged: ≤ 5 % still waiting 24 h after the customer's last message.
 
 ## 8. Open questions
