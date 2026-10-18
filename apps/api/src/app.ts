@@ -177,6 +177,7 @@ export async function buildApp(
         reads: inboxReads,
         replies: inboxReplies,
         media: deps.inboxMedia,
+        changes: deps.changeState,
         live: liveHub,
         webOrigin: new URL(config.PUBLIC_WEB_URL).origin,
         access: workspaceAccess,

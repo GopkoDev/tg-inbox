@@ -44,6 +44,10 @@ import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
 import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
+import { createStateChanges } from './modules/conversations/app/state-changes.js';
+import { createChangeState } from './modules/inbox/app/change-state.js';
+import type { Transaction } from 'kysely';
+import type { DB } from './platform/db.types.gen.js';
 import { createOpenMessageMedia } from './modules/inbox/app/open-media.js';
 import { createInboxReadUseCases } from './modules/inbox/app/reads.js';
 import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
@@ -212,6 +216,25 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     bots: bots.inboxStatus,
     clock,
   });
+  // Assign / unassign: memberships FOR SHARE, then the conversation row (sad.md §8 lock order).
+  const stateChanges = createStateChanges({
+    conversations: createConversationRepo(db),
+    activities: createActivityRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
+  const changeState = createChangeState({
+    transaction,
+    workspaces: {
+      // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+      lockActiveMembers: (tx, workspaceId, accountIds) =>
+        workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
+      displayNames: workspaceAccess.displayNames,
+    },
+    changes: stateChanges,
+    reads: inboxReads,
+    clock,
+  });
   const inboxMedia = createOpenMessageMedia({
     conversations: inboxConversations,
     bots: { openMedia: bots.openMedia },
@@ -237,6 +260,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     bots,
     inboxReads,
     inboxMedia,
+    changeState,
     conversationReplies,
     replyDelivery,
     /** Releases the database pool. */

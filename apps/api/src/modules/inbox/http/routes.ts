@@ -3,8 +3,10 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   ActiveMemberList,
+  AssignRequest,
   AssigneeLens,
   ConversationPage,
+  ConversationStateChange,
   ConversationSummary,
   Cursor,
   InboxBotStatus,
@@ -12,6 +14,7 @@ import {
   ReadState,
   ReplyResend,
   ReplySend,
+  StateChangeRequest,
   StatusLens,
   ThreadActivity,
   ThreadMessage,
@@ -19,6 +22,7 @@ import {
   ThreadReply,
 } from '@tg/shared';
 import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/http/guard.js';
+import type { ChangeState } from '../app/change-state.js';
 import type { InboxReadUseCases } from '../app/reads.js';
 import type { OpenMessageMedia } from '../app/open-media.js';
 import type { SendReplyUseCases } from '../app/send-reply.js';
@@ -29,6 +33,7 @@ export interface InboxDeps {
   reads: InboxReadUseCases;
   replies: SendReplyUseCases;
   media: OpenMessageMedia;
+  changes: ChangeState;
   live: LiveHub;
   /** The panel's own origin (`PUBLIC_WEB_URL`); the only `Origin` a live socket may be opened from. */
   webOrigin: string;
@@ -49,12 +54,33 @@ const RangeHeader = z
   .regex(/^bytes=[0-9]*-[0-9]*$/);
 const SendBody = ReplySend.extend({ body: z.string() });
 
+/** Change logs carry ids, kind, cause and outcome only, never names or message text (sad.md §7). */
+function logChange(
+  log: { info(obj: object, msg: string): void },
+  result: ConversationStateChange,
+  conversationId: string,
+  route: string,
+) {
+  log.info(
+    {
+      workspaceId: result.workspace_id,
+      conversationId,
+      activityId: result.activity?.id ?? null,
+      kind: result.activity?.kind ?? null,
+      cause: result.activity?.cause ?? null,
+      outcome: result.outcome,
+      route,
+    },
+    'conversation change',
+  );
+}
+
 /**
  * The inbox routes under `/workspaces/:workspaceId/inbox` (openapi.yaml); the caller supplies the
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, replies, media, live, webOrigin, access, authenticate } = deps;
+  const { reads, replies, media, changes, live, webOrigin, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -222,6 +248,54 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         request.params.conversationId,
         new Date(request.body.read_through_at),
       ),
+  );
+
+  // Assign, reassign and unassign (flow 5): the refusals are raised by the use case.
+  r.post(
+    `${base}/conversations/:conversationId/assign`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: AssignRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.assign(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        {
+          assigneeAccountId: request.body.assignee_account_id,
+          expectedStateVersion: request.body.expected_state_version,
+        },
+      );
+      logChange(request.log, result, request.params.conversationId, 'assign');
+      return result;
+    },
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/unassign`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: StateChangeRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.unassign(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        { expectedStateVersion: request.body.expected_state_version },
+      );
+      logChange(request.log, result, request.params.conversationId, 'unassign');
+      return result;
+    },
   );
 
   r.get(
