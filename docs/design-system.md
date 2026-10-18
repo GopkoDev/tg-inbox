@@ -80,10 +80,10 @@ The reusable primitives screens compose. `screens.md` may only use these names, 
 | Popover | `apps/web/src/shared/ui/popover.tsx:5` | open / closed | Contacts tag filter. |
 | SampleDataBadge | `apps/web/src/shared/ui/sample-data-badge.tsx:3` | default | NEW: «Sample data» label on screens backed by the swappable sample source (inbox, contacts, contact profile). No primitive fits: a fixed-copy Badge. |
 | DataTableToolbar | `apps/web/src/shared/ui/data-table-toolbar.tsx:3` | with / without search; with / without filters | NEW: toolbar row (search slot + filters slot) above a card-wrapped Table; used by Team and Contacts. |
-| EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |
+| EmptyFilterState | `apps/web/src/shared/ui/empty-filter-state.tsx:3` | default (message + Clear filters) / custom `actionLabel` (inbox: Clear search) | NEW: «nothing matches» state for filtered lists; `onClear` resets the filters. |
 | AuthLayout | `apps/web/src/shared/ui/auth-layout.tsx:14` | default (title + description + children) | NEW: centred `max-w-sm` auth column; used by sign-in, invite, reset, link-unavailable, no-access and workspace-picker screens. |
 | SettingsLayout | `apps/web/src/features/settings/SettingsLayout.tsx:11` | section nav (stacks above the form below `lg`) + routed section outlet | NEW: Settings frame — title, description, left section nav (Bot, Team), section in a Card. |
-| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:8` | empty / items / selected item / unread badge | NEW: inbox left pane — Avatar, name, relative time, preview, unread Badge, in a ScrollArea. |
+| ConversationList | `apps/web/src/features/inbox/ConversationList.tsx:8` | items / selected item / unread badge / waiting marker / team-reply icon / skeleton rows (`ConversationSkeletons`) | NEW: inbox left pane rows on real data — Avatar, name, relative time, last item by kind + caption, unread Badge; `InboxList` (same folder) composes it with search, Alert notice, empty / error states in a ScrollArea. |
 | MessageBubble | `apps/web/src/features/inbox/MessageBubble.tsx:3` | inbound / outbound | NEW: chat message bubble; no shadcn primitive exists. |
 | ReplyComposer | `apps/web/src/features/inbox/ReplyComposer.tsx:6` | empty (send disabled) / filled / sending via `onSend` | NEW: Textarea + send Button for the thread. |
 

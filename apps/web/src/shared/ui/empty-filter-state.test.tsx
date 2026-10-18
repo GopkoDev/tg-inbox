@@ -11,3 +11,16 @@ describe('EmptyFilterState', () => {
     expect(onClear).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('EmptyFilterState action label', () => {
+  it('uses a custom action label', () => {
+    render(
+      <EmptyFilterState
+        message="No conversations match"
+        actionLabel="Clear search"
+        onClear={() => {}}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Clear search' })).toBeInTheDocument();
+  });
+});

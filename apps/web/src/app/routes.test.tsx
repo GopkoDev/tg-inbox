@@ -21,6 +21,7 @@ vi.mock('@/features/inbox/store', () => ({
     getState: () => ({ enter: () => Promise.resolve(), leave: () => undefined }),
   }),
 }));
+vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));
 // The section bodies are other tasks' business; the route tree is what is under test here.
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));

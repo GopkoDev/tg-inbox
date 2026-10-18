@@ -1,10 +1,11 @@
 import { useEffect } from 'react';
 import { useParams } from 'react-router';
+import { InboxList } from '@/features/inbox/InboxList';
 import { useInboxStore } from '@/features/inbox/store';
 
 /**
- * SCR-01/SCR-02 host. This foundation step only joins the workspace's live inbox (one socket
- * per tab, closed on leaving); the list and the thread are drawn on top of the store by T24/T25.
+ * SCR-01/SCR-02 host. Joins the workspace's live inbox (one socket per tab, closed on leaving)
+ * and draws the list on top of the store; the thread pane is T25's.
  */
 export function InboxPage() {
   const { workspaceId } = useParams();
@@ -16,6 +17,7 @@ export function InboxPage() {
   return (
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-semibold">Inbox</h1>
+      <InboxList key={workspaceId} />
     </div>
   );
 }
