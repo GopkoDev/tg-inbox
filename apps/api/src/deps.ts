@@ -26,6 +26,7 @@ import { createReconnect } from './modules/bots/app/reconnect.js';
 import { createBotSettings } from './modules/bots/app/settings.js';
 import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
+import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
@@ -153,6 +154,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     settings: botSettings,
     markNeedsToken,
     sendText: createSendText({ bots: botRepo, telegram, markNeedsToken }).sendText,
+    openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus: createInboxBotStatus({ bots: botRepo }),
     paste: createPasteToken({ ...botOwnerDeps, conversations }),
     reconnect: createReconnect(botOwnerDeps),

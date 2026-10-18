@@ -19,7 +19,7 @@
 | T12 | [Add contact search ids and contacts by ids to the contacts module](./t12-contacts-search.md) | infra | Dmytro Hopko | S | — | done |
 | T13 | [Expose the inbox bot status to every member and publish bot.changed on every bot state transition](./t13-bots-inbox-status.md) | app | Dmytro Hopko | S | T3 | done |
 | T14 | [Add sendMessage to the bots gateway as send text, classifying every answer into a typed outcome](./t14-bots-send-text.md) | infra | Dmytro Hopko | M | T4 | done |
-| T15 | [Add the media stream to the bots gateway: getFile, size check and a ranged byte stream with typed unavailability](./t15-bots-media-stream.md) | infra | Dmytro Hopko | M | T4, T14 | todo |
+| T15 | [Add the media stream to the bots gateway: getFile, size check and a ranged byte stream with typed unavailability](./t15-bots-media-stream.md) | infra | Dmytro Hopko | M | T4, T14 | done |
 | T16 | [Create the inbox module with its read use cases and routes (list, search, conversation, thread, items, mark read, bot status) and wire it into buildDeps and buildApp](./t16-inbox-reads-and-wiring.md) | ports | Dmytro Hopko | M | T2, T7, T9, T12, T13 | todo |
 | T17 | [Add the sendReply and resendReply use cases and routes with the flow-1 check order and the drain-job hook](./t17-inbox-send-and-resend.md) | ports | Dmytro Hopko | M | T6, T10, T16 | todo |
 | T18 | [Build the inbox.deliver-replies drain worker with pre-checks, pacing, outcome handling, back-off jobs and the dead-letter handler](./t18-delivery-drain-worker.md) | app | Dmytro Hopko | M | T6, T11, T14, T17 | todo |

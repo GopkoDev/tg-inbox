@@ -1,3 +1,4 @@
+import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
 import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
@@ -169,7 +170,37 @@ export type SendOutcome =
   | { outcome: 'not_accepted'; retryAfterMs?: number }
   | { outcome: 'unknown' };
 
+/** `getFile` timeout (sad.md §8). */
+export const GET_FILE_TIMEOUT = 5000;
+/** A media download is aborted after this long without a byte (sad.md §8). */
+export const DOWNLOAD_IDLE_TIMEOUT = 30_000;
+/** The largest file a bot can download (20 MiB). */
+export const MAX_DOWNLOAD_BYTES = 20 * 1024 * 1024;
+
+/**
+ * The answer to fetching a customer's file, classified. No token or Telegram address in any
+ * variant. `unavailable`: 5xx, 429, timeout or network failure.
+ */
+export type FileFetch =
+  | {
+      outcome: 'stream';
+      body: Readable;
+      status: 200 | 206;
+      contentLength: number | null;
+      contentRange?: string;
+    }
+  | { outcome: 'too_large' }
+  | { outcome: 'gone' }
+  | { outcome: 'unauthorized' }
+  | { outcome: 'unavailable' }
+  | { outcome: 'range_not_satisfiable' };
+
 export interface TelegramGateway {
+  /**
+   * `getFile` (path cached in memory per file, under its one-hour validity) then a streamed
+   * download of it, forwarding a single `Range`. Never throws; the download URL stays inside.
+   */
+  openFile(token: string, fileReference: string, range: string | undefined): Promise<FileFetch>;
   /**
    * Plain text (no `parse_mode`). Never throws: every answer, a timeout included, is an outcome.
    * A call that may have been written is never repeated here.
