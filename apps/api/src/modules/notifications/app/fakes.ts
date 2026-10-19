@@ -199,6 +199,8 @@ export function notificationsHarness() {
   const signals: { workspaceId: string; accountId: string }[] = [];
   const jobs: { workspaceId: string; message: BotMessage }[] = [];
   const events: string[] = [];
+  /** Workspaces whose ping chain a use case asked to start, in order. */
+  const pingStarts: string[] = [];
   let seed = 0;
 
   /**
@@ -207,7 +209,12 @@ export function notificationsHarness() {
    */
   const transaction: Transaction = async (fn) => {
     const marks = connectLinks.rows.map((r) => ({ r, usedAt: r.usedAt, replacedAt: r.replacedAt }));
-    const sizes = { rows: connectLinks.rows.length, signals: signals.length, jobs: jobs.length };
+    const sizes = {
+      rows: connectLinks.rows.length,
+      signals: signals.length,
+      jobs: jobs.length,
+      pingStarts: pingStarts.length,
+    };
     try {
       return await fn({} as Executor);
     } catch (err) {
@@ -218,6 +225,7 @@ export function notificationsHarness() {
       connectLinks.rows.length = sizes.rows;
       signals.length = sizes.signals;
       jobs.length = sizes.jobs;
+      pingStarts.length = sizes.pingStarts;
       throw err;
     }
   };
@@ -257,10 +265,14 @@ export function notificationsHarness() {
     signals,
     jobs,
     events,
+    pingStarts,
     transaction,
     membership,
     botPort,
     signalPort,
+    startPings: async (_tx: Executor, workspaceId: string) => {
+      pingStarts.push(workspaceId);
+    },
     enqueue: async (_tx: Executor, workspaceId: string, message: BotMessage) => {
       jobs.push({ workspaceId, message });
     },

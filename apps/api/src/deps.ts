@@ -39,11 +39,12 @@ import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
 import { createDeliverAnswer } from './modules/notifications/app/deliver-answer.js';
 import { createIntercept } from './modules/notifications/app/intercept.js';
 import { createPresence } from './modules/notifications/app/presence.js';
+import { createSendPings } from './modules/notifications/app/send-pings.js';
 import { createRedeem } from './modules/notifications/app/redeem.js';
 import { createPingRepo } from './modules/notifications/infra/ping-repo.js';
 import { createPresenceRepo } from './modules/notifications/infra/presence-repo.js';
 import { createConnectLinkRepo } from './modules/notifications/infra/connect-link-repo.js';
-import { createBotMessageSender } from './modules/notifications/infra/jobs.js';
+import { createBotMessageSender, createPingStarter } from './modules/notifications/infra/jobs.js';
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContacts } from './modules/contacts/app/contacts.js';
@@ -70,12 +71,16 @@ import { createMessageRepo } from './modules/conversations/infra/message-repo.js
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
+import type { Jobs } from './platform/jobs.js';
 
 /**
  * Shared dependency builder: the one place module dependencies are constructed. Used by
  * `buildApp()` (HTTP) and the admin CLI. No Fastify import.
  */
-export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
+export function buildDeps(
+  config: Config,
+  overrides: { clock?: Clock; logger?: { info(obj: object, msg: string): void } } = {},
+) {
   const clock = overrides.clock ?? systemClock;
   const db = createDb(config.DATABASE_URL, {
     max: config.DATABASE_POOL_MAX,
@@ -193,17 +198,22 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   const telegramLinks = createTelegramLinkRepo(db);
   const connectLinks = createConnectLinkRepo(db);
   const botMessages = createBotMessageSender();
+  const pingStarter = createPingStarter();
+  const membershipLocks = {
+    // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+    lockActiveMembers: (tx: unknown, workspaceId: string, accountIds: string[]) =>
+      workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
+  };
   const redeem = createRedeem({
     transaction,
-    membership: {
-      // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
-      lockActiveMembers: (tx, workspaceId, accountIds) =>
-        workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
-    },
+    membership: membershipLocks,
     links: telegramLinks,
     connectLinks,
     signals: createNotificationSignals(),
     enqueue: botMessages.enqueue,
+    startPings: async (tx, workspaceId) => {
+      await pingStarter.start(workspaceId, { tx });
+    },
     clock,
   });
   const { intercept } = createIntercept({
@@ -215,11 +225,9 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   });
   const interceptor = { intercept };
   // What the live-socket hub reports: one lease per open tab (ADR-0002).
-  const presence = createPresence({
-    presence: createPresenceRepo(db),
-    pings: createPingRepo(db),
-    clock,
-  });
+  const presenceRepo = createPresenceRepo(db);
+  const pingRepo = createPingRepo(db);
+  const presence = createPresence({ presence: presenceRepo, pings: pingRepo, clock });
   // --- end notifications dependencies ---
 
   const sendMemberMessage = createSendMemberMessage({
@@ -229,6 +237,21 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     clock,
     pacer: createPacer(),
   }).sendMemberMessage;
+  const sendPings = createSendPings({
+    transaction,
+    membership: membershipLocks,
+    links: telegramLinks,
+    presence: presenceRepo,
+    pings: pingRepo,
+    reads: notificationReads,
+    bots: { pingReadiness },
+    workspaces: workspaceAccess,
+    send: sendMemberMessage,
+    signals: createNotificationSignals(),
+    clock,
+    panelUrl: config.PUBLIC_WEB_URL,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
   const deliverAnswer = createDeliverAnswer({
     links: telegramLinks,
     bots: { pingReadiness },
@@ -335,8 +358,16 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     bots,
     presence,
     deliverAnswer,
-    /** Binds the started job queue to the notifications answers (the queue starts after `buildDeps()`). */
-    bindNotificationJobs: botMessages.bind,
+    sendPings,
+    /** The sixth controlled tenancy exception: workspace ids with a live link, for the cron backstop. */
+    workspacesWithLiveLink: () => telegramLinks.workspacesWithLiveLink(),
+    /** Starts (or keeps) a workspace's ping chain; a live chain absorbs it. */
+    startPings: pingStarter.start,
+    /** Binds the started job queue to the notifications jobs (the queue starts after `buildDeps()`). */
+    bindNotificationJobs: (boss: Jobs) => {
+      botMessages.bind(boss);
+      pingStarter.bind(boss);
+    },
     inboxReads,
     inboxMedia,
     changeState,

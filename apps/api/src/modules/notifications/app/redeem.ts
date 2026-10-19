@@ -19,6 +19,8 @@ export interface RedeemDeps {
   connectLinks: ConnectLinkRepo;
   signals: NotificationSignals;
   enqueue: EnqueueBotMessage;
+  /** Starts the workspace's ping chain in the caller's transaction; a live chain absorbs it. */
+  startPings: (tx: Executor, workspaceId: string) => Promise<void>;
   clock: Clock;
 }
 
@@ -60,7 +62,8 @@ const MAX_ATTEMPTS = 3;
  * The Telegram user id and the token are never logged here.
  */
 export function createRedeem(deps: RedeemDeps): Redeem {
-  const { transaction, membership, links, connectLinks, signals, enqueue, clock } = deps;
+  const { transaction, membership, links, connectLinks, signals, enqueue, startPings, clock } =
+    deps;
 
   async function attempt(input: RedeemInput, tx: Executor): Promise<RedeemOutcome> {
     const { workspaceId, from } = input;
@@ -117,6 +120,8 @@ export function createRedeem(deps: RedeemDeps): Redeem {
     if (!inserted.ok) throw new UniquenessRace();
     await signals.telegramLinkChanged(tx, workspaceId, link.accountId);
     await enqueue(tx, workspaceId, { kind: 'connected', telegramLinkId: id });
+    // A new link does not wait for the minute cron: its chain starts with the commit.
+    await startPings(tx, workspaceId);
     return { outcome: 'linked' };
   }
 

@@ -35,6 +35,7 @@ function setup() {
     connectLinks: h.connectLinks,
     signals: h.signalPort,
     enqueue: h.enqueue,
+    startPings: h.startPings,
     clock: h.clock,
   });
   const { intercept } = createIntercept({

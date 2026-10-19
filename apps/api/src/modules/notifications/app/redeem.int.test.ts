@@ -56,6 +56,7 @@ describe('redeem (Postgres): uniqueness races and deactivation lock order', () =
           signals.push({ workspaceId, accountId });
         },
       },
+      startPings: async () => {},
       enqueue: async (_tx, workspaceId, message) => {
         jobs.push({ workspaceId, message });
       },

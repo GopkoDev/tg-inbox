@@ -75,7 +75,7 @@ export async function buildApp(
     await app.register(fastifyStatic, { root: config.WEB_DIST_DIR, wildcard: false });
   }
 
-  const deps = buildDeps(config, overrides);
+  const deps = buildDeps(config, { ...overrides, logger: app.log });
   const {
     db,
     credentialUseCases,
@@ -96,6 +96,9 @@ export async function buildApp(
   await createNotificationQueues(jobs);
   await registerNotificationJobs(jobs, {
     deliverAnswer: deps.deliverAnswer,
+    sendPings: deps.sendPings,
+    workspacesWithLiveLink: deps.workspacesWithLiveLink,
+    startPings: deps.startPings,
     logger: app.log,
     clock: deps.clock,
   });

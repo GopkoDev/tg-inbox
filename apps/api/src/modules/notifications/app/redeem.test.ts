@@ -22,6 +22,7 @@ function setup() {
     connectLinks: h.connectLinks,
     signals: h.signalPort,
     enqueue: h.enqueue,
+    startPings: h.startPings,
     clock: h.clock,
   });
   let n = 0;
@@ -86,6 +87,28 @@ describe('redeem (AC-04, AC-05, AC-06, AC-12)', () => {
     expect(h.jobs).toEqual([
       { workspaceId: W, message: { kind: 'connected', telegramLinkId: h.links.rows[0]!.id } },
     ]);
+  });
+
+  it("starts the workspace's ping chain in the same transaction as a new link", async () => {
+    const { h, issue, go } = setup();
+    await go(issue(A));
+    expect(h.pingStarts).toEqual([W]);
+  });
+
+  it.each([
+    ['unknown token', (s: ReturnType<typeof setup>) => s.go('x'.repeat(43))],
+    [
+      'already connected from this account',
+      async (s: ReturnType<typeof setup>) => {
+        await s.go(s.issue(A));
+        s.h.pingStarts.length = 0;
+        return s.go(s.issue(A));
+      },
+    ],
+  ])('%s: no chain is started', async (_name, act) => {
+    const s = setup();
+    await act(s);
+    expect(s.h.pingStarts).toEqual([]);
   });
 
   it('takes the membership lock before anything else', async () => {
