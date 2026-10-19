@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { CloseReason, ThreadActivity } from '@tg/shared';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -140,7 +140,7 @@ describe('SCR-12 confirm close (AC-06, AC-08)', () => {
     expect(screen.getByRole('button', { name: 'Close anyway' })).toBeEnabled();
   });
 
-  it('focus returns to the control that opened it', () => {
+  it('focus returns to the control that opened it', async () => {
     function Harness() {
       const [open, setOpen] = useState(false);
       return (
@@ -166,7 +166,28 @@ describe('SCR-12 confirm close (AC-06, AC-08)', () => {
     const opener = screen.getByRole('button', { name: 'opener' });
     opener.focus();
     fireEvent.click(opener);
+    // Focus moved into the dialog (W5); closing hands it back to the opener.
+    expect(screen.getByRole('button', { name: 'Keep it open' })).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Keep it open' }));
-    expect(opener).toHaveFocus();
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+});
+
+describe('SCR-12 focus (W5)', () => {
+  it('focus moves into the dialog on open, onto Keep it open', () => {
+    render(
+      <CloseConfirmDialog
+        open
+        reasons={['customer_waiting']}
+        staleChange={null}
+        newestUnreadMessage={null}
+        again={false}
+        pending={false}
+        failed={false}
+        onKeep={() => undefined}
+        onCloseAnyway={() => undefined}
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Keep it open' })).toHaveFocus();
   });
 });

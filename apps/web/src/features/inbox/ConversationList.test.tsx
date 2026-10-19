@@ -5,20 +5,27 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 
-const api = { listConversations: vi.fn() };
+const api = { listConversations: vi.fn(), getConversation: vi.fn() };
 vi.mock('./api-source', () => ({
   listConversations: (...a: unknown[]) => api.listConversations(...a),
-  getConversation: vi.fn(),
+  getConversation: (...a: unknown[]) => api.getConversation(...a),
   listThreadItems: vi.fn(),
   getThreadMessage: vi.fn(),
   getThreadReply: vi.fn(),
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
 }));
-const live = vi.hoisted(() => ({ reconnected: null as null | (() => void) }));
+const live = vi.hoisted(() => ({
+  reconnected: null as null | (() => void),
+  frame: null as null | ((f: unknown) => void),
+}));
 vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: (_ws: string, handlers: { onReconnected: () => void }) => {
+  openLiveSocket: (
+    _ws: string,
+    handlers: { onReconnected: () => void; onFrame: (f: unknown) => void },
+  ) => {
     live.reconnected = handlers.onReconnected;
+    live.frame = handlers.onFrame;
     return { close: vi.fn() };
   },
 }));
@@ -89,6 +96,7 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   vi.setSystemTime(NOW);
   api.listConversations.mockReset();
+  api.getConversation.mockReset();
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
 });
 afterEach(() => {
@@ -615,5 +623,138 @@ describe('SCR-01 row assignee line and Closed mark (AC-01)', () => {
     const badge = within(screen.getByRole('link', { name: /Name1/ })).getByText('Closed');
     expect(badge).toHaveAttribute('data-variant', 'outline');
     expect(within(screen.getByRole('link', { name: /Name2/ })).queryByText('Closed')).toBeNull();
+  });
+});
+
+describe('SCR-01 loaded pages and search results follow live changes (W3, W4, W7)', () => {
+  const observers: { cb: IntersectionObserverCallback }[] = [];
+  beforeEach(() => {
+    observers.length = 0;
+    vi.stubGlobal(
+      'IntersectionObserver',
+      class {
+        constructor(cb: IntersectionObserverCallback) {
+          observers.push({ cb });
+        }
+        observe() {}
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+    useInboxStore.getState().leave();
+  });
+  const reach = () =>
+    act(async () => {
+      observers
+        .at(-1)
+        ?.cb([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver);
+    });
+  const page = (items: Conversation[], extra = {}) => ({
+    workspace_id: WS,
+    lens: OPEN,
+    items,
+    has_prev: false,
+    has_next: false,
+    next_cursor: null,
+    ...extra,
+  });
+  const summaryOf = (c: Conversation, over: Partial<Conversation> = {}) => ({
+    ...c,
+    close_snapshot: { customer_message_seq: 1, latest_reply: null },
+    ...over,
+  });
+  const stateFrame = (c: Conversation) =>
+    act(async () =>
+      live.frame!({
+        v: 1,
+        workspace_id: WS,
+        type: 'conversation.changed',
+        conversation_id: c.id,
+        item: null,
+        change: 'state',
+      }),
+    );
+  const OLENA = { account_id: cid(950), display_name: 'Olena Kravets' };
+
+  it('a row on a later page leaves the Open lens when it is closed live', async () => {
+    api.listConversations.mockResolvedValueOnce(
+      page([conv(1)], { has_next: true, next_cursor: 'abc' }),
+    );
+    await act(() => useInboxStore.getState().enter(WS));
+    renderList();
+    api.listConversations.mockResolvedValueOnce(page([conv(5)]));
+    await reach();
+    expect(screen.getByRole('link', { name: /Name5/ })).toBeInTheDocument();
+    api.getConversation.mockResolvedValue(
+      summaryOf(conv(5), { status: 'closed', state_version: 1 }),
+    );
+    await stateFrame(conv(5));
+    await flush();
+    expect(screen.queryByRole('link', { name: /Name5/ })).toBeNull();
+    expect(screen.getByRole('link', { name: /Name1/ })).toBeInTheDocument();
+  });
+
+  it('a search result shows a live assignment and close (assignee line, Closed mark)', async () => {
+    api.listConversations.mockResolvedValueOnce(page([conv(1), conv(2)]));
+    await act(() => useInboxStore.getState().enter(WS));
+    renderList();
+    api.listConversations.mockResolvedValueOnce(page([conv(2)], { lens: SEARCHING }));
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'Name2' } });
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    const link = () => screen.getByRole('link', { name: /Name2/ });
+    expect(within(link()).getByText('Unassigned')).toBeInTheDocument();
+    api.getConversation.mockResolvedValue(
+      summaryOf(conv(2), { status: 'closed', assignee: OLENA, state_version: 1 }),
+    );
+    await stateFrame(conv(2));
+    await flush();
+    expect(within(link()).getByText('Olena Kravets')).toBeInTheDocument();
+    expect(link().querySelector('[data-slot="badge"]')).toHaveTextContent('Closed');
+    expect(screen.queryByRole('link', { name: /Name1/ })).toBeNull();
+  });
+
+  it('a resync re-runs the search on screen', async () => {
+    api.listConversations.mockResolvedValueOnce(page([conv(1), conv(2)]));
+    await act(() => useInboxStore.getState().enter(WS));
+    renderList();
+    api.listConversations.mockResolvedValueOnce(page([conv(2)], { lens: SEARCHING }));
+    fireEvent.change(screen.getByLabelText('Search conversations'), { target: { value: 'Name2' } });
+    await act(async () => {
+      vi.advanceTimersByTime(400);
+    });
+    api.listConversations.mockImplementation(async (_ws: string, params: { q?: string }) =>
+      params.q ? page([conv(2), conv(3)], { lens: SEARCHING }) : page([conv(1), conv(2)]),
+    );
+    await act(async () => live.frame!({ v: 1, workspace_id: WS, type: 'resync' }));
+    await flush();
+    expect(screen.getByRole('link', { name: /Name3/ })).toBeInTheDocument();
+  });
+
+  it('Retry after a failed first page keeps the open thread (W7)', async () => {
+    api.listConversations.mockResolvedValue(page([conv(1)]));
+    seed({
+      listStatus: 'error',
+      thread: {
+        conversationId: conv(1).id,
+        status: 'ready',
+        contact: conv(1).contact,
+        summary: null,
+        older: 'idle',
+        items: [],
+        hasPrev: false,
+        prevCursor: null,
+        readThroughAt: null,
+      },
+    });
+    renderList('operator', `/w/${WS}/inbox`);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(useInboxStore.getState().listStatus).toBe('ready');
+    expect(useInboxStore.getState().thread).toMatchObject({
+      conversationId: conv(1).id,
+      status: 'ready',
+    });
   });
 });

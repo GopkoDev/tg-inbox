@@ -2,6 +2,7 @@ import type { CloseReason, ThreadActivity } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -11,7 +12,7 @@ import {
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { activityText } from './ActivityLine';
-import { ago, capitalised } from './StateChangedDialog';
+import { ago, capitalised, useDialogFocus } from './StateChangedDialog';
 
 /** One line per reason; the two unread reasons point at the same message, so they share one. */
 function lines(
@@ -84,6 +85,7 @@ export function CloseConfirmDialog({
   onCloseAutoFocus?: (event: Event) => void;
   now?: Date;
 }) {
+  const focus = useDialogFocus(onCloseAutoFocus);
   return (
     <AlertDialog
       open={open}
@@ -91,7 +93,7 @@ export function CloseConfirmDialog({
         if (!next && !pending) onKeep();
       }}
     >
-      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
+      <AlertDialogContent {...focus}>
         <AlertDialogHeader>
           <AlertDialogTitle>Close this conversation?</AlertDialogTitle>
           <AlertDialogDescription asChild>
@@ -118,9 +120,7 @@ export function CloseConfirmDialog({
           </Alert>
         ) : null}
         <AlertDialogFooter>
-          <Button type="button" variant="outline" disabled={pending} onClick={onKeep}>
-            Keep it open
-          </Button>
+          <AlertDialogCancel disabled={pending}>Keep it open</AlertDialogCancel>
           <Button type="button" disabled={pending} onClick={onCloseAnyway}>
             {pending ? (
               <Loader2 data-testid="dialog-spinner" className="animate-spin" aria-hidden />

@@ -1,7 +1,9 @@
 import type { ConversationSummary, ThreadActivity } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
+import { useRef } from 'react';
 import {
   AlertDialog,
+  AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
   AlertDialogFooter,
@@ -24,6 +26,26 @@ export function ago(iso: string, now: Date): string {
   const hours = /^(\d+)h$/.exec(short);
   if (hours) return `${hours[1]} ${hours[1] === '1' ? 'hour' : 'hours'} ago`;
   return `on ${short}`;
+}
+
+/**
+ * Focus for a dialog opened without a trigger: Radix moves it onto the Cancel button on open
+ * (so a second Enter cannot resend); on close it goes back to whatever had it before, unless
+ * the owner says where (`onCloseAutoFocus`, when the opening control is gone).
+ */
+export function useDialogFocus(onCloseAutoFocus?: (event: Event) => void) {
+  const before = useRef<HTMLElement | null>(null);
+  return {
+    onOpenAutoFocus: () => {
+      before.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    },
+    onCloseAutoFocus: (event: Event) => {
+      if (onCloseAutoFocus) return onCloseAutoFocus(event);
+      event.preventDefault();
+      before.current?.focus();
+    },
+  };
 }
 
 export const capitalised = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
@@ -63,6 +85,7 @@ export function StateChangedDialog({
   onCloseAutoFocus?: (event: Event) => void;
   now?: Date;
 }) {
+  const focus = useDialogFocus(onCloseAutoFocus);
   const who = conversation.assignee
     ? `assigned to ${conversation.assignee.display_name}`
     : 'unassigned';
@@ -79,7 +102,7 @@ export function StateChangedDialog({
         if (!next && !pending) onLeave();
       }}
     >
-      <AlertDialogContent onCloseAutoFocus={onCloseAutoFocus}>
+      <AlertDialogContent {...focus}>
         <AlertDialogHeader>
           <AlertDialogTitle>This conversation changed since you looked</AlertDialogTitle>
           <AlertDialogDescription asChild>
@@ -104,9 +127,7 @@ export function StateChangedDialog({
           </Alert>
         ) : null}
         <AlertDialogFooter>
-          <Button type="button" variant="outline" disabled={pending} onClick={onLeave}>
-            Leave it
-          </Button>
+          <AlertDialogCancel disabled={pending}>Leave it</AlertDialogCancel>
           <Button type="button" disabled={pending} onClick={onGoAhead}>
             {pending ? (
               <Loader2 data-testid="dialog-spinner" className="animate-spin" aria-hidden />

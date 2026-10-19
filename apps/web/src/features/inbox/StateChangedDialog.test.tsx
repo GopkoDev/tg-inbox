@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { ConversationSummary, ThreadActivity } from '@tg/shared';
 import { useState } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -188,7 +188,7 @@ describe('SCR-11 confirm over a recent change (AC-03)', () => {
     expect(screen.getByRole('button', { name: 'Assign to Olena Operator' })).toBeEnabled();
   });
 
-  it('focus returns to the control that opened it', () => {
+  it('focus returns to the control that opened it', async () => {
     function Harness() {
       const [open, setOpen] = useState(false);
       return (
@@ -215,7 +215,16 @@ describe('SCR-11 confirm over a recent change (AC-03)', () => {
     const opener = screen.getByRole('button', { name: 'opener' });
     opener.focus();
     fireEvent.click(opener);
+    // Focus moved into the dialog (W5); closing hands it back to the opener.
+    expect(screen.getByRole('button', { name: 'Leave it' })).toHaveFocus();
     fireEvent.click(screen.getByRole('button', { name: 'Leave it' }));
-    expect(opener).toHaveFocus();
+    await waitFor(() => expect(opener).toHaveFocus());
+  });
+});
+
+describe('SCR-11 focus (W5)', () => {
+  it('focus moves into the dialog on open, onto Leave it', () => {
+    show();
+    expect(screen.getByRole('button', { name: 'Leave it' })).toHaveFocus();
   });
 });

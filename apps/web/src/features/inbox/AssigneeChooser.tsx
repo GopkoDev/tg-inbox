@@ -15,19 +15,12 @@ import { Button } from '@/shared/ui/button';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { Separator } from '@/shared/ui/separator';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { initials } from '@/shared/lib/initials';
 import { cn } from '@/shared/lib/utils';
 import { listActiveMembers } from './api-source';
 import type { ChangeResult } from './store';
 
 type Members = { kind: 'loading' } | { kind: 'error' } | { kind: 'ready'; items: MemberRef[] };
-
-const initials = (name: string) =>
-  name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((word) => Array.from(word)[0]?.toUpperCase() ?? '')
-    .join('');
 
 /**
  * SCR-10: a popover (not a menu — it must stay open to show the refusal and the re-read members

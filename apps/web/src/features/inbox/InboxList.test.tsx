@@ -206,10 +206,18 @@ describe('SCR-01 lens controls (AC-01)', () => {
   it('error: Retry re-reads the first page in the current lenses', async () => {
     seed({ listStatus: 'error', ...lens('closed', 'mine') });
     const enter = vi.fn().mockResolvedValue(undefined);
-    useInboxStore.setState({ enter });
+    const leave = vi.fn();
+    const retryList = vi.fn().mockResolvedValue(undefined);
+    const real = useInboxStore.getState();
+    useInboxStore.setState({ enter, leave, retryList });
     renderList();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect(enter).toHaveBeenCalledWith(WS, { status: 'closed', assignee: 'mine' });
+    // The lenses stay in the store: the retry re-reads the first page without a reset (W7).
+    expect(retryList).toHaveBeenCalledWith(WS);
+    expect(useInboxStore.getState().lens).toEqual({ status: 'closed', assignee: 'mine' });
+    expect(leave).not.toHaveBeenCalled();
+    expect(enter).not.toHaveBeenCalled();
+    useInboxStore.setState({ enter: real.enter, leave: real.leave, retryList: real.retryList });
   });
 
   it('renders an assignee name as plain text', () => {

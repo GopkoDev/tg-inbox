@@ -99,9 +99,16 @@ export type ResendResult =
 /** How a change action ended; the actions bar maps each to a state of SCR-02 / SCR-10..13. */
 export type ChangeResult =
   | { kind: 'recorded' | 'unchanged'; change: ConversationStateChange }
-  | { kind: 'stale'; latestChange: ThreadActivity | null }
+  | {
+      kind: 'stale';
+      /** The state the refusal was checked against: SCR-11 shows it and the go-ahead sends it. */
+      conversation: ConversationSummary;
+      latestChange: ThreadActivity | null;
+    }
   | {
       kind: 'needs_confirmation';
+      /** The version and snapshot the question is about: «Close anyway» confirms exactly them. */
+      conversation: ConversationSummary;
       reasons: CloseNeedsConfirmationReason[];
       staleChange: ThreadActivity | null;
       newestUnreadMessage: { id: string; received_at: string } | null;
@@ -116,6 +123,20 @@ type CloseNeedsConfirmationReason = ReturnType<
   typeof CloseNeedsConfirmationError.parse
 >['error']['details']['reasons'][number];
 
+/** The version a change request expects; default: the summary on screen. */
+type Expected = Pick<ConversationSummary, 'state_version'>;
+
+/** A search on screen: its query, how its first page went and the rows loaded for it. */
+export interface SearchResults {
+  q: string;
+  status: 'loading' | 'ready' | 'error';
+  /** The rows found so far; while a new query is in flight the previous query's rows stay. */
+  page: { rows: Conversation[]; hasNext: boolean; cursor: string | null } | null;
+}
+
+/** How a `loadMore` ended: `dropped` = the answer belongs to a list or search already replaced. */
+export type MoreResult = 'loaded' | 'error' | 'dropped';
+
 /**
  * The inbox of ONE workspace (`workspaceId`), shared by SCR-01..05. Entering another workspace
  * resets everything and closes the socket synchronously; every answer or frame tagged with any
@@ -129,6 +150,12 @@ interface InboxState {
   lens: InboxLens;
   /** A search is on: the status lens is set aside when a row's place is re-evaluated. */
   searching: boolean;
+  /**
+   * The search results on screen (null = no search). Live changes and resyncs keep them current
+   * like the list: rows are updated in place or dropped by the assignee lens; a conversation that
+   * joins the assignee lens, and every resync, re-run the search.
+   */
+  results: SearchResults | null;
   hasNext: boolean;
   nextCursor: string | null;
   /**
@@ -161,12 +188,24 @@ interface InboxState {
   /** Switches the list to other lenses (the address changed); an open thread stays open. */
   setLens: (workspaceId: string, lens: InboxLens) => Promise<void>;
   setSearching: (searching: boolean) => void;
+  /** Runs the search `q` within the assignee lens (the status lens is set aside). */
+  search: (workspaceId: string, q: string) => Promise<void>;
+  clearSearch: () => void;
+  /** Appends the next page of the list or of the search results; the rows join `conversations` / `results`. */
+  loadMore: (workspaceId: string, target: 'list' | 'results') => Promise<MoreResult>;
+  /** Re-reads the first page after it failed, keeping the open thread and the socket. */
+  retryList: (workspaceId: string) => Promise<void>;
   assign: (
     workspaceId: string,
     conversationId: string,
     assigneeAccountId: string,
+    options?: { expected?: Expected },
   ) => Promise<ChangeResult>;
-  unassign: (workspaceId: string, conversationId: string) => Promise<ChangeResult>;
+  unassign: (
+    workspaceId: string,
+    conversationId: string,
+    options?: { expected?: Expected },
+  ) => Promise<ChangeResult>;
   close: (
     workspaceId: string,
     conversationId: string,
@@ -176,7 +215,11 @@ interface InboxState {
       expected?: Pick<ConversationSummary, 'state_version' | 'close_snapshot'>;
     },
   ) => Promise<ChangeResult>;
-  reopen: (workspaceId: string, conversationId: string) => Promise<ChangeResult>;
+  reopen: (
+    workspaceId: string,
+    conversationId: string,
+    options?: { expected?: Expected },
+  ) => Promise<ChangeResult>;
   enter: (workspaceId: string, lens?: InboxLens) => Promise<void>;
   leave: () => void;
   openThread: (workspaceId: string, conversationId: string) => Promise<void>;
@@ -189,6 +232,10 @@ const EMPTY: Omit<
   | 'enter'
   | 'setLens'
   | 'setSearching'
+  | 'search'
+  | 'clearSearch'
+  | 'loadMore'
+  | 'retryList'
   | 'assign'
   | 'unassign'
   | 'close'
@@ -208,6 +255,7 @@ const EMPTY: Omit<
   conversations: [],
   lens: DEFAULT_LENS,
   searching: false,
+  results: null,
   hasNext: false,
   nextCursor: null,
   listVersion: 0,
@@ -225,6 +273,13 @@ const sending = new Set<string>();
 const changing = new Set<string>();
 /** Bumped by every foreground list load: an answer of an earlier one is stale. */
 let listSeq = 0;
+/** Bumped by every search run and by clearing it: an answer of an earlier one is stale. */
+let searchSeq = 0;
+/**
+ * Rows that left the lenses through a live summary, with that summary's state version: a page
+ * read before it (an older version) must not bring them back.
+ */
+const departed = new Map<string, number>();
 const newestReplyId = (items: ThreadItem[] | undefined): string | null =>
   items?.filter((i) => i.type === 'reply').at(-1)?.id ?? null;
 const newestSeen = (thread: OpenThread): string | null =>
@@ -254,6 +309,31 @@ function upsertConversation(list: Conversation[], row: Conversation): Conversati
 }
 
 /**
+ * Whether a copy read later may replace the one shown: a higher state version, or the same one
+ * with no earlier activity (re-reads at one version can answer out of order).
+ */
+const notOlder = (incoming: Conversation, shown: Conversation) =>
+  incoming.state_version > shown.state_version ||
+  (incoming.state_version === shown.state_version &&
+    incoming.last_activity_at >= shown.last_activity_at);
+const summaryNotOlder = (incoming: ConversationSummary, shown: ConversationSummary) =>
+  incoming.state_version > shown.state_version ||
+  (notOlder(incoming, shown) &&
+    incoming.close_snapshot.customer_message_seq >= shown.close_snapshot.customer_message_seq);
+/** A page row that left the lenses through a newer live summary stays out. */
+const leftSince = (row: Conversation) => (departed.get(row.id) ?? -1) > row.state_version;
+
+/** Page rows placed into what is shown: a newer shown copy stays, departed rows stay out. */
+function appendRows(list: Conversation[], page: readonly Conversation[]): Conversation[] {
+  const byId = new Map(list.map((c) => [c.id, c]));
+  for (const row of page) {
+    const shown = byId.get(row.id);
+    if (shown ? notOlder(row, shown) : !leftSince(row)) byId.set(row.id, row);
+  }
+  return [...byId.values()].sort(byActivity);
+}
+
+/**
  * A re-read first page merged into what is shown: page rows win unless the shown row is newer;
  * a shown row sorting below the page's last row is a stale copy (later pages load it afresh).
  */
@@ -271,12 +351,7 @@ function mergeConversations(list: Conversation[], page: readonly Conversation[])
             (byActivity(c, first) < 0 || page.some((p) => p.id === c.id)),
         )
       : list;
-  const byId = new Map(kept.map((c) => [c.id, c]));
-  for (const row of page) {
-    const shown = byId.get(row.id);
-    if (!shown || shown.last_activity_at <= row.last_activity_at) byId.set(row.id, row);
-  }
-  return [...byId.values()].sort(byActivity);
+  return appendRows(kept, page);
 }
 
 /** A newly placed reply that is the last reply shown becomes the newest one seen. */
@@ -300,6 +375,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     running.clear();
     sending.clear();
     changing.clear();
+    departed.clear();
+    searchSeq++;
     set({ ...EMPTY });
   };
 
@@ -390,23 +467,90 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     if (incoming.workspace_id !== workspaceId || get().workspaceId !== workspaceId) return;
     const { close_snapshot: snapshot, ...row } = incoming;
     void snapshot;
+    let searchAgain: string | null = null;
     set((s) => {
       const open = s.thread;
       const thread =
         open?.conversationId === incoming.id &&
-        (!open.summary || incoming.state_version >= open.summary.state_version)
+        (!open.summary || summaryNotOlder(incoming, open.summary))
           ? { ...open, summary: incoming, contact: incoming.contact }
           : open;
+      if (!options.rows) return { thread };
+      const account = useAuthStore.getState().account?.id ?? null;
       const shown = s.conversations.find((c) => c.id === incoming.id);
       let conversations = s.conversations;
-      if (options.rows && (!shown || incoming.state_version >= shown.state_version)) {
-        const account = useAuthStore.getState().account?.id ?? null;
-        conversations = belongsToLens(row, s.lens, account, s.searching)
-          ? upsertConversation(s.conversations, row)
-          : s.conversations.filter((c) => c.id !== incoming.id);
+      if (!shown || notOlder(row, shown)) {
+        if (belongsToLens(row, s.lens, account, s.searching)) {
+          departed.delete(row.id);
+          conversations = upsertConversation(s.conversations, row);
+        } else {
+          departed.set(row.id, Math.max(departed.get(row.id) ?? -1, row.state_version));
+          conversations = s.conversations.filter((c) => c.id !== incoming.id);
+        }
       }
-      return { thread, conversations };
+      // The search results take the same change; one the search may now find is searched again.
+      let results = s.results;
+      const found = results?.page?.rows.find((c) => c.id === incoming.id);
+      const belongs = belongsToLens(row, s.lens, account, true);
+      if (results?.page && found) {
+        if (notOlder(row, found)) {
+          const rows = belongs
+            ? upsertConversation(results.page.rows, row)
+            : results.page.rows.filter((c) => c.id !== incoming.id);
+          results = { ...results, page: { ...results.page, rows } };
+        }
+      } else if (results && belongs) searchAgain = results.q;
+      return { thread, conversations, results };
     });
+    if (searchAgain !== null) {
+      const q = searchAgain;
+      coalesce('search', () => runSearch(workspaceId, q, { background: true }));
+    }
+  };
+
+  const runSearch = async (workspaceId: string, q: string, options: { background: boolean }) => {
+    const startedAt = epoch;
+    const seq = ++searchSeq;
+    const assignee = get().lens.assignee;
+    if (!options.background)
+      set((s) => ({ results: { q, status: 'loading', page: s.results?.page ?? null } }));
+    const mine = () =>
+      current(workspaceId, startedAt) && seq === searchSeq && get().results?.q === q;
+    try {
+      const page = await source.listConversations(
+        workspaceId,
+        { q, assignee, limit: PAGE_SIZE },
+        options.background ? BACKGROUND : {},
+      );
+      // The status lens is set aside while searching; a page for other lenses is a late one.
+      if (
+        !mine() ||
+        page.workspace_id !== workspaceId ||
+        page.lens.status !== null ||
+        page.lens.assignee !== assignee ||
+        get().lens.assignee !== assignee
+      )
+        return;
+      set((s) => {
+        const before = s.results?.q === q ? (s.results.page?.rows ?? []) : [];
+        const rows = page.items.map((row) => {
+          const shown = before.find((c) => c.id === row.id);
+          return shown && !notOlder(row, shown) ? shown : row;
+        });
+        return {
+          results: {
+            q,
+            status: 'ready',
+            page: { rows, hasNext: page.has_next, cursor: page.next_cursor },
+          },
+        };
+      });
+    } catch (error) {
+      noteGuard(error, workspaceId, startedAt);
+      const now = get().results;
+      if (mine() && now && (!options.background || now.status === 'loading'))
+        set({ results: { ...now, status: 'error' } });
+    }
   };
 
   const loadSummary = async (workspaceId: string, conversationId: string) => {
@@ -524,15 +668,21 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     return pos(known) > pos(pageNewest) && pos(known) >= 0 ? known : pageNewest;
   };
 
-  /** After a (re)connect or `resync`: the three authoritative re-reads. */
-  const rereadAll = (workspaceId: string) => {
-    void loadList(workspaceId, { background: true });
+  /**
+   * After a (re)connect or `resync`: the three authoritative re-reads (and the search on screen,
+   * run again). Resolves once all of them answered, so a coalesced resync waits for them.
+   */
+  const rereadAll = async (workspaceId: string) => {
+    const reads = [loadList(workspaceId, { background: true }), loadBot(workspaceId)];
     const open = get().thread;
-    if (open) {
-      void loadThread(workspaceId, open.conversationId, { background: true });
-      void loadSummary(workspaceId, open.conversationId);
-    }
-    void loadBot(workspaceId);
+    if (open)
+      reads.push(
+        loadThread(workspaceId, open.conversationId, { background: true }),
+        loadSummary(workspaceId, open.conversationId),
+      );
+    const search = get().results;
+    if (search) reads.push(runSearch(workspaceId, search.q, { background: true }));
+    await Promise.all(reads);
   };
 
   const refetchRow = (workspaceId: string, conversationId: string) =>
@@ -610,7 +760,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         void loadBot(workspaceId);
         return;
       case 'resync':
-        rereadAll(workspaceId);
+        void rereadAll(workspaceId);
         return;
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
@@ -665,8 +815,9 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       if (error.code === 'CONVERSATION_STATE_CHANGED') {
         const parsed = ConversationStateChangedError.safeParse(envelope(error.code));
         if (parsed.success) {
-          applySummary(workspaceId, parsed.data.error.details.conversation);
-          return { kind: 'stale', latestChange: parsed.data.error.details.latest_change };
+          const { conversation, latest_change: latestChange } = parsed.data.error.details;
+          applySummary(workspaceId, conversation);
+          return { kind: 'stale', conversation, latestChange };
         }
       } else if (error.code === 'CLOSE_NEEDS_CONFIRMATION') {
         const parsed = CloseNeedsConfirmationError.safeParse(envelope(error.code));
@@ -675,6 +826,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           applySummary(workspaceId, details.conversation);
           return {
             kind: 'needs_confirmation',
+            conversation: details.conversation,
             reasons: details.reasons,
             staleChange: details.stale_change,
             newestUnreadMessage: details.newest_unread_message,
@@ -859,6 +1011,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     },
     async setLens(workspaceId, lens) {
       if (get().workspaceId !== workspaceId || sameLens(get().lens, lens)) return;
+      departed.clear();
       set((s) => ({
         lens,
         listStatus: 'loading',
@@ -881,21 +1034,99 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         };
       });
     },
-    assign: (workspaceId, conversationId, assigneeAccountId) =>
+    async search(workspaceId, q) {
+      if (get().workspaceId !== workspaceId) return;
+      await runSearch(workspaceId, q, { background: false });
+    },
+    clearSearch() {
+      searchSeq++;
+      set({ results: null });
+    },
+    async loadMore(workspaceId, target) {
+      const s = get();
+      const startedAt = epoch;
+      if (s.workspaceId !== workspaceId) return 'dropped';
+      const lens = s.lens;
+      const search = s.results;
+      const cursor = target === 'list' ? s.nextCursor : (search?.page?.cursor ?? null);
+      if (!cursor || (target === 'results' && !search)) return 'dropped';
+      const version = s.listVersion;
+      try {
+        const page = await source.listConversations(
+          workspaceId,
+          target === 'list'
+            ? { ...lens, after: cursor, limit: PAGE_SIZE }
+            : { q: search!.q, assignee: lens.assignee, after: cursor, limit: PAGE_SIZE },
+        );
+        const now = get();
+        if (
+          !current(workspaceId, startedAt) ||
+          page.workspace_id !== workspaceId ||
+          !sameLens(now.lens, lens) ||
+          page.lens.assignee !== lens.assignee ||
+          page.lens.status !== (target === 'list' ? lens.status : null)
+        )
+          return 'dropped';
+        if (target === 'list') {
+          // A re-read first page restarts paging from its own cursor: this page is of the old one.
+          if (now.listVersion !== version || now.nextCursor !== cursor) return 'dropped';
+          set((st) => ({
+            conversations: appendRows(st.conversations, page.items),
+            hasNext: page.has_next,
+            nextCursor: page.next_cursor,
+          }));
+          return 'loaded';
+        }
+        const shown = now.results;
+        if (shown?.q !== search!.q || !shown.page || shown.page.cursor !== cursor) return 'dropped';
+        const rows = shown.page.rows;
+        set({
+          results: {
+            ...shown,
+            page: {
+              rows: page.items.reduce(
+                (all, row) => {
+                  const known = all.find((c) => c.id === row.id);
+                  return known && !notOlder(row, known)
+                    ? all
+                    : [...all.filter((c) => c.id !== row.id), row];
+                },
+                [...rows],
+              ),
+              hasNext: page.has_next,
+              cursor: page.next_cursor,
+            },
+          },
+        });
+        return 'loaded';
+      } catch (error) {
+        noteGuard(error, workspaceId, startedAt);
+        return current(workspaceId, startedAt) ? 'error' : 'dropped';
+      }
+    },
+    async retryList(workspaceId) {
+      if (get().workspaceId !== workspaceId) return;
+      set({ listStatus: 'loading' });
+      await Promise.all([loadList(workspaceId, { background: false }), loadBot(workspaceId)]);
+    },
+    assign: (workspaceId, conversationId, assigneeAccountId, options = {}) =>
       runChange(workspaceId, conversationId, (summary) =>
         source.assignConversation(
           workspaceId,
           conversationId,
-          { assignee_account_id: assigneeAccountId, expected_state_version: summary.state_version },
+          {
+            assignee_account_id: assigneeAccountId,
+            expected_state_version: (options.expected ?? summary).state_version,
+          },
           {},
         ),
       ),
-    unassign: (workspaceId, conversationId) =>
+    unassign: (workspaceId, conversationId, options = {}) =>
       runChange(workspaceId, conversationId, (summary) =>
         source.unassignConversation(
           workspaceId,
           conversationId,
-          { expected_state_version: summary.state_version },
+          { expected_state_version: (options.expected ?? summary).state_version },
           {},
         ),
       ),
@@ -912,12 +1143,12 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           {},
         ),
       ),
-    reopen: (workspaceId, conversationId) =>
+    reopen: (workspaceId, conversationId, options = {}) =>
       runChange(workspaceId, conversationId, (summary) =>
         source.reopenConversation(
           workspaceId,
           conversationId,
-          { expected_state_version: summary.state_version },
+          { expected_state_version: (options.expected ?? summary).state_version },
           {},
         ),
       ),
@@ -927,10 +1158,9 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       set({ workspaceId, lens });
       client = openLiveSocket(workspaceId, {
         onFrame: (frame) => onFrame(workspaceId, frame),
-        onReconnected: () => rereadAll(workspaceId),
+        onReconnected: () => void rereadAll(workspaceId),
         onInvalidFrame: () => {
-          if (get().workspaceId === workspaceId)
-            coalesce('resync', async () => rereadAll(workspaceId));
+          if (get().workspaceId === workspaceId) coalesce('resync', () => rereadAll(workspaceId));
         },
         onClosed: () => {
           if (get().workspaceId === workspaceId) set({ live: 'stopped' });

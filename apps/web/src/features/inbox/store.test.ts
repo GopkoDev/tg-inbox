@@ -1200,3 +1200,326 @@ describe('inbox store: activity frames', () => {
     expect(useInboxStore.getState().live).toBe('live');
   });
 });
+
+// ───────── assignment-statuses review fixes (W1–W8) ─────────
+
+describe('inbox store: refusals carry what they were about (W1, W2)', () => {
+  const open = async (over: Partial<ConversationSummary> = {}) => {
+    api.getConversation.mockResolvedValue(summary(A, C1, { state_version: 3, ...over }));
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    await flush();
+  };
+  const store = () => useInboxStore.getState();
+
+  it('a stale refusal hands back its own summary, even when a newer one is on screen', async () => {
+    await open();
+    let reject!: (e: unknown) => void;
+    api.assignConversation.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    const pending = store().assign(A, C1, PEER);
+    // a live summary overtakes the request
+    api.getConversation.mockResolvedValue(summary(A, C1, { state_version: 8 }));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'state', null));
+    await flush();
+    reject(
+      apiError(409, 'CONVERSATION_STATE_CHANGED', {
+        conversation: summary(A, C1, { state_version: 6, assignee: member(PEER, 'Peer') }),
+        latest_change: null,
+      }),
+    );
+    const result = await pending;
+    expect(result).toMatchObject({ kind: 'stale', conversation: { state_version: 6 } });
+    expect(store().thread!.summary!.state_version).toBe(8);
+  });
+
+  it('a needs-confirmation refusal hands back its own summary', async () => {
+    await open();
+    api.closeConversation.mockRejectedValueOnce(
+      apiError(409, 'CLOSE_NEEDS_CONFIRMATION', {
+        reasons: ['customer_waiting'],
+        stale_change: null,
+        newest_unread_message: null,
+        conversation: summary(A, C1, {
+          state_version: 3,
+          close_snapshot: { customer_message_seq: 7, latest_reply: null },
+        }),
+      }),
+    );
+    expect(await store().close(A, C1)).toMatchObject({
+      kind: 'needs_confirmation',
+      conversation: { state_version: 3, close_snapshot: { customer_message_seq: 7 } },
+    });
+  });
+
+  it('assign, unassign and reopen send an expected version when one is given', async () => {
+    await open({ state_version: 9 });
+    const ok = {
+      workspace_id: A,
+      outcome: 'unchanged',
+      conversation: summary(A, C1, { state_version: 9 }),
+      activity: null,
+    };
+    api.assignConversation.mockResolvedValue(ok);
+    api.unassignConversation.mockResolvedValue(ok);
+    api.reopenConversation.mockResolvedValue(ok);
+    await store().assign(A, C1, PEER, { expected: { state_version: 6 } });
+    await store().unassign(A, C1, { expected: { state_version: 6 } });
+    await store().reopen(A, C1, { expected: { state_version: 6 } });
+    expect(api.assignConversation.mock.calls[0]![2]).toEqual({
+      assignee_account_id: PEER,
+      expected_state_version: 6,
+    });
+    expect(api.unassignConversation.mock.calls[0]![2]).toEqual({ expected_state_version: 6 });
+    expect(api.reopenConversation.mock.calls[0]![2]).toEqual({ expected_state_version: 6 });
+  });
+});
+
+describe('inbox store: loaded pages follow live changes (W3)', () => {
+  it('a row from a later page leaves the lens on a live close', async () => {
+    api.listConversations.mockResolvedValueOnce({
+      ...listPage(A, [conv(A, C1, '2026-10-18T12:00:00.000Z')]),
+      has_next: true,
+      next_cursor: 'n-1',
+    });
+    await useInboxStore.getState().enter(A);
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C2, '2026-10-18T09:00:00.000Z', { state_version: 1 })]),
+    );
+    expect(await useInboxStore.getState().loadMore(A, 'list')).toBe('loaded');
+    expect(api.listConversations.mock.calls.at(-1)![1]).toMatchObject({ after: 'n-1' });
+    expect(useInboxStore.getState()).toMatchObject({ hasNext: false, nextCursor: null });
+    expect(useInboxStore.getState().conversations.map((c) => c.id)).toEqual([C1, C2]);
+    api.getConversation.mockResolvedValue(
+      summary(A, C2, {
+        state_version: 2,
+        status: 'closed',
+        last_activity_at: '2026-10-18T09:00:00.000Z',
+      }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C2, 'state', null));
+    await flush();
+    expect(useInboxStore.getState().conversations.map((c) => c.id)).toEqual([C1]);
+  });
+
+  it('a page answering after the first page was re-read is dropped', async () => {
+    api.listConversations.mockResolvedValueOnce({
+      ...listPage(A, [conv(A, C1, '2026-10-18T12:00:00.000Z')]),
+      has_next: true,
+      next_cursor: 'n-1',
+    });
+    await useInboxStore.getState().enter(A);
+    let release!: (v: unknown) => void;
+    api.listConversations.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    const more = useInboxStore.getState().loadMore(A, 'list');
+    api.listConversations.mockResolvedValueOnce({
+      ...listPage(A, [conv(A, C1, '2026-10-18T12:00:00.000Z')]),
+      has_next: true,
+      next_cursor: 'n-2',
+    });
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    await flush();
+    release(listPage(A, [conv(A, C2, '2026-10-18T09:00:00.000Z')]));
+    expect(await more).toBe('dropped');
+    expect(useInboxStore.getState().conversations.map((c) => c.id)).toEqual([C1]);
+    expect(useInboxStore.getState().nextCursor).toBe('n-2');
+  });
+});
+
+describe('inbox store: search results follow live changes (W4)', () => {
+  const SEARCH = { status: null, assignee: 'all' } as const;
+  const enterAndSearch = async (rows: Conversation[], assignee: 'all' | 'mine' = 'all') => {
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? lensPage(ws, { ...SEARCH, assignee }, rows)
+        : lensPage(ws, { status: 'open', assignee }, []),
+    );
+    await useInboxStore.getState().enter(A, { status: 'open', assignee });
+    useInboxStore.getState().setSearching(true);
+    await useInboxStore.getState().search(A, 'Ada');
+  };
+  const results = () => useInboxStore.getState().results?.page?.rows ?? [];
+
+  it('searches in the assignee lens and keeps the answer', async () => {
+    await enterAndSearch([conv(A, C1, '2026-10-18T10:00:00.000Z')]);
+    expect(api.listConversations.mock.calls.at(-1)![1]).toMatchObject({
+      q: 'Ada',
+      assignee: 'all',
+    });
+    expect(useInboxStore.getState().results).toMatchObject({ q: 'Ada', status: 'ready' });
+    expect(results().map((c) => c.id)).toEqual([C1]);
+  });
+
+  it('a live assignment and close update the shown result in place', async () => {
+    await enterAndSearch([conv(A, C1, '2026-10-18T10:00:00.000Z')]);
+    api.getConversation.mockResolvedValue(
+      summary(A, C1, { state_version: 2, status: 'closed', assignee: member(PEER, 'Peer') }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'state', null));
+    await flush();
+    expect(results()).toHaveLength(1);
+    expect(results()[0]).toMatchObject({ status: 'closed', assignee: { account_id: PEER } });
+  });
+
+  it('mine: a result assigned to a teammate leaves the results', async () => {
+    await enterAndSearch(
+      [conv(A, C1, '2026-10-18T10:00:00.000Z', { assignee: member(ME, 'Me') })],
+      'mine',
+    );
+    api.getConversation.mockResolvedValue(
+      summary(A, C1, { state_version: 2, assignee: member(PEER, 'Peer') }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'state', null));
+    await flush();
+    expect(results()).toEqual([]);
+  });
+
+  it('a conversation that joins the assignee lens re-runs the search', async () => {
+    await enterAndSearch([], 'mine');
+    api.listConversations.mockClear();
+    api.getConversation.mockResolvedValue(
+      summary(A, C2, { state_version: 2, assignee: member(ME, 'Me') }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C2, 'state', null));
+    await flush();
+    expect(api.listConversations.mock.calls.some((c) => c[1]?.q === 'Ada')).toBe(true);
+  });
+
+  it('a resync re-runs the search', async () => {
+    await enterAndSearch([conv(A, C1, '2026-10-18T10:00:00.000Z')]);
+    api.listConversations.mockClear();
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    await flush();
+    expect(api.listConversations.mock.calls.some((c) => c[1]?.q === 'Ada')).toBe(true);
+  });
+
+  it('the results page further from their cursor', async () => {
+    api.listConversations.mockImplementation(
+      async (ws: string, params: { q?: string; after?: string }) =>
+        params.after
+          ? lensPage(ws, SEARCH, [conv(ws, C2, '2026-10-18T09:00:00.000Z')])
+          : params.q
+            ? {
+                ...lensPage(ws, SEARCH, [conv(ws, C1, '2026-10-18T10:00:00.000Z')]),
+                has_next: true,
+                next_cursor: 'q1',
+              }
+            : listPage(ws, []),
+    );
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().search(A, 'Ada');
+    expect(await useInboxStore.getState().loadMore(A, 'results')).toBe('loaded');
+    expect(api.listConversations.mock.calls.at(-1)![1]).toMatchObject({ q: 'Ada', after: 'q1' });
+    expect(results().map((c) => c.id)).toEqual([C1, C2]);
+  });
+});
+
+describe('inbox store: re-reads at the same state version (W6)', () => {
+  it('an older copy at the same version replaces neither the row nor the open summary', async () => {
+    api.listConversations.mockResolvedValue(
+      listPage(A, [conv(A, C1, '2026-10-18T10:05:00.000Z', { state_version: 3, unread_count: 2 })]),
+    );
+    api.getConversation.mockResolvedValue(
+      summary(A, C1, {
+        state_version: 3,
+        last_activity_at: '2026-10-18T10:05:00.000Z',
+        unread_count: 2,
+        close_snapshot: { customer_message_seq: 9, latest_reply: null },
+      }),
+    );
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    await flush();
+    api.getConversation.mockResolvedValue(
+      summary(A, C1, {
+        state_version: 3,
+        last_activity_at: '2026-10-18T10:00:00.000Z',
+        unread_count: 1,
+        close_snapshot: { customer_message_seq: 8, latest_reply: null },
+      }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'read', null));
+    await flush();
+    const s = useInboxStore.getState();
+    expect(s.conversations[0]).toMatchObject({
+      unread_count: 2,
+      last_activity_at: '2026-10-18T10:05:00.000Z',
+    });
+    expect(s.thread!.summary!.close_snapshot.customer_message_seq).toBe(9);
+  });
+
+  it('a re-read first page keeps a shown row with a higher state version', async () => {
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z', { state_version: 3 })]),
+    );
+    await useInboxStore.getState().enter(A);
+    api.getConversation.mockResolvedValue(
+      summary(A, C1, { state_version: 5, assignee: member(PEER, 'Peer') }),
+    );
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'state', null));
+    await flush();
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z', { state_version: 4 })]),
+    );
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    await flush();
+    expect(useInboxStore.getState().conversations[0]).toMatchObject({
+      state_version: 5,
+      assignee: { account_id: PEER },
+    });
+  });
+
+  it('a row that left the lens through a newer version is not brought back by an older page', async () => {
+    api.listConversations.mockResolvedValueOnce(
+      listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z', { state_version: 3 })]),
+    );
+    await useInboxStore.getState().enter(A);
+    let release!: (v: unknown) => void;
+    api.listConversations.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
+    api.getConversation.mockResolvedValue(summary(A, C1, { state_version: 4, status: 'closed' }));
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'state', null));
+    await flush();
+    expect(useInboxStore.getState().conversations).toEqual([]);
+    release(listPage(A, [conv(A, C1, '2026-10-18T10:00:00.000Z', { state_version: 3 })]));
+    await flush();
+    expect(useInboxStore.getState().conversations).toEqual([]);
+  });
+});
+
+describe('inbox store: list retry (W7) and coalesced resync (W8)', () => {
+  it('retryList re-reads the first page and keeps the open thread', async () => {
+    api.listConversations.mockRejectedValueOnce(new Error('net'));
+    api.getConversation.mockResolvedValue(summary(A, C1, { state_version: 1 }));
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    await flush();
+    expect(useInboxStore.getState().listStatus).toBe('error');
+    await useInboxStore.getState().retryList(A);
+    const s = useInboxStore.getState();
+    expect(s.listStatus).toBe('ready');
+    expect(s.conversations.map((c) => c.id)).toEqual([C1]);
+    expect(s.thread).toMatchObject({ conversationId: C1, status: 'ready' });
+    expect(sockets).toHaveLength(1);
+  });
+
+  it('invalid frames while a resync is still re-reading collapse into one more resync', async () => {
+    await useInboxStore.getState().enter(A);
+    const releases: ((v: unknown) => void)[] = [];
+    api.listConversations.mockImplementation(
+      (ws: string) =>
+        new Promise((r) =>
+          releases.push(() => r(listPage(ws, [conv(ws, C1, '2026-10-18T10:00:00.000Z')]))),
+        ),
+    );
+    api.listConversations.mockClear();
+    for (let i = 0; i < 4; i++) sockets[0]!.handlers.onInvalidFrame();
+    await flush();
+    expect(api.listConversations).toHaveBeenCalledTimes(1);
+    releases[0]!(undefined);
+    await flush();
+    expect(api.listConversations).toHaveBeenCalledTimes(2);
+    releases[1]!(undefined);
+    await flush();
+    expect(api.listConversations).toHaveBeenCalledTimes(2);
+  });
+});

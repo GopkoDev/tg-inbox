@@ -18,6 +18,17 @@ vi.mock('./api-source', () => ({
   reopenConversation: (...a: unknown[]) => api.reopenConversation(...a),
 }));
 
+const shared = vi.hoisted(() => ({ initials: vi.fn<(name: string) => string>() }));
+vi.mock('@/shared/lib/initials', async (load) => {
+  const real = await load<typeof import('@/shared/lib/initials')>();
+  return {
+    initials: (name: string) => {
+      shared.initials(name);
+      return real.initials(name);
+    },
+  };
+});
+
 import { useAuthStore } from '@/features/auth/store';
 import { ConversationActions } from './ConversationActions';
 import { useInboxStore } from './store';
@@ -332,5 +343,16 @@ describe('SCR-10 assignee chooser', () => {
     expect(cls).toContain('w-(--radix-popover-trigger-width)');
     expect(cls).toContain('min-w-60');
     expect(within(dialog()).getByTestId('member-list').className).toContain('overflow-y-auto');
+  });
+});
+
+describe('SCR-10 avatars (W9)', () => {
+  it('uses the shared initials helper for every member row', async () => {
+    show(summary());
+    renderBar();
+    openChooser();
+    await within(dialog()).findByRole('button', { name: /Bob Petrenko/ });
+    expect(shared.initials).toHaveBeenCalledWith('Bob Petrenko');
+    expect(within(row(/Bob Petrenko/)).getByText('BP')).toBeInTheDocument();
   });
 });

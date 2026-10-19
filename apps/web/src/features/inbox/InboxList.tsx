@@ -1,4 +1,3 @@
-import type { Conversation } from '@tg/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -11,32 +10,13 @@ import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
-import * as source from './api-source';
 import { ConversationList, ConversationSkeletons } from './ConversationList';
 import { Thread } from './Thread';
 import { AssigneeLens, StatusLens } from '@tg/shared';
 import { withLens, type InboxLens } from './lens';
 import { useInboxStore } from './store';
 
-const PAGE_SIZE = 30;
 const DEBOUNCE_MS = 300;
-
-interface Extra {
-  rows: Conversation[];
-  hasNext: boolean;
-  cursor: string | null;
-}
-
-const merge = (base: Conversation[], more: Conversation[]) => {
-  const seen = new Set(base.map((c) => c.id));
-  return [...base, ...more.filter((c) => !seen.has(c.id))];
-};
-
-/** A later page's copy of a row is the fresh one: it replaces the copy loaded before. */
-const appendPage = (loaded: Conversation[], page: Conversation[]) => {
-  const fresh = new Set(page.map((c) => c.id));
-  return [...loaded.filter((c) => !fresh.has(c.id)), ...page];
-};
 
 const EMPTY_LENS: Record<InboxLens['status'], Record<InboxLens['assignee'], string>> = {
   open: {
@@ -56,8 +36,8 @@ export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
   const isMobile = useIsMobile();
   const role = useWorkspaceStore((s) => s.current?.role);
-  const { listStatus, conversations, hasNext, nextCursor, listVersion, bot, lens } =
-    useInboxStore();
+  // Later pages and search results live in the store too, so live changes and resyncs reach them.
+  const { listStatus, conversations, hasNext, nextCursor, bot, lens, results } = useInboxStore();
   const isOwner = role === 'owner';
   const [searchParams, setSearchParams] = useSearchParams();
   /** The lenses live in the address; the page follows it into the store. */
@@ -77,21 +57,8 @@ export function InboxList() {
 
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
-  const [paged, setMore] = useState<Extra & { version: number }>({
-    rows: [],
-    hasNext: false,
-    cursor: null,
-    version: listVersion,
-  });
-  // Pages loaded beyond an older first page are stale once it is re-read: page again from the
-  // new `nextCursor` (a row that slid off the first page shows up there).
-  const more: Extra =
-    paged.version === listVersion ? paged : { rows: [], hasNext: false, cursor: null };
   const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [results, setResults] = useState<Extra | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  // Separate counters: a search never strands a page load, and a page load never drops a search.
-  const searchRequest = useRef(0);
+  /** A page load answering after paging restarted (a new query) leaves the paging state alone. */
   const pageRequest = useRef(0);
   const query = useRef('');
   /** A new query starts paging afresh: a page in flight belongs to the old one. */
@@ -106,7 +73,7 @@ export function InboxList() {
       if (text !== query.current) restartPaging();
       query.current = text;
       setQ(text);
-      if (!text) setResults(null);
+      if (!text) useInboxStore.getState().clearSearch();
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [input]);
@@ -117,84 +84,34 @@ export function InboxList() {
   }, [q]);
 
   const search = useCallback(
-    (text: string) => {
-      const id = ++searchRequest.current;
-      source
-        .listConversations(workspaceId, { q: text, assignee, limit: PAGE_SIZE })
-        .then((page) => {
-          // The status lens is set aside while searching; a page for other lenses is a late one.
-          if (
-            searchRequest.current !== id ||
-            page.workspace_id !== workspaceId ||
-            page.lens.status !== null ||
-            page.lens.assignee !== assignee
-          )
-            return;
-          setSearchError(null);
-          setResults({ rows: page.items, hasNext: page.has_next, cursor: page.next_cursor });
-        })
-        .catch((error: unknown) => {
-          useInboxStore.getState().reportGuard(error, workspaceId);
-          if (searchRequest.current === id) setSearchError(text);
-        });
-    },
-    [workspaceId, assignee],
+    (text: string) => void useInboxStore.getState().search(workspaceId, text),
+    [workspaceId],
   );
-
+  // A changed assignee lens searches again within it.
   useEffect(() => {
     if (q) search(q);
-  }, [q, search]);
+  }, [q, assignee, search]);
+  // The results belong to this pane: they go with it.
+  useEffect(() => () => useInboxStore.getState().clearSearch(), []);
 
+  const found = q !== '' && results?.page ? results.page : null;
   const loadMore = useCallback(() => {
-    const filtered = q !== '';
-    const cursor = filtered ? results?.cursor : (more.cursor ?? nextCursor);
+    const target = q !== '' ? 'results' : 'list';
+    const cursor = target === 'results' ? found?.cursor : nextCursor;
     if (!cursor || moreState === 'loading') return;
     const id = ++pageRequest.current;
     setMoreState('loading');
-    source
-      .listConversations(workspaceId, {
-        ...(filtered ? { q, assignee: lens.assignee } : lens),
-        after: cursor,
-        limit: PAGE_SIZE,
-      })
-      .then((page) => {
-        if (
-          pageRequest.current !== id ||
-          page.workspace_id !== workspaceId ||
-          page.lens.status !== (filtered ? null : lens.status) ||
-          page.lens.assignee !== lens.assignee
-        )
-          return;
-        if (!filtered && useInboxStore.getState().listVersion !== listVersion) {
-          setMoreState('idle');
-          return;
-        }
-        const next = (prev: Extra | null): Extra => ({
-          rows: appendPage(prev?.rows ?? [], page.items),
-          hasNext: page.has_next,
-          cursor: page.next_cursor,
-        });
-        if (filtered) setResults(next);
-        else
-          setMore((prev) => ({
-            ...next(prev.version === listVersion ? prev : null),
-            version: listVersion,
-          }));
-        setMoreState('idle');
-      })
-      .catch((error: unknown) => {
-        useInboxStore.getState().reportGuard(error, workspaceId);
-        if (pageRequest.current === id) setMoreState('error');
+    void useInboxStore
+      .getState()
+      .loadMore(workspaceId, target)
+      .then((outcome) => {
+        if (pageRequest.current === id) setMoreState(outcome === 'error' ? 'error' : 'idle');
       });
-  }, [q, results, more.cursor, nextCursor, listVersion, moreState, workspaceId, lens]);
+  }, [q, found, nextCursor, moreState, workspaceId]);
 
-  const filtered = q !== '' && results !== null;
-  const rows = filtered ? results.rows : merge(conversations, more.rows);
-  const canLoadMore = filtered
-    ? results.hasNext
-    : more.rows.length > 0 || more.cursor
-      ? more.hasNext
-      : hasNext;
+  const filtered = found !== null;
+  const rows = found ? found.rows : conversations;
+  const canLoadMore = found ? found.hasNext : hasNext;
 
   const sentinel = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef(loadMore);
@@ -217,12 +134,10 @@ export function InboxList() {
     if (query.current !== '') restartPaging();
     query.current = '';
     setQ('');
-    setResults(null);
+    useInboxStore.getState().clearSearch();
   };
-  const retryFirstPage = () => {
-    useInboxStore.getState().leave();
-    void useInboxStore.getState().enter(workspaceId, lens);
-  };
+  // Re-reads the first page in place: the socket and an open thread stay as they are.
+  const retryFirstPage = () => void useInboxStore.getState().retryList(workspaceId);
 
   const botSettings = (
     <Button asChild variant="link" size="sm" className="h-auto p-0">
@@ -232,7 +147,8 @@ export function InboxList() {
 
   const noBot = bot?.state === 'not_connected' || bot?.state === 'needs_token';
   const loading = listStatus === 'loading';
-  const failed = listStatus === 'error' || (q !== '' && searchError === q);
+  const failed =
+    listStatus === 'error' || (q !== '' && results?.q === q && results.status === 'error');
 
   let body: React.ReactNode;
   if (loading) body = <ConversationSkeletons count={6} />;
@@ -246,14 +162,7 @@ export function InboxList() {
               type="button"
               size="sm"
               variant="outline"
-              onClick={
-                q !== ''
-                  ? () => {
-                      setSearchError(null);
-                      search(q);
-                    }
-                  : retryFirstPage
-              }
+              onClick={q !== '' ? () => search(q) : retryFirstPage}
             >
               Retry
             </Button>

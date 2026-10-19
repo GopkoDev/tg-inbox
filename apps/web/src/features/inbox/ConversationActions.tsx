@@ -108,6 +108,8 @@ export function ConversationActions({
     setPending(action);
     setFailed(false);
     const store = useInboxStore.getState();
+    // A go-ahead resends exactly what the dialog showed, not a summary that arrived since.
+    const asked = fromDialog && confirm ? { expected: confirm.conversation } : {};
     const result =
       action === 'close'
         ? await store.close(
@@ -116,20 +118,23 @@ export function ConversationActions({
             fromDialog ? { confirm: true, expected: closeAsk?.expected } : {},
           )
         : action === 'reopen'
-          ? await store.reopen(workspaceId, conversationId)
+          ? await store.reopen(workspaceId, conversationId, asked)
           : action === 'assign' && pick
-            ? await store.assign(workspaceId, conversationId, pick)
-            : await store.unassign(workspaceId, conversationId);
+            ? await store.assign(workspaceId, conversationId, pick, asked)
+            : await store.unassign(workspaceId, conversationId, asked);
     setPending(null);
     if (result.kind === 'limited') {
       setRetryAt(result.retryAt);
       setSeconds(secondsLeft(result.retryAt));
     } else if (result.kind === 'failed' && !fromDialog) setFailed(true);
     if (action === 'close') {
-      const asked = useInboxStore.getState().thread?.summary;
-      if (result.kind === 'needs_confirmation' && asked)
+      if (result.kind === 'needs_confirmation')
         setCloseAsk({
-          expected: { state_version: asked.state_version, close_snapshot: asked.close_snapshot },
+          // The refusal's own version and snapshot, never a later live summary (AC-06).
+          expected: {
+            state_version: result.conversation.state_version,
+            close_snapshot: result.conversation.close_snapshot,
+          },
           reasons: result.reasons,
           staleChange: result.staleChange,
           newestUnreadMessage: result.newestUnreadMessage,
@@ -142,18 +147,16 @@ export function ConversationActions({
       }
     } else {
       if (result.kind === 'stale') {
-        // The store already holds the newer summary; the dialog keeps its own copy (Decision 7).
-        const now = useInboxStore.getState().thread?.summary;
-        if (now)
-          setConfirm({
-            action,
-            pick,
-            pickName,
-            conversation: now,
-            latestChange: result.latestChange,
-            again: fromDialog,
-            failed: false,
-          });
+        // The dialog keeps the refusal's own copy (Decision 7): its «Now» line and its go-ahead.
+        setConfirm({
+          action,
+          pick,
+          pickName,
+          conversation: result.conversation,
+          latestChange: result.latestChange,
+          again: fromDialog,
+          failed: false,
+        });
       } else if (fromDialog) {
         if (result.kind === 'failed') setConfirm((c) => (c ? { ...c, failed: true } : c));
         else {

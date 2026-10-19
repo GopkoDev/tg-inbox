@@ -636,3 +636,103 @@ describe('SCR-12 over the actions bar (AC-06, AC-08)', () => {
     expect(screen.queryByText(/Couldn.t save the change — check/)).toBeNull();
   });
 });
+
+describe('SCR-11 / SCR-12 are built from the refusal (W1, W2)', () => {
+  const ana = { account_id: id(5), display_name: 'Ana Shevchenko' };
+  const stale = (over: Partial<ConversationSummary>) =>
+    new ApiError(409, 'CONVERSATION_STATE_CHANGED', 'x', {
+      conversation: summary(over),
+      latest_change: null,
+    });
+  const dialog = () => screen.getByRole('alertdialog');
+
+  beforeEach(() => {
+    stubRadixDom();
+    useAuthStore
+      .getState()
+      .setAccount({ id: ana.account_id, email: 'a@x.io', display_name: ana.display_name });
+    api.listActiveMembers.mockResolvedValue({ workspace_id: WS, items: [ana, bob] });
+  });
+
+  it('go ahead sends the refusal’s version, not a live summary that arrived while the dialog is open', async () => {
+    show(summary({ status: 'closed' }));
+    api.reopenConversation
+      .mockRejectedValueOnce(stale({ status: 'closed', assignee: bob, state_version: 6 }))
+      .mockResolvedValueOnce(change({ status: 'open', state_version: 10 }));
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    await screen.findByRole('alertdialog');
+    act(() => show(summary({ status: 'closed', assignee: ana, state_version: 9 })));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Reopen anyway' }));
+    await waitFor(() => expect(api.reopenConversation).toHaveBeenCalledTimes(2));
+    expect(api.reopenConversation.mock.calls[1]![2]).toEqual({ expected_state_version: 6 });
+  });
+
+  it('assign go-ahead sends the refusal’s version with the pick', async () => {
+    show(summary());
+    api.assignConversation
+      .mockRejectedValueOnce(stale({ assignee: bob, state_version: 6 }))
+      .mockResolvedValueOnce(change({ assignee: ana, state_version: 10 }));
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: /Unassigned/ }));
+    fireEvent.click(await screen.findByRole('button', { name: /Me \(Ana/ }));
+    await screen.findByRole('alertdialog');
+    act(() => show(summary({ assignee: null, state_version: 9 })));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Assign to Ana Shevchenko' }));
+    await waitFor(() => expect(api.assignConversation).toHaveBeenCalledTimes(2));
+    expect(api.assignConversation.mock.calls[1]![2]).toEqual({
+      assignee_account_id: ana.account_id,
+      expected_state_version: 6,
+    });
+  });
+
+  it('the «Now» line is the refusal’s state even when a newer summary was already on screen', async () => {
+    show(summary({ status: 'closed' }));
+    let reject!: (e: unknown) => void;
+    api.reopenConversation.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Reopen' }));
+    act(() => show(summary({ status: 'open', assignee: ana, state_version: 9 })));
+    await act(async () => reject(stale({ status: 'closed', assignee: bob, state_version: 6 })));
+    await screen.findByRole('alertdialog');
+    expect(
+      within(dialog()).getByText('Now: assigned to Bob Petrenko · Closed'),
+    ).toBeInTheDocument();
+  });
+
+  it('Close anyway confirms the refusal’s version and snapshot even when a newer summary was already on screen', async () => {
+    show(summary());
+    let reject!: (e: unknown) => void;
+    api.closeConversation.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    renderBar();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    act(() =>
+      show(
+        summary({
+          state_version: 8,
+          close_snapshot: { customer_message_seq: 9, latest_reply: null },
+        }),
+      ),
+    );
+    const snapshot = { customer_message_seq: 7, latest_reply: null };
+    await act(async () =>
+      reject(
+        new ApiError(409, 'CLOSE_NEEDS_CONFIRMATION', 'x', {
+          conversation: summary({ state_version: 6, close_snapshot: snapshot }),
+          reasons: ['customer_waiting'],
+          stale_change: null,
+          newest_unread_message: null,
+        }),
+      ),
+    );
+    await screen.findByRole('alertdialog');
+    api.closeConversation.mockResolvedValueOnce(change({ status: 'closed', state_version: 10 }));
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(api.closeConversation).toHaveBeenCalledTimes(2));
+    expect(api.closeConversation.mock.calls[1]![2]).toEqual({
+      expected_state_version: 6,
+      expected_close_snapshot: snapshot,
+      confirm_close_reasons: true,
+    });
+  });
+});
