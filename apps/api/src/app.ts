@@ -6,6 +6,7 @@ import type { DestinationStream } from 'pino';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
+import { registerContacts } from './modules/contacts/http/routes.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
 import { createDeliver } from './modules/inbox/app/deliver.js';
 import { createSendReply } from './modules/inbox/app/send-reply.js';
@@ -208,6 +209,17 @@ export async function buildApp(
         live: liveHub,
         attention: deps.notificationReads.attentionCount,
         webOrigin: new URL(config.PUBLIC_WEB_URL).origin,
+        access: workspaceAccess,
+        authenticate,
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerContacts(api, {
+        reads: deps.contactReads,
+        writes: deps.tagWrites,
+        admin: deps.tagAdmin,
         access: workspaceAccess,
         authenticate,
       }),

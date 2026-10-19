@@ -398,6 +398,32 @@ describe('error handler', () => {
       },
     });
   });
+
+  it('names the array, not its index, and the closest branch of a failed union', async () => {
+    const app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    registerErrorHandler(app);
+    const source = z.enum(['inbox', 'profile']);
+    app.post(
+      '/v',
+      {
+        schema: {
+          body: z.union([
+            z.strictObject({ tag_id: z.uuid(), source }),
+            z.strictObject({ name: z.string(), source }),
+          ]),
+          querystring: z.object({ tag: z.array(z.uuid()).optional() }),
+        },
+      },
+      () => ({ ok: true }),
+    );
+    const send = async (payload: object, url = '/v') =>
+      (await app.inject({ method: 'POST', url, payload })).json().error.details;
+    expect(await send({ name: 'x', source: 'settings' })).toEqual({ field: 'source' });
+    expect(await send({ name: 'x', tag_id: 'y', source: 'inbox' })).toBeUndefined();
+    expect(await send({ name: 'x', source: 'inbox' }, '/v?tag=nope')).toEqual({ field: 'tag' });
+  });
 });
 
 describe('shared-inbox error details (T2)', () => {

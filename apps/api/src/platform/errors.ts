@@ -436,6 +436,28 @@ function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnv
 /** Router-level errors whose Fastify message embeds the request path. */
 const URL_ERROR_CODES = new Set(['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH']);
 
+/**
+ * The request field a validation issue is about: the last named segment of its path (an array
+ * index names the array). A failed union has no path of its own, so it names the field of the
+ * branch that came closest (the fewest issues).
+ */
+function fieldOf(issue: {
+  keyword: string;
+  instancePath: string;
+  params?: unknown;
+}): string | undefined {
+  const segments = issue.instancePath.split('/').filter(Boolean);
+  if (issue.keyword === 'invalid_union') {
+    const branches = (issue.params as { errors?: { path: (string | number)[] }[][] } | undefined)
+      ?.errors;
+    const closest = branches
+      ?.filter((issues) => issues.length > 0)
+      .sort((a, b) => a.length - b.length)[0];
+    if (closest?.[0]) segments.push(...closest[0].path.map(String));
+  }
+  return segments.filter((segment) => !/^\d+$/.test(segment)).at(-1);
+}
+
 /** The one mapping from any thrown error to the envelope + status. */
 function sendError(
   error: FastifyError,
@@ -452,7 +474,7 @@ function sendError(
   }
   if (error.validation) {
     const first = error.validation[0];
-    const field = first?.instancePath.split('/').filter(Boolean).at(-1);
+    const field = first && fieldOf(first);
     return reply
       .status(400)
       .send(

@@ -3,7 +3,7 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from "kysely";
+import type { ColumnType } from 'kysely';
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
