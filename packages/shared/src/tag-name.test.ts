@@ -32,6 +32,12 @@ describe('tidyTagName', () => {
     expect(tidyTagName('\u200D VIP \u200C')).toBe('VIP');
     expect(tidyTagName(' \u200D\u200B VIP')).toBe('VIP');
   });
+  it('collapses a joiner next to white space into the one space', () => {
+    expect(tidyTagName('A \u200D B')).toBe('A B');
+    expect(tidyTagName('A\u200D B')).toBe('A B');
+    expect(tidyTagName('A \u200CB')).toBe('A B');
+    expect(tidyTagName('A \u200C\u200D\n\u200D B')).toBe('A B');
+  });
   it('normalises to NFC', () => {
     expect(tidyTagName('é')).toBe('é');
   });
@@ -60,7 +66,7 @@ describe('checkTagName', () => {
   it('counts a joined emoji as one character (AC-07)', () => {
     const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
     const r = checkTagName(family);
-    expect(r).toEqual({ ok: true, name: family, key: family });
+    expect(r).toMatchObject({ ok: true, name: family });
     expect(tagNameLength(r.ok ? r.name : '')).toBe(1);
     expect(checkTagName(family.repeat(32)).ok).toBe(true);
     expect(checkTagName(family.repeat(33))).toEqual({ ok: false });
@@ -85,6 +91,15 @@ describe('checkTagName', () => {
     expect(key('VIP  ')).toBe(key('VIP'));
     expect(key('V  I P')).not.toBe(key('VIP'));
     expect(checkTagName('V  I P')).toMatchObject({ name: 'V I P' });
+  });
+  it('gives a name with joiners inside the key of the name without them (AC-08: no look-alikes)', () => {
+    expect(key('V\u200CIP')).toBe(key('VIP'));
+    expect(key('V\u200DIP')).toBe(key('VIP'));
+    expect(checkTagName('V\u200CIP')).toMatchObject({ name: 'V\u200CIP' });
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+    const r = checkTagName(family);
+    expect(r).toMatchObject({ ok: true, name: family });
+    expect(tagNameLength(r.ok ? r.name : '')).toBe(1);
   });
   it('folds sharp s, Cyrillic and decomposed forms together', () => {
     expect(key('Straße')).toBe(key('STRASSE'));

@@ -4,14 +4,20 @@
 export const TAG_NAME_MIN = 1;
 export const TAG_NAME_MAX = 32;
 
-// The invisible zero-width spaces go; the joiners (U+200C ZWNJ, U+200D ZWJ) stay, because they hold
-// multi-part emoji and some scripts together, but they are trimmed at the ends with the spaces, so
-// a name made only of them is empty. RegExp strings, not literals: prettier would unescape them.
+// The invisible zero-width spaces go; the joiners (U+200C ZWNJ, U+200D ZWJ) stay in the name,
+// because they hold multi-part emoji and some scripts together, but a joiner next to white space
+// joins nothing and folds into that one space, and they are trimmed at the ends with the spaces, so
+// a name made only of them is empty. The key drops them, so a joiner never splits a look-alike.
+// RegExp strings, not literals: prettier would unescape them.
 const ZERO_WIDTH_SPACE = new RegExp('[\\u200B\\u2060\\uFEFF]', 'gu');
-const WHITE_SPACE_RUN = /\s+/gu;
+const WHITE_SPACE_RUN = new RegExp('[\\s\\u200C\\u200D]*\\s[\\s\\u200C\\u200D]*', 'gu');
+const JOINER = new RegExp('[\\u200C\\u200D]', 'gu');
 const BLANK_ENDS = new RegExp('^[\\s\\u200C\\u200D]+|[\\s\\u200C\\u200D]+$', 'gu');
 
-/** NFC, zero-width spaces removed, every white-space run one space, spaces and joiners trimmed at the ends. */
+/**
+ * NFC, zero-width spaces removed, every white-space run (with the joiners next to it) one space,
+ * spaces and joiners trimmed at the ends.
+ */
 export const tidyTagName = (raw: string): string =>
   raw
     .normalize('NFC')
@@ -26,8 +32,9 @@ export const tagNameLength = (tidied: string): number => {
   return Array.from(segmenter.segment(tidied)).length;
 };
 
-/** Case-folded key: ß / SS and final sigma fold together. */
-export const tagNameKey = (tidied: string): string => tidied.toUpperCase().toLowerCase();
+/** Case-folded key, joiners dropped: ß / SS and final sigma fold together, V+ZWNJ+IP is VIP. */
+export const tagNameKey = (tidied: string): string =>
+  tidied.replace(JOINER, '').toUpperCase().toLowerCase();
 
 export type TagNameCheck = { ok: true; name: string; key: string } | { ok: false };
 

@@ -182,7 +182,7 @@ Existing columns are unchanged. New unique index `contacts_workspace_id_id_key (
 | `id` | uuid | PK; UNIQUE `(workspace_id, id)` | UUIDv7. The tag's identity: filters in addresses, contact tags and history refer to it, so a rename moves nothing (ADR-0002) |
 | `workspace_id` | uuid | NOT NULL, FK → `workspaces(id)` | |
 | `name` | text | NOT NULL, `<> ''`, `= btrim(name)` | The tidied name, case as typed, shown everywhere and sorted in ICU dictionary order (`COLLATE "und-x-icu"`). 1–32 graphemes, enforced in the domain (AC-07) |
-| `name_key` | text | NOT NULL, `<> ''`; UNIQUE `(workspace_id, name_key)` | The tidied name case-folded. "vip", " VIP " and "VIP  " are one tag; two members creating "Kyiv" at once end with one tag (AC-08). A rename into another tag's key is refused as `TAG_NAME_TAKEN` and offered as a merge (AC-09) |
+| `name_key` | text | NOT NULL, `<> ''`; UNIQUE `(workspace_id, name_key)` | The tidied name without the joiners U+200C / U+200D, case-folded. "vip", " VIP " and "VIP  " are one tag; two members creating "Kyiv" at once end with one tag (AC-08). A rename into another tag's key is refused as `TAG_NAME_TAKEN` and offered as a merge (AC-09) |
 | `created_by_account_id` | uuid | NOT NULL, FK `(workspace_id, created_by_account_id) → memberships` | Who created it (assumption 6) |
 | `created_at` | timestamptz | NOT NULL | |
 

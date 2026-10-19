@@ -63,4 +63,10 @@ describe('matchTags (SCR-20, AC-06, AC-08)', () => {
     expect(names(m)).toEqual(['Straße']);
     expect(m.create).toBeNull();
   });
+
+  it('treats a hidden joiner inside the text as the tag without it, as the server key does', () => {
+    const m = matchTags(TAGS, 'V\u200CIP', []);
+    expect(names(m)).toEqual(['VIP']);
+    expect(m.create).toBeNull();
+  });
 });
