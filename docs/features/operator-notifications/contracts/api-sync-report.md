@@ -40,7 +40,7 @@ Each can be vetoed at review.
 8. **Connect-link check order follows flow 8 as drawn:** membership → limit → already linked → bot readiness. Refused requests create no `connect_links` row, so they never count toward the 5.
 9. **Disconnect of nothing is `200`** with the current settings (sad.md §6 assumption "Disconnect on a link that is already gone is a success that changes nothing").
 10. **No `400` on the new GETs and on the body-less POSTs**: they take no query or body. A malformed `workspaceId` answers `404` (the shared `WorkspaceId` parameter). This follows `listActiveMembers` (assignment-statuses).
-11. **`IssuedConnectLink.url`** is the full `https://t.me/<username>?start=tgi_<token>` link, plus `bot_username`. The panel draws the code from the URL (SCR-17 "a code drawn in the panel").
+11. **`IssuedConnectLink.url`** is the full `https://t.me/<username>?start=tgi_<token>` link, plus `bot_username`. The panel shows the URL with Copy and Open in Telegram buttons (SCR-17; no scannable code in v1).
 
 ## Operations
 

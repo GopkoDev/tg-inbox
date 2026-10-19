@@ -233,8 +233,8 @@ paths:
            its 32 random bytes, expiring in 10 minutes.
 
         The answer is the only time the token exists outside the member's Telegram: it is never stored,
-        logged or returned again. The panel shows the link, draws its scannable code in the browser and
-        shows the expiry. Pressing Start within 10 minutes redeems it (seeded flow 2) and the dialog
+        logged or returned again. The panel shows the link with Copy and Open in Telegram buttons and
+        shows the expiry (no scannable code in v1). Pressing Start within 10 minutes redeems it (seeded flow 2) and the dialog
         turns "Connected" through `telegram_link.changed` (events.md). Asking again from the dialog
         repeats this request.
       operationId: createConnectLink
@@ -683,7 +683,7 @@ components:
             The Telegram start link `https://t.me/<bot_username>?start=tgi_<token>`, where `<token>` is
             32 random bytes in base64url (43 characters, ADR-0004). The 47-character start payload fits
             Telegram's limit. Only `connect_links.token_hash` (SHA-256 of the 32 bytes) is stored. The
-            panel draws the scannable code from this URL in the browser
+            panel shows this URL with Copy and Open in Telegram buttons (no scannable code in v1)
         expires_at:
           type: string
           format: date-time

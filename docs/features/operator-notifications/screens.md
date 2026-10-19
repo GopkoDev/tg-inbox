@@ -26,7 +26,7 @@ updated_at: "2026-10-19"
   3. **The attention count sits on the Inbox item as `SidebarMenuBadge`** and in the tab title as a `(N) ` prefix to the existing title (`(3) tg-inbox`). Both show the exact number, uncapped, as the contract returns it. With the sidebar collapsed to icons, the badge is hidden and the Inbox tooltip reads «Inbox (3)». At phone width, where the nav is in a drawer, the same number also shows as a small `Badge` next to the sidebar trigger in the header row, so the count is visible without opening the drawer.
   4. **Connect opens the dialog only on success.** **Connect Telegram** shows a spinner and calls `createConnectLink`; `201` opens SCR-17. Its refusals (`429`, both `409`s) are shown on SCR-16, as the contract says. Asking for a new link from inside the open dialog shows the same refusals inside the dialog, so the link already shown stays usable.
   5. **SCR-17 is a `Dialog`, not an `AlertDialog`.** Nothing is confirmed or lost by closing it: Esc, the close button or a click outside close it; the link stays valid for its 10 minutes and SCR-16 still turns «Connected» if Start is pressed later (ux-flows assumption). Focus returns to **Connect Telegram**.
-  6. **The scannable code** is drawn in the browser from `url` as an SVG (`NEW: QrCode`). Nothing leaves the browser for it, and no image is served (sad.md §4 _Routes_). On desktop the code is the main way; at phone width **Open in Telegram** comes first and the code sits below it.
+  6. **No scannable code in v1.** SCR-17 shows the connect link as selectable text with a **Copy** button and an **Open in Telegram** button; the member opens the link on the phone (Telegram Desktop or a copied link) or on the same device. QR code deferred — would need a new dependency; revisit with pilots (orchestrator amendment, autonomous run 2026-10-19). No image is served (sad.md §4 _Routes_).
   7. **Disconnect has no confirmation** (AC-04 «at once», ux-flows assumption). The button shows a spinner while `disconnectTelegram` runs; the answer re-renders the card.
   8. **The Team mark is a column** «Telegram pings» with the plain text «On» / «Off» in the members table (no colour meaning, since off is not an error). It is read when Team opens and taken from every deactivate / reactivate answer; it is **not** live (flow 15, sad.md §6 flag «`screens` should not promise a live mark»).
   9. **Telegram texts are plain text** (no Markdown / HTML parse mode), so a workspace name can never inject formatting, and links are bare URLs on their own line with the link preview off. Waits are whole minutes below an hour («12 min») and hours plus minutes from 60 («1 h 5 min», «2 h»).
@@ -231,36 +231,36 @@ New. A `Dialog` over SCR-16 (Decision 5), opened by a `201 IssuedConnectLink`.
 
 | State | Trigger / condition | Components (from the inventory) | Source-ref |
 | --- | --- | --- | --- |
-| default: waiting for Start | `201` — title «Connect Telegram»; «Scan the code with your phone, or open the link, then press **Start** in the chat with @<bot_username>.»; the code (`NEW: QrCode`, 192 px) drawn from `url`; **Open in Telegram** (link to `url`, new tab); the link as selectable muted text; «This link works once, until <expires_at, e.g. 09:22>.»; a muted line with a spinner «Waiting for you to press Start in Telegram…»; footer **Get a new link** (`ghost`) and **Close** (AC-04; flow 8; contract `createConnectLink` `201`) | NEW: ConnectTelegramDialog (Dialog, Button, Separator), NEW: QrCode | wireframe «connect dialog» |
-| success: connected | `telegram_link.changed` → re-read → `connected` — the code and link are replaced by a check icon and «Connected as <display_name>.» + «The Acme Flowers bot sent you a message in Telegram.»; footer **Done** only; SCR-16 behind shows `connected` (AC-04; flow 18) | NEW: ConnectTelegramDialog | wireframe «connect dialog» (connected) |
-| expired | the panel's clock passes `expires_at` with no change — the code is hidden; «This link has expired.»; **Get a new link** becomes the primary button. A Start pressed on the old link is answered «link expired» in Telegram (TG-02) (AC-05; flow 8) | NEW: ConnectTelegramDialog | wireframe «connect dialog» (expired) |
-| getting a new link | **Get a new link** — spinner on it, the current code stays; `createConnectLink` again (AC-13; flow 8 «asks again») | NEW: ConnectTelegramDialog | — |
-| success: new link | `201` — the code, link and expiry are replaced; the previous link now answers «link expired» in Telegram (AC-05, AC-13; flow 8) | NEW: ConnectTelegramDialog, NEW: QrCode | — |
+| default: waiting for Start | `201` — title «Connect Telegram»; «Open the link in Telegram, then press **Start** in the chat with @<bot_username>.»; **Open in Telegram** (link to `url`, new tab); the link as selectable muted text with a **Copy** button (`outline`, icon + «Copy»; after a successful `navigator.clipboard.writeText` it reads «Copied» for 2 s; when the clipboard is unavailable or refuses, the button is hidden and the link stays selectable); «This link works once, until <expires_at, e.g. 09:22>.»; a muted line with a spinner «Waiting for you to press Start in Telegram…»; footer **Get a new link** (`ghost`) and **Close** (AC-04; flow 8; contract `createConnectLink` `201`) | NEW: ConnectTelegramDialog (Dialog, Button, Separator) | wireframe «connect dialog» |
+| success: connected | `telegram_link.changed` → re-read → `connected` — the link and its buttons are replaced by a check icon and «Connected as <display_name>.» + «The Acme Flowers bot sent you a message in Telegram.»; footer **Done** only; SCR-16 behind shows `connected` (AC-04; flow 18) | NEW: ConnectTelegramDialog | wireframe «connect dialog» (connected) |
+| expired | the panel's clock passes `expires_at` with no change — the link and its Copy / Open in Telegram buttons are hidden; «This link has expired.»; **Get a new link** becomes the primary button. A Start pressed on the old link is answered «link expired» in Telegram (TG-02) (AC-05; flow 8) | NEW: ConnectTelegramDialog | wireframe «connect dialog» (expired) |
+| getting a new link | **Get a new link** — spinner on it, the current link stays; `createConnectLink` again (AC-13; flow 8 «asks again») | NEW: ConnectTelegramDialog | — |
+| success: new link | `201` — the link and expiry are replaced; the previous link now answers «link expired» in Telegram (AC-05, AC-13; flow 8) | NEW: ConnectTelegramDialog | — |
 | error: link limit | `429` on a new link — `Alert` in the dialog «Connect links are limited to 5 per 10 minutes — try again at <retry_at>.»; **Get a new link** disabled until then; the link shown stays valid (refused requests create nothing) (AC-13; Decision 4) | NEW: ConnectTelegramDialog, Alert | — |
 | refused: already connected | `409 TELEGRAM_ALREADY_LINKED` on a new link — the dialog shows `success: connected` from `details.settings` (AC-06) | NEW: ConnectTelegramDialog | — |
-| bot stopped working | `409 PINGS_NEED_WORKING_BOT` on a new link, or a `bot.changed` re-read that gives `can_connect: false` while still not connected — the code and link are hidden; «Telegram pings need a working bot that receives messages.» + the role's guidance (operator: ask a business owner; owner: **Open bot settings**, which closes the dialog → SCR-08); footer **Close** (AC-13; flow 16, flow 18) | NEW: ConnectTelegramDialog | — |
+| bot stopped working | `409 PINGS_NEED_WORKING_BOT` on a new link, or a `bot.changed` re-read that gives `can_connect: false` while still not connected — the link and its buttons are hidden; «Telegram pings need a working bot that receives messages.» + the role's guidance (operator: ask a business owner; owner: **Open bot settings**, which closes the dialog → SCR-08); footer **Close** (AC-13; flow 16, flow 18) | NEW: ConnectTelegramDialog | — |
 | error: new link failed | network / `500` on a new link — destructive `Alert` «Couldn't create a new link — try again.»; the current link stays | NEW: ConnectTelegramDialog, Alert (destructive) | — |
 | closed early | Esc / close / outside click — the dialog closes; the link keeps working for its 10 minutes; a later Start turns SCR-16 «Connected» live (ux-flows assumption; flow 18) | — | — |
 | refused in Telegram | the Start is refused (teammate's account, already connected elsewhere, already connected from this account) — the bot answers in Telegram (TG-02); the panel changes only if the link state changed: «already connected from this account» leaves the member connected, so the dialog stays `success: connected`; the other two leave it `default: waiting for Start` until it expires (AC-06; seeded flow 2) | NEW: ConnectTelegramDialog | — |
 | loading | N/A: the dialog opens only with a `201` answer in hand (Decision 4); its own re-reads keep the content shown | — | — |
 | empty / validation | N/A: no list, no input | — | — |
-| phone (< md) | the dialog is full width; **Open in Telegram** is the first, full-width button; the code shrinks to 160 px under it (Decision 6) | NEW: ConnectTelegramDialog | wireframe «connect dialog phone» |
+| phone (< md) | the dialog is full width; **Open in Telegram** is the first, full-width button; the link with **Copy** sits under it (Decision 6) | NEW: ConnectTelegramDialog | wireframe «connect dialog phone» |
 | guard / live states | → §Shared states (`401` / `403` / `404` close the dialog) | — | §Shared states |
 
 ```text
 connect dialog (waiting for Start)              connect dialog (connected)
 +------------------------------------------+    +------------------------------------------+
 | Connect Telegram                     [x] |    | Connect Telegram                     [x] |
-| Scan the code with your phone, or open   |    |                                          |
-| the link, then press Start in the chat   |    |               ✓                          |
-| with @test_flowers_bot.                  |    |     Connected as Test User.              |
+| Open the link in Telegram, then press    |    |                                          |
+| Start in the chat with                   |    |               ✓                          |
+| @test_flowers_bot.                       |    |     Connected as Test User.              |
 |                                          |    |     The Acme Flowers bot sent you a      |
-|            ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓               |    |     message in Telegram.                 |
-|            ▓▓  QR code   ▓▓               |    |                                          |
-|            ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓               |    |                                 [Done]   |
+|          [Open in Telegram]              |    |     message in Telegram.                 |
+|                                          |    |                                          |
+| https://t.me/test_flowers_bot?st… [Copy] |    |                                 [Done]   |
 |                                          |    +------------------------------------------+
-|          [Open in Telegram]              |
-| https://t.me/test_flowers_bot?start=tgi… |    connect dialog (expired)
+|                                          |
+|                                          |    connect dialog (expired)
 | This link works once, until 09:22.       |    +------------------------------------------+
 | ◌ Waiting for you to press Start in      |    | Connect Telegram                     [x] |
 |   Telegram…                              |    | This link has expired.                   |
@@ -271,12 +271,10 @@ connect dialog (waiting for Start)              connect dialog (connected)
 connect dialog phone
 +--------------------------------+
 | Connect Telegram           [x] |
-| Open the link, or scan the     |
-| code, then press Start …       |
+| Open the link in Telegram,     |
+| then press Start …             |
 | [      Open in Telegram      ] |
-|        ▓▓▓▓▓▓▓▓▓▓▓▓            |
-|        ▓▓ QR code ▓▓            |
-|        ▓▓▓▓▓▓▓▓▓▓▓▓            |
+| https://t.me/test_f…  [Copy]   |
 | This link works once, until    |
 | 09:22.                         |
 | ◌ Waiting for you to press     |
@@ -285,7 +283,7 @@ connect dialog phone
 +--------------------------------+
 ```
 
-At phone width the first sentence reads «Open the link, or scan the code, then press **Start** in the chat with @<bot_username>.», matching the button order.
+The same sentence is used at every width; there is no scannable code in v1 (Decision 6).
 
 ### SCR-13 — Settings — Team
 
@@ -407,7 +405,7 @@ desktop notification (operating system's own style)
 
 | State | Trigger / condition | What we control | Source-ref |
 | --- | --- | --- | --- |
-| default | the SCR-17 link or code opened on the phone — Telegram's own chat screen with the workspace's bot and its **Start** button; the start payload is `tgi_<token>` and is never shown to the member as a message of ours (AC-04; ADR-0004) | nothing visible: the bot's name, photo and description are the business owner's bot profile in BotFather | — |
+| default | the SCR-17 link opened in Telegram — Telegram's own chat screen with the workspace's bot and its **Start** button; the start payload is `tgi_<token>` and is never shown to the member as a message of ours (AC-04; ADR-0004) | nothing visible: the bot's name, photo and description are the business owner's bot profile in BotFather | — |
 | already started | the member has chatted with this bot before — Telegram sends `/start tgi_<token>` on opening the link or shows **Start** / **Restart** per its own rules; the outcome is TG-02 either way (AC-04) | — | — |
 
 ### TG-02 — Telegram: the bot's answers
@@ -469,7 +467,6 @@ TG-02 / TG-03 in the member's chat with the Acme Flowers bot
 | --- | --- | --- |
 | DesktopNotificationsCard | SCR-16's browser-only opt-in: capability check, permission state (`default` / `granted` / `denied`), the click-only permission request, worker registration and the per-account-and-workspace `localStorage` flag, with its off / asking / on / blocked / not-available states. No primitive owns this state; composes Card, Badge, Button, Alert | pending |
 | TelegramPingsCard | SCR-16's Telegram state machine over `NotificationSettings`: not connected / no working bot (per role) / connected / paused / not reachable, connect and disconnect pending, the limit countdown to `retry_at`, the two `409` re-renders from `details.settings`, and live re-reads. Composes Card, Badge, Button, Alert, Skeleton, ConnectTelegramDialog | pending |
-| ConnectTelegramDialog | SCR-17: a `Dialog` holding the issued link, its code, the expiry and its client-side expiry, «waiting for Start», the live turn to «Connected», new-link refusals in place and the bot-stopped state. Like `MediaViewer`, a fixed composition over Dialog; composes Dialog, Button, Separator, Alert, QrCode | pending |
-| QrCode | Draws a scannable code for a URL as an inline SVG in the browser (Decision 6). No primitive or shadcn component draws one; `implement` adds a small QR-encoding dependency (or an encoder module) and states it in the task. Props: `value`, `size`, an accessible label («Code for the connect link») | pending |
+| ConnectTelegramDialog | SCR-17: a `Dialog` holding the issued link with its Copy and Open in Telegram buttons, the expiry and its client-side expiry, «waiting for Start», the live turn to «Connected», new-link refusals in place and the bot-stopped state. Like `MediaViewer`, a fixed composition over Dialog; composes Dialog, Button, Separator, Alert | pending |
 | AppShell (extended) | Existing component; gains the attention store subscription, the `(N) ` title prefix, the Inbox `SidebarMenuBadge`, the phone header badge, the collapsed tooltip text, the Settings item for operators, and owns the tab's live socket — canon row updated, not duplicated | pending |
 | SettingsLayout (extended) | Existing component; gains the **Notifications** section and role-filtered sections with the role's description line and index redirect (Decision 1) — canon row updated | pending |

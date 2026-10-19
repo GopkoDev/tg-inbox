@@ -137,7 +137,7 @@ Clarifications (clarify, autonomous run 2026-10-19). Each one picks the most sen
 ### AC-04 (US-03): happy path
 
 **Given** an active operator of "Acme Flowers", whose bot is connected, with no Telegram link
-**When** they choose "Connect Telegram" in the panel, open the link it shows (or scan its code) on their phone and press Start in the chat with the "Acme Flowers" bot within 10 minutes
+**When** they choose "Connect Telegram" in the panel, open the link it shows on their phone and press Start in the chat with the "Acme Flowers" bot within 10 minutes
 **Then** the bot answers in that chat that it will notify them about waiting customers of "Acme Flowers", and how to stop: disconnect in the panel. The panel shows "Connected" with their Telegram name and since when, without reloading. Starting the bot through this link creates no contact and no conversation and shows nothing in the inbox. Choosing "Disconnect" removes the link at once: the bot sends no further pings and tells them in the chat that notifications are off.
 
 ### AC-05 (US-03): error

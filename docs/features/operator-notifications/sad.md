@@ -129,7 +129,7 @@ C4Context
 **UI architecture (web-frontend):** client-side SPA, already fixed by repo ADR-0001. No new UI ADR is needed for the delivery model. Three structural changes follow from the backend decisions:
 - **The live socket moves from the inbox store to the workspace frame.** The attention count must follow the member onto Contacts and Settings (AC-01), and presence counts any workspace page (spec §1 D1). So the frame (SCR-15) opens one live connection per tab per workspace, through `openLiveSocket`. It hands frames to subscribers: the inbox store, the attention store, the notifications settings store and the desktop notifier. The inbox store stops opening its own socket. This is part of [ADR-0002](adr/0002-track-presence-as-per-tab-leases-in-postgres-refreshed-by-the-workspace-live-socket.md).
 - **Stores:** a small attention store per workspace (count, refetched on frames, ADR-0008) and `features/notifications/store.ts` for SCR-16 / SCR-17 (link state, bot readiness, connect link, desktop opt-in). The desktop opt-in is a per-browser flag in `localStorage`, keyed by account and workspace. It is a per-viewer convenience, read in try/catch, and is off when storage is unavailable.
-- **Routes:** Settings — Notifications is a new settings page under `/w/:workspaceId/settings/notifications`, open to both roles. The connect dialog (SCR-17) is a shadcn `Dialog` over it. Ping links land on existing inbox addresses (`/w/:workspaceId/inbox/:conversationId` or the inbox with the `mine` / `unassigned` / open lens parameters). `screens` picks the primitives. The scannable code is drawn client-side from the link, so no image is served.
+- **Routes:** Settings — Notifications is a new settings page under `/w/:workspaceId/settings/notifications`, open to both roles. The connect dialog (SCR-17) is a shadcn `Dialog` over it. Ping links land on existing inbox addresses (`/w/:workspaceId/inbox/:conversationId` or the inbox with the `mine` / `unassigned` / open lens parameters). `screens` picks the primitives. The dialog shows the link with Copy and Open in Telegram buttons; no scannable code in v1 (deferred — it would need a new dependency), so no image is served.
 
 **Top strategic choices (the seeds for ADRs):**
 
@@ -286,7 +286,7 @@ apps/web/
     ├── app/ (workspace frame)      owns the live connection; title "(N) …"; Inbox badge
     ├── features/attention/         store: count, refetch on frames (debounced)
     ├── features/notifications/     store, Settings — Notifications page (SCR-16), connect dialog
-    │                                 (SCR-17, link + client-drawn code + expiry), desktop opt-in and
+    │                                 (SCR-17, link + Copy + expiry), desktop opt-in and
     │                                 permission, notifier (posts to the service worker)
     ├── features/inbox/             subscribes to the frame's connection instead of opening one
     └── features/team (Settings — Team)  "Telegram pings on / off" mark per member
@@ -784,7 +784,7 @@ sequenceDiagram
                 S->>D: mark my previous unused link replaced, insert the new link's hash with an expiry in 10 min
                 Note over S,D: persists connect link (workspace, token hash unique, account, created at, expires at, replaced at) - the token itself is never stored
                 S-->>UI: the start link with the bot username and the token, and the expiry
-                UI-->>U: dialog with the link, a code drawn in the panel and when it expires (SCR-17)
+                UI-->>U: dialog with the link, its Copy and Open in Telegram buttons and when it expires (SCR-17)
             end
         end
     end
@@ -796,7 +796,7 @@ sequenceDiagram
     Note over U,S: Postcondition: at most one usable connect link per member, at most 5 made per 10 min - the redeem is seeded flow 2, the dialog turns Connected live in flow 18
 ```
 
-Settings — Notifications sits behind the usual guard (AC-12). For an active member, it reads only the caller's own live link and the bot's readiness. A connected member sees "Connected" with the Telegram name and since when, or "Not reachable" or "Pings paused". The only action is Disconnect, never a connect link (AC-06). A member who is not connected is offered no link while the bot is not connected, not working or taken over. An operator is told to ask a business owner, and an owner gets the way to Settings — Bot (AC-13). "Connect Telegram" re-checks everything in one transaction under the member's connect-link lock: the membership, the 5-per-10-minutes limit with the retry time, a link made meanwhile and the bot's readiness. Then it marks the previous unused link replaced and stores only the new token's hash, with a 10-minute expiry (ADR-0004). The dialog shows the link, a code drawn in the browser and the expiry. Asking again replaces the previous link.
+Settings — Notifications sits behind the usual guard (AC-12). For an active member, it reads only the caller's own live link and the bot's readiness. A connected member sees "Connected" with the Telegram name and since when, or "Not reachable" or "Pings paused". The only action is Disconnect, never a connect link (AC-06). A member who is not connected is offered no link while the bot is not connected, not working or taken over. An operator is told to ask a business owner, and an owner gets the way to Settings — Bot (AC-13). "Connect Telegram" re-checks everything in one transaction under the member's connect-link lock: the membership, the 5-per-10-minutes limit with the retry time, a link made meanwhile and the bot's readiness. Then it marks the previous unused link replaced and stores only the new token's hash, with a 10-minute expiry (ADR-0004). The dialog shows the link with Copy and Open in Telegram buttons and the expiry. Asking again replaces the previous link.
 
 ### Flow 9: Disconnect my Telegram (US-03 — AC-04, AC-12)
 
