@@ -14,10 +14,24 @@ export interface ContactsAddress {
 export const EMPTY_ADDRESS: ContactsAddress = { q: '', mode: 'any', tagIds: [] };
 
 const TagId = z.uuid();
+/** The API's bounds on `listContacts` (more is a `400`). */
+export const MAX_TAG_IDS = 100;
+export const MAX_SEARCH_LENGTH = 200;
+
+/** The search text as sent: trimmed, at most 200 UTF-16 units, never ending in half a pair. */
+export function searchText(raw: string): string {
+  let q = raw.trim();
+  if (q.length <= MAX_SEARCH_LENGTH) return q;
+  q = q.slice(0, MAX_SEARCH_LENGTH);
+  const last = q.charCodeAt(q.length - 1);
+  if (last >= 0xd800 && last <= 0xdbff) q = q.slice(0, -1);
+  return q.trimEnd();
+}
 
 /**
  * Reads the view from the address. What the API would refuse (a malformed or repeated tag id, an
- * unknown mode, tags together with mode `none`) is left out, and `canonical` is false when the
+ * unknown mode, tags together with mode `none`, more than 100 tag ids, a search over 200
+ * characters) is left out, and `canonical` is false when the
  * address must be rewritten in place (those, a spelled-out default, an empty search).
  */
 export function parseAddress(params: URLSearchParams): {
@@ -29,12 +43,13 @@ export function parseAddress(params: URLSearchParams): {
   const seen = new Set<string>();
   const tagIds: string[] = [];
   for (const raw of params.getAll('tag')) {
+    if (tagIds.length === MAX_TAG_IDS) break;
     if (!TagId.safeParse(raw).success || seen.has(raw)) continue;
     seen.add(raw);
     tagIds.push(raw);
   }
   const address: ContactsAddress = {
-    q: (params.get('q') ?? '').trim(),
+    q: searchText(params.get('q') ?? ''),
     mode: chosen,
     tagIds: chosen === 'none' ? [] : tagIds,
   };

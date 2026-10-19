@@ -256,6 +256,22 @@ describe('SCR-18 show more', () => {
     expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
   });
 
+  it('shows a spinner on Show more and disables it while the next page loads', async () => {
+    api.listContacts.mockResolvedValueOnce(
+      page({ has_next: true, next_cursor: 'cur1', total_count: 4 }),
+    );
+    renderTable();
+    await screen.findByRole('table');
+    let finish!: (p: ContactPage) => void;
+    api.listContacts.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    fireEvent.click(screen.getByRole('button', { name: 'Show more' }));
+    const more = await screen.findByRole('button', { name: 'Show more' });
+    await waitFor(() => expect(more).toBeDisabled());
+    expect(within(more).getByTestId('more-spinner')).toBeInTheDocument();
+    await act(async () => finish(page({ items: [row(3)], total_count: 4 })));
+    expect(screen.queryByRole('button', { name: 'Show more' })).not.toBeInTheDocument();
+  });
+
   it('keeps the rows and offers Retry when the next page fails', async () => {
     api.listContacts.mockResolvedValueOnce(
       page({ has_next: true, next_cursor: 'cur1', total_count: 4 }),
@@ -311,6 +327,57 @@ describe('SCR-18 search, filter and the address', () => {
     fireEvent.click(screen.getByRole('button', { name: 'go-back' }));
     await waitFor(() => expect(where()).toBe(`/w/${WS}/contacts`));
     await waitFor(() => expect(search()).toHaveValue(''));
+  });
+
+  it('keeps a typed trailing space while the search is written, so the next word joins it', async () => {
+    renderTable();
+    await screen.findByRole('table');
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    fireEvent.change(search(), { target: { value: 'John ' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(301);
+    });
+    expect(where()).toBe(`/w/${WS}/contacts?q=John`);
+    expect(search()).toHaveValue('John ');
+    fireEvent.change(search(), { target: { value: 'John Smith' } });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(301);
+    });
+    expect(where()).toBe(`/w/${WS}/contacts?q=John+Smith`);
+    vi.useRealTimers();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+  });
+
+  it('takes at most 200 characters of search and at most 100 tag ids from the address', async () => {
+    const ids = Array.from({ length: 101 }, (_, n) => id(1000 + n));
+    renderTable(`/w/${WS}/contacts?q=${'a'.repeat(250)}&${ids.map((t) => `tag=${t}`).join('&')}`);
+    await screen.findByRole('table');
+    expect(search()).toHaveAttribute('maxLength', '200');
+    await waitFor(() => expect(lastCall()[1]).toMatchObject({ q: 'a'.repeat(200) }));
+    expect(
+      api.listContacts.mock.calls.every(
+        (c) =>
+          (c[1] as { q: string }).q.length <= 200 && (c[1] as { tag: string[] }).tag.length <= 100,
+      ),
+    ).toBe(true);
+    expect((lastCall()[1] as { tag: string[] }).tag).toEqual(ids.slice(0, 100));
+  });
+
+  it('the Tags filter shows skeletons while the tags load and Retry when they fail', async () => {
+    api.listTags.mockRejectedValueOnce(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x'));
+    renderTable();
+    await screen.findByRole('table');
+    fireEvent.click(tagsButton());
+    expect(await screen.findByText("Couldn't load the tags")).toBeInTheDocument();
+    expect(screen.queryByText(/No tags yet/)).not.toBeInTheDocument();
+    let finish!: (v: unknown) => void;
+    api.listTags.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findAllByTestId('tag-filter-skeleton')).toHaveLength(3);
+    await act(async () => finish({ workspace_id: WS, items: tags }));
+    expect(await screen.findByRole('checkbox', { name: /VIP/ })).toBeInTheDocument();
   });
 
   it('writes the mode and the tag ids to the address as history entries', async () => {
@@ -449,6 +516,46 @@ describe('SCR-18 empty states and errors', () => {
     operator.unmount();
     useContactsStore.getState().clear();
     api.getInboxBotStatus.mockResolvedValue(bot('connected'));
+    renderTable(`/w/${WS}/contacts`, 'owner');
+    expect(
+      await screen.findByText(
+        'No contacts yet. A contact appears when a customer writes to the business bot.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Connect bot' })).not.toBeInTheDocument();
+  });
+
+  it('a filtered address of a workspace with no contacts: the no-contacts card, not «nothing matches»', async () => {
+    api.listContacts.mockResolvedValue(noContacts());
+    renderTable(`/w/${WS}/contacts?q=ada&tag=${TAG_VIP}`);
+    expect(
+      await screen.findByText(
+        'No contacts yet. A contact appears when a customer writes to the business bot.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('No contacts match your search and filter')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /Search/i })).not.toBeInTheDocument();
+  });
+
+  it("owner: no text until the bot status answers, then the owner's text", async () => {
+    api.listContacts.mockResolvedValue(noContacts());
+    let answer!: (b: InboxBotStatus) => void;
+    api.getInboxBotStatus.mockReturnValue(new Promise((r) => (answer = r)));
+    renderTable(`/w/${WS}/contacts`, 'owner');
+    expect(await screen.findByTestId('empty-skeleton')).toBeInTheDocument();
+    expect(screen.queryByText(/No contacts yet/)).not.toBeInTheDocument();
+    await act(async () => answer(bot('not_connected')));
+    expect(
+      await screen.findByText(
+        'No contacts yet. A contact appears when a customer writes to your business bot.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('empty-skeleton')).not.toBeInTheDocument();
+  });
+
+  it('owner: a failed bot status read shows the plain no-contacts card', async () => {
+    api.listContacts.mockResolvedValue(noContacts());
+    api.getInboxBotStatus.mockRejectedValue(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x'));
     renderTable(`/w/${WS}/contacts`, 'owner');
     expect(
       await screen.findByText(

@@ -37,7 +37,8 @@ export function ReplyDeliveryState({
   /** The state line only, no «Try again» / «Send again» (the contact profile acts on nothing). */
   readOnly?: boolean;
 }) {
-  const takenOver = useInboxStore((s) => s.bot?.state === 'taken_over');
+  // The inbox's bot status is the inbox page's: a read-only host (the profile) does not keep it.
+  const takenOver = useInboxStore((s) => !readOnly && s.bot?.state === 'taken_over');
   const resendReply = useInboxStore((s) => s.resendReply);
   const [pending, setPending] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);

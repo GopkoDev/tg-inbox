@@ -1,9 +1,12 @@
 import type { TagFilterMode, TagWithCount } from '@tg/shared';
+import type { TagsStatus } from '@/features/tags/store';
+import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
 import { Label } from '@/shared/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/shared/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
+import { Skeleton } from '@/shared/ui/skeleton';
 import type { ContactsAddress } from './address';
 
 type Value = Pick<ContactsAddress, 'mode' | 'tagIds'>;
@@ -18,19 +21,29 @@ function buttonLabel({ mode, tagIds }: Value): string {
 /**
  * The Contacts list's tag filter (SCR-18): one popover behind a **Tags** button with the mode
  * (any of / all of / no tags) and one checkbox per workspace tag with its contact count. «No tags»
- * is a mode of its own: it clears the chosen tags and disables the checkboxes.
+ * is a mode of its own: it clears the chosen tags and disables the checkboxes. While the tag store
+ * loads it shows row skeletons, and when it failed an error with Retry — never «No tags yet».
  */
 export function TagFilter({
   tags,
+  status,
+  onRetry,
   mode,
   tagIds,
   onChange,
 }: {
   tags: TagWithCount[];
+  /** The tag store's status: the list is known only when `ready`. */
+  status: TagsStatus;
+  onRetry: () => void;
   mode: TagFilterMode;
   tagIds: string[];
   onChange: (next: Value) => void;
 }) {
+  const ready = status === 'ready';
+  // «Any of» / «All of» need tags; they also show while the tags are unknown, and the mode the
+  // address chose is always shown, so it can be changed.
+  const tagModes = !ready || tags.length > 0 || mode === 'all';
   const chooseMode = (next: string) => {
     if (next === 'none') onChange({ mode: 'none', tagIds: [] });
     else onChange({ mode: next as TagFilterMode, tagIds });
@@ -55,7 +68,7 @@ export function TagFilter({
         className="flex w-(--radix-popover-trigger-width) min-w-70 flex-col gap-3"
       >
         <RadioGroup value={mode} onValueChange={chooseMode} aria-label="Tag filter mode">
-          {tags.length > 0 ? (
+          {tagModes ? (
             <>
               <Label className="flex items-center gap-2 font-normal">
                 <RadioGroupItem value="any" />
@@ -72,7 +85,22 @@ export function TagFilter({
             No tags
           </Label>
         </RadioGroup>
-        {tags.length === 0 ? (
+        {status === 'error' ? (
+          <Alert>
+            <AlertDescription className="flex items-center justify-between gap-2">
+              Couldn&apos;t load the tags
+              <Button type="button" size="sm" variant="outline" onClick={onRetry}>
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : !ready ? (
+          <div className="flex flex-col gap-2 border-t pt-3">
+            {[0, 1, 2].map((n) => (
+              <Skeleton key={n} data-testid="tag-filter-skeleton" className="h-4 w-32" />
+            ))}
+          </div>
+        ) : tags.length === 0 ? (
           <p className="text-sm text-muted-foreground">No tags yet — tags are added on a contact</p>
         ) : (
           <div className="flex max-h-64 flex-col gap-2 overflow-y-auto border-t pt-3">

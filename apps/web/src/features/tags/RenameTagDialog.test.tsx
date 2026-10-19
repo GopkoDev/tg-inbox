@@ -191,6 +191,23 @@ describe('SCR-22 merge step (AC-09)', () => {
     expect(nameField()).toHaveValue('vip');
   });
 
+  it('focus follows the step: Merge tags on the merge offer, the Name field after Back', async () => {
+    await toMergeStep();
+    expect(screen.getByRole('button', { name: 'Merge tags' })).toHaveFocus();
+    fireEvent.click(screen.getByRole('button', { name: 'Back' }));
+    expect(nameField()).toHaveFocus();
+  });
+
+  it('merge target changed with no holder: focus returns to the Name field', async () => {
+    await toMergeStep();
+    api.renameTag.mockRejectedValueOnce(
+      refusal(409, ErrorCode.TAG_MERGE_TARGET_CHANGED, { name_holder: null }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Merge tags' }));
+    await flush();
+    expect(nameField()).toHaveFocus();
+  });
+
   it('Merge tags sends merge_into_tag_id from the refusal and hands the merged answer back', async () => {
     await toMergeStep();
     const answer = result('merged', { ...VIP, contact_count: 14 }, LOYAL.id);

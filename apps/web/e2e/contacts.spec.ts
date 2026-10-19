@@ -45,6 +45,7 @@ const conversationRows = (page: Page) =>
   page.getByRole('list', { name: 'Conversations' }).getByRole('listitem');
 const bubble = (page: Page, text: string) => page.getByTestId('bubble').getByText(text);
 const tagsRow = (page: Page) => page.getByTestId('header-tags');
+const nav = (page: Page) => page.getByRole('navigation', { name: 'Workspace' });
 
 test('the Contacts list: newest first, Show more, search, any / all / no tags, reload, back and a saved link with a deleted tag (AC-01, AC-02)', async ({
   browser,
@@ -123,15 +124,22 @@ test('reading a conversation on the profile leaves it unread until Open in inbox
 
   const ana = await open(browser, OPERATOR, workspaceId, '/contacts');
   const { page } = ana;
+  // The attention count before the profile: Zoe's conversation needs Ana.
+  await expect(page).toHaveTitle('(1) tg-inbox', WAIT);
+  await expect(nav(page).getByLabel('1 conversation needs you')).toBeVisible(WAIT);
   await contactRows(page).filter({ hasText: 'Zoe' }).getByRole('link', { name: 'Zoe' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Zoe' })).toBeVisible(WAIT);
   await expect(bubble(page, 'Do you deliver today?')).toBeVisible(WAIT);
   await expect(bubble(page, 'And on Sunday?')).toBeVisible();
-  // The profile has no composer and marks nothing read.
+  // The profile has no composer and marks nothing read: the attention count is unchanged.
   await expect(page.getByRole('textbox', { name: 'Reply' })).toHaveCount(0);
-  // A message arriving while the profile is open shows live, still unread.
+  await expect(page).toHaveTitle('(1) tg-inbox');
+  await expect(nav(page).getByLabel('1 conversation needs you')).toBeVisible();
+  // A message arriving while the profile is open shows live, still unread and still counted.
   expect(await world.customerWrites(token, 781_001, 'Hello?', 'Zoe')).toBe(200);
   await expect(bubble(page, 'Hello?')).toBeVisible(WAIT);
+  await expect(page).toHaveTitle('(1) tg-inbox');
+  await expect(nav(page).getByLabel('1 conversation needs you')).toBeVisible();
 
   await page
     .getByRole('navigation', { name: 'Workspace' })
@@ -145,6 +153,7 @@ test('reading a conversation on the profile leaves it unread until Open in inbox
   await page.getByRole('link', { name: 'Open in inbox' }).click();
   await expect(page.getByRole('textbox', { name: 'Reply' })).toBeVisible(WAIT);
   await expect(zoe.getByLabel(/unread/)).toHaveCount(0, WAIT);
+  await expect(page).toHaveTitle('tg-inbox', WAIT);
 
   await ana.context.close();
 });

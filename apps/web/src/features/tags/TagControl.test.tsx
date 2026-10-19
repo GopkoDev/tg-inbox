@@ -505,6 +505,17 @@ describe('SCR-20 live, keyboard and focus', () => {
     expect(optionNames()).toEqual(['Kyiv', 'VIP']);
   });
 
+  it('removing a tag keeps focus in the control: the search input takes it', async () => {
+    api.removeContactTag.mockResolvedValue(removed([carried(VIP)]));
+    renderControl([carried(VIP), carried(WHOLESALE)]);
+    await openControl();
+    const remove = within(popover()).getByRole('button', { name: 'Remove tag Wholesale' });
+    remove.focus();
+    fireEvent.click(remove);
+    await flush();
+    expect(input()).toHaveFocus();
+  });
+
   it('Up / Down move the active option, Enter picks it, Esc closes and focus returns to Add tag', async () => {
     api.addContactTag.mockResolvedValue(added(VINTAGE, [carried(VINTAGE)]));
     renderControl([carried(KYIV)]);

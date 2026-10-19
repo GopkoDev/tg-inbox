@@ -35,6 +35,22 @@ describe('parseAddress', () => {
     expect(parseAddress(params('q=')).canonical).toBe(false);
   });
 
+  it('keeps at most 100 tag ids, the first ones, and asks for a rewrite (the API refuses more)', () => {
+    const ids = Array.from(
+      { length: 101 },
+      (_, n) => `0198f0c0-0000-7000-8000-${String(1000 + n).padStart(12, '0')}`,
+    );
+    const { address, canonical } = parseAddress(params(ids.map((t) => `tag=${t}`).join('&')));
+    expect(address.tagIds).toEqual(ids.slice(0, 100));
+    expect(canonical).toBe(false);
+  });
+
+  it('keeps at most 200 characters of search text and asks for a rewrite (the API refuses more)', () => {
+    const { address, canonical } = parseAddress(params(`q=${'a'.repeat(250)}`));
+    expect(address.q).toBe('a'.repeat(200));
+    expect(canonical).toBe(false);
+  });
+
   it('trims the search text', () => {
     const { address, canonical } = parseAddress(params('q=%20ada%20'));
     expect(address.q).toBe('ada');

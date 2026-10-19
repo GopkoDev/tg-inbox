@@ -12,6 +12,7 @@ import {
   type ThreadReply,
 } from '@tg/shared';
 import { ApiError } from '@/shared/api/client';
+import { useInboxStore } from '@/features/inbox/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ShellGuardContext } from '@/shared/ui/app-shell-context';
 import { stubRadixDom } from '@/test/radix';
@@ -183,6 +184,7 @@ beforeEach(() => {
     page([message(1, 1), activity(1, 2), reply(1, 3, { state: 'sent' }), message(2, 4)]),
   );
   useContactsStore.getState().clear();
+  useInboxStore.setState({ bot: null, guardError: null });
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -323,6 +325,51 @@ describe('Conversation tab: media', () => {
     fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(screen.getByRole('heading', { level: 1, name: 'Ada Lovelace' })).toBeInTheDocument();
+  });
+});
+
+describe('Conversation tab: the guard of the profile, not the inbox', () => {
+  it('a media 401 / 403 is handed to the shell guard, and nothing is left for the inbox page', async () => {
+    const fetchMock = vi.fn<(url: string) => Promise<Response>>(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({ error: { code: 'ACCESS_REMOVED', message: 'Access removed' } }),
+          { status: 403, headers: { 'content-type': 'application/json' } },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    useInboxStore.setState({ workspaceId: WS, guardError: null });
+    api.listThreadItems.mockResolvedValue(
+      page([
+        message(1, 1, {
+          kind: 'photo',
+          body: 'a tulip',
+          attachment: { mime_type: 'image/jpeg' },
+        } as never),
+      ]),
+    );
+    renderProfile();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    await waitFor(() => expect(guard).toHaveBeenCalled());
+    expect(guard.mock.calls.at(-1)![0]).toMatchObject({
+      status: 403,
+      code: ErrorCode.ACCESS_REMOVED,
+    });
+    expect(guard.mock.calls.at(-1)![1]).toBe(WS);
+    expect(useInboxStore.getState().guardError).toBeNull();
+  });
+
+  it("a failed reply shows no «not arriving» warning from the inbox's bot status", async () => {
+    useInboxStore.setState({
+      bot: { workspace_id: WS, state: 'taken_over', can_reply: true, receiving: false },
+    });
+    api.listThreadItems.mockResolvedValue(
+      page([reply(1, 3, { state: 'not_delivered', failure_reason: 'delivery_interrupted' })]),
+    );
+    renderProfile();
+    expect(await screen.findByText('Not delivered — sending was interrupted')).toBeInTheDocument();
+    expect(screen.queryByText('New customer messages are not arriving')).not.toBeInTheDocument();
   });
 });
 

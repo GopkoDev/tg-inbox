@@ -1,6 +1,6 @@
 import { ErrorCode, checkTagName, type TagRenameResult, type TagWithCount } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
-import { useId, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { useDialogFocus } from '@/features/inbox/StateChangedDialog';
 import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
@@ -69,6 +69,9 @@ export function RenameTagDialog({
   const focus = useDialogFocus();
   const fieldId = useId();
   const input = useRef<HTMLInputElement>(null);
+  const mergeButton = useRef<HTMLButtonElement>(null);
+  /** The step last shown while open (null = closed): a step switch moves focus into the new step. */
+  const shownStep = useRef<boolean | null>(null);
   const [form, setForm] = useState<Form | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -150,6 +153,21 @@ export function RenameTagDialog({
   ) : null;
 
   const merging = shown?.step === 'merge' && shown.target !== null && tag !== null;
+  const isOpen = tag !== null;
+
+  // The pressed button leaves with its step: focus goes to the merge step's main button, or back
+  // to the Name field. The first step of an opening is focused by `onOpenAutoFocus`.
+  useEffect(() => {
+    if (!isOpen) {
+      shownStep.current = null;
+      return;
+    }
+    if (shownStep.current !== null && shownStep.current !== merging) {
+      if (merging) mergeButton.current?.focus();
+      else input.current?.focus();
+    }
+    shownStep.current = merging;
+  }, [isOpen, merging]);
 
   return (
     <Dialog
@@ -186,6 +204,7 @@ export function RenameTagDialog({
                 Back
               </Button>
               <Button
+                ref={mergeButton}
                 type="button"
                 variant="destructive"
                 disabled={pending}

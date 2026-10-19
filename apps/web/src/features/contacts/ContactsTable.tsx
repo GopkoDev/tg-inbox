@@ -17,7 +17,14 @@ import { EmptyFilterState } from '@/shared/ui/empty-filter-state';
 import { Input } from '@/shared/ui/input';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { isFiltered, parseAddress, withAddress, type ContactsAddress } from './address';
+import {
+  MAX_SEARCH_LENGTH,
+  isFiltered,
+  parseAddress,
+  searchText,
+  withAddress,
+  type ContactsAddress,
+} from './address';
 import { contactFullName, firstWroteText, languageName, lastWrote } from './format';
 import { useContactsStore } from './store';
 import { TagFilter } from './TagFilter';
@@ -128,9 +135,11 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
   const { address, canonical } = useMemo(() => parseAddress(params), [params]);
   const list = useContactsStore((s) => s.list);
   const tags = useTagsStore((s) => s.items);
+  const tagsStatus = useTagsStore((s) => s.status);
   const [notice, setNotice] = useState(false);
   const [input, setInput] = useState(address.q);
-  const [botNotConnected, setBotNotConnected] = useState(false);
+  /** An owner's empty card waits for the bot status: `null` until it answers. */
+  const [botNotConnected, setBotNotConnected] = useState<boolean | null>(null);
   const paramsRef = useRef(params);
   const addressRef = useRef(address);
   useEffect(() => {
@@ -150,15 +159,16 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
       setParams(withAddress(paramsRef.current, addressRef.current), { replace: true });
   }, [canonical, params, setParams]);
 
-  // The search box follows the address (back button, a saved link); typing writes it back after 300 ms.
+  // The search box follows the address (back button, a saved link); typing writes it back after
+  // 300 ms. The box keeps what was typed when it already says the same (a trailing space stays).
   const [seenQ, setSeenQ] = useState(address.q);
   if (address.q !== seenQ) {
     setSeenQ(address.q);
-    setInput(address.q);
+    if (searchText(input) !== address.q) setInput(address.q);
   }
   useEffect(() => {
     const t = setTimeout(() => {
-      const text = input.trim();
+      const text = searchText(input);
       if (text !== addressRef.current.q) write({ ...addressRef.current, q: text });
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
@@ -199,14 +209,15 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
   }, [missingKey, setParams]);
 
   const filtered = isFiltered(address);
-  const empty = list?.status === 'ready' && list.totalCount === 0 && !filtered;
+  // No contacts at all: the empty card, whatever the search or filter says (AC-03).
+  const empty = list?.status === 'ready' && list.totalCount === 0;
   // An owner's empty card offers the way to the bot settings only when there is no connected bot.
   useEffect(() => {
     if (!empty || role !== 'owner') return;
     let stopped = false;
     void getInboxBotStatus(workspaceId)
       .then((bot) => !stopped && setBotNotConnected(bot.state === 'not_connected'))
-      .catch(() => undefined);
+      .catch(() => !stopped && setBotNotConnected(false));
     return () => {
       stopped = true;
     };
@@ -217,6 +228,14 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
     write({ q: '', mode: 'any', tagIds: [] });
   };
 
+  if (empty && role === 'owner' && botNotConnected === null)
+    return (
+      <Card>
+        <CardContent data-testid="empty-skeleton" className="flex flex-col items-center gap-3 py-6">
+          <Skeleton className="h-4 w-80 max-w-full" />
+        </CardContent>
+      </Card>
+    );
   if (empty)
     return (
       <Card>
@@ -325,7 +344,9 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
               disabled={list.more === 'loading'}
               onClick={() => void useContactsStore.getState().loadMore(workspaceId, guard)}
             >
-              {list.more === 'loading' ? <Loader2 className="animate-spin" aria-hidden /> : null}
+              {list.more === 'loading' ? (
+                <Loader2 data-testid="more-spinner" className="animate-spin" aria-hidden />
+              ) : null}
               Show more
             </Button>
           </div>
@@ -342,6 +363,7 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
               type="text"
               aria-label="Search by name or username"
               placeholder="Search by name or username"
+              maxLength={MAX_SEARCH_LENGTH}
               value={input}
               onChange={(e) => setInput(e.target.value)}
             />
@@ -349,6 +371,8 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
           filters={
             <TagFilter
               tags={tags}
+              status={tagsStatus}
+              onRetry={() => void useTagsStore.getState().load(workspaceId, guard)}
               mode={address.mode}
               tagIds={address.tagIds}
               onChange={(next) => write({ ...address, ...next })}

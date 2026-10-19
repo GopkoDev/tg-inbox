@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import { MediaGuardContext, type MediaGuard } from '@/features/inbox/media';
 import { BubbleSkeletons, ThreadItemView } from '@/features/inbox/ThreadItemView';
+import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
 import { Button } from '@/shared/ui/button';
@@ -15,10 +17,18 @@ const SCROLLER = 'max-h-[60vh] min-h-48 overflow-y-auto';
  * SCR-19's Conversation tab: the contact's conversation exactly as the inbox thread shows it —
  * paged history, live items, media through the viewer — without its two writing parts. It never
  * marks anything read and has no composer (ADR-0006); a reply's delivery state shows without the
- * resend buttons. Answering happens in the inbox, one click away.
+ * resend buttons. Answering happens in the inbox, one click away. A media 401 / 403 goes to the
+ * shell guard here (the inbox store's guard error is read only by the inbox page).
  */
 export function ContactConversationHistory({ workspaceId }: { workspaceId: string }) {
   const guard = useShellGuard();
+  const mediaGuard = useMemo<MediaGuard>(
+    () => (error, ws) => {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403))
+        void guard(error, ws).catch(() => undefined);
+    },
+    [guard],
+  );
   const conversation = useContactsStore((s) => s.conversation);
   const status = conversation?.status ?? 'loading';
   const thread = conversation?.thread ?? 'loading';
@@ -138,10 +148,12 @@ export function ContactConversationHistory({ workspaceId }: { workspaceId: strin
     );
 
   return (
-    <Card className="py-0">
-      <div ref={scroller} data-testid="history-scroll" onScroll={onScroll} className={SCROLLER}>
-        {body}
-      </div>
-    </Card>
+    <MediaGuardContext.Provider value={mediaGuard}>
+      <Card className="py-0">
+        <div ref={scroller} data-testid="history-scroll" onScroll={onScroll} className={SCROLLER}>
+          {body}
+        </div>
+      </Card>
+    </MediaGuardContext.Provider>
   );
 }

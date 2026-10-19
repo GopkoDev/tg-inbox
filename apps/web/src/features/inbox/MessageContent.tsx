@@ -9,6 +9,7 @@ import {
   failureState,
   fetchMedia,
   UNAVAILABLE_REASON_TEXT,
+  useMediaGuard,
   useMessageMedia,
   type MediaState,
 } from './media';
@@ -206,6 +207,7 @@ function InlineMedia({
 function FileRow({ message, workspaceId }: { message: ThreadMessage; workspaceId: string }) {
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<MediaState | null>(null);
+  const guard = useMediaGuard();
   const name = message.attachment?.file_name ?? 'File';
   const size = fileSize(message.attachment?.file_size ?? null);
 
@@ -224,7 +226,7 @@ function FileRow({ message, workspaceId }: { message: ThreadMessage; workspaceId
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (error) {
-      setFailure(failureState(error, workspaceId));
+      setFailure(failureState(error, workspaceId, guard));
     } finally {
       setBusy(false);
     }

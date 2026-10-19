@@ -213,11 +213,13 @@ export function TagControl({
     input.current?.focus();
   };
 
-  const remove = (tagId: string) => {
+  const remove = async (tagId: string) => {
     if (busy) return;
-    void run({ kind: 'remove', tagId }, () =>
+    await run({ kind: 'remove', tagId }, () =>
       removeContactTag(workspaceId, contactId, tagId, { source }),
     );
+    // the pressed badge may be gone: focus stays in the control
+    input.current?.focus();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -270,7 +272,7 @@ export function TagControl({
                   type="button"
                   aria-label={`Remove tag ${t.name}`}
                   disabled={busy}
-                  onClick={() => remove(t.id)}
+                  onClick={() => void remove(t.id)}
                   className="rounded-full p-0.5 hover:bg-foreground/10 disabled:opacity-50"
                 >
                   {pending?.kind === 'remove' && pending.tagId === t.id ? (

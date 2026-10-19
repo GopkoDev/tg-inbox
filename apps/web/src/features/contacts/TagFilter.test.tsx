@@ -3,6 +3,7 @@ import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import type { TagWithCount } from '@tg/shared';
 import { stubRadixDom } from '@/test/radix';
+import type { TagsStatus } from '@/features/tags/store';
 import type { ContactsAddress } from './address';
 import { TagFilter } from './TagFilter';
 
@@ -18,16 +19,22 @@ const TAGS = [tag(1, 'Kyiv', 30), tag(2, 'VIP', 14), tag(3, 'Wholesale', 0)];
 function Harness({
   initial,
   tags = TAGS,
+  status = 'ready',
+  onRetry = () => undefined,
   onChange,
 }: {
   initial: Pick<ContactsAddress, 'mode' | 'tagIds'>;
   tags?: TagWithCount[];
+  status?: TagsStatus;
+  onRetry?: () => void;
   onChange?: (v: Pick<ContactsAddress, 'mode' | 'tagIds'>) => void;
 }) {
   const [value, setValue] = useState(initial);
   return (
     <TagFilter
       tags={tags}
+      status={status}
+      onRetry={onRetry}
       mode={value.mode}
       tagIds={value.tagIds}
       onChange={(next) => {
@@ -119,6 +126,36 @@ describe('TagFilter popover', () => {
     expect(
       within(dialog as HTMLElement).getByRole('radio', { name: 'No tags' }),
     ).toBeInTheDocument();
+  });
+
+  it('while the tags load: row skeletons, not «No tags yet», and every mode', () => {
+    render(<Harness initial={{ mode: 'any', tagIds: [] }} tags={[]} status="loading" />);
+    open();
+    expect(screen.getAllByTestId('tag-filter-skeleton')).toHaveLength(3);
+    expect(screen.queryByText('No tags yet — tags are added on a contact')).not.toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: 'Any of these tags' })).toBeChecked();
+    expect(screen.getByRole('radio', { name: 'All of these tags' })).toBeInTheDocument();
+  });
+
+  it("when the tags fail to load: «Couldn't load the tags» with Retry, not «No tags yet»", () => {
+    const onRetry = vi.fn();
+    render(
+      <Harness initial={{ mode: 'any', tagIds: [] }} tags={[]} status="error" onRetry={onRetry} />,
+    );
+    open();
+    expect(screen.getByText("Couldn't load the tags")).toBeInTheDocument();
+    expect(screen.queryByText('No tags yet — tags are added on a contact')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('an address with mode all and a workspace with no tags: the chosen mode is shown and can be changed', () => {
+    const onChange = vi.fn();
+    render(<Harness initial={{ mode: 'all', tagIds: [] }} tags={[]} onChange={onChange} />);
+    open();
+    expect(screen.getByRole('radio', { name: 'All of these tags' })).toBeChecked();
+    fireEvent.click(screen.getByRole('radio', { name: 'No tags' }));
+    expect(onChange).toHaveBeenLastCalledWith({ mode: 'none', tagIds: [] });
   });
 
   it('checks only the chosen tags', () => {
