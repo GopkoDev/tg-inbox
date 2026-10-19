@@ -217,7 +217,7 @@ describe('openLiveSocket', () => {
     });
 
     it('a hidden tab that reconnects reports how long ago it left, on the monotonic clock; visible again carries none (RR2, D1)', () => {
-      // A wall clock jumping ahead must not grant extra presence: only performance.now() counts.
+      // A wall clock jumping back must not grant extra presence: the monotonic elapsed time wins.
       let mono = 1_000;
       const now = vi.spyOn(performance, 'now').mockImplementation(() => mono);
       try {
@@ -232,7 +232,7 @@ describe('openLiveSocket', () => {
           on_screen: false,
           hidden_for_ms: 0,
         });
-        vi.setSystemTime(new Date(Date.now() + 3_600_000));
+        vi.setSystemTime(new Date(Date.now() - 3_600_000));
         mono = 65_000;
         s.drop(1001);
         vi.advanceTimersByTime(100);
@@ -243,6 +243,27 @@ describe('openLiveSocket', () => {
         ]);
         setVisibility('visible');
         expect(presence(again).at(-1)).toEqual({ type: 'presence', v: 1, on_screen: true });
+      } finally {
+        now.mockRestore();
+      }
+    });
+
+    it('a computer that slept while hidden reports the wall-clock time away (the monotonic clock may stop in sleep)', () => {
+      const mono = 1_000;
+      const now = vi.spyOn(performance, 'now').mockImplementation(() => mono);
+      try {
+        start();
+        const s = FakeSocket.all[0]!;
+        s.open();
+        setVisibility('hidden');
+        vi.setSystemTime(new Date(Date.now() + 7_200_000));
+        s.drop(1006);
+        vi.advanceTimersByTime(100); // the backoff — the wall clock moves with the fake timers
+        const again = FakeSocket.all[1]!;
+        again.open();
+        expect(presence(again)).toEqual([
+          { type: 'presence', v: 1, on_screen: false, hidden_for_ms: 7_200_100 },
+        ]);
       } finally {
         now.mockRestore();
       }

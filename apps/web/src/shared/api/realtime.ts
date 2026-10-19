@@ -69,7 +69,10 @@ export function openLiveSocket(
   // When this tab left the screen, on the monotonic clock (a wall clock can jump or run ahead), kept
   // across reconnects so a hidden tab that reconnects keeps its 10 minutes (D1). Unknown (undefined)
   // for a tab hidden since it opened: no on-screen history.
-  let hiddenAt: number | undefined;
+  // When the tab left the screen, on both clocks: the monotonic one ignores wall-clock jumps,
+  // the wall one keeps counting while the computer sleeps. The larger elapsed time is sent —
+  // looking away sooner is the safe direction.
+  let hiddenAt: { mono: number; wall: number } | undefined;
   // Presence (events.md): `on_screen` right after every open and on every visibilitychange.
   const sendPresence = () => {
     if (!open || !socket) return;
@@ -79,7 +82,12 @@ export function openLiveSocket(
       v: 1,
       on_screen: onScreen,
       ...(!onScreen && hiddenAt !== undefined
-        ? { hidden_for_ms: Math.max(0, Math.round(performance.now() - hiddenAt)) }
+        ? {
+            hidden_for_ms: Math.max(
+              0,
+              Math.round(Math.max(performance.now() - hiddenAt.mono, Date.now() - hiddenAt.wall)),
+            ),
+          }
         : {}),
     };
     try {
@@ -90,7 +98,7 @@ export function openLiveSocket(
   };
   const onVisibility = () => {
     if (document.visibilityState === 'visible') hiddenAt = undefined;
-    else hiddenAt ??= performance.now();
+    else hiddenAt ??= { mono: performance.now(), wall: Date.now() };
     sendPresence();
   };
   document.addEventListener('visibilitychange', onVisibility);
