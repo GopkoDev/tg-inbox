@@ -14,7 +14,9 @@ const at = (s: number) => new Date(T0.getTime() + s * 1000);
 const W = 'w1';
 const C = 'c1';
 
-async function setup(state: { status?: 'open' | 'closed'; assignee?: string | null } = {}) {
+async function setup(
+  state: { status?: 'open' | 'closed'; assignee?: string | null; replies?: number } = {},
+) {
   const repo = fakeReplyRepo({ conversations: [[W, C]] });
   const conversations = fakeConversationRepo();
   conversations.rows.push({
@@ -41,19 +43,23 @@ async function setup(state: { status?: 'open' | 'closed'; assignee?: string | nu
     clock: fixedClock(at(100)),
   };
   const deliveryDeps = { ...deps, conversations, activities };
-  const created = await createReplies(deps).createReply({
-    workspaceId: W,
-    conversationId: C,
-    authorId: 'me',
-    clientKey: 'k',
-    body: 'Hi',
-    lastSeenReplyId: null,
-    confirmTeammate: false,
-    limit: 30,
-    windowMs: 60_000,
-    enqueueDrain: async () => {},
-  });
-  if (created.status !== 'created') throw new Error('setup');
+  const replyIds: string[] = [];
+  for (let i = 0; i < (state.replies ?? 1); i++) {
+    const created = await createReplies(deps).createReply({
+      workspaceId: W,
+      conversationId: C,
+      authorId: 'me',
+      clientKey: i === 0 ? 'k' : `k${i}`,
+      body: 'Hi',
+      lastSeenReplyId: null,
+      confirmTeammate: false,
+      limit: 30,
+      windowMs: 60_000,
+      enqueueDrain: async () => {},
+    });
+    if (created.status !== 'created') throw new Error('setup');
+    replyIds.push(created.reply.id);
+  }
   signals.replies.length = 0;
   return {
     repo,
@@ -61,7 +67,8 @@ async function setup(state: { status?: 'open' | 'closed'; assignee?: string | nu
     conversations,
     activities,
     delivery: createReplyDelivery(deliveryDeps),
-    replyId: created.reply.id,
+    replyId: replyIds[0]!,
+    replyIds,
     row: conversations.rows[0]!,
   };
 }
@@ -180,6 +187,95 @@ describe('a failed reply reopens a closed conversation (AC-08)', () => {
     const result = await t.delivery.resolveDeadLetter(W, C, options);
     expect(result.interrupted).toEqual([t.replyId]);
     expectReopenedOnce(t);
+  });
+
+  /**
+   * Records the order of the reply / attempt writes and the conversation row lock (B2): the row lock
+   * is the last lock of the order (sad.md §8), so it comes once, after every reply and attempt write
+   * of the transaction — never between them, where it would deadlock with a lagging drain.
+   */
+  function recordLocks(s: Awaited<ReturnType<typeof setup>>) {
+    const log: string[] = [];
+    const spy = (target: Record<string, unknown>, names: string[], tag: string) => {
+      for (const name of names) {
+        const original = target[name] as (...a: unknown[]) => unknown;
+        target[name] = (...a: unknown[]) => {
+          log.push(`${tag}:${name}`);
+          return original.apply(target, a);
+        };
+      }
+    };
+    spy(
+      s.repo as unknown as Record<string, unknown>,
+      ['settleReply', 'settleIdleReply', 'finishAttempt', 'skipAttempt'],
+      'write',
+    );
+    spy(s.conversations as unknown as Record<string, unknown>, ['lockState'], 'lock');
+    return {
+      log,
+      check() {
+        const locks = log.filter((e) => e.startsWith('lock:'));
+        expect(locks).toEqual(['lock:lockState']);
+        expect(log.at(-1)).toBe('lock:lockState');
+        log.length = 0;
+      },
+    };
+  }
+
+  it('dead letter with several replies locks the conversation once, after every reply and attempt write (B2)', async () => {
+    const s = await setup({ status: 'closed', assignee: 'mate', replies: 3 });
+    await s.delivery.startAttempt({ workspaceId: W, conversationId: C, replyId: s.replyIds[0]! });
+    await s.delivery.startAttempt({ workspaceId: W, conversationId: C, replyId: s.replyIds[1]! });
+    const locks = recordLocks(s);
+    const result = await s.delivery.resolveDeadLetter(W, C, {
+      staleBefore: at(200),
+      drainQueued: async () => false,
+    });
+    expect(result.notConfirmed).toHaveLength(2);
+    expect(result.interrupted).toEqual([s.replyIds[2]]);
+    locks.check();
+    expectReopenedOnce(s);
+  });
+
+  it('resolveStaleInFlight with several attempts locks the conversation once, after the writes (B2)', async () => {
+    const s = await setup({ status: 'closed', assignee: 'mate', replies: 2 });
+    for (const replyId of s.replyIds) {
+      await s.delivery.startAttempt({ workspaceId: W, conversationId: C, replyId });
+    }
+    const locks = recordLocks(s);
+    expect(await s.delivery.resolveStaleInFlight(W, C, at(200))).toHaveLength(2);
+    locks.check();
+    expectReopenedOnce(s);
+  });
+
+  it('skipReply and finishAttempt lock the conversation after their reply and attempt writes (B2)', async () => {
+    const s = await setup({ status: 'closed', assignee: 'mate', replies: 2 });
+    const locks = recordLocks(s);
+    await s.delivery.skipReply({
+      workspaceId: W,
+      conversationId: C,
+      replyId: s.replyIds[0]!,
+      failureReason: 'bot_unavailable',
+    });
+    locks.check();
+    const started = await s.delivery.startAttempt({
+      workspaceId: W,
+      conversationId: C,
+      replyId: s.replyIds[1]!,
+    });
+    locks.log.length = 0;
+    await s.delivery.finishAttempt(failed(started!.attemptId, 'not_delivered'));
+    locks.check();
+  });
+
+  it('a dead letter with nothing failed never locks the conversation', async () => {
+    const s = await setup({ status: 'closed', replies: 1 });
+    const locks = recordLocks(s);
+    await s.delivery.resolveDeadLetter(W, C, {
+      staleBefore: at(200),
+      drainQueued: async () => true,
+    });
+    expect(locks.log.filter((e) => e.startsWith('lock:'))).toEqual([]);
   });
 
   it('a second reply failing after the reopen adds nothing', async () => {

@@ -306,6 +306,19 @@ describe('inbox read routes (postgres)', () => {
     expect(blank.lens).toEqual({ status: 'closed', assignee: 'all' });
   });
 
+  it('a query that normalises to nothing ("@") is not a search: the status lens stays, said and applied (B4, AC-01)', async () => {
+    const s = await lensSeed();
+    const list = async (qs: string) =>
+      ConversationPage.parse((await get(s.me, `${base(s.ws)}/conversations${qs}`)).json());
+    const at = await list('?q=%20%40%20&status=closed');
+    expect(at.lens).toEqual({ status: 'closed', assignee: 'all' });
+    expect(at.items.map((c) => c.id)).toEqual([s.closedMine, s.closedNone]);
+    // The cursor is bound to the lens without a search, so it pages on as the plain closed list.
+    const first = await list('?q=%40&status=closed&limit=1');
+    const next = await list(`?status=closed&limit=1&after=${first.next_cursor}`);
+    expect(next.items.map((c) => c.id)).toEqual([s.closedNone]);
+  });
+
   it('pages within a lens and refuses a cursor from another lens and an unknown lens', async () => {
     const s = await lensSeed();
     const first = ConversationPage.parse(

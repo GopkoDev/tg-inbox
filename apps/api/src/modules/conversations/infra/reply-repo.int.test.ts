@@ -503,4 +503,77 @@ describe('reply requests (Postgres)', () => {
       Array(8).fill('created'),
     );
   });
+
+  it('dead letter and stale resolution racing lagging drains over many replies never deadlock, and reopen once (B2: the conversation row is locked after the loop)', async () => {
+    const delivery = createReplyDelivery({
+      transaction: (fn) => db.transaction().execute(fn),
+      replies: repo(),
+      conversations: createConversationRepo(db),
+      activities: createActivityRepo(db),
+      signals,
+      clock,
+    });
+    for (let round = 0; round < 10; round++) {
+      const s = await setup();
+      await db
+        .updateTable('conversations')
+        .set({ status: 'closed' })
+        .where('id', '=', s.conversationId)
+        .execute();
+      const { workspaceId, conversationId } = s;
+      // Pending replies alternate: idle ones the dead letter interrupts in its loop, and ones whose
+      // young attempt a lagging drain is finishing (left to it, but row-locked by the loop on the way).
+      const lagging: string[] = [];
+      for (let i = 0; i < 12; i++) {
+        const replyId = await insertReply(db, {
+          workspaceId,
+          conversationId,
+          authorAccountId: s.accountId,
+          positionAt: at(i),
+        });
+        if (i % 2 === 1) {
+          lagging.push(
+            await insertReplyAttempt(db, {
+              workspaceId,
+              conversationId,
+              replyId,
+              initiatedByAccountId: s.accountId,
+              startedAt: i % 4 === 1 ? at(900) : at(0),
+            }),
+          );
+        }
+      }
+      await Promise.all([
+        delivery.resolveDeadLetter(workspaceId, conversationId, {
+          staleBefore: at(500),
+          drainQueued: async () => false,
+        }),
+        delivery.resolveStaleInFlight(workspaceId, conversationId, at(500)),
+        // The lagging drains finish their attempts in the opposite order to the loops.
+        ...[...lagging].reverse().map((attemptId) =>
+          delivery.finishAttempt({
+            workspaceId,
+            conversationId,
+            attemptId,
+            attemptOutcome: 'refused',
+            replyState: 'not_delivered',
+            failureReason: 'customer_blocked',
+          }),
+        ),
+      ]);
+      const reopened = await db
+        .selectFrom('conversation_activities')
+        .select('kind')
+        .where('conversation_id', '=', conversationId)
+        .execute();
+      expect(reopened).toEqual([{ kind: 'reopened' }]);
+      const left = await db
+        .selectFrom('replies')
+        .select('id')
+        .where('conversation_id', '=', conversationId)
+        .where('state', '=', 'sending')
+        .execute();
+      expect(left).toEqual([]);
+    }
+  });
 });

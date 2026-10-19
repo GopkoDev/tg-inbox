@@ -40,12 +40,14 @@ const activity: ActivityView = {
   createdAt: NOW,
 };
 
-function setup(o: { active?: string[]; result?: ChangeResult } = {}) {
+const snapshot = { customerMessageSeq: 3, latestReply: { id: 'r1', state: 'sent' as const } };
+
+function setup(o: { active?: string[]; result?: ChangeResult; summary?: object } = {}) {
   const statusCalls: unknown[] = [];
   const calls: string[] = [];
   const tx = { tag: 'tx' } as unknown as Executor;
   const active = o.active ?? [ME, MATE];
-  const summary = { id: CONV, state_version: 4 } as ConversationSummary;
+  const summary = { id: CONV, state_version: 4, ...o.summary } as ConversationSummary;
   const changeState = createChangeState({
     transaction: async (fn) => {
       calls.push('begin');
@@ -150,7 +152,7 @@ describe('assign', () => {
   });
 
   it('stale: CONVERSATION_STATE_CHANGED with the current summary and the latest change', async () => {
-    const s = setup({ result: { outcome: 'stale', state, latestChange: activity } });
+    const s = setup({ result: { outcome: 'stale', state, snapshot, latestChange: activity } });
     const err = await assign(s).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConversationStateChangedError);
     expect((err as ConversationStateChangedError).details).toMatchObject({
@@ -159,8 +161,31 @@ describe('assign', () => {
     });
   });
 
+  it('stale echoes the version, status, assignee and close snapshot checked under the row lock, not a later read (B1)', async () => {
+    // A capture committed between the change transaction and the summary read: the later read has
+    // moved on, the refusal must not.
+    const s = setup({
+      result: { outcome: 'stale', state, snapshot, latestChange: activity },
+      summary: {
+        state_version: 5,
+        status: 'closed',
+        assignee: null,
+        close_snapshot: { customer_message_seq: 4, latest_reply: null },
+      },
+    });
+    const err = (await assign(s).catch((e: unknown) => e)) as ConversationStateChangedError;
+    expect(err.details).toMatchObject({
+      conversation: {
+        state_version: 4,
+        status: 'open',
+        assignee: { account_id: MATE, display_name: 'Mate' },
+        close_snapshot: { customer_message_seq: 3, latest_reply: { id: 'r1', state: 'sent' } },
+      },
+    });
+  });
+
   it('stale with no entry yet: latest_change is null', async () => {
-    const s = setup({ result: { outcome: 'stale', state, latestChange: null } });
+    const s = setup({ result: { outcome: 'stale', state, snapshot, latestChange: null } });
     const err = (await assign(s).catch((e: unknown) => e)) as ConversationStateChangedError;
     expect(err.details).toMatchObject({ latest_change: null });
   });
@@ -194,7 +219,6 @@ describe('unassign', () => {
   });
 });
 
-const snapshot = { customerMessageSeq: 3, latestReply: { id: 'r1', state: 'sent' as const } };
 const close = (s: ReturnType<typeof setup>, confirm = false) =>
   s.changeState.close(WS, member, CONV, {
     expectedStateVersion: 4,
@@ -247,6 +271,49 @@ describe('close', () => {
     });
   });
 
+  it('needs_confirmation echoes the version and close snapshot checked under the row lock, not a later read (B1)', async () => {
+    const s = setup({
+      result: {
+        outcome: 'needs_confirmation',
+        reasons: ['customer_waiting'],
+        state,
+        snapshot,
+        latestChange: null,
+        newestUnreadMessage: null,
+      },
+      summary: {
+        state_version: 5,
+        status: 'open',
+        assignee: null,
+        close_snapshot: { customer_message_seq: 4, latest_reply: { id: 'r2', state: 'sending' } },
+      },
+    });
+    const err = (await close(s).catch((e: unknown) => e)) as CloseNeedsConfirmationError;
+    expect(err.details).toMatchObject({
+      conversation: {
+        state_version: 4,
+        status: 'open',
+        assignee: { account_id: MATE, display_name: 'Mate' },
+        close_snapshot: { customer_message_seq: 3, latest_reply: { id: 'r1', state: 'sent' } },
+      },
+    });
+  });
+
+  it('needs_confirmation without state_changed: stale_change is null even when an entry exists (B3)', async () => {
+    const s = setup({
+      result: {
+        outcome: 'needs_confirmation',
+        reasons: ['customer_waiting'],
+        state,
+        snapshot,
+        latestChange: activity,
+        newestUnreadMessage: null,
+      },
+    });
+    const err = (await close(s).catch((e: unknown) => e)) as CloseNeedsConfirmationError;
+    expect(err.details).toMatchObject({ reasons: ['customer_waiting'], stale_change: null });
+  });
+
   it('needs_confirmation with nothing to show: null stale_change and null unread message', async () => {
     const s = setup({
       result: {
@@ -285,7 +352,7 @@ describe('reopen', () => {
   });
 
   it('stale is CONVERSATION_STATE_CHANGED', async () => {
-    const s = setup({ result: { outcome: 'stale', state, latestChange: activity } });
+    const s = setup({ result: { outcome: 'stale', state, snapshot, latestChange: activity } });
     await expect(
       s.changeState.reopen(WS, member, CONV, { expectedStateVersion: 1 }),
     ).rejects.toBeInstanceOf(ConversationStateChangedError);

@@ -92,7 +92,7 @@ const memberRef = (names: ReadonlyMap<string, string>, accountId: string): Membe
   account_id: accountId,
   display_name: names.get(accountId) ?? '?',
 });
-const orNull = (names: ReadonlyMap<string, string>, accountId: string | null) =>
+export const orNull = (names: ReadonlyMap<string, string>, accountId: string | null) =>
   accountId === null ? null : memberRef(names, accountId);
 
 /** The accounts an activity entry names: actor, previous and new assignee. */
@@ -176,8 +176,11 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
         limit: number;
       },
     ): Promise<ConversationPage> {
-      const search = (input.q ?? '').trim();
+      // Searching is decided once, from the normalised query: `null` contact ids is no search (a
+      // blank or bare "@" query), so the status lens stays applied, said and bound to the cursor.
       const contactIds = await contacts.searchContactIds(workspaceId, input.q ?? '');
+      const searching = contactIds !== null;
+      const search = searching ? (input.q ?? '').trim() : '';
       const page = await conversations.listConversations(workspaceId, {
         ...member,
         contactIds,
@@ -190,7 +193,7 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       return {
         workspace_id: workspaceId,
         // Searching sets the status lens aside (AC-01): the page says so.
-        lens: { status: search === '' ? input.status : null, assignee: input.assignee },
+        lens: { status: searching ? null : input.status, assignee: input.assignee },
         items: await rowsToDtos(workspaceId, page.items),
         has_prev: page.hasPrev,
         has_next: page.hasNext,

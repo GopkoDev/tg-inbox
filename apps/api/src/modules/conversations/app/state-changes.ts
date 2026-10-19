@@ -117,7 +117,13 @@ export type ChangeStatusInput = {
 export type ChangeResult =
   | { outcome: 'recorded'; state: LockedState; activity: ActivityView }
   | { outcome: 'unchanged'; state: LockedState; latestChange: ActivityView | null }
-  | { outcome: 'stale'; state: LockedState; latestChange: ActivityView | null }
+  | {
+      outcome: 'stale';
+      state: LockedState;
+      /** The close snapshot read under the row lock, echoed with the refusal. */
+      snapshot: CloseSnapshot;
+      latestChange: ActivityView | null;
+    }
   | {
       outcome: 'needs_confirmation';
       reasons: CloseReason[];
@@ -174,10 +180,21 @@ export function createStateChanges(deps: StateChangeDeps & { clock: Clock }): St
 
     switch (decision.outcome) {
       case 'unchanged':
-      case 'stale':
         return {
           outcome: decision.outcome,
           state,
+          latestChange: await activities.latestFor(workspaceId, conversationId, tx),
+        };
+      case 'stale':
+        return {
+          outcome: 'stale',
+          state,
+          snapshot: {
+            customerMessageSeq: state.customerMessageSeq,
+            latestReply: close
+              ? latestReply
+              : await conversations.latestReply(workspaceId, conversationId, tx),
+          },
           latestChange: await activities.latestFor(workspaceId, conversationId, tx),
         };
       case 'needs_confirmation':

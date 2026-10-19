@@ -39,12 +39,14 @@ export interface ConversationRepo {
   findByChat(workspaceId: string, telegramChatId: bigint, tx?: Executor): Promise<string | null>;
   hasAny(workspaceId: string, tx?: Executor): Promise<boolean>;
   /**
-   * Reads the state columns and takes the row lock (`FOR UPDATE`) for the rest of the transaction.
+   * Reads the state columns and takes the row lock (`FOR NO KEY UPDATE`) for the rest of the
+   * transaction: it serialises with every other state lock and with the capture's raise `UPDATE`,
+   * but not with the `FOR KEY SHARE` of a foreign-key insert (reply, attempt, message, activity).
    * Null when the conversation is not in the workspace (nothing is locked).
    */
   lockState(workspaceId: string, conversationId: string, tx: Executor): Promise<LockedState | null>;
   /**
-   * Locks (`FOR UPDATE`, by id) every conversation of the workspace assigned to the account, open and
+   * Locks (`FOR NO KEY UPDATE`, by id) every conversation of the workspace assigned to the account, open and
    * closed, and returns their ids. The deactivation's step 3: it runs after the membership `UPDATE`.
    */
   lockAssignedTo(workspaceId: string, accountId: string, tx: Executor): Promise<string[]>;

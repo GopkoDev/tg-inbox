@@ -90,7 +90,7 @@ export function createConversationRepo(db: Db): ConversationRepo {
         ])
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', conversationId)
-        .forUpdate()
+        .forNoKeyUpdate()
         .executeTakeFirst();
       if (!row) return null;
       return {
@@ -112,7 +112,7 @@ export function createConversationRepo(db: Db): ConversationRepo {
         .where('workspace_id', '=', workspaceId)
         .where('assignee_account_id', '=', accountId)
         .orderBy('id')
-        .forUpdate()
+        .forNoKeyUpdate()
         .execute();
       return rows.map((r) => r.id);
     },

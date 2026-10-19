@@ -1,4 +1,4 @@
-import type { ConversationStateChange } from '@tg/shared';
+import type { ConversationStateChange, ConversationSummary } from '@tg/shared';
 import {
   AccessRemovedError,
   AssigneeNotActiveError,
@@ -7,11 +7,11 @@ import {
   ConversationStateChangedError,
   NotFoundError,
 } from '../../../platform/errors.js';
-import type { ActivityView } from '../../conversations/app/ports.js';
+import type { ActivityView, LockedState } from '../../conversations/app/ports.js';
 import type { CloseSnapshot } from '../../conversations/domain/state.js';
 import type { ChangeResult } from '../../conversations/app/state-changes.js';
 import type { Member } from './reads.js';
-import { activityDto } from './reads.js';
+import { activityDto, orNull } from './reads.js';
 import type { ChangeStateDeps } from './ports.js';
 
 /**
@@ -23,8 +23,13 @@ import type { ChangeStateDeps } from './ports.js';
 export function createChangeState(deps: ChangeStateDeps) {
   const { transaction, workspaces, changes, reads, clock } = deps;
 
-  async function namesOf(workspaceId: string, activities: (ActivityView | null)[]) {
+  async function namesOf(
+    workspaceId: string,
+    activities: (ActivityView | null)[],
+    state?: LockedState,
+  ) {
     const ids = new Set<string>();
+    if (state?.assigneeAccountId) ids.add(state.assigneeAccountId);
     for (const a of activities) {
       if (!a) continue;
       for (const id of [a.actorAccountId, a.previousAssigneeAccountId, a.newAssigneeAccountId]) {
@@ -32,6 +37,36 @@ export function createChangeState(deps: ChangeStateDeps) {
       }
     }
     return ids.size ? workspaces.displayNames(workspaceId, [...ids]) : new Map<string, string>();
+  }
+
+  /**
+   * The refusal's summary: what "close anyway" / "go ahead" echo — the version, status, assignee and
+   * close snapshot — are the values checked under the row lock, never a read after the commit, so a
+   * capture or a failed reply committed in between makes the next attempt ask again (AC-03, AC-06).
+   * The rest (contact, preview, unread) comes from the summary read.
+   */
+  async function locked(
+    workspaceId: string,
+    member: Member,
+    conversationId: string,
+    result: { state: LockedState; snapshot: CloseSnapshot },
+    names: Map<string, string>,
+  ): Promise<ConversationSummary> {
+    const read = await reads.getConversation(workspaceId, member, conversationId);
+    const { state, snapshot } = result;
+    return {
+      ...read,
+      state_version: state.stateVersion,
+      status: state.status,
+      assignee: orNull(names, state.assigneeAccountId),
+      close_snapshot: {
+        customer_message_seq: snapshot.customerMessageSeq,
+        latest_reply: snapshot.latestReply && {
+          id: snapshot.latestReply.id,
+          state: snapshot.latestReply.state,
+        },
+      },
+    };
   }
 
   /** Turns the use case's result into the 200 body, or the refusal it stands for. */
@@ -50,25 +85,27 @@ export function createChangeState(deps: ChangeStateDeps) {
           Math.max(1, Math.ceil((result.retryAt.getTime() - clock.now().getTime()) / 1000)),
         );
       case 'stale': {
-        const conversation = await reads.getConversation(workspaceId, member, conversationId);
-        const names = await namesOf(workspaceId, [result.latestChange]);
+        const names = await namesOf(workspaceId, [result.latestChange], result.state);
         throw new ConversationStateChangedError(
-          conversation,
+          await locked(workspaceId, member, conversationId, result, names),
           result.latestChange && activityDto(workspaceId, result.latestChange, names),
         );
       }
       case 'needs_confirmation': {
-        const conversation = await reads.getConversation(workspaceId, member, conversationId);
-        const names = await namesOf(workspaceId, [result.latestChange]);
+        const names = await namesOf(workspaceId, [result.latestChange], result.state);
         const unread = result.newestUnreadMessage;
         throw new CloseNeedsConfirmationError({
           reasons: result.reasons,
-          stale_change: result.latestChange && activityDto(workspaceId, result.latestChange, names),
+          // The contract names the stale change only when the version is a reason (AC-06).
+          stale_change:
+            result.reasons.includes('state_changed') && result.latestChange
+              ? activityDto(workspaceId, result.latestChange, names)
+              : null,
           newest_unread_message: unread && {
             id: unread.id,
             received_at: unread.receivedAt.toISOString(),
           },
-          conversation,
+          conversation: await locked(workspaceId, member, conversationId, result, names),
         });
       }
       case 'recorded':
