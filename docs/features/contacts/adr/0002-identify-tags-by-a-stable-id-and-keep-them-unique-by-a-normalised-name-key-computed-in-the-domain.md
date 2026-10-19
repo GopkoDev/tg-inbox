@@ -15,7 +15,7 @@ ticket: "roadmap step 7 — contacts"
 
 ## Context
 
-The spec requires that two names differing only in letter case (any alphabet) or spacing (any Unicode space, zero-width characters) are the same tag, that the tidied name is stored and shown with case as typed, that length counts graphemes (an emoji is one), and that a tag stays the same tag across renames: filters, pickers and saved links that chose it before still mean it (AC-02, AC-07, AC-08, AC-14, clarifications). The rule must hold under concurrent creation and be reproduced in the picker so "Create tag" is hidden for an existing name.
+The spec requires that two names differing only in letter case (any alphabet) or spacing (any Unicode space, invisible zero-width spaces; the joiners that hold emoji and some scripts together are kept) are the same tag, that the tidied name is stored and shown with case as typed, that length counts graphemes (an emoji is one), and that a tag stays the same tag across renames: filters, pickers and saved links that chose it before still mean it (AC-02, AC-07, AC-08, AC-14, clarifications). The rule must hold under concurrent creation and be reproduced in the picker so "Create tag" is hidden for an existing name.
 
 ## Decision drivers
 
@@ -26,7 +26,7 @@ The spec requires that two names differing only in letter case (any alphabet) or
 
 ## Considered options
 
-1. **A stable UUIDv7 id per tag + a `name_key` column computed by one pure function (NFC, zero-width removed, white-space runs collapsed, trimmed, case-folded), unique `(workspace_id, name_key)`.** The same function lives in `packages/shared` for the picker.
+1. **A stable UUIDv7 id per tag + a `name_key` column computed by one pure function (NFC, zero-width spaces U+200B / U+2060 / U+FEFF removed, joiners kept, white-space runs collapsed, trimmed, case-folded), unique `(workspace_id, name_key)`.** The same function lives in `packages/shared` for the picker.
 2. **A case-insensitive ICU nondeterministic collation on `name` with a unique index**, after tidying spaces in the app. Case folding moves into the database, but spacing still needs the app, and the browser cannot reproduce the database collation exactly, so the picker and the server could disagree.
 3. **The name as the identity** (`(workspace_id, name)` as key, references by name). Simple URLs, but a rename would have to rewrite every reference and saved links would break, contradicting AC-02 and AC-14.
 
