@@ -1,3 +1,4 @@
+import type { InboxBotStatus } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
 import type { PresenceLease } from '../domain/presence.js';
 
@@ -220,3 +221,51 @@ export interface PingRepo {
    */
   markOpened(workspaceId: string, accountId: string, now: Date, tx?: Executor): Promise<boolean>;
 }
+
+// ───────── ports to other modules and the platform (filled by the composition root) ─────────
+
+/** One database transaction; the callback's executor is the transaction every repo call joins. */
+export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
+
+/** The slice of `workspaces` the connect/redeem use cases need. */
+export interface MembershipLocks {
+  /**
+   * Joins `tx`: `FOR SHARE` on the memberships of `accountIds`, so a concurrent deactivation waits;
+   * returns the active accounts among them.
+   */
+  lockActiveMembers(tx: Executor, workspaceId: string, accountIds: string[]): Promise<string[]>;
+}
+
+/** The slice of `bots` notifications reads. */
+export interface BotReadiness {
+  inboxBotStatus(workspaceId: string): Promise<InboxBotStatus>;
+  pingReadiness(workspaceId: string): Promise<{
+    state: 'connected' | 'needs_token' | 'taken_over' | 'disconnected';
+    telegramBotId: bigint;
+    username: string;
+    sendPausedUntil: Date | null;
+  } | null>;
+}
+
+export interface NotificationSignals {
+  /** `telegram_link.changed` for that account, in the caller's transaction. */
+  telegramLinkChanged(tx: Executor, workspaceId: string, accountId: string): Promise<void>;
+}
+
+export type CannotConnectReasonValue = 'telegram_linked_to_teammate' | 'member_linked_elsewhere';
+
+/** A bot answer to enqueue (`notifications.send-bot-message`); exactly one recipient per kind. */
+export type BotMessage =
+  | {
+      kind: 'connected' | 'already_connected' | 'notifications_off' | 'chat_only_notifications';
+      telegramLinkId: string;
+    }
+  | { kind: 'link_expired'; telegramUserId: bigint }
+  | { kind: 'cannot_connect'; telegramUserId: bigint; reason: CannotConnectReasonValue };
+
+/** Puts the answer job on the caller's transaction, so it commits or rolls back with the rows. */
+export type EnqueueBotMessage = (
+  tx: Executor,
+  workspaceId: string,
+  message: BotMessage,
+) => Promise<void>;
