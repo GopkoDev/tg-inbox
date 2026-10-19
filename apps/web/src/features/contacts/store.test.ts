@@ -659,3 +659,125 @@ describe('contacts store never marks read (ADR-0006, AC-05)', () => {
     expect(offenders).toEqual([]);
   });
 });
+
+describe('contacts store: a superseded success is not lost (RR1)', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  const failure = () => new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x');
+  function opening() {
+    openEverything();
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    useContactsStore.getState().watch(A, guard);
+  }
+
+  it('the contact: an older open read succeeds, the newer background read fails → the older answer shows', async () => {
+    opening();
+    const first = deferred<ContactProfile>();
+    const second = deferred<ContactProfile>();
+    api.getContact.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const open = useContactsStore.getState().openProfile(A, C1, guard);
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    first.resolve(profile(C1, { first_name: 'Ada F.' }));
+    await settle();
+    second.reject(failure());
+    await open;
+    await settle();
+    expect(useContactsStore.getState().profile).toMatchObject({
+      status: 'ready',
+      contact: { first_name: 'Ada F.' },
+    });
+  });
+
+  it('the contact: the newer read fails first, the older success arrives after → the older answer shows', async () => {
+    opening();
+    const first = deferred<ContactProfile>();
+    api.getContact
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(Promise.reject(failure()));
+    const open = useContactsStore.getState().openProfile(A, C1, guard);
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    await settle();
+    first.resolve(profile(C1, { first_name: 'Ada F.' }));
+    await open;
+    expect(useContactsStore.getState().profile).toMatchObject({
+      status: 'ready',
+      contact: { first_name: 'Ada F.' },
+    });
+  });
+
+  it('the tag history: an older open read succeeds, the newer background read fails → the older entries show', async () => {
+    opening();
+    const first = deferred<TagHistoryPage>();
+    const second = deferred<TagHistoryPage>();
+    api.listContactTagHistory
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const open = useContactsStore.getState().openProfile(A, C1, guard);
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    first.resolve(history({ items: [{ id: id(701) } as never] }));
+    await settle();
+    second.reject(failure());
+    await open;
+    await settle();
+    const h = useContactsStore.getState().history!;
+    expect(h.status).toBe('ready');
+    expect(h.items.map((e) => e.id)).toEqual([id(701)]);
+  });
+
+  it('the conversation summary: an older open read succeeds, the newer background read fails → the older summary and its thread show', async () => {
+    opening();
+    const first = deferred<ConversationSummary>();
+    const second = deferred<ConversationSummary>();
+    api.getContactConversation
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const open = useContactsStore.getState().openProfile(A, C1, guard);
+    emit(frame({ type: 'resync' }));
+    first.resolve(summary());
+    await settle();
+    second.reject(failure());
+    await open;
+    await settle();
+    await settle();
+    const c = useContactsStore.getState().conversation!;
+    expect(c.status).toBe('ready');
+    expect(c.summary?.id).toBe(CONV);
+    expect(c.thread).toBe('ready');
+    expect(c.items.map((i) => i.id)).toEqual([id(501), id(502)]);
+  });
+
+  it('the thread: an older open read succeeds, the newer background read fails → the older items show', async () => {
+    opening();
+    const first = deferred<ThreadPage>();
+    const second = deferred<ThreadPage>();
+    api.listThreadItems.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    const open = useContactsStore.getState().openProfile(A, C1, guard);
+    await settle();
+    expect(api.listThreadItems).toHaveBeenCalledTimes(1);
+    emit(
+      frame({
+        type: 'conversation.changed',
+        conversation_id: CONV,
+        item: { type: 'message', id: id(503) },
+        change: 'created',
+      }),
+    );
+    await settle();
+    expect(api.listThreadItems).toHaveBeenCalledTimes(2);
+    first.resolve(thread([message(1, 1), message(2, 2)]));
+    await settle();
+    second.reject(failure());
+    await open;
+    await settle();
+    const c = useContactsStore.getState().conversation!;
+    expect(c.thread).toBe('ready');
+    expect(c.items.map((i) => i.id)).toEqual([id(501), id(502)]);
+  });
+});

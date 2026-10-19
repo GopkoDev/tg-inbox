@@ -6,6 +6,7 @@ import type {
   TagFilterMode,
   TagHistoryEntry,
   ThreadItem,
+  ThreadPage,
 } from '@tg/shared';
 import { create } from 'zustand';
 import type { GuardFn } from '@/features/workspaces/guard';
@@ -118,6 +119,47 @@ const isGuardAnswer = (error: unknown) =>
   error instanceof ApiError && (error.status === 401 || error.status === 403);
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
+/**
+ * The order of one slice's reads: the latest wins, but a superseded success is not lost. An older
+ * answer that arrives while a newer read is in flight is held; it shows only when the newest read
+ * then fails (or has already failed) and nothing newer was applied. `apply` re-checks that the
+ * slice still shows what it read and reports whether it applied.
+ */
+type Apply = () => boolean | Promise<boolean>;
+const readOrder = () => {
+  let issued = 0;
+  let applied = 0;
+  let newestFailed = false;
+  let held: { seq: number; apply: Apply } | null = null;
+  return {
+    begin() {
+      newestFailed = false;
+      return ++issued;
+    },
+    /** A success: applied now when it is the newest read (or the newest failed), held otherwise. */
+    async succeeded(seq: number, apply: Apply) {
+      if (seq <= applied) return;
+      if (seq !== issued && !newestFailed) {
+        if (!held || seq > held.seq) held = { seq, apply };
+        return;
+      }
+      applied = seq;
+      held = null;
+      await apply();
+    },
+    /** A failure: `stale` when a newer read was started, else the held success to show (or null). */
+    failed(seq: number): 'stale' | Apply | null {
+      if (seq !== issued) return 'stale';
+      newestFailed = true;
+      const fallback = held && held.seq > applied ? held : null;
+      held = null;
+      if (!fallback) return null;
+      applied = fallback.seq;
+      return fallback.apply;
+    },
+  };
+};
+
 export const useContactsStore = create<ContactsState>()((set, get) => {
   /** Counts every list read: a late answer of an earlier read is dropped. */
   let listEpoch = 0;
@@ -125,14 +167,15 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
   let profileEpoch = 0;
   let headerEpoch = 0;
   /**
-   * Count every read of one slice (latest wins): two overlapping background re-reads may answer in
-   * reverse order, and the older snapshot must not replace the newer one.
+   * Order every read of one slice (latest wins): two overlapping background re-reads may answer in
+   * reverse order, and the older snapshot must not replace the newer one; a superseded success
+   * still shows when the newer read fails.
    */
-  const contactSeq = { profile: 0, header: 0 };
-  let historySeq = 0;
+  const contactOrder = { profile: readOrder(), header: readOrder() };
+  const historyOrder = readOrder();
   let historyMoreSeq = 0;
-  let summarySeq = 0;
-  let itemsSeq = 0;
+  const summaryOrder = readOrder();
+  const itemsOrder = readOrder();
 
   const here = (workspaceId: string) => get().workspaceId === workspaceId;
   const enter = (workspaceId: string) => {
@@ -232,21 +275,28 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = slice === 'profile' ? profileEpoch : headerEpoch;
-    const seq = ++contactSeq[slice];
+    const order = contactOrder[slice];
+    const seq = order.begin();
     const stale = () =>
       !here(workspaceId) ||
       epoch !== (slice === 'profile' ? profileEpoch : headerEpoch) ||
-      seq !== contactSeq[slice] ||
       get()[slice]?.contactId !== contactId;
     try {
       const contact = await getContact(workspaceId, contactId, background ? BACKGROUND : {});
       if (stale() || contact.workspace_id !== workspaceId) return;
-      set({ [slice]: { contactId, status: 'ready', contact } });
+      await order.succeeded(seq, () => {
+        if (stale()) return false;
+        set({ [slice]: { contactId, status: 'ready', contact } });
+        return true;
+      });
     } catch (error) {
       if (stale()) return;
+      const fallback = order.failed(seq);
+      if (fallback === 'stale') return;
       if (await guarded(error, workspaceId, guard)) return;
       const open = get()[slice]!;
       if (isNotFound(error)) set({ [slice]: { contactId, status: 'not_found', contact: null } });
+      else if (fallback && (await fallback())) return;
       else if (!background || !open.contact)
         set({ [slice]: { ...open, status: open.contact && background ? 'ready' : 'error' } });
       // a failed background re-read keeps what is shown
@@ -263,13 +313,10 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     const after = options.after;
     // A first page: the latest read wins. A next page: dropped when a first-page re-read moved the
     // cursor meanwhile (appending it would skip or repeat entries).
-    const seq = after ? 0 : ++historySeq;
+    const seq = after ? 0 : historyOrder.begin();
     const more = after ? ++historyMoreSeq : 0;
     const stale = () =>
-      !here(workspaceId) ||
-      epoch !== profileEpoch ||
-      get().history?.contactId !== contactId ||
-      (!after && seq !== historySeq);
+      !here(workspaceId) || epoch !== profileEpoch || get().history?.contactId !== contactId;
     const moved = () => {
       const open = get().history!;
       if (!after || open.nextCursor === after) return false;
@@ -285,23 +332,32 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
         options.background ? BACKGROUND : {},
       );
       if (stale() || page.workspace_id !== workspaceId || moved()) return;
-      const open = get().history!;
-      const known = after ? open.items : [];
-      const shown = new Set(known.map((e) => e.id));
-      set({
-        history: {
-          contactId,
-          status: 'ready',
-          items: [...known, ...page.items.filter((e) => !shown.has(e.id))],
-          hasNext: page.has_next,
-          nextCursor: page.next_cursor,
-          // a next page still in flight settles `more` itself
-          more: !after && open.more === 'loading' ? 'loading' : 'idle',
-        },
-      });
+      const apply = () => {
+        if (stale()) return false;
+        const open = get().history!;
+        const known = after ? open.items : [];
+        const shown = new Set(known.map((e) => e.id));
+        set({
+          history: {
+            contactId,
+            status: 'ready',
+            items: [...known, ...page.items.filter((e) => !shown.has(e.id))],
+            hasNext: page.has_next,
+            nextCursor: page.next_cursor,
+            // a next page still in flight settles `more` itself
+            more: !after && open.more === 'loading' ? 'loading' : 'idle',
+          },
+        });
+        return true;
+      };
+      if (after) apply();
+      else await historyOrder.succeeded(seq, apply);
     } catch (error) {
       if (stale() || moved()) return;
+      const fallback = after ? null : historyOrder.failed(seq);
+      if (fallback === 'stale') return;
       if (await guarded(error, workspaceId, guard)) return;
+      if (fallback && (await fallback())) return;
       const open = get().history!;
       if (after) set({ history: { ...open, more: 'error' } });
       else if (!(options.background && open.status === 'ready'))
@@ -320,11 +376,10 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = profileEpoch;
-    const seq = ++itemsSeq;
+    const seq = itemsOrder.begin();
     const stale = () =>
       !here(workspaceId) ||
       epoch !== profileEpoch ||
-      seq !== itemsSeq ||
       get().conversation?.contactId !== contactId ||
       get().conversation?.summary?.id !== conversationId;
     try {
@@ -335,50 +390,62 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
         background ? BACKGROUND : {},
       );
       if (stale() || page.workspace_id !== workspaceId) return;
-      const open = get().conversation!;
-      const fresh = [...page.items].sort(byPosition);
-      // A background read merges only when it reaches back to what is shown; otherwise the items
-      // between would be a hole no cursor reaches, so the page replaces them.
-      const shownNewest = open.items.at(-1);
-      const reaches =
-        !page.has_prev ||
-        open.items.length === 0 ||
-        (fresh[0] !== undefined &&
-          shownNewest !== undefined &&
-          byPosition(fresh[0], shownNewest) <= 0);
-      if (background && reaches && open.items.length > 0) {
-        const items = fresh.reduce((all, item) => upsertItem(all, item), open.items);
-        const keepsEarlier =
-          open.items[0] !== undefined &&
-          (fresh[0] === undefined || byPosition(open.items[0], fresh[0]) < 0);
-        set({
-          conversation: {
-            ...open,
-            thread: 'ready',
-            items,
-            hasPrev: keepsEarlier ? open.hasPrev : page.has_prev,
-            prevCursor: keepsEarlier ? open.prevCursor : page.prev_cursor,
-          },
-        });
-      } else {
-        set({
-          conversation: {
-            ...open,
-            thread: 'ready',
-            items: fresh,
-            hasPrev: page.has_prev,
-            prevCursor: page.prev_cursor,
-            older: 'idle',
-          },
-        });
-      }
+      await itemsOrder.succeeded(seq, () => {
+        if (stale()) return false;
+        showItems(page, background);
+        return true;
+      });
     } catch (error) {
       if (stale()) return;
+      const fallback = itemsOrder.failed(seq);
+      if (fallback === 'stale') return;
       if (await guarded(error, workspaceId, guard)) return;
+      if (fallback && (await fallback())) return;
       const open = get().conversation!;
       if (!(background && open.thread === 'ready'))
         set({ conversation: { ...open, thread: 'error' } });
       // a failed background re-read keeps the items shown
+    }
+  };
+
+  /** Puts a thread page into the open conversation (merged or replacing, see below). */
+  const showItems = (page: ThreadPage, background: boolean) => {
+    const open = get().conversation!;
+    const fresh = [...page.items].sort(byPosition);
+    // A background read merges only when it reaches back to what is shown; otherwise the items
+    // between would be a hole no cursor reaches, so the page replaces them.
+    const shownNewest = open.items.at(-1);
+    const reaches =
+      !page.has_prev ||
+      open.items.length === 0 ||
+      (fresh[0] !== undefined &&
+        shownNewest !== undefined &&
+        byPosition(fresh[0], shownNewest) <= 0);
+    if (background && reaches && open.items.length > 0) {
+      const items = fresh.reduce((all, item) => upsertItem(all, item), open.items);
+      const keepsEarlier =
+        open.items[0] !== undefined &&
+        (fresh[0] === undefined || byPosition(open.items[0], fresh[0]) < 0);
+      set({
+        conversation: {
+          ...open,
+          thread: 'ready',
+          items,
+          hasPrev: keepsEarlier ? open.hasPrev : page.has_prev,
+          prevCursor: keepsEarlier ? open.prevCursor : page.prev_cursor,
+        },
+      });
+    } else {
+      set({
+        conversation: {
+          ...open,
+          thread: 'ready',
+          items: fresh,
+          hasPrev: page.has_prev,
+          prevCursor: page.prev_cursor,
+          older: 'idle',
+        },
+      });
     }
   };
 
@@ -389,12 +456,9 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = profileEpoch;
-    const seq = ++summarySeq;
+    const seq = summaryOrder.begin();
     const stale = () =>
-      !here(workspaceId) ||
-      epoch !== profileEpoch ||
-      seq !== summarySeq ||
-      get().conversation?.contactId !== contactId;
+      !here(workspaceId) || epoch !== profileEpoch || get().conversation?.contactId !== contactId;
     try {
       const summary = await getContactConversation(
         workspaceId,
@@ -402,23 +466,30 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
         background ? BACKGROUND : {},
       );
       if (stale() || summary.workspace_id !== workspaceId) return;
-      const open = get().conversation!;
-      const sameConversation = open.summary?.id === summary.id;
-      set({
-        conversation: {
-          ...open,
-          status: 'ready',
-          summary,
-          ...(sameConversation
-            ? {}
-            : { items: [], thread: 'loading', hasPrev: false, prevCursor: null, older: 'idle' }),
-        },
+      await summaryOrder.succeeded(seq, async () => {
+        if (stale()) return false;
+        const open = get().conversation!;
+        const sameConversation = open.summary?.id === summary.id;
+        set({
+          conversation: {
+            ...open,
+            status: 'ready',
+            summary,
+            ...(sameConversation
+              ? {}
+              : { items: [], thread: 'loading', hasPrev: false, prevCursor: null, older: 'idle' }),
+          },
+        });
+        await readItems(workspaceId, contactId, summary.id, guard, background && sameConversation);
+        return true;
       });
-      await readItems(workspaceId, contactId, summary.id, guard, background && sameConversation);
     } catch (error) {
       if (stale()) return;
+      const fallback = summaryOrder.failed(seq);
+      if (fallback === 'stale') return;
       if (await guarded(error, workspaceId, guard)) return;
       const open = get().conversation!;
+      if (!isNotFound(error) && fallback && (await fallback())) return;
       if (isNotFound(error)) {
         // 404 for a contact the profile found: «No conversation to show» (contract F-3)
         set({
