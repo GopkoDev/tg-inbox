@@ -64,6 +64,11 @@ export interface ContactRepo {
    */
   searchContactIds(workspaceId: string, query: string): Promise<string[] | null>;
   contactsByIds(workspaceId: string, ids: readonly string[]): Promise<ContactSummary[]>;
+  /**
+   * ADR-0004 step 2 (member): the contact row `FOR NO KEY UPDATE` by (workspace, id), held until
+   * `tx` ends; false when it is not a contact of the workspace.
+   */
+  lockContact(workspaceId: string, contactId: string, tx: Executor): Promise<boolean>;
 }
 
 // ───────── tags ─────────
@@ -126,4 +131,87 @@ export interface TagRepo {
   ): Promise<boolean>;
   /** Whether a row was deleted; refused by the FK while links remain. */
   delete(workspaceId: string, id: string, tx?: Executor): Promise<boolean>;
+}
+
+/** A contact's tag with who added it and when. */
+export interface ContactTagRow {
+  tagId: string;
+  name: string;
+  addedByAccountId: string;
+  addedAt: Date;
+}
+
+export interface NewContactTag {
+  workspaceId: string;
+  contactId: string;
+  tagId: string;
+  addedByAccountId: string;
+  addedAt: Date;
+}
+
+export interface ContactTagRepo {
+  /** The contact's tags in tag-list order. */
+  tagsOf(workspaceId: string, contactId: string, tx?: Executor): Promise<ContactTagRow[]>;
+  /** Tags of a page of contacts in tag-list order; a contact with none has no entry. */
+  tagsOfMany(
+    workspaceId: string,
+    contactIds: readonly string[],
+    tx?: Executor,
+  ): Promise<Map<string, { id: string; name: string }[]>>;
+  carries(workspaceId: string, contactId: string, tagId: string, tx?: Executor): Promise<boolean>;
+  countFor(workspaceId: string, contactId: string, tx?: Executor): Promise<number>;
+  insert(link: NewContactTag, tx?: Executor): Promise<void>;
+  /** Whether a link was removed. */
+  delete(workspaceId: string, contactId: string, tagId: string, tx?: Executor): Promise<boolean>;
+}
+
+export type MemberTagSource = 'inbox' | 'profile';
+
+export interface MemberHistoryEntry {
+  workspaceId: string;
+  contactId: string;
+  tagId: string;
+  tagName: string;
+  kind: 'added' | 'removed';
+  actorAccountId: string;
+  source: MemberTagSource;
+  createdAt: Date;
+}
+
+export interface TagHistoryRow {
+  id: string;
+  tagId: string;
+  tagName: string;
+  kind: 'added' | 'removed' | 'merged' | 'deleted';
+  mergedInto: { tagId: string; name: string } | null;
+  actorAccountId: string;
+  source: 'inbox' | 'profile' | 'settings';
+  createdAt: Date;
+}
+
+/** Position after which the next history page starts: the last entry shown. */
+export interface HistoryPosition {
+  createdAt: Date;
+  id: string;
+}
+
+export interface TagHistoryRepo {
+  /** Appends one member entry; returns its id. */
+  append(entry: MemberHistoryEntry, tx?: Executor): Promise<string>;
+  /** Up to 50 entries of the contact, newest first (created_at, id descending), after `after`. */
+  page(
+    workspaceId: string,
+    contactId: string,
+    after?: HistoryPosition,
+    tx?: Executor,
+  ): Promise<{ entries: TagHistoryRow[]; hasNext: boolean }>;
+  /** The member's `added` / `removed` entries since `since` (owner kinds never count) and the oldest. */
+  memberChangesSince(
+    workspaceId: string,
+    accountId: string,
+    since: Date,
+    tx?: Executor,
+  ): Promise<{ count: number; oldestAt: Date | null }>;
+  /** ADR-0004 step 3: `pg_advisory_xact_lock` on `tag-changes:<ws>:<account>`. */
+  lockMemberChanges(workspaceId: string, accountId: string, tx: Executor): Promise<void>;
 }

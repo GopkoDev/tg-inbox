@@ -258,4 +258,44 @@ describe('contact repository', () => {
       ]);
     });
   });
+
+  describe('lockContact (ADR-0004 step 2, AC-12)', () => {
+    it('finds a contact of the workspace and not one of another', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const inA = await insertContact(db, { workspaceId: a });
+      await db.transaction().execute(async (tx) => {
+        expect(await repo.lockContact(a, inA, tx)).toBe(true);
+        expect(await repo.lockContact(b, inA, tx)).toBe(false);
+        expect(await repo.lockContact(a, '0199ffff-ffff-7fff-8fff-ffffffffffff', tx)).toBe(false);
+      });
+    });
+
+    it('holds FOR NO KEY UPDATE: a second lock waits, a different contact does not', async () => {
+      const w = await insertWorkspace(db);
+      const one = await insertContact(db, { workspaceId: w });
+      const two = await insertContact(db, { workspaceId: w });
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const taken = new Promise<void>((r) => (locked = r));
+      const first = db.transaction().execute(async (tx) => {
+        await repo.lockContact(w, one, tx);
+        locked();
+        await held;
+      });
+      await taken;
+      let waiting = true;
+      const same = db
+        .transaction()
+        .execute((tx) => repo.lockContact(w, one, tx))
+        .then(() => (waiting = false));
+      await db.transaction().execute((tx) => repo.lockContact(w, two, tx));
+      await new Promise((r) => setTimeout(r, 300));
+      expect(waiting).toBe(true);
+      release();
+      await first;
+      await same;
+      expect(waiting).toBe(false);
+    });
+  });
 });

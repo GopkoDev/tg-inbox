@@ -50,6 +50,9 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
         .map((r) => r.id)
         .sort();
     },
+    async lockContact(workspaceId, contactId) {
+      return rows.some((r) => r.workspaceId === workspaceId && r.id === contactId);
+    },
     async contactsByIds(workspaceId, ids) {
       return rows
         .filter((r) => r.workspaceId === workspaceId && ids.includes(r.id))

@@ -108,5 +108,16 @@ export function createContactRepo(db: Db): ContactRepo {
         username: r.username,
       }));
     },
+
+    async lockContact(workspaceId, contactId, tx) {
+      const row = await tx
+        .selectFrom('contacts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', contactId)
+        .forNoKeyUpdate()
+        .executeTakeFirst();
+      return row !== undefined;
+    },
   };
 }
