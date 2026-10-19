@@ -298,4 +298,28 @@ describe('contact repository', () => {
       expect(waiting).toBe(false);
     });
   });
+
+  describe('profile (AC-04, AC-12)', () => {
+    it('reads the contact with its first and last wrote, and nothing of another workspace', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const p = profile({ lastName: 'Tester', languageCode: null, username: null });
+      const { contactId } = await repo.upsertFromProfile(a, p, at(5), at(100));
+      await repo.upsertFromProfile(a, p, at(9), at(101));
+      expect(await repo.profile(a, contactId)).toEqual({
+        id: contactId,
+        workspaceId: a,
+        telegramUserId: p.telegramUserId,
+        firstName: 'Test User',
+        lastName: 'Tester',
+        username: null,
+        languageCode: null,
+        profileSeenAt: at(9),
+        createdAt: at(100),
+        firstWroteAt: at(5),
+        lastWroteAt: at(9),
+      });
+      expect(await repo.profile(b, contactId)).toBeNull();
+      expect(await repo.profile(a, '0199ffff-ffff-7fff-8fff-ffffffffffff')).toBeNull();
+    });
+  });
 });

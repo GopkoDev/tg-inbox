@@ -1,7 +1,8 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
-import { normalizeSearchQuery, type ContactRepo } from '../app/ports.js';
+import type { ContactRepo } from '../app/ports.js';
+import { contactSearchPredicate } from './contact-search.js';
 
 export function createContactRepo(db: Db): ContactRepo {
   return {
@@ -75,19 +76,13 @@ export function createContactRepo(db: Db): ContactRepo {
     },
 
     async searchContactIds(workspaceId, query) {
-      const q = normalizeSearchQuery(query);
-      if (q === null) return null;
-      // Escape the LIKE metacharacters so the text is matched literally; Postgres lower() folds
-      // case for Cyrillic and Latin alike.
-      const pattern = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
+      const predicate = contactSearchPredicate(query);
+      if (predicate === null) return null;
       const rows = await db
         .selectFrom('contacts')
         .select('id')
         .where('workspace_id', '=', workspaceId)
-        .where(
-          sql<boolean>`(lower(first_name || ' ' || coalesce(last_name, '')) like lower(${pattern})
-            or lower(username) like lower(${pattern}))`,
-        )
+        .where(predicate)
         .orderBy('id')
         .execute();
       return rows.map((r) => r.id);
@@ -118,6 +113,29 @@ export function createContactRepo(db: Db): ContactRepo {
         .forNoKeyUpdate()
         .executeTakeFirst();
       return row !== undefined;
+    },
+
+    async profile(workspaceId, contactId) {
+      const r = await db
+        .selectFrom('contacts')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', contactId)
+        .executeTakeFirst();
+      if (!r) return null;
+      return {
+        id: r.id,
+        workspaceId: r.workspace_id,
+        telegramUserId: BigInt(r.telegram_user_id),
+        firstName: r.first_name,
+        lastName: r.last_name,
+        username: r.username,
+        languageCode: r.language_code,
+        profileSeenAt: r.profile_seen_at,
+        createdAt: r.created_at,
+        firstWroteAt: r.first_wrote_at,
+        lastWroteAt: r.last_wrote_at,
+      };
     },
   };
 }

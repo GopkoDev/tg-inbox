@@ -69,6 +69,8 @@ export interface ContactRepo {
    * `tx` ends; false when it is not a contact of the workspace.
    */
   lockContact(workspaceId: string, contactId: string, tx: Executor): Promise<boolean>;
+  /** The contact's facts by (workspace, id), first and last wrote included; null for an unknown or foreign id. */
+  profile(workspaceId: string, contactId: string): Promise<ContactRecord | null>;
 }
 
 // ───────── tags ─────────
@@ -248,4 +250,47 @@ export interface TagHistoryRepo {
   ): Promise<void>;
   /** ADR-0004 step 3: `pg_advisory_xact_lock` on `tag-changes:<ws>:<account>`. */
   lockMemberChanges(workspaceId: string, accountId: string, tx: Executor): Promise<void>;
+}
+
+// ───────── contacts list ─────────
+
+export type TagFilterMode = 'any' | 'all' | 'none';
+
+/** What the list is filtered by: the normalised search and the (already resolved) tag ids. */
+export interface ContactListFilter {
+  /** Normalised by `normalizeSearchQuery`; null = no search. */
+  q: string | null;
+  mode: TagFilterMode;
+  /** Tag ids of the workspace; empty with `any` / `all` = no tag filter, always empty with `none`. */
+  tagIds: readonly string[];
+}
+
+/** The last contact shown: where the next page continues (a null `lastWroteAt` is the NULL tail). */
+export interface ContactListPosition {
+  lastWroteAt: Date | null;
+  id: string;
+}
+
+export interface ContactListRow {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  languageCode: string | null;
+  firstWroteAt: Date | null;
+  lastWroteAt: Date | null;
+  /** In tag-list order. */
+  tags: { id: string; name: string }[];
+}
+
+export interface ContactListQuery {
+  /** Up to 50 rows by last wrote newest first (NULL tail last, id descending), after `after`. */
+  listPage(
+    workspaceId: string,
+    filter: ContactListFilter & { after?: ContactListPosition },
+  ): Promise<{ rows: ContactListRow[]; hasNext: boolean }>;
+  /** Contacts matching the search and the tag filter. */
+  matchingCount(workspaceId: string, filter: ContactListFilter): Promise<number>;
+  /** All contacts of the workspace. */
+  totalCount(workspaceId: string): Promise<number>;
 }
