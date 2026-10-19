@@ -462,4 +462,73 @@ describe('TelegramPingsCard (SCR-16)', () => {
     renderCard();
     expect(await screen.findByRole('button', { name: 'Connect Telegram' })).toHaveClass('w-full');
   });
+
+  describe('focus after SCR-17 closes (W5)', () => {
+    const openDialog = async () => {
+      renderCard();
+      api.createConnectLink.mockResolvedValue(link);
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect Telegram' }));
+      await screen.findByRole('dialog');
+    };
+
+    it('connected while the dialog was open: Done moves focus to Disconnect, not the page body', async () => {
+      await openDialog();
+      api.getNotificationSettings.mockResolvedValue(connected());
+      frame('telegram_link.changed');
+      fireEvent.click(await screen.findByRole('button', { name: 'Done' }));
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Disconnect' })).toHaveFocus());
+    });
+
+    it('the bot stopped while the dialog was open: Close moves focus to the card heading', async () => {
+      await openDialog();
+      api.getNotificationSettings.mockResolvedValue(
+        notConnected({ can_connect: false, bot: bot('taken_over') }),
+      );
+      frame('bot.changed');
+      const dialog = await screen.findByRole('dialog');
+      await waitFor(() => expect(within(dialog).queryByText(link.url)).not.toBeInTheDocument());
+      fireEvent.click(within(dialog).getAllByRole('button', { name: 'Close' }).at(-1)!);
+      await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+      await waitFor(() =>
+        expect(screen.getByRole('heading', { name: 'Telegram pings' })).toHaveFocus(),
+      );
+    });
+
+    it('still not connected: Close returns focus to Connect Telegram', async () => {
+      await openDialog();
+      fireEvent.click(
+        within(screen.getByRole('dialog')).getAllByRole('button', { name: 'Close' }).at(-1)!,
+      );
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Connect Telegram' })).toHaveFocus(),
+      );
+    });
+  });
+
+  describe('access removed (AC-12, W3)', () => {
+    const removed = () => new ApiError(403, ErrorCode.ACCESS_REMOVED, 'gone');
+
+    it('a 403 ACCESS_REMOVED on load goes to the shell guard and shows no link state', async () => {
+      const refusal = removed();
+      api.getNotificationSettings.mockRejectedValue(refusal);
+      renderCard();
+      await waitFor(() => expect(guard).toHaveBeenCalledWith(refusal, WS));
+      expect(screen.queryByText('Not connected')).not.toBeInTheDocument();
+      expect(screen.queryByText('Connected')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument();
+    });
+
+    it('a 403 ACCESS_REMOVED on Connect goes to the guard and opens no dialog', async () => {
+      renderCard();
+      const refusal = removed();
+      api.createConnectLink.mockRejectedValue(refusal);
+      fireEvent.click(await screen.findByRole('button', { name: 'Connect Telegram' }));
+      await waitFor(() => expect(guard).toHaveBeenCalledWith(refusal, WS));
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(screen.queryByText(/Couldn't create a connect link/)).not.toBeInTheDocument();
+    });
+  });
 });

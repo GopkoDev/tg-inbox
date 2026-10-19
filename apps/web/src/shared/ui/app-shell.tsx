@@ -249,10 +249,20 @@ export function AppShell() {
   const accountId = useAuthStore((s) => s.account?.id);
   const workspaceName = useWorkspaceStore((s) => s.current?.name);
   const navigate = useNavigate();
+  // `navigate` may change identity on every location change: a page change must not restart it.
+  const navigateRef = useRef(navigate);
+  useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
   useEffect(() => {
     if (!entered || !accountId || !workspaceName) return;
-    return startNotifier({ workspaceId, workspaceName, accountId, navigate });
-  }, [entered, workspaceId, accountId, workspaceName, navigate]);
+    return startNotifier({
+      workspaceId,
+      workspaceName,
+      accountId,
+      navigate: (path) => void navigateRef.current(path),
+    });
+  }, [entered, workspaceId, accountId, workspaceName]);
   const attention = useAttentionStore((s) =>
     entered && s.workspaceId === workspaceId ? s.count : null,
   );

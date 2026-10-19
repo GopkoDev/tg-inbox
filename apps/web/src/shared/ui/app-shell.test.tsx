@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Link, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
@@ -40,6 +40,13 @@ vi.mock('@/shared/api/live-connection', () => ({
   },
   liveStatus: () => 'idle',
 }));
+const notifier = vi.hoisted(() => ({
+  startNotifier: vi.fn(),
+  stops: [] as ReturnType<typeof vi.fn>[],
+}));
+vi.mock('@/features/notifications/notifier', () => ({
+  startNotifier: (...a: unknown[]) => notifier.startNotifier(...a),
+}));
 
 import { AppShell } from './app-shell';
 
@@ -69,6 +76,7 @@ function renderShell(path = '/w/w1') {
               </>
             }
           />
+          <Route path="inbox/:conversationId" element={<p>conversation body</p>} />
           <Route path="settings/*" element={<p>bot body</p>} />
         </Route>
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
@@ -94,6 +102,12 @@ beforeEach(() => {
   useAuthStore.getState().clear();
   useWorkspaceStore.getState().clear();
   useAuthStore.getState().setAccount({ id: 'a', email: 'o@x.io', display_name: 'O' });
+  notifier.stops = [];
+  notifier.startNotifier.mockImplementation(() => {
+    const stop = vi.fn();
+    notifier.stops.push(stop);
+    return stop;
+  });
 });
 
 describe('AppShell', () => {
@@ -443,6 +457,83 @@ describe('AppShell', () => {
       await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
       unmount();
       expect(document.title).toBe('tg-inbox');
+    });
+  });
+
+  describe('the desktop notifier (AC-02, OS-02)', () => {
+    const started = () =>
+      notifier.startNotifier.mock.calls.map(
+        ([o]) => o as { workspaceId: string; workspaceName: string; accountId: string },
+      );
+
+    it('starts none while the workspace is entering, then one with its name, the account and navigate', async () => {
+      let resolve!: (w: typeof acme) => void;
+      enterWorkspace.mockReturnValue(new Promise((r) => (resolve = r)));
+      renderShell();
+      expect(notifier.startNotifier).not.toHaveBeenCalled();
+      resolve(acme);
+      expect(await screen.findByText('shell body')).toBeInTheDocument();
+      await waitFor(() => expect(notifier.startNotifier).toHaveBeenCalledTimes(1));
+      expect(notifier.startNotifier).toHaveBeenCalledWith({
+        workspaceId: 'w1',
+        workspaceName: 'Acme Flowers',
+        accountId: 'a',
+        navigate: expect.any(Function),
+      });
+    });
+
+    it('starts none for a workspace the person cannot enter', async () => {
+      enterWorkspace.mockRejectedValue(new ApiError(404, 'NOT_FOUND' as never, 'x'));
+      renderShell();
+      expect(await screen.findByText('Page not found')).toBeInTheDocument();
+      expect(notifier.startNotifier).not.toHaveBeenCalled();
+    });
+
+    it('waits for the account before it starts', async () => {
+      useAuthStore.getState().clear();
+      enterWorkspace.mockResolvedValue(acme);
+      renderShell();
+      expect(await screen.findByText('shell body')).toBeInTheDocument();
+      expect(notifier.startNotifier).not.toHaveBeenCalled();
+      act(() =>
+        useAuthStore.getState().setAccount({ id: 'a', email: 'o@x.io', display_name: 'O' }),
+      );
+      await waitFor(() => expect(notifier.startNotifier).toHaveBeenCalledTimes(1));
+      expect(started()[0]!.accountId).toBe('a');
+    });
+
+    it('a workspace switch stops the old notifier and starts one for the new workspace', async () => {
+      enterWorkspace.mockImplementation(async (id: string) => (id === 'w1' ? acme : bolt));
+      renderShell();
+      fireEvent.click(await screen.findByRole('link', { name: 'go to bolt' }));
+      await waitFor(() =>
+        expect(started().map((o) => [o.workspaceId, o.workspaceName])).toEqual([
+          ['w1', 'Acme Flowers'],
+          ['w2', 'Bolt Bikes'],
+        ]),
+      );
+      expect(notifier.stops[0]).toHaveBeenCalledTimes(1);
+      expect(notifier.stops[1]).not.toHaveBeenCalled();
+    });
+
+    it('leaving the frame stops it', async () => {
+      enterWorkspace.mockResolvedValue(acme);
+      const { unmount } = renderShell();
+      await waitFor(() => expect(notifier.startNotifier).toHaveBeenCalledTimes(1));
+      unmount();
+      expect(notifier.stops[0]).toHaveBeenCalledTimes(1);
+    });
+
+    it("the worker's open-conversation opens /w/<id>/inbox/<conversation> in place", async () => {
+      enterWorkspace.mockResolvedValue(acme);
+      renderShell();
+      await waitFor(() => expect(notifier.startNotifier).toHaveBeenCalledTimes(1));
+      const { navigate } = notifier.startNotifier.mock.calls[0]![0] as {
+        navigate: (path: string) => void;
+      };
+      act(() => navigate('/w/w1/inbox/c1'));
+      expect(await screen.findByText('conversation body')).toBeInTheDocument();
+      expect(notifier.stops[0]).not.toHaveBeenCalled();
     });
   });
 });

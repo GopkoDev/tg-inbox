@@ -1,18 +1,25 @@
 import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuthStore } from '@/features/auth/store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
-import { readState, turnOff, turnOn, type DesktopState } from './desktop';
+import { Skeleton } from '@/shared/ui/skeleton';
+import { ensureWorker, readState, turnOff, turnOn, type DesktopState } from './desktop';
 
 const COUNT_KEEPS_WORKING = 'The count in the tab title and next to Inbox keeps working.';
+
+const Heading = () => (
+  <CardTitle>
+    <h2>Desktop notifications</h2>
+  </CardTitle>
+);
 
 /**
  * SCR-16's Desktop notifications card (this browser, US-02). Renders without any request: the
  * state comes from the browser and the stored flag. The browser is asked for permission only
- * from the button's click (OS-01).
+ * from the button's click (OS-01). The flag is per account, so the card waits for the account.
  */
 export function DesktopNotificationsCard({
   workspaceId,
@@ -21,14 +28,93 @@ export function DesktopNotificationsCard({
   workspaceId: string;
   workspaceName: string;
 }) {
-  const accountId = useAuthStore((s) => s.account?.id ?? '');
+  const accountId = useAuthStore((s) => s.account?.id);
+  if (!accountId) {
+    return (
+      <Card>
+        <CardHeader>
+          <Heading />
+        </CardHeader>
+        <CardContent>
+          <Skeleton data-testid="desktop-notifications-skeleton" className="h-16 w-full" />
+        </CardContent>
+      </Card>
+    );
+  }
+  return (
+    <DesktopCardBody
+      key={`${accountId}.${workspaceId}`}
+      accountId={accountId}
+      workspaceId={workspaceId}
+      workspaceName={workspaceName}
+    />
+  );
+}
+
+function DesktopCardBody({
+  accountId,
+  workspaceId,
+  workspaceName,
+}: {
+  accountId: string;
+  workspaceId: string;
+  workspaceName: string;
+}) {
   const [state, setState] = useState<DesktopState>(() => readState(accountId, workspaceId));
   const [asking, setAsking] = useState(false);
+  const askingRef = useRef(false);
+
+  // The member may allow or block the site in the browser's settings while the card is open:
+  // re-read on coming back to the tab and on the browser's own permission change.
+  useEffect(() => {
+    const reread = () => {
+      if (!askingRef.current) setState(readState(accountId, workspaceId));
+    };
+    document.addEventListener('visibilitychange', reread);
+    window.addEventListener('focus', reread);
+    let status: PermissionStatus | null = null;
+    let gone = false;
+    navigator.permissions
+      ?.query({ name: 'notifications' })
+      .then((s) => {
+        if (gone) return;
+        status = s;
+        s.addEventListener('change', reread);
+      })
+      .catch(() => undefined);
+    return () => {
+      gone = true;
+      document.removeEventListener('visibilitychange', reread);
+      window.removeEventListener('focus', reread);
+      status?.removeEventListener('change', reread);
+    };
+  }, [accountId, workspaceId]);
+
+  // An opt-in that is on needs its worker: bring it back if the browser lost it.
+  const on = state === 'on';
+  useEffect(() => {
+    if (!on) return;
+    let gone = false;
+    void ensureWorker().then((ok) => {
+      if (!ok && !gone) setState('unavailable');
+    });
+    return () => {
+      gone = true;
+    };
+  }, [on]);
 
   const onTurnOn = async () => {
+    askingRef.current = true;
     setAsking(true);
-    const next = await turnOn(accountId, workspaceId);
-    setAsking(false);
+    let next: DesktopState;
+    try {
+      next = await turnOn(accountId, workspaceId);
+    } catch {
+      next = 'unavailable';
+    } finally {
+      askingRef.current = false;
+      setAsking(false);
+    }
     setState(next);
   };
   const onTurnOff = async () => {
@@ -39,9 +125,7 @@ export function DesktopNotificationsCard({
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
-        <CardTitle>
-          <h2>Desktop notifications</h2>
-        </CardTitle>
+        <Heading />
         <Badge variant={state === 'on' ? 'default' : 'outline'}>
           {state === 'on' ? 'On' : state === 'unavailable' ? 'Not available' : 'Off'}
         </Badge>

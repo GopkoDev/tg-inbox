@@ -5,7 +5,8 @@
  * only inside `turnOn`, which the card calls from its button's click handler.
  */
 
-export const WORKER_URL = '/notifications-sw.js?v=1';
+/** No version in the URL: the browser re-checks the script's bytes on every `register`. */
+export const WORKER_URL = '/notifications-sw.js';
 const FLAG_PREFIX = 'tg.desktop-notifications.';
 
 export type DesktopPermission = NotificationPermission | 'unsupported';
@@ -13,6 +14,11 @@ export type DesktopState = 'off' | 'on' | 'blocked' | 'unavailable';
 
 const flagKey = (accountId: string, workspaceId: string) =>
   `${FLAG_PREFIX}${accountId}.${workspaceId}`;
+
+/** A write under an empty account id would be a flag no notifier ever reads. */
+function requireAccount(accountId: string) {
+  if (!accountId) throw new Error('desktop notifications need the account id');
+}
 
 function storageWorks(): boolean {
   try {
@@ -40,6 +46,7 @@ export function permission(): DesktopPermission {
 }
 
 export function flagOn(accountId: string, workspaceId: string): boolean {
+  if (!accountId) return false;
   try {
     return localStorage.getItem(flagKey(accountId, workspaceId)) === '1';
   } catch {
@@ -67,6 +74,25 @@ export function readState(accountId: string, workspaceId: string): DesktopState 
   return granted === 'granted' && flagOn(accountId, workspaceId) ? 'on' : 'off';
 }
 
+function registerWorker() {
+  return navigator.serviceWorker.register(WORKER_URL, { scope: '/' });
+}
+
+/**
+ * Keeps the worker of an opt-in that is on: registers it again when the browser has lost it
+ * (cleared site data, an unregister from devtools). `register` is idempotent for the same URL and
+ * scope. False when the worker cannot be had, so the opt-in cannot show anything.
+ */
+export async function ensureWorker(): Promise<boolean> {
+  try {
+    const registration = await navigator.serviceWorker.getRegistration('/');
+    if (!registration) await registerWorker();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Turn the opt-in on. Call it straight from the click handler: the permission request is the
  * first thing it does, and nothing else in the panel calls `Notification.requestPermission()`.
@@ -75,12 +101,18 @@ export async function turnOn(
   accountId: string,
   workspaceId: string,
 ): Promise<Exclude<DesktopState, 'off'>> {
+  requireAccount(accountId);
   if (!capability()) return 'unavailable';
   let result = Notification.permission;
-  if (result === 'default') result = await Notification.requestPermission();
+  try {
+    if (result === 'default') result = await Notification.requestPermission();
+  } catch {
+    // An old or locked-down browser that cannot ask at all.
+    return 'unavailable';
+  }
   if (result !== 'granted') return 'blocked';
   try {
-    await navigator.serviceWorker.register(WORKER_URL, { scope: '/' });
+    await registerWorker();
     localStorage.setItem(flagKey(accountId, workspaceId), '1');
   } catch {
     return 'unavailable';
@@ -90,6 +122,7 @@ export async function turnOn(
 
 /** Clear the flag at once; the worker goes when no workspace in this browser keeps a flag. */
 export async function turnOff(accountId: string, workspaceId: string): Promise<void> {
+  requireAccount(accountId);
   try {
     localStorage.removeItem(flagKey(accountId, workspaceId));
   } catch {

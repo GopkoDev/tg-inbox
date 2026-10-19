@@ -1,7 +1,7 @@
 import type { LiveFrame } from '@tg/shared';
 import { create } from 'zustand';
 import { ApiError } from '@/shared/api/client';
-import { subscribeLive } from '@/shared/api/live-connection';
+import { reviveLiveConnection, subscribeLive } from '@/shared/api/live-connection';
 import { getAttentionCount } from './api';
 
 /** One refetch per burst of frames (ADR-0008). */
@@ -24,6 +24,9 @@ let unsubscribe: (() => void) | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 /** Bumped by every start/stop: an answer of an earlier one is stale. */
 let epoch = 0;
+/** Numbers every read; `landed` is the newest one that answered: an older answer is stale. */
+let issued = 0;
+let landed = 0;
 
 /** Frames that can change the count: an arrival, an assignment or state change, a read. */
 function changesCount(frame: LiveFrame): boolean {
@@ -38,13 +41,19 @@ function changesCount(frame: LiveFrame): boolean {
  */
 export const useAttentionStore = create<AttentionState>()((set, get) => {
   const read = async (workspaceId: string, guard: AttentionGuard, startedAt: number) => {
+    const mine = ++issued;
+    const current = () => epoch === startedAt && mine > landed;
     try {
       const answer = await getAttentionCount(workspaceId);
-      if (epoch !== startedAt || answer.workspace_id !== workspaceId) return;
+      if (!current() || answer.workspace_id !== workspaceId) return;
+      landed = mine;
       set({ count: answer.count });
+      // The member may still read this workspace: a live session the server ended comes back.
+      reviveLiveConnection(workspaceId);
     } catch (error) {
-      if (epoch !== startedAt) return;
+      if (!current()) return;
       if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+        landed = mine;
         set({ count: null });
         await guard(error, workspaceId).catch(() => undefined);
       }

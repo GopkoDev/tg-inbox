@@ -20,8 +20,11 @@ const api = vi.hoisted(() => ({ getConversation: vi.fn() }));
 vi.mock('@/features/inbox/api-source', () => ({
   getConversation: (...a: unknown[]) => api.getConversation(...a),
 }));
-const desktop = vi.hoisted(() => ({ readState: vi.fn() }));
-vi.mock('./desktop', () => ({ readState: (...a: unknown[]) => desktop.readState(...a) }));
+const desktop = vi.hoisted(() => ({ readState: vi.fn(), ensureWorker: vi.fn() }));
+vi.mock('./desktop', () => ({
+  readState: (...a: unknown[]) => desktop.readState(...a),
+  ensureWorker: () => desktop.ensureWorker(),
+}));
 
 import { startNotifier } from './notifier';
 
@@ -69,6 +72,7 @@ beforeEach(() => {
     },
   });
   desktop.readState.mockReturnValue('on');
+  desktop.ensureWorker.mockResolvedValue(true);
   api.getConversation.mockResolvedValue(row());
   stop = startNotifier({
     workspaceId: WS,
@@ -166,5 +170,32 @@ describe('notifier', () => {
     swListeners.message?.({ data: { type: 'something', workspaceId: WS } });
     swListeners.message?.({ data: null });
     expect(navigate).not.toHaveBeenCalled();
+  });
+
+  describe('keeps the worker of an opt-in that is on (W8)', () => {
+    const restart = () => {
+      stop();
+      stop = startNotifier({
+        workspaceId: WS,
+        workspaceName: 'Acme Flowers',
+        accountId: ME,
+        navigate,
+      });
+    };
+
+    it('on start, with the opt-in on, makes sure the worker is registered', () => {
+      desktop.ensureWorker.mockClear();
+      desktop.readState.mockReturnValue('on');
+      restart();
+      expect(desktop.readState).toHaveBeenCalledWith(ME, WS);
+      expect(desktop.ensureWorker).toHaveBeenCalledTimes(1);
+    });
+
+    it('registers nothing while the opt-in is off', () => {
+      desktop.ensureWorker.mockClear();
+      desktop.readState.mockReturnValue('off');
+      restart();
+      expect(desktop.ensureWorker).not.toHaveBeenCalled();
+    });
   });
 });

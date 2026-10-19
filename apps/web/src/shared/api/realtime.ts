@@ -26,6 +26,8 @@ export interface LiveOptions {
   createSocket?: (url: string) => SocketLike;
   /** Delay before reconnect attempt `attempt` (0-based). */
   backoffMs?: (attempt: number) => number;
+  /** Reopened after the server ended an earlier session: the first open reports reconnected. */
+  resumed?: boolean;
 }
 
 export interface LiveClient {
@@ -58,6 +60,7 @@ export function openLiveSocket(
   const backoff = options.backoffMs ?? defaultBackoff;
   let stopped = false;
   let attempt = 0;
+  let resumed = options.resumed ?? false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let socket: SocketLike | undefined;
   let open = false;
@@ -90,8 +93,9 @@ export function openLiveSocket(
       if (stopped) return;
       // Any failed attempt before this open (a drop, or a first try that never opened) may have
       // missed signals.
-      const missed = attempt > 0;
+      const missed = attempt > 0 || resumed;
       attempt = 0;
+      resumed = false;
       open = true;
       sendPresence();
       if (missed) handlers.onReconnected();

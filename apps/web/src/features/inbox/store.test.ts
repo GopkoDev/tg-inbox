@@ -412,6 +412,16 @@ describe('inbox store: recovery', () => {
     expect(useInboxStore.getState().conversations).toHaveLength(1);
   });
 
+  it('a stopped session that comes back (revived, reports reconnected) is live again and re-reads (W9)', async () => {
+    await useInboxStore.getState().enter(A);
+    sockets[0]!.handlers.onClosed(4403);
+    await flush();
+    sockets[0]!.handlers.onReconnected();
+    await flush();
+    expect(useInboxStore.getState().live).toBe('live');
+    expect(api.listConversations).toHaveBeenCalledTimes(2);
+  });
+
   it('leave() closes the socket and clears everything', async () => {
     await useInboxStore.getState().enter(A);
     useInboxStore.getState().leave();

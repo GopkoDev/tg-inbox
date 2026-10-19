@@ -55,6 +55,17 @@ beforeEach(() => {
 afterEach(() => vi.useRealTimers());
 
 describe('openLiveSocket', () => {
+  it('resumed after a stop: the first open reports reconnected, signals may have been missed (W9)', () => {
+    const handlers = { onFrame: vi.fn(), onReconnected: vi.fn(), onClosed: vi.fn() };
+    openLiveSocket(W1, handlers, { createSocket: (url) => new FakeSocket(url), resumed: true });
+    FakeSocket.all[0]!.open();
+    expect(handlers.onReconnected).toHaveBeenCalledTimes(1);
+    FakeSocket.all[0]!.drop(1001);
+    vi.runOnlyPendingTimers();
+    FakeSocket.all[1]!.open();
+    expect(handlers.onReconnected).toHaveBeenCalledTimes(2);
+  });
+
   it('a first attempt that never opened: the first successful open reports reconnected (W8)', () => {
     const { handlers } = start();
     FakeSocket.all[0]!.drop(1006);

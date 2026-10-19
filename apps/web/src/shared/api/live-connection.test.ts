@@ -5,18 +5,28 @@ import type { LiveHandlers } from './realtime';
 interface Opened {
   workspaceId: string;
   handlers: LiveHandlers;
+  options?: { resumed?: boolean };
   close: ReturnType<typeof vi.fn>;
 }
 const opened: Opened[] = [];
 vi.mock('./realtime', () => ({
-  openLiveSocket: (workspaceId: string, handlers: LiveHandlers) => {
-    const o = { workspaceId, handlers, close: vi.fn() };
+  openLiveSocket: (
+    workspaceId: string,
+    handlers: LiveHandlers,
+    options?: { resumed?: boolean },
+  ) => {
+    const o = { workspaceId, handlers, options, close: vi.fn() };
     opened.push(o);
     return o;
   },
 }));
 
-import { liveStatus, openLiveConnection, subscribeLive } from './live-connection';
+import {
+  liveStatus,
+  openLiveConnection,
+  reviveLiveConnection,
+  subscribeLive,
+} from './live-connection';
 
 const A = '0198f0c0-0000-7000-8000-000000000001';
 const B = '0198f0c0-0000-7000-8000-000000000002';
@@ -144,5 +154,45 @@ describe('the workspace live connection (SAD §4)', () => {
     opened[0]!.handlers.onFrame(resync(A));
     expect(a.onFrame).not.toHaveBeenCalled();
     expect(liveStatus(A)).toBe('idle');
+  });
+
+  describe('a stopped connection recovers while the frame stays mounted (W9)', () => {
+    it('revive: a new socket, marked resumed, whose frames reach the same subscribers', () => {
+      const conn = openLiveConnection(A);
+      const a = sub();
+      subscribeLive(A, a);
+      opened[0]!.handlers.onClosed(4403);
+      expect(liveStatus(A)).toBe('stopped');
+      reviveLiveConnection(A);
+      expect(opened).toHaveLength(2);
+      expect(opened[1]!.options).toMatchObject({ resumed: true });
+      expect(liveStatus(A)).toBe('live');
+      opened[1]!.handlers.onFrame(resync(A));
+      expect(a.onFrame).toHaveBeenCalledTimes(1);
+      conn.close();
+      expect(opened[1]!.close).toHaveBeenCalledTimes(1);
+      expect(liveStatus(A)).toBe('idle');
+    });
+
+    it('revive does nothing to a live or an unopened connection', () => {
+      reviveLiveConnection(A);
+      expect(opened).toHaveLength(0);
+      const conn = openLiveConnection(A);
+      reviveLiveConnection(A);
+      expect(opened).toHaveLength(1);
+      conn.close();
+    });
+
+    it('opening a stopped workspace again replaces the stopped socket', () => {
+      const one = openLiveConnection(A);
+      opened[0]!.handlers.onClosed(4401);
+      const two = openLiveConnection(A);
+      expect(opened).toHaveLength(2);
+      expect(liveStatus(A)).toBe('live');
+      one.close();
+      expect(opened[1]!.close).not.toHaveBeenCalled();
+      two.close();
+      expect(opened[1]!.close).toHaveBeenCalledTimes(1);
+    });
   });
 });

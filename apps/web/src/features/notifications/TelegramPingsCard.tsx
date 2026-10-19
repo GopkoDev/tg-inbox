@@ -1,6 +1,14 @@
 import { Loader2 } from 'lucide-react';
 import type { IssuedConnectLink } from '@tg/shared';
-import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from 'react';
 import { Link } from 'react-router';
 import { formatBotClock, formatBotDay } from '@/features/bot/settings/format';
 import { NotFoundCard } from '@/pages/NotFoundPage';
@@ -31,12 +39,17 @@ function Spinner() {
   return <Loader2 className="animate-spin" aria-hidden />;
 }
 
+const HeadingRef = createContext<RefObject<HTMLHeadingElement | null> | null>(null);
+
 function CardShell({ badge, children }: { badge?: ReactNode; children: ReactNode }) {
+  const heading = useContext(HeadingRef);
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2">
         <CardTitle>
-          <h2>Telegram pings</h2>
+          <h2 ref={heading} tabIndex={-1} className="outline-none">
+            Telegram pings
+          </h2>
         </CardTitle>
         {badge}
       </CardHeader>
@@ -59,13 +72,19 @@ export function TelegramPingsCard({
   const guard = useShellGuard();
   const [issued, setIssued] = useState<IssuedConnectLink | null>(null);
   const connectButton = useRef<HTMLButtonElement>(null);
+  const disconnectButton = useRef<HTMLButtonElement>(null);
+  const heading = useRef<HTMLHeadingElement>(null);
+  // A connect that succeeded unmounts Connect Telegram: focus goes to Disconnect, else the title.
+  const returnFocus = () =>
+    (connectButton.current ?? disconnectButton.current ?? heading.current)?.focus();
   return (
-    <>
+    <HeadingRef.Provider value={heading}>
       <PingsCard
         workspaceId={workspaceId}
         workspaceName={workspaceName}
         onIssued={setIssued}
         connectButton={connectButton}
+        disconnectButton={disconnectButton}
       />
       {issued && (
         <ConnectTelegramDialog
@@ -74,10 +93,10 @@ export function TelegramPingsCard({
           issued={issued}
           guard={guard}
           onClose={() => setIssued(null)}
-          returnFocus={() => connectButton.current?.focus()}
+          returnFocus={returnFocus}
         />
       )}
-    </>
+    </HeadingRef.Provider>
   );
 }
 
@@ -86,11 +105,13 @@ function PingsCard({
   workspaceName,
   onIssued,
   connectButton,
+  disconnectButton,
 }: {
   workspaceId: string;
   workspaceName: string;
   onIssued: (link: IssuedConnectLink) => void;
   connectButton: RefObject<HTMLButtonElement | null>;
+  disconnectButton: RefObject<HTMLButtonElement | null>;
 }) {
   const guard = useShellGuard();
   const settings = useNotificationsStore((s) => s.settings);
@@ -224,6 +245,7 @@ function PingsCard({
         )}
         {alerts}
         <Button
+          ref={disconnectButton}
           variant="outline"
           className="w-full sm:w-auto"
           disabled={busy}

@@ -194,4 +194,42 @@ test('Settings is role-filtered and the owner sees the Team mark after a connect
   await olga.context.close();
 });
 
+test('a deactivated member: the open notifications page, a ping link and Settings land on access removed, with nothing of the workspace (AC-12)', async ({
+  browser,
+  world,
+}) => {
+  const { workspaceId, token } = await acme(world);
+  expect(await world.customerWrites(token, 780_001, 'Are you open today?', 'Zoe')).toBe(200);
+  const conversationId = await world.conversationId(OPERATOR, workspaceId, 'Zoe');
+
+  const ana = await open(browser, OPERATOR, workspaceId, '/settings/notifications');
+  const page = ana.page;
+  await expect(page.getByText('Not connected')).toBeVisible(WAIT);
+  await expect(page).toHaveTitle('(1) tg-inbox', WAIT);
+
+  // The owner deactivates Ana: her open page hears the socket close and lands on the notice.
+  await world.deactivate(OWNER, workspaceId, OPERATOR);
+  // A fresh load no longer knows the workspace's name: the notice then says "this workspace".
+  const landed = async (name = 'Acme Flowers') => {
+    await expect(page.getByText(`Your access to ${name} was removed`)).toBeVisible(WAIT);
+    await expect(page).toHaveTitle('tg-inbox');
+    await expect(page.getByText('Not connected')).toHaveCount(0);
+    await expect(page.getByText(/^Connected as /)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Connect Telegram' })).toHaveCount(0);
+    await expect(page.getByLabel(/need you|needs you/)).toHaveCount(0);
+    await expect(page.getByText('Are you open today?')).toHaveCount(0);
+  };
+  await landed();
+
+  // A ping link she still has in Telegram: the same landing, not the conversation.
+  await page.goto(`/w/${workspaceId}/inbox/${conversationId}`);
+  await landed('this workspace');
+
+  // Settings — Notifications typed in directly: the same.
+  await page.goto(`/w/${workspaceId}/settings/notifications`);
+  await landed('this workspace');
+
+  await ana.context.close();
+});
+
 const ANA_EMAIL = OPERATOR;

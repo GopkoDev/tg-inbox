@@ -94,9 +94,10 @@ function RowActions({
   );
 }
 
-/** SCR-07 body. `onInvite` is the slot T25 fills with the invite dialog. */
 /** The Team mark: plain text, read when Team opens and replaced by each deactivate / reactivate answer. */
 const pingsMark = (m: { telegram_pings: boolean }) => (m.telegram_pings ? 'On' : 'Off');
+
+/** SCR-07 body. `onInvite` is the slot T25 fills with the invite dialog. */
 
 export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?: () => void }) {
   const team = useTeam(workspaceId);

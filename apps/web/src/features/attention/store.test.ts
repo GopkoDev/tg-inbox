@@ -10,7 +10,9 @@ vi.mock('./api', () => ({
 const live = vi.hoisted(() => ({
   subs: [] as { workspaceId: string; subscriber: unknown; off: () => void }[],
 }));
+const revive = vi.hoisted(() => vi.fn());
 vi.mock('@/shared/api/live-connection', () => ({
+  reviveLiveConnection: (ws: string) => revive(ws),
   subscribeLive: (workspaceId: string, subscriber: unknown) => {
     const entry = {
       workspaceId,
@@ -229,5 +231,63 @@ describe('attention store (AC-01, ADR-0008)', () => {
     await flush();
     expect(guard).toHaveBeenCalledWith(refusal, A);
     expect(count()).toBeNull();
+  });
+
+  it('an older answer that lands after a newer one does not overwrite it (W4)', async () => {
+    useAttentionStore.getState().start(A, guard);
+    await flush();
+    const pending: ((v: unknown) => void)[] = [];
+    api.getAttentionCount.mockImplementation(() => new Promise((r) => pending.push(r)));
+    subscriber().onFrame(changed(A, 'created', { type: 'message', id: M1 }));
+    await vi.advanceTimersByTimeAsync(300);
+    subscriber().onFrame(changed(A, 'read', null));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(pending).toHaveLength(2);
+    pending[1]!(answer(A, 5));
+    await flush();
+    expect(count()).toBe(5);
+    pending[0]!(answer(A, 2));
+    await flush();
+    expect(count()).toBe(5);
+  });
+
+  it('a newer read that fails keeps the newest count it has, an older refusal is ignored (W4)', async () => {
+    useAttentionStore.getState().start(A, guard);
+    await flush();
+    const pending: { resolve: (v: unknown) => void; reject: (e: unknown) => void }[] = [];
+    api.getAttentionCount.mockImplementation(
+      () => new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    );
+    subscriber().onFrame(changed(A, 'created', { type: 'message', id: M1 }));
+    await vi.advanceTimersByTimeAsync(300);
+    subscriber().onFrame(changed(A, 'read', null));
+    await vi.advanceTimersByTimeAsync(300);
+    pending[1]!.resolve(answer(A, 7));
+    await flush();
+    pending[0]!.reject(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'gone'));
+    await flush();
+    expect(count()).toBe(7);
+    expect(guard).not.toHaveBeenCalled();
+  });
+
+  it('after the server ended the live session, a successful read reopens it (W9)', async () => {
+    useAttentionStore.getState().start(A, guard);
+    await flush();
+    revive.mockClear();
+    api.getAttentionCount.mockResolvedValue(answer(A, 2));
+    subscriber().onClosed(4403);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(count()).toBe(2);
+    expect(revive).toHaveBeenCalledWith(A);
+  });
+
+  it('a refused read after the session ended does not reopen it (W9)', async () => {
+    useAttentionStore.getState().start(A, guard);
+    await flush();
+    revive.mockClear();
+    api.getAttentionCount.mockRejectedValue(new ApiError(403, ErrorCode.ACCESS_REMOVED, 'x'));
+    subscriber().onClosed(4403);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(revive).not.toHaveBeenCalled();
   });
 });

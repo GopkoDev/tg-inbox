@@ -12,6 +12,7 @@ let permission: NotificationPermission;
 let requestPermission: ReturnType<typeof vi.fn>;
 let register: ReturnType<typeof vi.fn>;
 let unregister: ReturnType<typeof vi.fn>;
+let getRegistration: ReturnType<typeof vi.fn>;
 
 function stubBrowser(
   opts: { permission?: NotificationPermission; answer?: NotificationPermission } = {},
@@ -29,7 +30,7 @@ function stubBrowser(
   register = vi.fn(async () => ({}));
   Object.defineProperty(navigator, 'serviceWorker', {
     configurable: true,
-    value: { register, getRegistration: vi.fn(async () => ({ unregister })) },
+    value: { register, getRegistration: (getRegistration = vi.fn(async () => ({ unregister }))) },
   });
 }
 
@@ -45,6 +46,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
   Reflect.deleteProperty(navigator, 'serviceWorker');
+  Reflect.deleteProperty(navigator, 'permissions');
 });
 
 describe('DesktopNotificationsCard', () => {
@@ -78,7 +80,7 @@ describe('DesktopNotificationsCard', () => {
     expect(screen.getByRole('button', { name: 'Turn on desktop notifications' })).toBeDisabled();
     await act(async () => answer('granted'));
     await waitFor(() => expect(screen.getByText('On')).toBeInTheDocument());
-    expect(register).toHaveBeenCalledWith(expect.stringMatching(/^\/notifications-sw\.js\?v=/), {
+    expect(register).toHaveBeenCalledWith('/notifications-sw.js', {
       scope: '/',
     });
     expect(localStorage.getItem(KEY(WS))).toBe('1');
@@ -198,5 +200,117 @@ describe('DesktopNotificationsCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Turn off' }));
     await waitFor(() => expect(localStorage.getItem(KEY(WS))).toBeNull());
     expect(unregister).not.toHaveBeenCalled();
+  });
+
+  describe('the account arrives after the first render (W1)', () => {
+    it('shows a skeleton, no state and no button until the account is known, then the stored On', async () => {
+      useAuthStore.getState().clear();
+      stubBrowser({ permission: 'granted' });
+      localStorage.setItem(KEY(WS), '1');
+      renderCard();
+      expect(screen.getByRole('heading', { name: 'Desktop notifications' })).toBeInTheDocument();
+      expect(screen.getByTestId('desktop-notifications-skeleton')).toBeInTheDocument();
+      expect(screen.queryByText('Off')).not.toBeInTheDocument();
+      expect(screen.queryByRole('button')).not.toBeInTheDocument();
+      act(() =>
+        useAuthStore.getState().setAccount({ id: ME, email: 'me@example.com', display_name: 'Me' }),
+      );
+      expect(await screen.findByText('On')).toBeInTheDocument();
+    });
+
+    it('turning on after the account arrived stores the flag under that account', async () => {
+      useAuthStore.getState().clear();
+      stubBrowser({ permission: 'granted' });
+      renderCard();
+      act(() =>
+        useAuthStore.getState().setAccount({ id: ME, email: 'me@example.com', display_name: 'Me' }),
+      );
+      fireEvent.click(await screen.findByRole('button', { name: 'Turn on desktop notifications' }));
+      await waitFor(() => expect(screen.getByText('On')).toBeInTheDocument());
+      expect(localStorage.getItem(KEY(WS))).toBe('1');
+      expect(localStorage.getItem(`tg.desktop-notifications..${WS}`)).toBeNull();
+    });
+  });
+
+  describe('re-reads the browser while open (W6)', () => {
+    it('allowed in the site settings, then back to the tab: blocked becomes On', async () => {
+      stubBrowser({ permission: 'denied' });
+      localStorage.setItem(KEY(WS), '1');
+      renderCard();
+      expect(screen.getByText(/are blocked for this site/)).toBeInTheDocument();
+      permission = 'granted';
+      act(() => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(await screen.findByText('On')).toBeInTheDocument();
+    });
+
+    it('a window focus re-reads too: blocked becomes Off with the button', async () => {
+      stubBrowser({ permission: 'denied' });
+      renderCard();
+      permission = 'default';
+      act(() => {
+        window.dispatchEvent(new Event('focus'));
+      });
+      expect(
+        await screen.findByRole('button', { name: 'Turn on desktop notifications' }),
+      ).toBeInTheDocument();
+    });
+
+    it('a permission change reported by the browser re-reads', async () => {
+      stubBrowser({ permission: 'denied' });
+      const status = new EventTarget();
+      Object.defineProperty(navigator, 'permissions', {
+        configurable: true,
+        value: { query: vi.fn(async () => status) },
+      });
+      renderCard();
+      await act(async () => undefined);
+      permission = 'default';
+      act(() => {
+        status.dispatchEvent(new Event('change'));
+      });
+      expect(
+        await screen.findByRole('button', { name: 'Turn on desktop notifications' }),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it('a permission request that throws does not leave the card spinning (W7)', async () => {
+    requestPermission.mockRejectedValue(new TypeError('not supported'));
+    renderCard();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on desktop notifications' }));
+    await waitFor(() => expect(screen.getByText('Not available')).toBeInTheDocument());
+    expect(localStorage.getItem(KEY(WS))).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  describe('the worker registration (W8)', () => {
+    it('flag on but the worker gone: registers it again on open and stays On', async () => {
+      stubBrowser({ permission: 'granted' });
+      getRegistration.mockResolvedValue(undefined);
+      localStorage.setItem(KEY(WS), '1');
+      renderCard();
+      await waitFor(() =>
+        expect(register).toHaveBeenCalledWith('/notifications-sw.js', { scope: '/' }),
+      );
+      expect(screen.getByText('On')).toBeInTheDocument();
+      expect(requestPermission).not.toHaveBeenCalled();
+    });
+
+    it('flag on, the worker gone and it cannot come back: Not available, not On', async () => {
+      stubBrowser({ permission: 'granted' });
+      getRegistration.mockResolvedValue(undefined);
+      register.mockRejectedValue(new Error('nope'));
+      localStorage.setItem(KEY(WS), '1');
+      renderCard();
+      expect(await screen.findByText('Not available')).toBeInTheDocument();
+    });
+
+    it('Off asks nothing of the worker', async () => {
+      renderCard();
+      await act(async () => undefined);
+      expect(register).not.toHaveBeenCalled();
+    });
   });
 });

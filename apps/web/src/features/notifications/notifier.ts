@@ -1,7 +1,7 @@
 import type { LiveFrame } from '@tg/shared';
 import { getConversation } from '@/features/inbox/api-source';
 import { subscribeLive } from '@/shared/api/live-connection';
-import { readState } from './desktop';
+import { ensureWorker, readState } from './desktop';
 
 interface NotifierOptions {
   workspaceId: string;
@@ -57,6 +57,9 @@ export function startNotifier({
       // A failed read or a missing worker only means no notification this time.
     }
   };
+
+  // A worker the browser lost (cleared site data) would leave an opt-in that is on silent.
+  if (readState(accountId, workspaceId) === 'on') void ensureWorker();
 
   const unsubscribe = subscribeLive(workspaceId, {
     onFrame: (frame) => {

@@ -1201,7 +1201,10 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       set({ workspaceId, lens });
       unsubscribe = subscribeLive(workspaceId, {
         onFrame: (frame) => onFrame(workspaceId, frame),
-        onReconnected: () => void rereadAll(workspaceId),
+        onReconnected: () => {
+          if (get().workspaceId === workspaceId) set({ live: 'live' });
+          void rereadAll(workspaceId);
+        },
         onInvalidFrame: () => {
           if (get().workspaceId === workspaceId) coalesce('resync', () => rereadAll(workspaceId));
         },
