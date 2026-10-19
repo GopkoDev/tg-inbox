@@ -168,6 +168,24 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       ),
   );
 
+  // The profile's conversation: a pure read that marks nothing read (ADR-0006, contacts QG-2).
+  r.get(
+    `${base}/contacts/:contactId/conversation`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...workspace, contactId: z.uuid() }),
+        response: { 200: ConversationSummary },
+      },
+    },
+    async (request) =>
+      reads.getContactConversation(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.contactId,
+      ),
+  );
+
   r.get(
     `${base}/conversations/:conversationId/items`,
     {

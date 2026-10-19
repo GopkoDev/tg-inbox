@@ -164,6 +164,25 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
     return items;
   }
 
+  async function summaryDto(
+    workspaceId: string,
+    row: ConversationSummaryRow | null,
+  ): Promise<ConversationSummary> {
+    const [dto] = row ? await rowsToDtos(workspaceId, [row]) : [];
+    if (!row || !dto) throw notFound();
+    const snapshot = row.closeSnapshot;
+    return {
+      ...dto,
+      close_snapshot: {
+        customer_message_seq: snapshot.customerMessageSeq,
+        latest_reply: snapshot.latestReply && {
+          id: snapshot.latestReply.id,
+          state: snapshot.latestReply.state,
+        },
+      },
+    };
+  }
+
   return {
     async listConversations(
       workspaceId: string,
@@ -206,24 +225,22 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       member: Member,
       conversationId: string,
     ): Promise<ConversationSummary> {
-      const row: ConversationSummaryRow | null = await conversations.conversationSummary(
+      return summaryDto(
         workspaceId,
-        conversationId,
-        member,
+        await conversations.conversationSummary(workspaceId, conversationId, member),
       );
-      const [dto] = row ? await rowsToDtos(workspaceId, [row]) : [];
-      if (!row || !dto) throw notFound();
-      const snapshot = row.closeSnapshot;
-      return {
-        ...dto,
-        close_snapshot: {
-          customer_message_seq: snapshot.customerMessageSeq,
-          latest_reply: snapshot.latestReply && {
-            id: snapshot.latestReply.id,
-            state: snapshot.latestReply.state,
-          },
-        },
-      };
+    },
+
+    /** The conversation of a contact (the profile's "open conversation"); a pure read. */
+    async getContactConversation(
+      workspaceId: string,
+      member: Member,
+      contactId: string,
+    ): Promise<ConversationSummary> {
+      return summaryDto(
+        workspaceId,
+        await conversations.findByContact(workspaceId, contactId, member),
+      );
     },
 
     async listThreadItems(

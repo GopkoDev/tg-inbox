@@ -83,6 +83,12 @@ export interface InboxReads {
     conversationId: string,
     viewer: Viewer,
   ): Promise<ConversationSummaryRow | null>;
+  /** The contact's conversation summary; reads only, never marks anything read (ADR-0006). */
+  findByContact(
+    workspaceId: string,
+    contactId: string,
+    viewer: Viewer,
+  ): Promise<ConversationSummaryRow | null>;
   threadPage(
     workspaceId: string,
     conversationId: string,
@@ -152,6 +158,9 @@ export function createInboxReads(deps: InboxReadsDeps): InboxReads {
 
     conversationSummary: (workspaceId, conversationId, viewer) =>
       lists.summary(workspaceId, conversationId, viewer),
+
+    findByContact: (workspaceId, contactId, viewer) =>
+      lists.summaryByContact(workspaceId, contactId, viewer),
 
     async threadPage(workspaceId, conversationId, input) {
       if (input.before !== null && input.after !== null) {

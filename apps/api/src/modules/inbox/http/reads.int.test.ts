@@ -4,6 +4,7 @@ import {
   ActiveMemberList,
   ConversationPage,
   ConversationSummary,
+  AttentionCount,
   ErrorEnvelope,
   InboxBotStatus,
   ReadState,
@@ -13,6 +14,7 @@ import {
   ThreadReply,
 } from '@tg/shared';
 import { buildApp } from '../../../app.js';
+import { createNotificationQueries } from '../../conversations/infra/notification-queries.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
@@ -23,6 +25,7 @@ import {
   insertActivity,
   insertConversation,
   insertMessage,
+  insertReadMark,
   insertReply,
   twoWorkspacesWithInbox,
 } from '../../../test/fixtures/conversations.js';
@@ -685,6 +688,132 @@ describe('inbox read routes (postgres)', () => {
     expect((await post(null, `${c}/read`, body)).statusCode).toBe(401);
     expect((await post(outsider, `${c}/read`, body)).statusCode).toBe(404);
     expect((await post(removed, `${c}/read`, body)).statusCode).toBe(403);
+  });
+
+  describe('the conversation of a contact (contacts profile, ADR-0006)', () => {
+    const contactUrl = (ws: string, contactId: string) =>
+      `${base(ws)}/contacts/${contactId}/conversation`;
+    const contactOf = async (ws: string, conversationId: string) =>
+      (
+        await db
+          .selectFrom('conversations')
+          .select('contact_id')
+          .where('workspace_id', '=', ws)
+          .where('id', '=', conversationId)
+          .executeTakeFirstOrThrow()
+      ).contact_id;
+
+    it('returns the contact conversation summary exactly as the conversation read, for either role', async () => {
+      const s = await seed();
+      const contactId = await contactOf(s.ws, s.c1);
+      for (const who of [s.operator, s.owner]) {
+        const res = await get(who, contactUrl(s.ws, contactId));
+        expect(res.statusCode).toBe(200);
+        const summary = ConversationSummary.parse(res.json());
+        const direct = ConversationSummary.parse(
+          (await get(who, `${base(s.ws)}/conversations/${s.c1}`)).json(),
+        );
+        expect(summary).toEqual(direct);
+        expect(summary).toMatchObject({ id: s.c1, unread_count: 2, waiting_for_reply: true });
+      }
+    });
+
+    it('answers 404 for a contact of another workspace, an unknown contact and a contact with no conversation', async () => {
+      const s = await seed();
+      const other = await insertWorkspace(db, 'Bolt Bikes');
+      const foreignContact = await insertContact(db, { workspaceId: other });
+      const foreignConversation = await insertConversation(db, {
+        workspaceId: other,
+        contactId: foreignContact,
+      });
+      expect(foreignConversation).toBeDefined();
+      const lonely = await insertContact(db, { workspaceId: s.ws });
+      for (const id of [foreignContact, newId(), lonely]) {
+        const res = await get(s.operator, contactUrl(s.ws, id));
+        expect(res.statusCode, id).toBe(404);
+        expect(errorOf(res).code).toBe('NOT_FOUND');
+      }
+    });
+
+    it('refuses signed-out, other-workspace and deactivated callers', async () => {
+      const s = await seed();
+      const contactId = await contactOf(s.ws, s.c1);
+      const outsider = await member(await insertWorkspace(db, 'Bolt Bikes'));
+      const removed = await member(s.ws, 'operator', 'deactivated');
+      const url = contactUrl(s.ws, contactId);
+      expect((await get(null, url)).statusCode).toBe(401);
+      expect((await get(outsider, url)).statusCode).toBe(404);
+      const gone = await get(removed, url);
+      expect(gone.statusCode).toBe(403);
+      expect(errorOf(gone).code).toBe('ACCESS_REMOVED');
+    });
+
+    it('never changes read state: read marks, unread count, attention and the ping due set stay as they were (QG-2, AC-05)', async () => {
+      const s = await seed();
+      const contactId = await contactOf(s.ws, s.c1);
+      // The operator has read the first message only; the second is unread.
+      await insertReadMark(db, {
+        workspaceId: s.ws,
+        conversationId: s.c1,
+        accountId: s.operator.accountId,
+        readThroughAt: at('09:00'),
+      });
+      const pings = createNotificationQueries(db);
+      const snapshot = async () => ({
+        marks: await db
+          .selectFrom('read_marks')
+          .selectAll()
+          .where('workspace_id', '=', s.ws)
+          .orderBy('id')
+          .execute(),
+        unread: ConversationSummary.parse(
+          (await get(s.operator, `${base(s.ws)}/conversations/${s.c1}`)).json(),
+        ).unread_count,
+        attention: AttentionCount.parse((await get(s.operator, `${base(s.ws)}/attention`)).json())
+          .count,
+        due: await pings.waitingForPings(s.ws, {
+          accountIds: [s.operator.accountId, s.owner.accountId],
+        }),
+      });
+      const readProfile = async (who: Who) => {
+        const summary = await get(who, contactUrl(s.ws, contactId));
+        expect(summary.statusCode).toBe(200);
+        // Every thread page, both directions, as the profile history would.
+        const latest = ThreadPage.parse(
+          (await get(who, `${base(s.ws)}/conversations/${s.c1}/items?limit=1`)).json(),
+        );
+        if (latest.prev_cursor) {
+          const older = await get(
+            who,
+            `${base(s.ws)}/conversations/${s.c1}/items?limit=1&before=${latest.prev_cursor}`,
+          );
+          expect(older.statusCode).toBe(200);
+        }
+        expect((await get(who, `${base(s.ws)}/conversations/${s.c1}/items`)).statusCode).toBe(200);
+      };
+
+      const before = await snapshot();
+      expect(before.unread).toBe(1);
+      await readProfile(s.operator);
+      await readProfile(s.owner);
+      expect(await snapshot()).toEqual(before);
+
+      // A customer message is captured while the profile reads: the next summary shows it, still unread.
+      await insertMessage(db, {
+        workspaceId: s.ws,
+        conversationId: s.c1,
+        telegramMessageId: 3n,
+        sentAt: at('09:30'),
+        receivedAt: at('09:30'),
+      });
+      await readProfile(s.operator);
+      await readProfile(s.owner);
+      const after = await snapshot();
+      expect(after.marks).toEqual(before.marks);
+      expect(after.unread).toBe(2);
+      expect(after.attention).toBe(before.attention);
+      expect(after.due).toEqual(before.due);
+    });
   });
 
   it('does not extend the session for a background request', async () => {
