@@ -32,62 +32,59 @@ Roadmap step 7: contacts. The Contacts list and the contact profile move off sam
 
 ## Stacked PR
 
-This branch is based on `operator-notifications` (PR pending), which is itself based on `assignment-statuses` (PR pending). Merge order: `assignment-statuses` → `operator-notifications` → `contacts`; after each merge, retarget the next PR to `main`. Before opening this PR, rebase `contacts` onto the latest `operator-notifications`: that branch gained `5cf716e` (the TelegramPingsCard clock fix), identical to the cherry-pick `43dfc40` on this branch, so the rebase drops the cherry-pick cleanly. Later feature branches (broadcasts) will stack on this branch.
+This branch is based on `operator-notifications` (PR pending), which is itself based on `assignment-statuses` (PR pending). Merge order: `assignment-statuses` → `operator-notifications` → `contacts`; after each merge, retarget the next PR to `main`. The branch is rebased onto the latest `operator-notifications` (incl. `5cf716e`, the TelegramPingsCard clock fix). Later feature branches (broadcasts) will stack on this branch.
 
 ## Tasks (SDD-Task trailers)
 
-- `2af178b` spec: contacts
-- `7d37d76` clarify: contacts — 24 resolved, 0 deferred
-- `68e6efe` ux-flows: contacts
-- `2fa8cf4` design: contacts — SAD + ADRs (critic pass)
-- `a288197` spec(contacts): align the AC-08 spacing example with the tidy rule (inner spaces collapse, not vanish)
-- `800f06f` sequences: contacts runtime flows
-- `ec33b11` data-model: contacts (data-model.md + staged migrations)
-- `69800ec` api: contacts contract
-- `072d734` screens: contacts manifest
-- `e2a9ef4` tasks: contacts (breakdown + tasks.json)
-- `8476ac8` test-plan: contacts
-- `fb5e53a` [T1] feat(contacts): add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order
-- `4430563` [T2] feat(contacts): promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally
-- `bd50dff` [T3] feat(contacts): promote migrations 04–06 (tags, contact_tags, contact_tag_history), regenerate DB types and add the tag fixtures
-- `8ac81d4` [T4] feat(contacts): add the contacts zod contracts, the eight tag error codes, and the contact.changed / tags.changed frames and signals with their hub mapping
-- `f74ed1a` [T5] feat(contacts): add the tags domain: the limits (100 per workspace, 20 per contact, 60 per 60 s, 50 per page), the history kinds and sources, the merge link rule and the rate-limit retry time
-- `43dfc40` test(operator-notifications): pin the clock in the connecting test (fixture link expired after 09:22 real time) — cherry-pick, see the note below
-- `af1c324` [T6] feat(contacts): build the tag repository: the workspace tag lock, find by name key, insert, the workspace count, the tag list with counts in tag-list order, id resolution, the row locks and the rename, with cross-workspace isolation tests
-- `6b079ee` [T7] feat(contacts): build the contact-tag and tag-history repositories for member changes: the contact row lock, a contact's tags in tag-list order, link insert and delete, history entries, the history keyset page and the member-kind rate count, with isolation tests
-- `c885898` [T8] feat(contacts): add the owner set-based statements: merge (merged entries, keep the earlier link, re-point the rest) and delete (links with RETURNING, deleted entries)
-- `f3a0360` [T9] feat(contacts): build the contacts list query (search, any / all / none with the all-of grouped semi-join, keyset with the NULL tail, tags per row, matching and total counts) and the profile read
-- `a1c15ca` [T10] feat(contacts): add the contacts read use cases: the list page (normalised search, resolved and missing tag ids, the none-with-tags refusal), the profile with adders' names and the tag-history page with actors' names, through a contacts → workspaces display-name port
-- `5af0615` [T11 T12] feat(contacts): t11 + T12 — addContactTag (find-or-create under the tag lock, limits, member rate limit, history, signals) and removeContactTag
-- `811e8cd` [T13 T14] feat(contacts): t13 + T14 — the owner use cases listTags, renameTag (case-only, merge on confirmation, `tag.merged` log) and deleteTag against the confirmed count
-- `5cb9a95` [T15] feat(contacts): add conversations.findByContact and the inbox read getContactConversation, and pin with integration tests that the profile's reads never change read state
-- `9dcaae4` [T16] feat(contacts): register the contacts routes (registerContacts): the eight operations with their zod schemas, the ownerOnly guard on rename and delete, and the wiring in buildDeps and buildApp
-- `f14f624` [T17] test(contacts): add the API end-to-end contacts stories, the integrity queries, the cross-workspace and secrecy suite, the live-push assertions and the seeded 10 000-contact timing checks
-- `743315a` test(contacts): give the owner merge/delete timing check three runs on a noisy machine, each run still checking every effect
-- `2a0c23a` test(contacts): measure the list, profile and tag-change budgets over up to three batches so a noisy machine cannot fail them
-- `842a6b2` test(contacts): allow the pilot-scale suite a generous test timeout
-- `7165cee` [T18] feat(contacts): add the web contacts and tags API sources and stores, with the live subscriptions to contact.changed, tags.changed, conversation.changed (never mark read) and resync
-- `7d1e308` [T19] feat(contacts): build SCR-18, the Contacts list: ContactsTable and TagFilter with the address state, Show more, the counts, the missing-tag notice and the empty and error states, replacing ContactsPreview
-- `bb54635` [T20] feat(contacts): build SCR-19, the contact profile: the header card with facts and tags, the conversation card, the Conversation / Tag history tabs with TagHistoryList and ContactCrumb, and remove the contacts sample source and SampleDataBadge
-- `88a3484` [T21] feat(contacts): build ContactConversationHistory, the profile's read-only thread: inbox-order items, older pages, media, live items, no read marking and no composer, with ReplyDeliveryState readOnly
-- `4ed89bb` [T22] feat(contacts): build SCR-20, the TagControl, and mount it on the profile and on the inbox conversation header (SCR-02) with the contact's tags and the name linking to the profile
-- `9f4523e` [T23] feat(contacts): build Settings — Tags (SCR-21) with the counts as links and the DeleteTagDialog (SCR-23), the owner-only Tags section in SettingsLayout and its route
-- `71a9d68` [T24] feat(contacts): build SCR-22, the RenameTagDialog with its merge step: name rules in place, TAG_NAME_TAKEN turned into the merge offer, TAG_MERGE_TARGET_CHANGED re-ask
-- `0c2d56f` [T25] test(contacts): add browser end-to-end contacts flows against the real API: list and filter, profile reading without marking read, tagging live between two members, owner rename / merge / delete, the operator refusal
-- `ee1a28b` [T26] docs(contacts): update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the contacts routes and tables, the contacts → workspaces edge, the new signals and the new components
-- `7ce142e` [review U1 U6 W1 W2] fix(contacts): latest re-read wins in the contacts store, the tag control re-reads on every opening and after the per-contact limit
-- `98455b2` [review B1 B2 B3 B4] fix(contacts): close the tag-write races and stop naming adders inside the transaction
-- `dcc2a07` [review U2 U3 U4 U5 U7 U8 W3 W4 W5 W6] fix(contacts): the empty card whenever there are no contacts, list address caps, tag filter loading / error, the profile's own guard and focus that follows the step
-- `31c16cf` [review S3 S4 S5] fix(contacts): log tag.merged per the contract, keep emoji joiners in tag names, validate crafted cursors
-- `93125d4` [review S4] docs(contacts): align ADR-0002 and the contract with the review's tag-name tidy rule (zero-width spaces removed, joiners kept)
-- `94d4c69` [review RR1] fix(contacts): a superseded success shows when the newest profile read fails
-- `96c1ccc` [review RR2] fix(contacts): the tag name key drops the joiners, a joiner next to a space folds into it
-- `fd882a7` [review RR3] fix(contacts): a tag change drops the held profile re-read, so a failed newer read cannot bring old tags back
-- `5fb00ed` [review RR4] docs(contacts): state the tag-name tidy and key rule the same way everywhere, fix the sad.md mojibake
-- `dc3010b` [review RR5] fix(contacts): a tag change re-reads a slice whose re-read was in flight, so newer changes it dropped come back
-- `d1fd2f5` review(contacts): independent review — 23 findings + 5 re-review findings, all fixed; PASS
-
-Note: `43dfc40` is a cherry-pick of the operator-notifications TelegramPingsCard clock fix (the connecting test's fixture link expired after 09:22 real time), needed here to keep the web suite green. `operator-notifications` now carries the same change as `5cf716e`, so it disappears from this list on the rebase.
+- `5715f5a` spec: contacts
+- `b503ca4` clarify: contacts — 24 resolved, 0 deferred
+- `6435587` ux-flows: contacts
+- `c77585b` design: contacts — SAD + ADRs (critic pass)
+- `2a0cccb` spec(contacts): align the AC-08 spacing example with the tidy rule (inner spaces collapse, not vanish)
+- `990a4c4` sequences: contacts runtime flows
+- `0530c99` data-model: contacts (data-model.md + staged migrations)
+- `9d4d2c6` api: contacts contract
+- `86bfb16` screens: contacts manifest
+- `ad16d07` tasks: contacts (breakdown + tasks.json)
+- `7953255` test-plan: contacts
+- `3ce8322` [T1] feat(contacts): add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order
+- `b1f3caf` [T2] feat(contacts): promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally
+- `fbeee56` [T3] feat(contacts): promote migrations 04–06 (tags, contact_tags, contact_tag_history), regenerate DB types and add the tag fixtures
+- `b10ff15` [T4] feat(contacts): add the contacts zod contracts, the eight tag error codes, and the contact.changed / tags.changed frames and signals with their hub mapping
+- `67cb28e` [T5] feat(contacts): add the tags domain: the limits (100 per workspace, 20 per contact, 60 per 60 s, 50 per page), the history kinds and sources, the merge link rule and the rate-limit retry time
+- `41fd3f1` [T6] feat(contacts): build the tag repository: the workspace tag lock, find by name key, insert, the workspace count, the tag list with counts in tag-list order, id resolution, the row locks and the rename, with cross-workspace isolation tests
+- `80d94c2` [T7] feat(contacts): build the contact-tag and tag-history repositories for member changes: the contact row lock, a contact's tags in tag-list order, link insert and delete, history entries, the history keyset page and the member-kind rate count, with isolation tests
+- `6ce5020` [T8] feat(contacts): add the owner set-based statements: merge (merged entries, keep the earlier link, re-point the rest) and delete (links with RETURNING, deleted entries)
+- `ce97334` [T9] feat(contacts): build the contacts list query (search, any / all / none with the all-of grouped semi-join, keyset with the NULL tail, tags per row, matching and total counts) and the profile read
+- `fa301dd` [T10] feat(contacts): add the contacts read use cases: the list page (normalised search, resolved and missing tag ids, the none-with-tags refusal), the profile with adders' names and the tag-history page with actors' names, through a contacts → workspaces display-name port
+- `4a2039a` [T11 T12] feat(contacts): t11 + T12 — addContactTag (find-or-create under the tag lock, limits, member rate limit, history, signals) and removeContactTag
+- `e61c0e8` [T13 T14] feat(contacts): t13 + T14 — the owner use cases listTags, renameTag (case-only, merge on confirmation, `tag.merged` log) and deleteTag against the confirmed count
+- `a89f050` [T15] feat(contacts): add conversations.findByContact and the inbox read getContactConversation, and pin with integration tests that the profile's reads never change read state
+- `c5194b5` [T16] feat(contacts): register the contacts routes (registerContacts): the eight operations with their zod schemas, the ownerOnly guard on rename and delete, and the wiring in buildDeps and buildApp
+- `ad35345` [T17] test(contacts): add the API end-to-end contacts stories, the integrity queries, the cross-workspace and secrecy suite, the live-push assertions and the seeded 10 000-contact timing checks
+- `5654dbd` test(contacts): give the owner merge/delete timing check three runs on a noisy machine, each run still checking every effect
+- `2fb0671` test(contacts): measure the list, profile and tag-change budgets over up to three batches so a noisy machine cannot fail them
+- `a888610` test(contacts): allow the pilot-scale suite a generous test timeout
+- `c6109e3` [T18] feat(contacts): add the web contacts and tags API sources and stores, with the live subscriptions to contact.changed, tags.changed, conversation.changed (never mark read) and resync
+- `d1a3db3` [T19] feat(contacts): build SCR-18, the Contacts list: ContactsTable and TagFilter with the address state, Show more, the counts, the missing-tag notice and the empty and error states, replacing ContactsPreview
+- `f690d2b` [T20] feat(contacts): build SCR-19, the contact profile: the header card with facts and tags, the conversation card, the Conversation / Tag history tabs with TagHistoryList and ContactCrumb, and remove the contacts sample source and SampleDataBadge
+- `40a759a` [T21] feat(contacts): build ContactConversationHistory, the profile's read-only thread: inbox-order items, older pages, media, live items, no read marking and no composer, with ReplyDeliveryState readOnly
+- `3ebcdc3` [T22] feat(contacts): build SCR-20, the TagControl, and mount it on the profile and on the inbox conversation header (SCR-02) with the contact's tags and the name linking to the profile
+- `f86138c` [T23] feat(contacts): build Settings — Tags (SCR-21) with the counts as links and the DeleteTagDialog (SCR-23), the owner-only Tags section in SettingsLayout and its route
+- `0a6283a` [T24] feat(contacts): build SCR-22, the RenameTagDialog with its merge step: name rules in place, TAG_NAME_TAKEN turned into the merge offer, TAG_MERGE_TARGET_CHANGED re-ask
+- `b331df6` [T25] test(contacts): add browser end-to-end contacts flows against the real API: list and filter, profile reading without marking read, tagging live between two members, owner rename / merge / delete, the operator refusal
+- `e1928e4` [T26] docs(contacts): update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the contacts routes and tables, the contacts → workspaces edge, the new signals and the new components
+- `0ad44b0` [review U1 U6 W1 W2] fix(contacts): latest re-read wins in the contacts store, the tag control re-reads on every opening and after the per-contact limit
+- `ecfd811` [review B1 B2 B3 B4] fix(contacts): close the tag-write races and stop naming adders inside the transaction
+- `7b01d93` [review U2 U3 U4 U5 U7 U8 W3 W4 W5 W6] fix(contacts): the empty card whenever there are no contacts, list address caps, tag filter loading / error, the profile's own guard and focus that follows the step
+- `6a651c1` [review S3 S4 S5] fix(contacts): log tag.merged per the contract, keep emoji joiners in tag names, validate crafted cursors
+- `f697db4` [review S4] docs(contacts): align ADR-0002 and the contract with the review's tag-name tidy rule (zero-width spaces removed, joiners kept)
+- `89092e4` [review RR1] fix(contacts): a superseded success shows when the newest profile read fails
+- `ea1210c` [review RR2] fix(contacts): the tag name key drops the joiners, a joiner next to a space folds into it
+- `bd8b2fb` [review RR3] fix(contacts): a tag change drops the held profile re-read, so a failed newer read cannot bring old tags back
+- `6b73b03` [review RR4] docs(contacts): state the tag-name tidy and key rule the same way everywhere, fix the sad.md mojibake
+- `67eedce` [review RR5] fix(contacts): a tag change re-reads a slice whose re-read was in flight, so newer changes it dropped come back
+- `2fdd944` review(contacts): independent review — 23 findings + 5 re-review findings, all fixed; PASS
 
 ## Verification
 
