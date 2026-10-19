@@ -189,6 +189,61 @@ describe('SCR-21 owner actions (AC-09, AC-11, AC-14)', () => {
   });
 });
 
+describe('SCR-21 rename and merge (AC-09)', () => {
+  it('a rename moves the row to its new place and re-reads the list', async () => {
+    api.renameTag.mockResolvedValue({
+      workspace_id: WS,
+      outcome: 'renamed',
+      tag: { ...KYIV, name: 'Zhytomyr' },
+      merged_tag_id: null,
+    });
+    renderSettings();
+    await flush();
+    api.listTags.mockResolvedValue(list(OLD, VIP, WHOLESALE, { ...KYIV, name: 'Zhytomyr' }));
+    fireEvent.click(within(row('Kyiv')).getByRole('button', { name: 'Rename' }));
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'Zhytomyr' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await flush();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    const names = screen
+      .getAllByRole('row')
+      .slice(1)
+      .map((r) => within(r).getAllByRole('cell')[0]!.textContent);
+    expect(names).toEqual(['Old promo', 'VIP', 'Wholesale', 'Zhytomyr']);
+    expect(api.listTags).toHaveBeenCalledTimes(2);
+  });
+
+  it('a merge removes the merged row, shows the target count and the success notice', async () => {
+    const LOYAL = tag(5, 'Loyal', 3);
+    api.listTags.mockResolvedValue(list(KYIV, LOYAL, VIP));
+    api.renameTag
+      .mockRejectedValueOnce(
+        new ApiError(409, ErrorCode.TAG_NAME_TAKEN, 'taken', {
+          tag: { ...VIP, contact_count: 12 },
+        }),
+      )
+      .mockResolvedValueOnce({
+        workspace_id: WS,
+        outcome: 'merged',
+        tag: { ...VIP, contact_count: 14 },
+        merged_tag_id: LOYAL.id,
+      });
+    renderSettings();
+    await flush();
+    api.listTags.mockResolvedValue(list(KYIV, { ...VIP, contact_count: 14 }));
+    fireEvent.click(within(row('Loyal')).getByRole('button', { name: 'Rename' }));
+    fireEvent.change(await screen.findByLabelText('Name'), { target: { value: 'vip' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Merge tags' }));
+    await flush();
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.getByText('«Loyal» merged into «VIP».')).toBeInTheDocument();
+    expect(screen.queryByRole('row', { name: /^Loyal/ })).toBeNull();
+    expect(within(row('VIP')).getByRole('link', { name: '14 contacts' })).toBeInTheDocument();
+  });
+});
+
 describe('SCR-21 owners only (AC-11)', () => {
   it('an operator gets the owners-only card and Back to inbox, and nothing is read', async () => {
     renderSettings('operator');

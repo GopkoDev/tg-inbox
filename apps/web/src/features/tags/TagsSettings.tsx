@@ -1,4 +1,4 @@
-import type { TagWithCount } from '@tg/shared';
+import { compareTagListOrder, tagNameKey, type TagWithCount } from '@tg/shared';
 import { MoreHorizontal } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
@@ -16,6 +16,7 @@ import {
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { contactsText, DeleteTagDialog } from './DeleteTagDialog';
+import { RenameTagDialog } from './RenameTagDialog';
 import { useTagsStore } from './store';
 
 const NO_TAGS: TagWithCount[] = [];
@@ -48,6 +49,7 @@ export function TagsSettings({ workspaceId }: { workspaceId: string }) {
   const [lost, setLost] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<TagWithCount | null>(null);
+  const [renaming, setRenaming] = useState<TagWithCount | null>(null);
 
   useEffect(() => {
     if (isOwner) void useTagsStore.getState().load(workspaceId, guard, {});
@@ -62,14 +64,23 @@ export function TagsSettings({ workspaceId }: { workspaceId: string }) {
     setNotice(null);
     setDeleting(tag);
   };
-  const startRename = () => {
+  const startRename = (tag: TagWithCount) => {
     setNotice(null);
+    setRenaming(tag);
   };
+  /** The list with `changed` in its tag-list place (and `gone` left out), until the re-read. */
+  const placed = (changed: TagWithCount, gone: string | null) =>
+    [...items.filter((t) => t.id !== changed.id && t.id !== gone), changed].sort((a, b) =>
+      compareTagListOrder(
+        { name: a.name, key: tagNameKey(a.name) },
+        { name: b.name, key: tagNameKey(b.name) },
+      ),
+    );
 
   const actions = (tag: TagWithCount) => (
     <>
       <div className="hidden justify-end gap-1 md:flex">
-        <Button type="button" variant="ghost" size="sm" onClick={() => startRename()}>
+        <Button type="button" variant="ghost" size="sm" onClick={() => startRename(tag)}>
           Rename
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={() => startDelete(tag)}>
@@ -89,7 +100,7 @@ export function TagsSettings({ workspaceId }: { workspaceId: string }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={() => startRename()}>Rename</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => startRename(tag)}>Rename</DropdownMenuItem>
             <DropdownMenuItem onSelect={() => startDelete(tag)}>Delete</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -186,6 +197,28 @@ export function TagsSettings({ workspaceId }: { workspaceId: string }) {
           {body}
         </CardContent>
       </Card>
+      <RenameTagDialog
+        workspaceId={workspaceId}
+        tag={renaming}
+        onClose={() => setRenaming(null)}
+        onDone={(answer, tag) => {
+          setRenaming(null);
+          if (answer.outcome === 'unchanged') return;
+          useTagsStore.getState().replace(workspaceId, placed(answer.tag, answer.merged_tag_id));
+          if (answer.outcome === 'merged')
+            setNotice(`«${tag.name}» merged into «${answer.tag.name}».`);
+          reread();
+        }}
+        onGone={() => {
+          setRenaming(null);
+          setNotice('This tag no longer exists.');
+          reread();
+        }}
+        onOwnerOnly={() => {
+          setRenaming(null);
+          setLost(true);
+        }}
+      />
       <DeleteTagDialog
         workspaceId={workspaceId}
         tag={deleting}
