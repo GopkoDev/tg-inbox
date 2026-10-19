@@ -297,6 +297,16 @@ export interface InboundInterceptor {
   intercept(input: InterceptInput): Promise<'pass' | 'consumed'>;
 }
 
+/**
+ * Called inside the paste-token connect transaction once the bot row is written (and a takeover is
+ * confirmed): `notifications` removes the live links made with another Telegram bot. A rotation
+ * passes the same bot id. A failure rolls the connect back.
+ */
+export type BotConnectedHook = (
+  tx: Executor,
+  event: { workspaceId: string; telegramBotId: bigint },
+) => Promise<void>;
+
 /** What `bots` calls on the contacts app layer. */
 export interface ContactsApi {
   countContacts(workspaceId: string): Promise<number>;

@@ -524,3 +524,38 @@ describe('pasteToken publishes bot.changed (AC-13)', () => {
     expect(h.signals.published).toEqual(['ws-a', 'ws-a']);
   });
 });
+
+describe('pasteToken calls the bot-connected hook in the connect transaction (flow 16)', () => {
+  it('a first connect: once, with the workspace and the Telegram bot id', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'none';
+    await h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    expect(h.botConnected).toEqual([{ workspaceId: 'ws-a', telegramBotId: 100001n }]);
+  });
+
+  it('a rotation: with the same Telegram bot id, so the hook can keep every link', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.telegram.me = ME;
+    await h.paste.pasteToken('ws-a', NEW_TOKEN, false);
+    expect(h.botConnected).toEqual([{ workspaceId: 'ws-a', telegramBotId: 100001n }]);
+  });
+
+  it('a refusal (takeover not confirmed) never reaches the hook', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'foreign';
+    await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false));
+    expect(h.botConnected).toEqual([]);
+  });
+
+  it('a hook that fails rolls the connect back: no bot row, no signal', async () => {
+    const h = createBotsHarness();
+    h.telegram.me = ME;
+    h.telegram.webhook = 'none';
+    h.hook.fail = true;
+    await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false));
+    expect(h.bots.rows).toEqual([]);
+    expect(h.signals.published).toEqual([]);
+  });
+});

@@ -37,6 +37,7 @@ import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js'
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
 import { createDeliverAnswer } from './modules/notifications/app/deliver-answer.js';
+import { createLinkLifecycle } from './modules/notifications/app/link-lifecycle.js';
 import { createIntercept } from './modules/notifications/app/intercept.js';
 import { createPresence } from './modules/notifications/app/presence.js';
 import { createSendPings } from './modules/notifications/app/send-pings.js';
@@ -156,13 +157,26 @@ export function buildDeps(
   const notificationReads = createNotificationReads({
     reads: createNotificationQueries(db),
   });
-  // Built before `team` so the deactivation transaction can call it (sad.md §5).
+  // The notifications link repositories and lifecycle are built before `team` and `bots`: both call
+  // them inside their own transactions (sad.md §5 ports).
+  const telegramLinks = createTelegramLinkRepo(db);
+  const connectLinks = createConnectLinkRepo(db);
+  const linkLifecycle = createLinkLifecycle({
+    links: telegramLinks,
+    connectLinks,
+    signals: createNotificationSignals(),
+    clock,
+  });
   const team = createTeam({
     uow: workspaceUow,
     clock,
     accounts: accountUseCases,
     publish,
-    onMembershipDeactivated: conversations.unassignDeactivatedMember,
+    // Composed port (sad.md §11): unassign the member's conversations, then remove their Telegram link.
+    onMembershipDeactivated: async (tx, event) => {
+      await conversations.unassignDeactivatedMember(tx, event);
+      await linkLifecycle.removeLinkOnDeactivation(tx, event);
+    },
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
   const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
@@ -195,8 +209,6 @@ export function buildDeps(
   const inboxStatus = createInboxBotStatus({ bots: botRepo });
 
   // --- notifications: calls the app layers of workspaces and bots (one-way: bots -> notifications by port) ---
-  const telegramLinks = createTelegramLinkRepo(db);
-  const connectLinks = createConnectLinkRepo(db);
   const botMessages = createBotMessageSender();
   const pingStarter = createPingStarter();
   const membershipLocks = {
@@ -269,7 +281,12 @@ export function buildDeps(
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus,
-    paste: createPasteToken({ ...botOwnerDeps, conversations }),
+    paste: createPasteToken({
+      ...botOwnerDeps,
+      conversations,
+      // Removes the links made with another bot, in the connect transaction (flow 16).
+      onBotConnected: (tx, event) => linkLifecycle.onBotConnected(tx, event),
+    }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
     acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations, interceptor }),
