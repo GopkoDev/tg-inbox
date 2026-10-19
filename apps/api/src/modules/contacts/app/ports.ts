@@ -81,7 +81,8 @@ export interface ContactRepo {
 //      `FOR NO KEY UPDATE` (member: `ContactRepo.lockContact`);
 //   3. the member rate-limit lock `tag-changes:<ws>:<account>` (`TagHistoryRepo.lockMemberChanges`);
 //   4. `FOR KEY SHARE` on the tag row (`lockForKeyShare`), before any `contact_tags` write;
-//   5. the writes (links, history).
+//   5. the writes (links, history); an owner merge first locks the links of both tags `FOR UPDATE`
+//      (`ContactTagRepo.mergeInto`), so a member removal in flight is waited for, never undone.
 // A member add therefore waits at step 4 on an owner's step 2 before it has written an index entry
 // the owner's re-point could wait on, so merge and add never deadlock.
 
@@ -169,8 +170,10 @@ export interface ContactTagRepo {
    * Owner merge, set-based, in the caller's transaction with both tag rows locked `FOR UPDATE`:
    * where a contact carries both tags the target link takes the earlier (added_at, adder) of the
    * two (the target's on a tie), those duplicate `from` links are deleted and the rest are
-   * re-pointed to `to`, keeping adder and time. Returns the ids of the contacts that carried
-   * `from` (for `appendMerged`, written by the caller after this call). Does not delete the tag.
+   * re-pointed to `to`, keeping adder and time. The links of both tags are locked first, so a
+   * concurrent member removal is waited for. Returns the ids of the contacts whose `from` link was
+   * actually merged (deleted or re-pointed; for `appendMerged`, written by the caller after this
+   * call). Does not delete the tag.
    */
   mergeInto(
     workspaceId: string,

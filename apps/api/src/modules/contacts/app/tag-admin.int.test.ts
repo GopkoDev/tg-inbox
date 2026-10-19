@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
@@ -8,9 +9,9 @@ import { createContactRepo } from '../infra/contact-repo.js';
 import { createContactTagRepo } from '../infra/contact-tag-repo.js';
 import { createTagHistoryRepo } from '../infra/tag-history-repo.js';
 import { createTagRepo } from '../infra/tag-repo.js';
-import type { TagSignals } from './ports.js';
-import { createTagAdmin } from './tag-admin.js';
-import { createTagWrites } from './tags.js';
+import type { TagHistoryRepo, TagSignals } from './ports.js';
+import { createTagAdmin, type TagAdminDeps } from './tag-admin.js';
+import { createTagWrites, type TagWritesDeps } from './tags.js';
 
 const NOW = new Date('2026-10-19T12:00:00.000Z');
 const ago = (s: number) => new Date(NOW.getTime() - s * 1000);
@@ -22,6 +23,8 @@ describe('owner tag management (postgres)', () => {
   let writes: ReturnType<typeof createTagWrites>;
   let signalLog: string[];
   let logs: { obj: Record<string, unknown>; msg: string }[];
+  let adminDeps: TagAdminDeps;
+  let writesDeps: TagWritesDeps;
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -42,7 +45,7 @@ describe('owner tag management (postgres)', () => {
     const contactTags = createContactTagRepo(db);
     const tagHistory = createTagHistoryRepo(db);
     const clock = fixedClock(NOW);
-    admin = createTagAdmin({
+    adminDeps = {
       transaction,
       tags,
       contactTags,
@@ -50,8 +53,9 @@ describe('owner tag management (postgres)', () => {
       signals,
       clock,
       logger: { info: (obj, msg) => logs.push({ obj: obj as Record<string, unknown>, msg }) },
-    });
-    writes = createTagWrites({
+    };
+    admin = createTagAdmin(adminDeps);
+    writesDeps = {
       transaction,
       contacts: createContactRepo(db),
       tags,
@@ -60,7 +64,8 @@ describe('owner tag management (postgres)', () => {
       signals,
       workspaces: { displayNames: async (_ws, ids) => new Map(ids.map((id) => [id, 'Member'])) },
       clock,
-    });
+    };
+    writes = createTagWrites(writesDeps);
   });
 
   afterAll(async () => {
@@ -103,6 +108,26 @@ describe('owner tag management (postgres)', () => {
       });
     }
   };
+
+  /** VIP on 8 contacts, Loyal on 8 with 2 shared: 14 carry VIP afterwards, 8 get a merged entry. */
+  async function seed() {
+    const { a } = await twoWorkspacesWithTags(db);
+    const vip = a.tagId;
+    await db.deleteFrom('contact_tag_history').where('workspace_id', '=', a.workspaceId).execute();
+    await db.deleteFrom('contact_tags').where('workspace_id', '=', a.workspaceId).execute();
+    const loyal = await insertTag(db, {
+      workspaceId: a.workspaceId,
+      createdByAccountId: a.ownerAccountId,
+      name: 'Loyal',
+    });
+    const pool = await contacts(a, 14);
+    const onVip = pool.slice(0, 8);
+    const onLoyal = pool.slice(6, 14); // 6 and 7 carry both
+    await carry(a, onVip, vip, a.operatorAccountId, ago(1000));
+    await carry(a, onLoyal.slice(0, 2), loyal, a.ownerAccountId, ago(2000)); // earlier than VIP's
+    await carry(a, onLoyal.slice(2), loyal, a.ownerAccountId, ago(500));
+    return { a, vip, loyal, pool, onVip, onLoyal };
+  }
 
   describe('listTags and rename (AC-09, AC-04, AC-12)', () => {
     it('lists the workspace tags with counts, zero counts included, none of another workspace', async () => {
@@ -160,29 +185,6 @@ describe('owner tag management (postgres)', () => {
   });
 
   describe('the confirmed merge (AC-09)', () => {
-    /** VIP on 8 contacts, Loyal on 8 with 2 shared: 14 carry VIP afterwards, 8 get a merged entry. */
-    async function seed() {
-      const { a } = await twoWorkspacesWithTags(db);
-      const vip = a.tagId;
-      await db
-        .deleteFrom('contact_tag_history')
-        .where('workspace_id', '=', a.workspaceId)
-        .execute();
-      await db.deleteFrom('contact_tags').where('workspace_id', '=', a.workspaceId).execute();
-      const loyal = await insertTag(db, {
-        workspaceId: a.workspaceId,
-        createdByAccountId: a.ownerAccountId,
-        name: 'Loyal',
-      });
-      const pool = await contacts(a, 14);
-      const onVip = pool.slice(0, 8);
-      const onLoyal = pool.slice(6, 14); // 6 and 7 carry both
-      await carry(a, onVip, vip, a.operatorAccountId, ago(1000));
-      await carry(a, onLoyal.slice(0, 2), loyal, a.ownerAccountId, ago(2000)); // earlier than VIP's
-      await carry(a, onLoyal.slice(2), loyal, a.ownerAccountId, ago(500));
-      return { a, vip, loyal, pool, onVip, onLoyal };
-    }
-
     it('merges set-based: 14 on VIP, adders kept, earlier link wins, one merged entry per carrier', async () => {
       const { a, vip, loyal, onLoyal } = await seed();
       signalLog.length = 0;
@@ -256,7 +258,7 @@ describe('owner tag management (postgres)', () => {
         const { a, vip, loyal, pool } = await seed();
         const fresh = await insertContact(db, { workspaceId: a.workspaceId });
         const target = round % 2 === 0 ? loyal : vip;
-        const [merge, add] = await Promise.allSettled([
+        const [merge, add, second] = await Promise.allSettled([
           admin.renameTag(a.workspaceId, a.ownerAccountId, loyal, {
             name: 'VIP',
             mergeIntoTagId: vip,
@@ -278,6 +280,15 @@ describe('owner tag management (postgres)', () => {
           ),
         ]);
         expect(merge.status).toBe('fulfilled');
+        // the second add lands first (then deduplicated by the merge) or finds VIP already carried
+        const secondOutcome =
+          second.status === 'fulfilled'
+            ? second.value.outcome
+            : String((second.reason as { code?: unknown }).code);
+        expect(secondOutcome).toMatch(/^(recorded|unchanged)$/);
+        expect(
+          (await links(a.workspaceId, vip)).filter((x) => x.contact_id === pool[10]).length,
+        ).toBe(1);
         if (add.status === 'rejected') {
           expect(add.reason).toMatchObject({ code: 'TAG_NOT_FOUND' });
           expect(
@@ -314,6 +325,227 @@ describe('owner tag management (postgres)', () => {
       ).toBe('recorded');
       const res = await admin.renameTag(a.workspaceId, a.ownerAccountId, t, { name: 'Renamed' });
       expect(res.outcome).toBe('renamed');
+    });
+  });
+
+  /**
+   * Races pinned in a fixed interleaving: one side pauses inside its transaction (after its writes,
+   * before its commit) until the other is seen waiting on a row lock in pg_stat_activity.
+   */
+  describe('races pinned with a paused transaction (ADR-0004)', () => {
+    function pause() {
+      let reached!: () => void;
+      let release!: () => void;
+      const atPause = new Promise<void>((r) => (reached = r));
+      const released = new Promise<void>((r) => (release = r));
+      return {
+        atPause,
+        release,
+        hold: async () => {
+          reached();
+          await released;
+        },
+      };
+    }
+
+    /** Resolves once a backend waits on a lock, or once `other` settled without ever waiting. */
+    async function untilWaitingOnLock(other?: Promise<unknown>) {
+      let settled = false;
+      void other?.then(
+        () => (settled = true),
+        () => (settled = true),
+      );
+      for (let i = 0; i < 400 && !settled; i++) {
+        const { rows } = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND wait_event_type = 'Lock'`.execute(db);
+        if ((rows[0]?.n ?? 0) > 0) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      if (!settled) throw new Error('nothing waits on a lock');
+    }
+
+    /** The answer's outcome, or the code of the error it failed with ('23505' = a unique violation). */
+    const outcomeOf = (r: PromiseSettledResult<{ outcome: string }>) =>
+      r.status === 'fulfilled' ? r.value.outcome : String((r.reason as { code?: unknown }).code);
+
+    /** An admin whose merge / delete pauses after its link writes, before the commit. */
+    function pausedAdmin(p: ReturnType<typeof pause>) {
+      const tagHistory: TagAdminDeps['tagHistory'] = {
+        appendMerged: async (...args: Parameters<TagHistoryRepo['appendMerged']>) => {
+          await p.hold();
+          return adminDeps.tagHistory.appendMerged(...args);
+        },
+        appendDeleted: async (...args: Parameters<TagHistoryRepo['appendDeleted']>) => {
+          await p.hold();
+          return adminDeps.tagHistory.appendDeleted(...args);
+        },
+      };
+      return createTagAdmin({ ...adminDeps, tagHistory });
+    }
+
+    /** Member writes that pause after the link write, before the history entry and the commit. */
+    function pausedWrites(p: ReturnType<typeof pause>) {
+      const tagHistory: TagWritesDeps['tagHistory'] = {
+        ...writesDeps.tagHistory,
+        append: async (...args: Parameters<TagHistoryRepo['append']>) => {
+          await p.hold();
+          return writesDeps.tagHistory.append(...args);
+        },
+      };
+      return createTagWrites({ ...writesDeps, tagHistory });
+    }
+
+    /** The entries written by the race (the seed's own added entries are older than NOW). */
+    const trail = async (workspaceId: string, contactId: string) =>
+      (await history(workspaceId))
+        .filter((e) => e.contact_id === contactId && e.created_at.getTime() === NOW.getTime())
+        .map((e) => e.kind)
+        .sort();
+
+    it('an add of the target onto a contact the merge re-points answers unchanged, not a 500 (B1)', async () => {
+      const { a, vip, loyal, pool } = await seed();
+      const c = pool[10]!; // carries Loyal only
+      const p = pause();
+      const merge = pausedAdmin(p).renameTag(a.workspaceId, a.ownerAccountId, loyal, {
+        name: 'VIP',
+        mergeIntoTagId: vip,
+      });
+      await p.atPause; // (c, Loyal) is re-pointed to VIP, not committed; VIP is FOR UPDATE
+      const add = writes.addContactTag(
+        a.workspaceId,
+        a.operatorAccountId,
+        c,
+        { tagId: vip },
+        'inbox',
+      );
+      try {
+        await untilWaitingOnLock(add); // the add waits for FOR KEY SHARE on VIP
+      } finally {
+        p.release();
+      }
+      const [m, r] = await Promise.allSettled([merge, add]);
+      expect(m.status).toBe('fulfilled');
+      expect(outcomeOf(r)).toBe('unchanged');
+      const value = (r as PromiseFulfilledResult<{ tags: { id: string }[] }>).value;
+      expect(value.tags.map((t) => t.id)).toEqual([vip]);
+      expect((await links(a.workspaceId, vip)).filter((x) => x.contact_id === c)).toHaveLength(1);
+      expect(await trail(a.workspaceId, c)).toEqual(['merged']);
+    });
+
+    it('a removal racing a merge that re-pointed the link answers unchanged and records nothing (B3)', async () => {
+      const { a, vip, loyal, pool } = await seed();
+      const c = pool[10]!; // carries Loyal only
+      const p = pause();
+      const merge = pausedAdmin(p).renameTag(a.workspaceId, a.ownerAccountId, loyal, {
+        name: 'VIP',
+        mergeIntoTagId: vip,
+      });
+      await p.atPause;
+      signalLog.length = 0;
+      const remove = writes.removeContactTag(a.workspaceId, a.operatorAccountId, c, loyal, 'inbox');
+      try {
+        await untilWaitingOnLock(remove); // the removal's DELETE waits for the merge's row lock
+      } finally {
+        p.release();
+      }
+      const [m, r] = await Promise.allSettled([merge, remove]);
+      expect(m.status).toBe('fulfilled');
+      expect(outcomeOf(r)).toBe('unchanged');
+      expect((await links(a.workspaceId, vip)).some((x) => x.contact_id === c)).toBe(true);
+      expect(await trail(a.workspaceId, c)).toEqual(['merged']);
+      expect(signalLog).not.toContain(`contact.changed:${a.workspaceId}:${c}`);
+    });
+
+    it('a removal racing a delete that took the link answers unchanged and records nothing (B3)', async () => {
+      const { a } = await twoWorkspacesWithTags(db);
+      const tagId = await insertTag(db, {
+        workspaceId: a.workspaceId,
+        createdByAccountId: a.ownerAccountId,
+        name: 'Old promo',
+      });
+      const cs = await contacts(a, 3);
+      await carry(a, cs, tagId, a.operatorAccountId, ago(100));
+      const p = pause();
+      const del = pausedAdmin(p).deleteTag(a.workspaceId, a.ownerAccountId, tagId, 3);
+      await p.atPause; // the links are deleted, not committed
+      signalLog.length = 0;
+      const remove = writes.removeContactTag(
+        a.workspaceId,
+        a.operatorAccountId,
+        cs[0]!,
+        tagId,
+        'inbox',
+      );
+      try {
+        await untilWaitingOnLock(remove);
+      } finally {
+        p.release();
+      }
+      const [d, r] = await Promise.allSettled([del, remove]);
+      expect(d).toMatchObject({ status: 'fulfilled', value: { removed_from_count: 3 } });
+      expect(outcomeOf(r)).toBe('unchanged');
+      expect(r).toMatchObject({ value: { tags: [] } });
+      expect(await trail(a.workspaceId, cs[0]!)).toEqual(['deleted']);
+      expect(signalLog).toEqual([`tags.changed:${a.workspaceId}`]);
+    });
+
+    /** A member removal paused after its DELETE, then the merge started behind it. */
+    async function removalThenMerge(
+      a: Ws,
+      contactId: string,
+      tagId: string,
+      vip: string,
+      loyal: string,
+    ) {
+      const p = pause();
+      const remove = pausedWrites(p).removeContactTag(
+        a.workspaceId,
+        a.operatorAccountId,
+        contactId,
+        tagId,
+        'inbox',
+      );
+      await p.atPause; // the link is deleted, not committed
+      const merge = admin.renameTag(a.workspaceId, a.ownerAccountId, loyal, {
+        name: 'VIP',
+        mergeIntoTagId: vip,
+      });
+      try {
+        await untilWaitingOnLock(merge); // the merge waits for the member's row lock
+      } finally {
+        p.release();
+      }
+      const [r, m] = await Promise.allSettled([remove, merge]);
+      expect(outcomeOf(r)).toBe('recorded');
+      expect(outcomeOf(m)).toBe('merged');
+    }
+
+    it('a merge racing the removal of the merged tag writes no merged entry for that contact (B4)', async () => {
+      const { a, vip, loyal, pool } = await seed();
+      const gone = pool[10]!; // carries Loyal only
+      await removalThenMerge(a, gone, loyal, vip, loyal);
+      expect(await trail(a.workspaceId, gone)).toEqual(['removed']);
+      expect((await links(a.workspaceId, vip)).some((x) => x.contact_id === gone)).toBe(false);
+      // 8 carriers of Loyal minus the one whose link the member removed first
+      const merged = await history(a.workspaceId, 'merged');
+      expect(merged).toHaveLength(7);
+      expect(merged.map((e) => e.contact_id)).not.toContain(gone);
+      expect(await links(a.workspaceId, vip)).toHaveLength(13);
+    });
+
+    it('a merge racing the removal of the target moves the merged link instead of dropping it (B4)', async () => {
+      const { a, vip, loyal } = await seed();
+      // carries VIP (earlier, by the operator) and Loyal (later, by the owner)
+      const both = await insertContact(db, { workspaceId: a.workspaceId });
+      await carry(a, [both], vip, a.operatorAccountId, ago(1000));
+      await carry(a, [both], loyal, a.ownerAccountId, ago(500));
+      await removalThenMerge(a, both, vip, vip, loyal);
+      const kept = (await links(a.workspaceId, vip)).filter((x) => x.contact_id === both);
+      expect(kept).toEqual([
+        expect.objectContaining({ added_by_account_id: a.ownerAccountId, added_at: ago(500) }),
+      ]);
+      expect(await trail(a.workspaceId, both)).toEqual(['merged', 'removed']);
     });
   });
 

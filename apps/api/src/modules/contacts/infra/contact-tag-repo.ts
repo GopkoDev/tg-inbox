@@ -92,13 +92,15 @@ export function createContactTagRepo(db: Db): ContactTagRepo {
 
     async mergeInto(workspaceId, fromTagId, toTagId, tx) {
       if (fromTagId === toTagId) throw new Error('mergeInto: a tag cannot be merged into itself');
-      const carriers = await tx
-        .selectFrom('contact_tags')
-        .select('contact_id')
-        .where('workspace_id', '=', workspaceId)
-        .where('tag_id', '=', fromTagId)
-        .execute();
-      if (carriers.length === 0) return [];
+      // 0. Lock the links of both tags. A member removal in flight is waited for and its row is
+      //    skipped; member adds of either tag already wait on the tag rows locked by the caller, so
+      //    from here on the set of links the merge works on is fixed (ADR-0004, step 5).
+      const locked = await sql<{ tag_id: string }>`
+        SELECT tag_id FROM contact_tags
+        WHERE workspace_id = ${workspaceId} AND tag_id IN (${fromTagId}, ${toTagId})
+        ORDER BY contact_id, tag_id
+        FOR UPDATE`.execute(tx);
+      if (!locked.rows.some((r) => r.tag_id === fromTagId)) return [];
       // 1. Contacts that carry both: the target link takes the strictly earlier addition.
       await sql`
         UPDATE contact_tags AS t
@@ -108,18 +110,21 @@ export function createContactTagRepo(db: Db): ContactTagRepo {
           AND f.workspace_id = t.workspace_id AND f.tag_id = ${fromTagId}
           AND f.contact_id = t.contact_id AND f.added_at < t.added_at`.execute(tx);
       // 2. ...and their now-duplicate links of the merged tag go.
-      await sql`
+      const dropped = await sql<{ contact_id: string }>`
         DELETE FROM contact_tags AS f
         WHERE f.workspace_id = ${workspaceId} AND f.tag_id = ${fromTagId}
           AND EXISTS (
             SELECT 1 FROM contact_tags AS t
             WHERE t.workspace_id = f.workspace_id AND t.tag_id = ${toTagId}
-              AND t.contact_id = f.contact_id)`.execute(tx);
+              AND t.contact_id = f.contact_id)
+        RETURNING f.contact_id`.execute(tx);
       // 3. The rest move to the target with their adder and time.
-      await sql`
+      const moved = await sql<{ contact_id: string }>`
         UPDATE contact_tags SET tag_id = ${toTagId}
-        WHERE workspace_id = ${workspaceId} AND tag_id = ${fromTagId}`.execute(tx);
-      return carriers.map((r) => r.contact_id);
+        WHERE workspace_id = ${workspaceId} AND tag_id = ${fromTagId}
+        RETURNING contact_id`.execute(tx);
+      // The carriers are the links actually merged, not a read taken before the writes.
+      return [...dropped.rows, ...moved.rows].map((r) => r.contact_id);
     },
 
     async deleteLinksReturning(workspaceId, tagId, tx) {

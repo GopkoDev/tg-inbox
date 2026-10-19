@@ -20,6 +20,7 @@ import { memberRefs } from './member-refs.js';
 import type {
   ContactRepo,
   ContactTagRepo,
+  ContactTagRow,
   DisplayNames,
   Executor,
   MemberTagSource,
@@ -71,13 +72,12 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
   const log = (outcome: string, ids: { workspaceId: string; contactId: string; tagId?: string }) =>
     deps.logger?.info({ ...ids, outcome }, 'contact tag change');
 
-  /** The contact's tags as the wire carries them, adders named. */
-  async function carriedDto(
-    workspaceId: string,
-    contactId: string,
-    tx: Executor,
-  ): Promise<ContactTag[]> {
-    const carried = await contactTags.tagsOf(workspaceId, contactId, tx);
+  /**
+   * The contact's tags as the wire carries them, adders named. Called after the commit: the names
+   * come through the pool, so resolving them inside the transaction would take a second connection
+   * while the contact row and the locks are held (precedent: inbox/app/change-state.ts).
+   */
+  async function named(workspaceId: string, carried: ContactTagRow[]): Promise<ContactTag[]> {
     const ref = await memberRefs(
       workspaces,
       workspaceId,
@@ -122,7 +122,7 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
 
       // A refusal throws inside the transaction, so a tag created above it rolls back too.
       try {
-        return await transaction(async (tx): Promise<ContactTagAdded> => {
+        const { answer, carried } = await transaction(async (tx): Promise<AddAnswer> => {
           const now = clock.now();
           let tagId = 'tagId' in choice ? choice.tagId : '';
           let created = false;
@@ -163,12 +163,14 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
           if (already) {
             log('unchanged', { ...ids, tagId });
             return {
-              workspace_id: workspaceId,
-              contact_id: contactId,
-              outcome: 'unchanged',
-              tag: { id: already.tagId, name: already.name },
-              tag_created: false,
-              tags: await carriedDto(workspaceId, contactId, tx),
+              answer: {
+                workspace_id: workspaceId,
+                contact_id: contactId,
+                outcome: 'unchanged',
+                tag: { id: already.tagId, name: already.name },
+                tag_created: false,
+              },
+              carried,
             };
           }
           if (!canAddToContact(carried.length)) throw new ContactTagLimitReachedError();
@@ -179,6 +181,22 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
           // 5. The tag row FOR KEY SHARE: gone (deleted, merged away, foreign) = TAG_NOT_FOUND.
           const tag: TagRecord | null = await tags.lockForKeyShare(workspaceId, tagId, tx);
           if (!tag) throw new TagNotFoundError(tagId);
+
+          // An owner merge we waited for at step 5 may have re-pointed one of this contact's links
+          // to this very tag: then it already carries it (and has the merged entry), so unchanged.
+          if (await contactTags.carries(workspaceId, contactId, tagId, tx)) {
+            log('unchanged', { ...ids, tagId });
+            return {
+              answer: {
+                workspace_id: workspaceId,
+                contact_id: contactId,
+                outcome: 'unchanged',
+                tag: { id: tag.id, name: tag.name },
+                tag_created: false,
+              },
+              carried: await contactTags.tagsOf(workspaceId, contactId, tx),
+            };
+          }
 
           // 6-8. The link, one added entry carrying the current name, the signals.
           await contactTags.insert(
@@ -200,17 +218,19 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
           );
           await signals.contactChanged(tx, workspaceId, contactId);
           if (created) await signals.tagsChanged(tx, workspaceId);
-          const result: ContactTagAdded = {
-            workspace_id: workspaceId,
-            contact_id: contactId,
-            outcome: 'recorded',
-            tag: { id: tag.id, name: tag.name },
-            tag_created: created,
-            tags: await carriedDto(workspaceId, contactId, tx),
-          };
           log('added', { ...ids, tagId });
-          return result;
+          return {
+            answer: {
+              workspace_id: workspaceId,
+              contact_id: contactId,
+              outcome: 'recorded',
+              tag: { id: tag.id, name: tag.name },
+              tag_created: created,
+            },
+            carried: await contactTags.tagsOf(workspaceId, contactId, tx),
+          };
         });
+        return { ...answer, tags: await named(workspaceId, carried) };
       } catch (e) {
         const code = (e as { code?: string }).code;
         const outcome = REFUSALS[code ?? ''];
@@ -222,7 +242,7 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
     async removeContactTag(workspaceId, actorAccountId, contactId, tagId, source) {
       const ids = { workspaceId, contactId, tagId };
       try {
-        return await transaction(async (tx): Promise<ContactTagRemoved> => {
+        const { answer, carried } = await transaction(async (tx): Promise<RemoveAnswer> => {
           const now = clock.now();
           // 2. The contact row; a removal touches no tag row, so it never waits on an owner.
           if (!(await contacts.lockContact(workspaceId, contactId, tx))) {
@@ -231,19 +251,21 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
           // 3. Not carried (deleted, merged, foreign or never carried) = unchanged, no hint which.
           const carried = await contactTags.tagsOf(workspaceId, contactId, tx);
           const row = carried.find((t) => t.tagId === tagId);
-          if (!row) {
+          const unchanged = (rows: ContactTagRow[]): RemoveAnswer => {
             log('unchanged', ids);
             return {
-              workspace_id: workspaceId,
-              contact_id: contactId,
-              outcome: 'unchanged',
-              tags: await carriedDto(workspaceId, contactId, tx),
+              answer: { workspace_id: workspaceId, contact_id: contactId, outcome: 'unchanged' },
+              carried: rows,
             };
-          }
+          };
+          if (!row) return unchanged(carried);
           // 4. The budget, shared with adds.
           await checkBudget(workspaceId, actorAccountId, now, tx);
-          // 5-7. The link, one removed entry with the current name, the signal.
-          await contactTags.delete(workspaceId, contactId, tagId, tx);
+          // 5-7. The link, one removed entry with the current name, the signal. An owner merge or
+          // delete that held the link row took it first: nothing removed, so nothing recorded.
+          if (!(await contactTags.delete(workspaceId, contactId, tagId, tx))) {
+            return unchanged(await contactTags.tagsOf(workspaceId, contactId, tx));
+          }
           await tagHistory.append(
             {
               workspaceId,
@@ -260,12 +282,11 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
           await signals.contactChanged(tx, workspaceId, contactId);
           log('removed', ids);
           return {
-            workspace_id: workspaceId,
-            contact_id: contactId,
-            outcome: 'recorded',
-            tags: await carriedDto(workspaceId, contactId, tx),
+            answer: { workspace_id: workspaceId, contact_id: contactId, outcome: 'recorded' },
+            carried: await contactTags.tagsOf(workspaceId, contactId, tx),
           };
         });
+        return { ...answer, tags: await named(workspaceId, carried) };
       } catch (e) {
         const outcome = REFUSALS[(e as { code?: string }).code ?? ''];
         if (outcome) log(outcome, ids);
@@ -274,6 +295,11 @@ export function createTagWrites(deps: TagWritesDeps): TagWrites {
     },
   };
 }
+
+/** A use case's answer before the adders are named, and the carried rows to name after the commit. */
+type AddAnswer = { answer: Omit<ContactTagAdded, 'tags'>; carried: ContactTagRow[] };
+type RemoveBody = Omit<ContactTagRemoved, 'tags'>;
+type RemoveAnswer = { answer: RemoveBody; carried: ContactTagRow[] };
 
 /** Error code to the structured-log outcome of a refused change. */
 const REFUSALS: Record<string, string> = {

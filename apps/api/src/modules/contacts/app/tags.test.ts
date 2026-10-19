@@ -15,15 +15,28 @@ async function setup() {
   const store = fakeTagStore();
   const ports = fakeTagWritePorts(contactRepo, store);
   const logs: { obj: object; msg: string }[] = [];
+  // B2: names are resolved through the pool, so never while the transaction holds its connection.
+  let inTx = false;
+  const nameCallsInTx: boolean[] = [];
   const writes = createTagWrites({
-    transaction: ports.transaction,
+    transaction: async (fn) => {
+      inTx = true;
+      try {
+        return await ports.transaction(fn);
+      } finally {
+        inTx = false;
+      }
+    },
     contacts: contactRepo,
     tags: ports.tags,
     contactTags: ports.contactTags,
     tagHistory: ports.tagHistory,
     signals: ports.signals,
     workspaces: {
-      displayNames: async (_ws, ids) => new Map(ids.map((id) => [id, NAMES.get(id) ?? 'Other'])),
+      displayNames: async (_ws, ids) => {
+        nameCallsInTx.push(inTx);
+        return new Map(ids.map((id) => [id, NAMES.get(id) ?? 'Other']));
+      },
     },
     clock: fixedClock(NOW),
     logger: { info: (obj, msg) => logs.push({ obj, msg }) },
@@ -43,7 +56,7 @@ async function setup() {
         NOW,
       )
     ).contactId;
-  return { writes, store, ports, contact, logs };
+  return { writes, store, ports, contact, logs, nameCallsInTx };
 }
 
 const history = (s: Awaited<ReturnType<typeof setup>>) => s.store.entries;
@@ -356,5 +369,44 @@ describe('removeContactTag (AC-06, AC-12, AC-15)', () => {
       headers: { 'Retry-After': '40' },
     });
     expect(s.store.links).toHaveLength(1);
+  });
+});
+
+describe('adders are named after the commit (no second pool connection inside the transaction)', () => {
+  it('resolves display names outside the transaction for recorded and unchanged adds and removes', async () => {
+    const s = await setup();
+    const c = await s.contact(1);
+    const vip = s.store.addTag(WS, 'VIP');
+    const added = await s.writes.addContactTag(WS, ME, c, { tagId: vip }, 'inbox');
+    const again = await s.writes.addContactTag(WS, ME, c, { tagId: vip }, 'inbox');
+    const removed = await s.writes.removeContactTag(WS, ME, c, vip, 'inbox');
+    s.store.link(WS, c, vip, ME, NOW);
+    const gone = await s.writes.removeContactTag(WS, ME, c, newId(), 'inbox');
+    expect([added.outcome, again.outcome, removed.outcome, gone.outcome]).toEqual([
+      'recorded',
+      'unchanged',
+      'recorded',
+      'unchanged',
+    ]);
+    expect(again.tags[0]?.added_by).toEqual({ account_id: ME, display_name: 'Mia Member' });
+    expect(gone.tags[0]?.added_by).toEqual({ account_id: ME, display_name: 'Mia Member' });
+    expect(s.nameCallsInTx.length).toBeGreaterThan(0);
+    expect(s.nameCallsInTx).not.toContain(true);
+  });
+});
+
+describe('a removal whose link an owner operation took first (B3)', () => {
+  it('answers unchanged when the delete removed nothing: no entry, no signal, no budget', async () => {
+    const s = await setup();
+    const c = await s.contact(1);
+    const vip = s.store.addTag(WS, 'VIP');
+    s.store.link(WS, c, vip, ME, NOW);
+    // a merge or delete committed between the read and the delete: the row is no longer there
+    s.ports.contactTags.delete = async () => false;
+    const res = await s.writes.removeContactTag(WS, ME, c, vip, 'inbox');
+    expect(res.outcome).toBe('unchanged');
+    expect(history(s)).toHaveLength(0);
+    expect(s.ports.signalLog).toEqual([]);
+    expect(s.logs.at(-1)?.obj).toMatchObject({ outcome: 'unchanged' });
   });
 });
