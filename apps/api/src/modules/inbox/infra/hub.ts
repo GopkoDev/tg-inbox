@@ -221,6 +221,16 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       let onlyAccount: string | undefined;
       if (signal.type === 'bot.changed') {
         frame = { type: 'bot.changed', v: 1, workspace_id: signal.workspace_id };
+      } else if (signal.type === 'contact.changed') {
+        frame = {
+          type: 'contact.changed',
+          v: 1,
+          workspace_id: signal.workspace_id,
+          contact_id: signal.contact_id,
+          change: signal.change,
+        };
+      } else if (signal.type === 'tags.changed') {
+        frame = { type: 'tags.changed', v: 1, workspace_id: signal.workspace_id };
       } else if (signal.type === 'telegram_link.changed') {
         frame = { type: 'telegram_link.changed', v: 1, workspace_id: signal.workspace_id };
         onlyAccount = signal.account_id;

@@ -152,6 +152,30 @@ describe('live hub dispatch', () => {
     });
   });
 
+  it('forwards contact.changed and tags.changed to every socket of the workspace only, ids only', () => {
+    const { hub, open } = setup();
+    const [a, b] = [newId(), newId()];
+    const x = open(a, newId());
+    const y = open(a, newId());
+    const z = open(b, newId());
+    const contactId = newId();
+    hub.dispatch({
+      type: 'contact.changed',
+      v: 1,
+      workspace_id: a,
+      contact_id: contactId,
+      change: 'tags',
+    });
+    hub.dispatch({ type: 'tags.changed', v: 1, workspace_id: a });
+    for (const s of [x, y]) {
+      expect(s.socket.frames.map((f) => LiveFrame.parse(f))).toEqual([
+        { type: 'contact.changed', v: 1, workspace_id: a, contact_id: contactId, change: 'tags' },
+        { type: 'tags.changed', v: 1, workspace_id: a },
+      ]);
+    }
+    expect(z.socket.frames).toEqual([]);
+  });
+
   it('membership.deactivated closes only that account sockets of that workspace with 4403 and forwards nothing', () => {
     const { hub, open } = setup();
     const [a, b] = [newId(), newId()];

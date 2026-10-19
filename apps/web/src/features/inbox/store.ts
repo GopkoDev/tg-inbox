@@ -811,6 +811,9 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         return;
       case 'telegram_link.changed':
         return; // the settings screen listens for it; the inbox has nothing to refresh
+      case 'contact.changed':
+      case 'tags.changed':
+        return; // the tag control and the contacts screens subscribe to these; nothing here yet
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
         const open = get().thread?.conversationId === conversationId;

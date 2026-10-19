@@ -725,3 +725,24 @@ describe('PresenceFrame (AC-07)', () => {
     expect(PresenceFrame.safeParse({ type: 'presence', v: 1 }).success).toBe(false);
   });
 });
+
+describe('contact.changed and tags.changed frames (events.md)', () => {
+  const contact = { type: 'contact.changed', v: 1, workspace_id: W, contact_id: C, change: 'tags' };
+  const tags = { type: 'tags.changed', v: 1, workspace_id: W };
+  it('parses both', () => {
+    expect(LiveFrame.safeParse(contact).success).toBe(true);
+    expect(LiveFrame.safeParse(tags).success).toBe(true);
+  });
+  it('ignores unknown extra fields like the other frames', () => {
+    expect(LiveFrame.safeParse({ ...contact, future: 1 }).success).toBe(true);
+    expect(LiveFrame.safeParse({ ...tags, future: 1 }).success).toBe(true);
+  });
+  it('rejects malformed ones', () => {
+    expect(LiveFrame.safeParse({ ...contact, contact_id: undefined }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...contact, change: 'profile' }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...contact, workspace_id: undefined }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...contact, v: 2 }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...tags, workspace_id: 'nope' }).success).toBe(false);
+    expect(LiveFrame.safeParse({ type: 'tags.changed', v: 1 }).success).toBe(false);
+  });
+});

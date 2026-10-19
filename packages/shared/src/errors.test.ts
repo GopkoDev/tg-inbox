@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ErrorCode, ErrorEnvelope } from './errors.js';
 
 describe('ErrorCode', () => {
-  it('declares the 39 codes', () => {
-    expect(Object.keys(ErrorCode)).toHaveLength(39);
+  it('declares the 47 codes', () => {
+    expect(Object.keys(ErrorCode)).toHaveLength(47);
     for (const c of [
       'CONNECT_LINK_LIMIT_REACHED',
       'TELEGRAM_ALREADY_LINKED',
@@ -39,6 +39,14 @@ describe('ErrorCode', () => {
       'CLOSE_NEEDS_CONFIRMATION',
       'ASSIGNEE_NOT_ACTIVE',
       'CHANGE_LIMIT_REACHED',
+      'TAG_NAME_INVALID',
+      'TAG_LIMIT_REACHED',
+      'CONTACT_TAG_LIMIT_REACHED',
+      'TAG_NOT_FOUND',
+      'TAG_NAME_TAKEN',
+      'TAG_MERGE_TARGET_CHANGED',
+      'TAG_COUNT_CHANGED',
+      'TAG_CHANGE_LIMIT_REACHED',
     ]) {
       expect(ErrorCode).toHaveProperty(c, c);
     }
