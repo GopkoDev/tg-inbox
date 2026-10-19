@@ -61,3 +61,32 @@ describe('tag history cursor', () => {
     expect(decodeHistoryCursor(c)).toEqual({ createdAt: at, id: ID });
   });
 });
+
+describe('crafted cursors never reach the database casts', () => {
+  const craft = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+
+  it.each(['x', 'not-a-uuid', `${ID}x`, ID.replace(/-/g, '')])(
+    'refuses a position id %j that is not a uuid',
+    (id) => {
+      expect(decodeContactCursor(craft({ k: 'c', at: at.getTime(), id, f: key }), key)).toBeNull();
+      expect(decodeContactCursor(craft({ k: 'c', at: null, id, f: key }), key)).toBeNull();
+      expect(decodeHistoryCursor(craft({ k: 'h', at: at.getTime(), id }))).toBeNull();
+    },
+  );
+
+  it.each([-8.64e15, -1, 8.64e15, 253402300800000])(
+    'refuses a time %d outside 1970 .. 9999 (Postgres would answer timestamp out of range)',
+    (ms) => {
+      expect(decodeContactCursor(craft({ k: 'c', at: ms, id: ID, f: key }), key)).toBeNull();
+      expect(decodeHistoryCursor(craft({ k: 'h', at: ms, id: ID }))).toBeNull();
+    },
+  );
+
+  it('accepts the bounds and an upper-case uuid', () => {
+    expect(decodeHistoryCursor(craft({ k: 'h', at: 0, id: ID.toUpperCase() }))).toEqual({
+      createdAt: new Date(0),
+      id: ID.toUpperCase(),
+    });
+    expect(decodeHistoryCursor(craft({ k: 'h', at: 253402300799999, id: ID }))).not.toBeNull();
+  });
+});

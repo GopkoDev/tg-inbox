@@ -18,13 +18,19 @@ function decode(cursor: string): Record<string, unknown> | null {
   }
 }
 
+/** 9999-12-31T23:59:59.999Z: a cursor time is a message or history time, never outside 1970 .. 9999. */
+const MAX_CURSOR_MS = 253_402_300_799_999;
+
+/** A time in range, so a crafted cursor never reaches Postgres as a timestamp it cannot hold. */
 function toDate(ms: unknown): Date | null {
-  if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
-  const d = new Date(ms);
-  return Number.isNaN(d.getTime()) ? null : d;
+  if (typeof ms !== 'number' || !Number.isFinite(ms) || ms < 0 || ms > MAX_CURSOR_MS) return null;
+  return new Date(ms);
 }
 
-const isId = (v: unknown): v is string => typeof v === 'string' && v !== '';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** A uuid, so a crafted cursor never fails the database's uuid cast (a 500 instead of a 400). */
+const isId = (v: unknown): v is string => typeof v === 'string' && UUID.test(v);
 
 /** What a list cursor is valid for: the normalised search, the mode and the resolved tag ids (any order). */
 export function contactFilterKey(f: {

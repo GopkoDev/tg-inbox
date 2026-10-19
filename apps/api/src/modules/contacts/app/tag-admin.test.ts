@@ -205,7 +205,14 @@ describe('renameTag (AC-09)', () => {
       await s.admin.renameTag(WS, OWNER, loyal, { name: 'VIP', mergeIntoTagId: vip });
       expect(s.store.entries).toHaveLength(0);
       const line = s.logs.find((l) => l.msg === 'tag.merged');
-      expect(line?.obj).toMatchObject({ workspaceId: WS, fromTagId: loyal, toTagId: vip });
+      // the fields of the contract's log event (events.md "Log event: tag.merged"), nothing more
+      expect(line?.obj).toEqual({
+        event: 'tag.merged',
+        workspace_id: WS,
+        merged_tag_id: loyal,
+        target_tag_id: vip,
+        actor_account_id: OWNER,
+      });
       expect(JSON.stringify(s.logs)).not.toMatch(/VIP|Loyal/);
     });
 

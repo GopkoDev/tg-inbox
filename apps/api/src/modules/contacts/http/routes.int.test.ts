@@ -20,6 +20,7 @@ import {
   TagRenameResult,
 } from '@tg/shared';
 import { buildApp } from '../../../app.js';
+import { contactFilterKey } from '../domain/cursor.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
@@ -116,6 +117,17 @@ describe('contacts routes (postgres)', () => {
       const cursor = await get(owner, `${base(a.workspaceId)}/contacts?after=not-a-cursor`);
       expect(cursor.statusCode).toBe(400);
       expect(errorOf(cursor).code).toBe('VALIDATION_ERROR');
+      // well-formed cursors crafted with a non-uuid id or an out-of-range time are 400, not a 500
+      const key = contactFilterKey({ q: null, mode: 'any', tagIds: [] });
+      const craft = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+      for (const crafted of [
+        craft({ k: 'c', at: 1, id: 'x', f: key }),
+        craft({ k: 'c', at: -8e15, id: newId(), f: key }),
+      ]) {
+        const res = await get(owner, `${base(a.workspaceId)}/contacts?after=${crafted}`);
+        expect(res.statusCode, res.body).toBe(400);
+        expect(errorOf(res).code).toBe('VALIDATION_ERROR');
+      }
       expect((await get(owner, `${base(a.workspaceId)}/contacts?bogus=1`)).statusCode).toBe(400);
     });
 
@@ -146,6 +158,12 @@ describe('contacts routes (postgres)', () => {
         `${base(a.workspaceId)}/contacts/${a.taggedContactId}/tag-history?after=zzz`,
       );
       expect(badCursor.statusCode).toBe(400);
+      const crafted = Buffer.from(JSON.stringify({ k: 'h', at: 1, id: 'x' })).toString('base64url');
+      const craftedRes = await get(
+        operator,
+        `${base(a.workspaceId)}/contacts/${a.taggedContactId}/tag-history?after=${crafted}`,
+      );
+      expect(craftedRes.statusCode, craftedRes.body).toBe(400);
     });
 
     it('lists tags with counts for an operator too (a member read, AC-11)', async () => {

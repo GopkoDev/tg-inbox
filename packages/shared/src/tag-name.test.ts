@@ -22,8 +22,15 @@ describe('tidyTagName', () => {
     expect(tidyTagName('New\nYork')).toBe('New York');
     expect(tidyTagName('a \t\r\n  b')).toBe('a b');
   });
-  it('removes zero-width characters', () => {
-    expect(tidyTagName('V​I‌P‍⁠﻿')).toBe('VIP');
+  it('removes the invisible zero-width spaces (U+200B, U+2060, U+FEFF)', () => {
+    expect(tidyTagName('V\u200BI\u2060P\uFEFF')).toBe('VIP');
+  });
+  it('keeps the joiners that hold emoji and some scripts together, trimming them at the ends', () => {
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+    expect(tidyTagName(family)).toBe(family);
+    expect(tidyTagName('\u0645\u200C\u0646')).toBe('\u0645\u200C\u0646');
+    expect(tidyTagName('\u200D VIP \u200C')).toBe('VIP');
+    expect(tidyTagName(' \u200D\u200B VIP')).toBe('VIP');
   });
   it('normalises to NFC', () => {
     expect(tidyTagName('é')).toBe('é');
@@ -46,6 +53,17 @@ describe('checkTagName', () => {
     expect(checkTagName('')).toEqual({ ok: false });
     expect(checkTagName('   ')).toEqual({ ok: false });
     expect(checkTagName('​⁠')).toEqual({ ok: false });
+    // a name made only of joiners or other invisible characters is empty too
+    expect(checkTagName('\u200D')).toEqual({ ok: false });
+    expect(checkTagName('\u200C\u200D \u200B\uFEFF')).toEqual({ ok: false });
+  });
+  it('counts a joined emoji as one character (AC-07)', () => {
+    const family = '\u{1F468}\u200D\u{1F469}\u200D\u{1F467}';
+    const r = checkTagName(family);
+    expect(r).toEqual({ ok: true, name: family, key: family });
+    expect(tagNameLength(r.ok ? r.name : '')).toBe(1);
+    expect(checkTagName(family.repeat(32)).ok).toBe(true);
+    expect(checkTagName(family.repeat(33))).toEqual({ ok: false });
   });
   it('accepts 32 graphemes and refuses 33, emoji counting as one', () => {
     expect(TAG_NAME_MAX).toBe(32);

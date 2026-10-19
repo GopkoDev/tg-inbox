@@ -4,12 +4,20 @@
 export const TAG_NAME_MIN = 1;
 export const TAG_NAME_MAX = 32;
 
-const ZERO_WIDTH = new RegExp('[\\u200B-\\u200D\\u2060\\uFEFF]', 'gu');
+// The invisible zero-width spaces go; the joiners (U+200C ZWNJ, U+200D ZWJ) stay, because they hold
+// multi-part emoji and some scripts together, but they are trimmed at the ends with the spaces, so
+// a name made only of them is empty. RegExp strings, not literals: prettier would unescape them.
+const ZERO_WIDTH_SPACE = new RegExp('[\\u200B\\u2060\\uFEFF]', 'gu');
 const WHITE_SPACE_RUN = /\s+/gu;
+const BLANK_ENDS = new RegExp('^[\\s\\u200C\\u200D]+|[\\s\\u200C\\u200D]+$', 'gu');
 
-/** NFC, zero-width characters removed, every white-space run one space, ends trimmed. */
+/** NFC, zero-width spaces removed, every white-space run one space, spaces and joiners trimmed at the ends. */
 export const tidyTagName = (raw: string): string =>
-  raw.normalize('NFC').replace(ZERO_WIDTH, '').replace(WHITE_SPACE_RUN, ' ').trim();
+  raw
+    .normalize('NFC')
+    .replace(ZERO_WIDTH_SPACE, '')
+    .replace(WHITE_SPACE_RUN, ' ')
+    .replace(BLANK_ENDS, '');
 
 const segmenter = new Intl.Segmenter(undefined, { granularity: 'grapheme' });
 

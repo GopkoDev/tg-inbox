@@ -226,10 +226,12 @@ describe('owner tag management (postgres)', () => {
       });
       expect(signalLog).toEqual([`tags.changed:${a.workspaceId}`]);
       const line = logs.find((l) => l.msg === 'tag.merged');
-      expect(line?.obj).toMatchObject({
-        workspaceId: a.workspaceId,
-        fromTagId: loyal,
-        toTagId: vip,
+      expect(line?.obj).toEqual({
+        event: 'tag.merged',
+        workspace_id: a.workspaceId,
+        merged_tag_id: loyal,
+        target_tag_id: vip,
+        actor_account_id: a.ownerAccountId,
       });
       expect(JSON.stringify(logs)).not.toMatch(/Loyal/);
     });

@@ -40,7 +40,7 @@ export interface TagAdminDeps {
   tagHistory: Pick<TagHistoryRepo, 'appendMerged' | 'appendDeleted'>;
   signals: Pick<TagSignals, 'tagsChanged'>;
   clock: Clock;
-  /** Ids and counts only; `tag.merged` feeds the look-alike KPI (sad.md §7). */
+  /** Ids only; `tag.merged` feeds the look-alike KPI (sad.md §7). */
   logger?: { info(obj: object, msg: string): void };
 }
 
@@ -177,12 +177,14 @@ export function createTagAdmin(deps: TagAdminDeps): TagAdmin {
       });
 
       if (result.outcome === 'merged') {
+        // The contract's log event (events.md "Log event: tag.merged"): ids only.
         deps.logger?.info(
           {
-            workspaceId,
-            fromTagId: result.merged_tag_id,
-            toTagId: result.tag.id,
-            contactCount: result.tag.contact_count,
+            event: 'tag.merged',
+            workspace_id: workspaceId,
+            merged_tag_id: result.merged_tag_id,
+            target_tag_id: result.tag.id,
+            actor_account_id: ownerAccountId,
           },
           'tag.merged',
         );
