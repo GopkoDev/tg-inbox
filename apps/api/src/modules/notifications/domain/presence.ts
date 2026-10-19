@@ -1,4 +1,4 @@
-import { PRESENCE_WINDOW_MS } from './constants.js';
+import { LEASE_MS, PRESENCE_WINDOW_MS } from './constants.js';
 
 /** One open workspace tab of a member (a `tab_presences` row). */
 export interface PresenceLease {
@@ -23,4 +23,13 @@ export function isPresent(leases: readonly PresenceLease[], now: Date): boolean 
 
 export function isAway(leases: readonly PresenceLease[], now: Date): boolean {
   return !isPresent(leases, now);
+}
+
+/**
+ * The time a tab says it left the screen, bounded by the server clock: never in the future, never
+ * older than the presence window plus one lease (older counts away anyway). Only this bound is trusted.
+ */
+export function boundHiddenSince(claimed: Date, now: Date): Date {
+  const t = now.getTime();
+  return new Date(Math.min(t, Math.max(claimed.getTime(), t - PRESENCE_WINDOW_MS - LEASE_MS)));
 }

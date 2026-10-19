@@ -487,6 +487,56 @@ describe('POST /api/telegram/webhook/:botId (postgres)', () => {
       ]);
     });
 
+    it('one Telegram user gets each refusal reason once a minute: a different explanation is not dropped (R2, AC-06)', async () => {
+      // U (linked to teammate A) starts two links of B (no link: telegram_linked_to_teammate twice) and one
+      // of C (linked from another account: member_linked_elsewhere). The throttle slot is one minute.
+      for (;;) {
+        const { rows } = await sql<{
+          s: number;
+        }>`select extract(second from now())::int as s`.execute(db);
+        if (rows[0]!.s < 45) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      const b = await withMember({ linked: true });
+      const teammate = await insertMembership(db, b.workspaceId);
+      const elsewhere = await insertMembership(db, b.workspaceId);
+      await insertTelegramLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: elsewhere.accountId,
+        telegramBotId: b.bot.telegramBotId,
+        telegramUserId: 880301n,
+      });
+      const fresh = new Date(T.getTime() + 3_600_000 - 60_000);
+      const links = [
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: teammate.accountId,
+          createdAt: fresh,
+        }),
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: teammate.accountId,
+          createdAt: fresh,
+        }),
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: elsewhere.accountId,
+          createdAt: fresh,
+        }),
+      ];
+      const before = (await botMessageJobs()).length;
+      for (const [n, link] of links.entries()) {
+        expect(
+          (await deliver(b, start(`/start ${link.startPayload}`, LINKED_USER, 300 + n))).statusCode,
+        ).toBe(200);
+      }
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => [j.kind, j.telegram_user_id, j.reason])).toEqual([
+        ['cannot_connect', String(LINKED_USER), 'telegram_linked_to_teammate'],
+        ['cannot_connect', String(LINKED_USER), 'member_linked_elsewhere'],
+      ]);
+    });
+
     it('anything from a linked sender is consumed: text, media, edit, campaign start - at most one notice an hour', async () => {
       const b = await withMember({ linked: true });
       const before = (await botMessageJobs()).length;

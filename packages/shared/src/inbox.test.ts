@@ -686,6 +686,28 @@ describe('PresenceFrame (AC-07)', () => {
     );
   });
 
+  it('takes an optional ISO hidden_since: when the tab left the screen (R3, D1)', () => {
+    const at = '2026-10-19T10:00:00.000Z';
+    expect(
+      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_since: at }),
+    ).toEqual({
+      success: true,
+      data: { type: 'presence', v: 1, on_screen: false, hidden_since: at },
+    });
+    expect(
+      PresenceFrame.safeParse({
+        type: 'presence',
+        v: 1,
+        on_screen: false,
+        hidden_since: 'yesterday',
+      }).success,
+    ).toBe(false);
+    expect(
+      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_since: 0 })
+        .success,
+    ).toBe(false);
+  });
+
   it('rejects unknown type, extra fields, a string on_screen, a wrong version and a missing flag', () => {
     expect(PresenceFrame.safeParse({ type: 'resync', v: 1, on_screen: true }).success).toBe(false);
     expect(

@@ -31,15 +31,18 @@ export function createPresenceRepo(db: Db): PresenceRepo {
       return row !== undefined;
     },
 
-    async setScreen(workspaceId, id, onScreen, at, tx) {
+    async setScreen(workspaceId, id, onScreen, at, hiddenSince, tx) {
       const row = await (tx ?? db)
         .updateTable('tab_presences')
         .set({
           on_screen: onScreen,
           // Stamped while on screen and on a real on -> off transition only: an off frame on a tab
           // that was never on screen keeps NULL (away), a repeated off keeps the time it left (D1).
+          // A lease with no on-screen history (a hidden tab that reconnected) takes the time the tab
+          // says it left, already bounded by the caller.
           last_on_screen_at: sql`CASE WHEN ${onScreen}::boolean OR on_screen
-            THEN GREATEST(last_on_screen_at, ${at}::timestamptz) ELSE last_on_screen_at END`,
+            THEN GREATEST(last_on_screen_at, ${at}::timestamptz)
+            ELSE COALESCE(last_on_screen_at, ${hiddenSince ?? null}::timestamptz) END`,
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', id)

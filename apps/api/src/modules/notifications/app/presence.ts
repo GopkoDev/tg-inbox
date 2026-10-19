@@ -1,5 +1,6 @@
 import type { Clock } from '../../../platform/clock.js';
 import { LEASE_MS } from '../domain/constants.js';
+import { boundHiddenSince } from '../domain/presence.js';
 import type { PingRepo, PresenceRepo } from './ports.js';
 
 export interface PresenceDeps {
@@ -31,13 +32,16 @@ export interface Presence {
   /**
    * The tab went on or off screen. Leaving stamps `last_on_screen_at`; returning marks the member's
    * latest ping opened (spec section 7). `accountId` is the socket's authenticated member. No-op when
-   * the lease is gone.
+   * the lease is gone. `hiddenSince` (off frames only) is when the tab says it left the screen: bounded
+   * by the server clock, it is stamped on a lease with no on-screen history (a hidden tab that
+   * reconnected), so the tab keeps its 10 minutes (D1).
    */
   screen(
     workspaceId: string,
     connectionId: string,
     accountId: string,
     onScreen: boolean,
+    hiddenSince?: Date,
   ): Promise<void>;
   /** A clean close (including 4401 / 4403): the lease goes at once. */
   closed(workspaceId: string, connectionId: string): Promise<void>;
@@ -63,9 +67,10 @@ export function createPresence({ presence, pings, clock }: PresenceDeps): Presen
       await presence.extend(workspaceId, connectionId, leaseEnd(clock.now()));
     },
 
-    async screen(workspaceId, connectionId, accountId, onScreen) {
+    async screen(workspaceId, connectionId, accountId, onScreen, hiddenSince) {
       const now = clock.now();
-      const found = await presence.setScreen(workspaceId, connectionId, onScreen, now);
+      const left = !onScreen && hiddenSince ? boundHiddenSince(hiddenSince, now) : undefined;
+      const found = await presence.setScreen(workspaceId, connectionId, onScreen, now, left);
       if (found && onScreen) await pings.markOpened(workspaceId, accountId, now);
     },
 

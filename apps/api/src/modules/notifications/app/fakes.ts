@@ -400,10 +400,11 @@ export function fakePresenceRepo(): PresenceRepo & { rows: FakeLease[] } {
       if (liveUntil > row.liveUntil) row.liveUntil = liveUntil;
       return true;
     },
-    async setScreen(w, id, onScreen, now) {
+    async setScreen(w, id, onScreen, now, hiddenSince) {
       const row = find(w, id);
       if (!row) return false;
       if (onScreen || row.onScreen) row.lastOnScreenAt = now;
+      else if (row.lastOnScreenAt === null && hiddenSince) row.lastOnScreenAt = hiddenSince;
       row.onScreen = onScreen;
       return true;
     },

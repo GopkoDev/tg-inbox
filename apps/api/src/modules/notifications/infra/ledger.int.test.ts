@@ -131,6 +131,32 @@ describe('presence and ping ledger repositories (Postgres)', () => {
       expect(await lease(left)).toMatchObject({ on_screen: false, last_on_screen_at: sec(20) });
     });
 
+    it('an off frame with hidden_since stamps it only on a lease with no on-screen history (R3, D1)', async () => {
+      const { accountId, a, b } = await twoWorkspacesWithLinks(db);
+      const fresh = await insertPresence(db, {
+        workspaceId: a.workspaceId,
+        accountId,
+        openedAt: sec(100),
+        onScreen: false,
+      });
+      expect(await presence.setScreen(b.workspaceId, fresh, false, sec(120), sec(40))).toBe(false);
+      expect(await lease(fresh)).toMatchObject({ last_on_screen_at: null });
+      expect(await presence.setScreen(a.workspaceId, fresh, false, sec(120), sec(40))).toBe(true);
+      expect(await lease(fresh)).toMatchObject({ on_screen: false, last_on_screen_at: sec(40) });
+      // History now: a later claim keeps the stamped time.
+      await presence.setScreen(a.workspaceId, fresh, false, sec(130), sec(90));
+      expect(await lease(fresh)).toMatchObject({ last_on_screen_at: sec(40) });
+      const left = await insertPresence(db, {
+        workspaceId: a.workspaceId,
+        accountId,
+        openedAt: sec(0),
+        onScreen: false,
+        lastOnScreenAt: sec(20),
+      });
+      await presence.setScreen(a.workspaceId, left, false, sec(120), sec(10));
+      expect(await lease(left)).toMatchObject({ last_on_screen_at: sec(20) });
+    });
+
     it('close deletes the lease, only inside its workspace', async () => {
       const { accountId, a, b } = await twoWorkspacesWithLinks(db);
       const id = await insertPresence(db, { workspaceId: a.workspaceId, accountId });

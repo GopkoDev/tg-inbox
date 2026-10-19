@@ -216,6 +216,43 @@ describe('openLiveSocket', () => {
       expect(presence(FakeSocket.all[1]!)).toEqual([{ type: 'presence', v: 1, on_screen: true }]);
     });
 
+    it('a hidden tab that reconnects reports when it left the screen; visible again carries none (R3, D1)', () => {
+      vi.setSystemTime(new Date('2026-10-19T10:00:00.000Z'));
+      start();
+      const s = FakeSocket.all[0]!;
+      s.open();
+      vi.setSystemTime(new Date('2026-10-19T10:01:00.000Z'));
+      setVisibility('hidden');
+      const left = '2026-10-19T10:01:00.000Z';
+      expect(presence(s).at(-1)).toEqual({
+        type: 'presence',
+        v: 1,
+        on_screen: false,
+        hidden_since: left,
+      });
+      vi.setSystemTime(new Date('2026-10-19T10:02:00.000Z'));
+      s.drop(1001);
+      vi.advanceTimersByTime(100);
+      const again = FakeSocket.all[1]!;
+      again.open();
+      expect(presence(again)).toEqual([
+        { type: 'presence', v: 1, on_screen: false, hidden_since: left },
+      ]);
+      setVisibility('visible');
+      expect(presence(again).at(-1)).toEqual({ type: 'presence', v: 1, on_screen: true });
+    });
+
+    it('a tab hidden since it opened has no on-screen history: no hidden_since (R3)', () => {
+      setVisibility('hidden');
+      start();
+      const s = FakeSocket.all[0]!;
+      s.open();
+      s.drop(1006);
+      vi.advanceTimersByTime(100);
+      FakeSocket.all[1]!.open();
+      expect(presence(FakeSocket.all[1]!)).toEqual([{ type: 'presence', v: 1, on_screen: false }]);
+    });
+
     it('close() removes the visibilitychange listener', () => {
       const { client } = start();
       const s = FakeSocket.all[0]!;

@@ -234,6 +234,66 @@ describe('reply delivery (Postgres)', () => {
     });
   });
 
+  it('sent: a reply settled after a close leaves the closed conversation without a period (R1)', async () => {
+    // The reply goes out at 500, the customer writes at 600, the conversation is closed before the settle.
+    const s = await setup({ received: at(600), closed: true });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(600),
+    });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    expect(
+      await delivery().finishAttempt({
+        ...ids(s),
+        attemptId: a.attemptId,
+        attemptOutcome: 'accepted',
+        replyState: 'sent',
+        telegramMessageId: 9n,
+        sentAt: at(500),
+      }),
+    ).toBe(true);
+    expect(await reply(a.replyId)).toMatchObject({ state: 'sent' });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      status: 'closed',
+      last_reply_sent_at: at(500),
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+  });
+
+  it('sent: a reopen-started period that began after the sent time is kept (R1)', async () => {
+    // The reply goes out at 500, the customer writes at 600, a reopen at 800 started the current period.
+    const s = await setup({ received: at(600) });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(600),
+    });
+    await db
+      .updateTable('conversations')
+      .set({ waiting_since: at(800), waiting_started_by: 'reopen' })
+      .where('id', '=', s.conversationId)
+      .execute();
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(500),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: at(800),
+      waiting_started_by: 'reopen',
+    });
+  });
+
   it('sent: another conversation of the workspace keeps its period', async () => {
     const s = await setup({ received: at(0), waitingSince: at(0) });
     const contactId = await insertContact(db, { workspaceId: s.workspaceId });

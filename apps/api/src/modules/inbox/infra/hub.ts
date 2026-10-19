@@ -30,6 +30,7 @@ export interface PresencePort {
     connectionId: string,
     accountId: string,
     onScreen: boolean,
+    hiddenSince?: Date,
   ): Promise<void>;
   closed(workspaceId: string, connectionId: string): Promise<void>;
 }
@@ -80,8 +81,8 @@ interface Conn {
   owner: LiveSocketOwner;
   /** Presence calls of one socket run in order: a close never overtakes the open. */
   queue: Promise<void>;
-  /** Waiting to be written: the last `on_screen` the tab reported. */
-  pending: boolean | undefined;
+  /** Waiting to be written: the last screen state the tab reported (`hiddenSince` with off only). */
+  pending: { onScreen: boolean; hiddenSince: Date | undefined } | undefined;
   timer: NodeJS.Timeout | undefined;
 }
 
@@ -122,11 +123,17 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
   };
   /** Writes the pending screen state, if any. */
   const flush = (conn: Conn) => {
-    const onScreen = conn.pending;
+    const pending = conn.pending;
     conn.pending = undefined;
-    if (onScreen === undefined) return;
+    if (pending === undefined) return;
     run(conn, () =>
-      presence.screen(conn.owner.workspaceId, conn.id, conn.owner.accountId, onScreen),
+      presence.screen(
+        conn.owner.workspaceId,
+        conn.id,
+        conn.owner.accountId,
+        pending.onScreen,
+        pending.hiddenSince,
+      ),
     );
   };
   /**
@@ -194,7 +201,11 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       }
       const frame = PresenceFrame.safeParse(json);
       if (!frame.success) return;
-      conn.pending = frame.data.on_screen;
+      const { on_screen: onScreen, hidden_since: hiddenSince } = frame.data;
+      conn.pending = {
+        onScreen,
+        hiddenSince: !onScreen && hiddenSince ? new Date(hiddenSince) : undefined,
+      };
       if (conn.timer) return;
       flush(conn);
       openWindow(conn);

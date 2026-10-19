@@ -43,10 +43,11 @@ function fakePresenceRepo(): PresenceRepo & { rows: Row[] } {
       r.liveUntil = later(r.liveUntil, liveUntil);
       return true;
     },
-    async setScreen(w, id, onScreen, when) {
+    async setScreen(w, id, onScreen, when, hiddenSince) {
       const r = find(w, id);
       if (!r) return false;
       if (onScreen || r.onScreen) r.lastOnScreenAt = later(r.lastOnScreenAt, when);
+      else if (r.lastOnScreenAt === null && hiddenSince) r.lastOnScreenAt = hiddenSince;
       r.onScreen = onScreen;
       return true;
     },
@@ -172,6 +173,46 @@ describe('presence use cases (AC-07, ADR-0002)', () => {
     expect(isPresent(await stillLive(), clock.now())).toBe(true);
     clock.advance(3_000);
     expect(isPresent(await stillLive(), clock.now())).toBe(false);
+  });
+
+  it('a tab that reconnects hidden keeps the time it left the screen: present until 10 minutes after (R3, D1)', async () => {
+    const { presence, uc, clock } = setup();
+    // The tab left the screen a minute ago, then its socket reconnected (a new, never-on-screen lease).
+    const left = new Date(T0.getTime() - 60_000);
+    await uc.opened(W, A, 'c2', false);
+    await uc.screen(W, 'c2', A, false, left);
+    expect(presence.rows[0]).toMatchObject({ onScreen: false, lastOnScreenAt: left });
+    const stillLive = async () => {
+      await uc.alive(W, 'c2');
+      return [...(await presence.listLive(W, clock.now())).get(A)!];
+    };
+    clock.set(new Date(left.getTime() + PRESENCE_WINDOW_MS - 2_000));
+    expect(isPresent(await stillLive(), clock.now())).toBe(true);
+    clock.advance(3_000);
+    expect(isPresent(await stillLive(), clock.now())).toBe(false);
+  });
+
+  it('a claimed hidden_since is capped to the server clock: never in the future, never older than 10 min + lease', async () => {
+    const { presence, uc } = setup();
+    await uc.opened(W, A, 'future', false);
+    await uc.screen(W, 'future', A, false, new Date(T0.getTime() + 3_600_000));
+    expect(presence.rows[0]!.lastOnScreenAt).toEqual(T0);
+    await uc.opened(W, A, 'old', false);
+    await uc.screen(W, 'old', A, false, new Date(T0.getTime() - 24 * 3_600_000));
+    expect(presence.rows[1]!.lastOnScreenAt).toEqual(
+      new Date(T0.getTime() - PRESENCE_WINDOW_MS - LEASE_MS),
+    );
+  });
+
+  it('hidden_since never rewrites a lease with on-screen history, and an on frame ignores it', async () => {
+    const { presence, uc, clock } = setup();
+    await uc.opened(W, A, 'c1', true);
+    clock.advance(20_000);
+    await uc.screen(W, 'c1', A, false, new Date(T0.getTime() - 60_000));
+    expect(presence.rows[0]!.lastOnScreenAt).toEqual(at(20));
+    clock.advance(20_000);
+    await uc.screen(W, 'c1', A, false, new Date(T0.getTime() - 60_000));
+    expect(presence.rows[0]!.lastOnScreenAt).toEqual(at(20));
   });
 
   it('coming back on screen marks the latest ping opened', async () => {

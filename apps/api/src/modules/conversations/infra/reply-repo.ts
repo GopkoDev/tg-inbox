@@ -365,14 +365,22 @@ export function createReplyRepo(db: Db): ReplyRepo {
           // the customer is still waiting, but on a new period: it began with the first message after
           // the reply (started by 'message'), so the old period's ledger never mutes the new wait and
           // the team's 30 minutes count from the new message (AC-09). The fallback to the newest
-          // arrival only covers a row without its message rows.
-          waiting_since: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+          // arrival only covers a row without its message rows. A closed conversation holds no period
+          // (conversations_waiting_open_check), and a period that began after the reply (a reopen
+          // while it was in flight) is not the one it answered: both keep the row as it is.
+          waiting_since: sql`CASE
+            WHEN status <> 'open' OR waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+              THEN waiting_since
+            WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
             THEN COALESCE(
               (SELECT min(m.received_at) FROM messages m
                 WHERE m.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId}
                   AND m.received_at > GREATEST(conversations.last_reply_sent_at, ${sentAt}::timestamptz)),
               last_message_received_at) END`,
-          waiting_started_by: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+          waiting_started_by: sql`CASE
+            WHEN status <> 'open' OR waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+              THEN waiting_started_by
+            WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
             THEN 'message' END`,
         })
         .where('workspace_id', '=', workspaceId)

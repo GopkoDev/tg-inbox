@@ -164,6 +164,8 @@ export interface PresenceRepo {
     id: string,
     onScreen: boolean,
     at: Date,
+    /** Off frames only: when the tab left the screen, stamped on a lease with no on-screen history. */
+    hiddenSince?: Date,
     tx?: Executor,
   ): Promise<boolean>;
   close(workspaceId: string, id: string, tx?: Executor): Promise<boolean>;

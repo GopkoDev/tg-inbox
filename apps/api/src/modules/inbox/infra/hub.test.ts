@@ -33,8 +33,15 @@ function fakePresence() {
     opened: (ws: string, account: string, conn: string, onScreen: boolean) =>
       log('opened', ws, account, conn, onScreen),
     alive: (ws: string, conn: string) => log('alive', ws, conn),
-    screen: (ws: string, conn: string, account: string, onScreen: boolean) =>
-      log('screen', ws, conn, account, onScreen),
+    screen: (ws: string, conn: string, account: string, onScreen: boolean, hiddenSince?: Date) =>
+      log(
+        'screen',
+        ws,
+        conn,
+        account,
+        onScreen,
+        ...(hiddenSince ? [hiddenSince.toISOString()] : []),
+      ),
     closed: (ws: string, conn: string) => log('closed', ws, conn),
   };
 }
@@ -393,6 +400,36 @@ describe('live hub presence (ADR-0002, AC-07)', () => {
       hub.message(x.socket, Buffer.from(frame(false)));
       await vi.advanceTimersByTimeAsync(0);
       expect(screens()).toHaveLength(4);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("passes an off frame's hidden_since on as a Date; an on frame carries none (R3, D1)", async () => {
+    vi.useFakeTimers();
+    try {
+      const { hub, open, presence } = setup({}, { presenceCoalesceMs: 100 });
+      const [ws, me] = [newId(), newId()];
+      const x = open(ws, me);
+      const left = '2026-10-19T10:00:00.000Z';
+      hub.message(
+        x.socket,
+        Buffer.from(
+          JSON.stringify({ type: 'presence', v: 1, on_screen: false, hidden_since: left }),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      hub.message(
+        x.socket,
+        Buffer.from(
+          JSON.stringify({ type: 'presence', v: 1, on_screen: true, hidden_since: left }),
+        ),
+      );
+      await vi.advanceTimersByTimeAsync(200);
+      expect(presence.calls.filter((c) => c.startsWith('screen'))).toEqual([
+        `screen|${ws}|${connOf(presence)}|${me}|false|${left}`,
+        `screen|${ws}|${connOf(presence)}|${me}|true`,
+      ]);
     } finally {
       vi.useRealTimers();
     }

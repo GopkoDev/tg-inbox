@@ -114,9 +114,10 @@ export async function createNotificationQueues(boss: Jobs): Promise<void> {
 
 /**
  * A refusal answer (`link_expired`, `cannot_connect`) goes to whoever sent the start, so anyone can
- * ask for one: at most one of each is queued per (workspace, Telegram user) per one-minute slot, the extras
- * are dropped silently. A flood of fake `/start tgi_…` from one account then costs one send a minute
- * and cannot exhaust the bot's Telegram limit (whose 429 pauses every member send of the bot).
+ * ask for one: at most one of each (kind and, for `cannot_connect`, reason) is queued per (workspace,
+ * Telegram user) per one-minute slot, the extras are dropped silently; a different reason is a different
+ * explanation and still goes out. A flood of fake `/start tgi_…` from one account then costs one send a
+ * minute and cannot exhaust the bot's Telegram limit (whose 429 pauses every member send of the bot).
  */
 export const REFUSAL_ANSWER_SLOT_SECONDS = 60;
 
@@ -134,13 +135,19 @@ export function createBotMessageSender(): { enqueue: EnqueueBotMessage; bind(bos
     },
     async enqueue(tx, workspaceId, message) {
       if (!boss) throw new Error('the job queue is not started');
-      const throttle =
-        message.kind === 'link_expired' || message.kind === 'cannot_connect'
-          ? {
-              singletonKey: `refusal:${workspaceId}:${message.telegramUserId}:${message.kind}`,
-              singletonSeconds: REFUSAL_ANSWER_SLOT_SECONDS,
-            }
-          : {};
+      // `refusal:<workspace>:<user>:<kind>[:<reason>]`: one slot per explanation.
+      const refusal =
+        message.kind === 'link_expired'
+          ? `${message.telegramUserId}:${message.kind}`
+          : message.kind === 'cannot_connect'
+            ? `${message.telegramUserId}:${message.kind}:${message.reason}`
+            : null;
+      const throttle = refusal
+        ? {
+            singletonKey: `refusal:${workspaceId}:${refusal}`,
+            singletonSeconds: REFUSAL_ANSWER_SLOT_SECONDS,
+          }
+        : {};
       await boss.send(SEND_BOT_MESSAGE_QUEUE, toJobPayload(workspaceId, message), {
         db: jobDb(tx),
         ...throttle,

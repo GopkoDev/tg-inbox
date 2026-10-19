@@ -227,7 +227,7 @@ The `memberships` edges are the composite FKs `(workspace_id, account_id)`. The 
 | `account_id` | uuid | NOT NULL, FK `(workspace_id, account_id) → memberships` | |
 | `live_until` | timestamptz | NOT NULL, `> opened_at` | `now + 50 s` on open and on every pong (every 25 s). The row counts while it is in the future (spec §6: away ≤ 60 s after a lost tab) |
 | `on_screen` | boolean | NOT NULL | The last reported Page Visibility state (`presence { onScreen }` frame) |
-| `last_on_screen_at` | timestamptz | NULL, `>= opened_at` | Stamped when the tab leaves the screen. NULL for a tab that opened hidden and was never on screen, which counts away (spec §6: away ≤ 10 min + 60 s after leaving) |
+| `last_on_screen_at` | timestamptz | NULL, `>= opened_at − 650 s` | Stamped when the tab leaves the screen. NULL for a tab that opened hidden and was never on screen, which counts away. A hidden tab that reconnects sends `hidden_since`, stored here bounded by the server clock (not after now, not before now − 10 min − one 50 s lease), so it may precede `opened_at` by up to 650 s (spec §6: away ≤ 10 min + 60 s after leaving) |
 | `opened_at` | timestamptz | NOT NULL | When the connection opened |
 
 **Away for W** = no row of the member with `live_until > now AND (on_screen OR last_on_screen_at > now − 10 min)`.

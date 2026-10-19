@@ -1121,6 +1121,11 @@ describe('operator-notifications migrations 04-08', () => {
       presence(ws, a, { lastOnScreenAt: new Date('2025-12-31T00:00:00Z') }),
     ).rejects.toThrow(/tab_presences_last_on_screen_at_check/);
     await presence(ws, a, { lastOnScreenAt: later });
+    // A hidden tab that reconnected brings the time it left: up to 10 min + one lease before the open.
+    await presence(ws, a, { lastOnScreenAt: new Date(now.getTime() - 650_000) });
+    await expect(
+      presence(ws, a, { lastOnScreenAt: new Date(now.getTime() - 651_000) }),
+    ).rejects.toThrow(/tab_presences_last_on_screen_at_check/);
   });
 
   it('rejects pings and ledger items that break the outcome, member and ledger rules (AC-08)', async () => {

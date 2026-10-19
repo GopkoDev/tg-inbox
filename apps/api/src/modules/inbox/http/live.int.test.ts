@@ -371,6 +371,39 @@ describe('inbox live socket (postgres + real websocket)', () => {
       }
     });
 
+    it('a hidden tab that reconnects keeps the time it left the screen: present until 10 min after leaving (R3, D1)', async () => {
+      const ws = await insertWorkspace(db, `HR ${newId()}`);
+      const me = await member(ws);
+      const repo = createPresenceRepo(db);
+      // The tab left the screen a minute ago; its socket dropped and reconnected while hidden.
+      const left = new Date(Date.now() - 60_000);
+      const tab = await connect(ws, me.token);
+      await lease(ws, me.accountId);
+      tab.socket.send(
+        JSON.stringify({
+          type: 'presence',
+          v: 1,
+          on_screen: false,
+          hidden_since: left.toISOString(),
+        }),
+      );
+      const [row] = await pollRows(ws, me.accountId, (r) => r[0]!.last_on_screen_at !== null);
+      expect(row!.on_screen).toBe(false);
+      expect(row!.last_on_screen_at).toEqual(left);
+      await db
+        .updateTable('tab_presences')
+        .set({ live_until: new Date(Date.now() + 3_600_000) })
+        .where('id', '=', row!.id)
+        .execute();
+      const at = (ms: number) => new Date(left.getTime() + ms);
+      const live = async (ms: number) => [
+        ...((await repo.listLive(ws, at(ms), [me.accountId])).get(me.accountId) ?? []),
+      ];
+      expect(isPresent(await live(60_000), at(60_000))).toBe(true);
+      expect(isPresent(await live(9 * 60_000), at(9 * 60_000))).toBe(true);
+      expect(isAway(await live(11 * 60_000), at(11 * 60_000))).toBe(true);
+    });
+
     it('junk and oversized frames are ignored and the lease stays as it was', async () => {
       const ws = await insertWorkspace(db, `J ${newId()}`);
       const me = await member(ws);

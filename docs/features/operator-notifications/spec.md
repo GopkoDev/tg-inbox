@@ -51,6 +51,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 - Business owners and operators are treated identically, as everywhere in the inbox.
 - Linking is per membership, because each workspace has its own bot. A multi-workspace member links once per workspace.
 - Desktop notifications are a per-browser opt-in, asked for only when the member clicks to turn them on. There are no sounds of our own; the operating system's notification sound applies.
+- A refusal answer (link expired, cannot connect) can be triggered by anyone who writes to the bot, so a repeated identical refusal to one Telegram user within a minute is answered once; a refusal with a different reason is still answered.
 - Linking a Telegram account is the opt-in, and removing the link is the off switch. There is no separate on/off toggle, no quiet hours and no per-workspace schedule in this step (§3, §8).
 
 Clarifications (clarify, autonomous run 2026-10-19). Each one picks the most sensible reading of a point where two builders could have diverged. Any of them can be vetoed at review:
@@ -236,6 +237,8 @@ Clarifications (clarify, autonomous run 2026-10-19). Each one picks the most sen
 - [ ] Should members be able to opt in to the customer's message preview or the contact's name in pings? Default now: no, neither (§3, §6.1). Owner: Dmytro Hopko. Due: after 30 days of pilot use (look at the ping → panel KPI).
 - [ ] Do pilots need quiet hours or a per-workspace schedule for pings? Default now: no, unlinking is the off switch. Owner: Dmytro Hopko. Due: after 30 days of pilot use (watch the unlink/block KPI and pings sent between 22:00 and 08:00 workspace time).
 - [ ] Are the 5-minute ping and 30-minute team escalation thresholds right for pilots, and should owners be able to change them? Default now: fixed at 5 and 30 minutes. Owner: Dmytro Hopko. Due: after 30 days of pilot use.
+
+Note (re-review 2026-10-19): the refusal answers of AC-05/AC-06 are throttled per Telegram user to one per kind and reason per minute; a repeated identical refusal within that minute is consumed silently, not answered again.
 
 ## Clarify log (2026-10-19)
 

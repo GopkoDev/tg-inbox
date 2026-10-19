@@ -42,14 +42,16 @@ The producer, the heartbeat (ping every 25 s), the 5 s re-check, the at-most-onc
 
 ```json
 { "type": "presence", "v": 1, "on_screen": true }
+{ "type": "presence", "v": 1, "on_screen": false, "hidden_since": "2026-10-19T10:01:00.000Z" }
 ```
 
 - **Required fields:** `type`, `v`, `on_screen` (boolean: Page Visibility `visible`, i.e. the selected tab of a window that is not minimised).
+- **Optional field:** `hidden_since` (ISO 8601 date-time with offset): when this tab left the screen. The client sends it only with `on_screen: false`, only when it saw the tab go from visible to hidden (a tab hidden since it opened has none), and keeps it across reconnects until the tab is visible again. The server ignores it on an on frame. Additive: an old bundle simply omits it.
 - **When sent:** once right after the socket opens, and on every `visibilitychange`.
 - **Server handling** (flow 7):
   - parsed with zod; a frame that fails (unknown type, extra or wrong fields, over the existing 1024-byte inbound cap `LIVE_MAX_INBOUND_BYTES`) is ignored;
   - at most one write per second per socket: a frame outside a window is written at once (leading edge, so a reconnected tab's opening frame is not held back), frames inside it collapse into one trailing write with the last value;
-  - `on_screen: false` → `tab_presences.on_screen = false`; `last_on_screen_at = now` **only on a real on → off transition** (the lease was on screen). An off frame on a lease that was never on screen (a tab that opened or reconnected hidden) keeps `last_on_screen_at` NULL, so it counts away at once; a repeated off frame keeps the time the tab left;
+  - `on_screen: false` → `tab_presences.on_screen = false`; `last_on_screen_at = now` **only on a real on → off transition** (the lease was on screen). An off frame on a lease that was never on screen keeps `last_on_screen_at` NULL, so it counts away at once (a tab that opened hidden) — unless it carries `hidden_since` (a hidden tab that reconnected): then `last_on_screen_at` = `hidden_since` bounded by the server clock (never after now, never before now − 10 min − one 50 s lease), so the reconnect keeps the 10 minutes after the tab left (D1). A repeated off frame keeps the time the tab left;
   - `on_screen: true` → `on_screen = true`. If this member got a ping in this workspace within the last 15 min, that ping's `opened_at` is set (spec §7 "ping → panel" KPI). The same happens when the first frame after open says `true`.
   - every write is scoped by the socket's workspace id and connection id, so a frame affects only its own member's lease (sad.md §8 *Untrusted content*).
 - **Away for W** = no lease of this member with `live_until > now` and (`on_screen` or `last_on_screen_at > now − 10 min`). That gives the spec §6 freshness: away ≤ 60 s after a lost tab, ≤ 10 min + 60 s after a hidden one.

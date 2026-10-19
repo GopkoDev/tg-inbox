@@ -47,7 +47,8 @@ function liveUrl(workspaceId: string): string {
 }
 
 /**
- * One live socket for one workspace (ADR-0002). Sends the presence frame after every open and on visibilitychange. Reconnects with backoff after 1001 or any drop,
+ * One live socket for one workspace (ADR-0002). Sends the presence frame after every open and on visibilitychange
+ * (with `hidden_since` while hidden, when the tab was seen leaving the screen). Reconnects with backoff after 1001 or any drop,
  * never after 4401/4403. Frames that fail the shared schema (unknown types) are dropped and reported to `onInvalidFrame`.
  */
 export function openLiveSocket(
@@ -65,13 +66,18 @@ export function openLiveSocket(
   let socket: SocketLike | undefined;
   let open = false;
 
+  // When this tab left the screen, kept across reconnects so a hidden tab that reconnects keeps its
+  // 10 minutes (D1). Unknown (undefined) for a tab hidden since it opened: no on-screen history.
+  let hiddenSince: string | undefined;
   // Presence (events.md): `on_screen` right after every open and on every visibilitychange.
   const sendPresence = () => {
     if (!open || !socket) return;
+    const onScreen = document.visibilityState === 'visible';
     const frame: PresenceFrame = {
       type: 'presence',
       v: 1,
-      on_screen: document.visibilityState === 'visible',
+      on_screen: onScreen,
+      ...(!onScreen && hiddenSince ? { hidden_since: hiddenSince } : {}),
     };
     try {
       socket.send(JSON.stringify(frame));
@@ -79,11 +85,16 @@ export function openLiveSocket(
       // a socket closing underneath: the close event drives the reconnect
     }
   };
-  document.addEventListener('visibilitychange', sendPresence);
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') hiddenSince = undefined;
+    else hiddenSince ??= new Date().toISOString();
+    sendPresence();
+  };
+  document.addEventListener('visibilitychange', onVisibility);
   const stop = () => {
     stopped = true;
     open = false;
-    document.removeEventListener('visibilitychange', sendPresence);
+    document.removeEventListener('visibilitychange', onVisibility);
   };
 
   const connect = () => {

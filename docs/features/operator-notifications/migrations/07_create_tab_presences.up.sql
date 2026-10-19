@@ -3,7 +3,9 @@
 --   id                — the connection id, a UUIDv7 the hub generates per socket
 --   live_until        — moved to now + 50 s on every pong (every 25 s); the lease counts while it is in the future
 --   on_screen         — the tab's last reported Page Visibility state
---   last_on_screen_at — stamped when the tab leaves the screen; NULL for a tab that opened hidden and never showed
+--   last_on_screen_at — stamped when the tab leaves the screen; NULL for a tab that opened hidden and never showed.
+--                       A hidden tab that reconnects brings the time it left (bounded to now - 10 min - one lease), so
+--                       it may precede opened_at by at most 650 s
 --   opened_at         — when the connection opened
 -- A member is away for a workspace when no row of theirs has live_until > now AND (on_screen OR
 -- last_on_screen_at > now - 10 min). A clean close deletes the row; a lost connection leaves it to expire, and
@@ -22,7 +24,7 @@ CREATE TABLE IF NOT EXISTS tab_presences (
   CONSTRAINT tab_presences_membership_fkey
     FOREIGN KEY (workspace_id, account_id) REFERENCES memberships (workspace_id, account_id),
   CONSTRAINT tab_presences_live_until_check CHECK (live_until > opened_at),
-  CONSTRAINT tab_presences_last_on_screen_at_check CHECK (last_on_screen_at >= opened_at)
+  CONSTRAINT tab_presences_last_on_screen_at_check CHECK (last_on_screen_at >= opened_at - interval '650 seconds')
 );
 
 -- The away predicate per member at send time (flow 1) and for the sweep's presence rows of a workspace
