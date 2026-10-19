@@ -686,25 +686,28 @@ describe('PresenceFrame (AC-07)', () => {
     );
   });
 
-  it('takes an optional ISO hidden_since: when the tab left the screen (R3, D1)', () => {
-    const at = '2026-10-19T10:00:00.000Z';
+  it('takes an optional hidden_for_ms: how long ago the tab left the screen, a whole non-negative ms count (RR2, D1)', () => {
     expect(
-      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_since: at }),
+      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 }),
     ).toEqual({
       success: true,
-      data: { type: 'presence', v: 1, on_screen: false, hidden_since: at },
+      data: { type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 },
     });
+    for (const bad of [-1, 1.5, '60000', Number.MAX_SAFE_INTEGER + 2]) {
+      expect(
+        PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_for_ms: bad })
+          .success,
+        String(bad),
+      ).toBe(false);
+    }
+    // The wall-clock form is gone: a strict frame rejects it.
     expect(
       PresenceFrame.safeParse({
         type: 'presence',
         v: 1,
         on_screen: false,
-        hidden_since: 'yesterday',
+        hidden_since: '2026-10-19T10:00:00.000Z',
       }).success,
-    ).toBe(false);
-    expect(
-      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_since: 0 })
-        .success,
     ).toBe(false);
   });
 

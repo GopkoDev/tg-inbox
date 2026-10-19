@@ -131,7 +131,7 @@ describe('presence and ping ledger repositories (Postgres)', () => {
       expect(await lease(left)).toMatchObject({ on_screen: false, last_on_screen_at: sec(20) });
     });
 
-    it('an off frame with hidden_since stamps it only on a lease with no on-screen history (R3, D1)', async () => {
+    it('an off frame with a left-screen time (from hidden_for_ms) stamps it only on a lease with no on-screen history (R3, D1)', async () => {
       const { accountId, a, b } = await twoWorkspacesWithLinks(db);
       const fresh = await insertPresence(db, {
         workspaceId: a.workspaceId,

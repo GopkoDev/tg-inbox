@@ -48,7 +48,7 @@ function liveUrl(workspaceId: string): string {
 
 /**
  * One live socket for one workspace (ADR-0002). Sends the presence frame after every open and on visibilitychange
- * (with `hidden_since` while hidden, when the tab was seen leaving the screen). Reconnects with backoff after 1001 or any drop,
+ * (with `hidden_for_ms` while hidden, when the tab was seen leaving the screen). Reconnects with backoff after 1001 or any drop,
  * never after 4401/4403. Frames that fail the shared schema (unknown types) are dropped and reported to `onInvalidFrame`.
  */
 export function openLiveSocket(
@@ -66,9 +66,10 @@ export function openLiveSocket(
   let socket: SocketLike | undefined;
   let open = false;
 
-  // When this tab left the screen, kept across reconnects so a hidden tab that reconnects keeps its
-  // 10 minutes (D1). Unknown (undefined) for a tab hidden since it opened: no on-screen history.
-  let hiddenSince: string | undefined;
+  // When this tab left the screen, on the monotonic clock (a wall clock can jump or run ahead), kept
+  // across reconnects so a hidden tab that reconnects keeps its 10 minutes (D1). Unknown (undefined)
+  // for a tab hidden since it opened: no on-screen history.
+  let hiddenAt: number | undefined;
   // Presence (events.md): `on_screen` right after every open and on every visibilitychange.
   const sendPresence = () => {
     if (!open || !socket) return;
@@ -77,7 +78,9 @@ export function openLiveSocket(
       type: 'presence',
       v: 1,
       on_screen: onScreen,
-      ...(!onScreen && hiddenSince ? { hidden_since: hiddenSince } : {}),
+      ...(!onScreen && hiddenAt !== undefined
+        ? { hidden_for_ms: Math.max(0, Math.round(performance.now() - hiddenAt)) }
+        : {}),
     };
     try {
       socket.send(JSON.stringify(frame));
@@ -86,8 +89,8 @@ export function openLiveSocket(
     }
   };
   const onVisibility = () => {
-    if (document.visibilityState === 'visible') hiddenSince = undefined;
-    else hiddenSince ??= new Date().toISOString();
+    if (document.visibilityState === 'visible') hiddenAt = undefined;
+    else hiddenAt ??= performance.now();
     sendPresence();
   };
   document.addEventListener('visibilitychange', onVisibility);

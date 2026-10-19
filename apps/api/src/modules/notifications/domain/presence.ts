@@ -26,10 +26,11 @@ export function isAway(leases: readonly PresenceLease[], now: Date): boolean {
 }
 
 /**
- * The time a tab says it left the screen, bounded by the server clock: never in the future, never
- * older than the presence window plus one lease (older counts away anyway). Only this bound is trusted.
+ * When a tab left the screen, from how long ago it says it left (`hidden_for_ms`, the tab's monotonic
+ * clock) anchored on the server clock: never in the future, never older than the presence window plus
+ * one lease (older counts away anyway). Only this bound is trusted.
  */
-export function boundHiddenSince(claimed: Date, now: Date): Date {
-  const t = now.getTime();
-  return new Date(Math.min(t, Math.max(claimed.getTime(), t - PRESENCE_WINDOW_MS - LEASE_MS)));
+export function leftScreenAt(hiddenForMs: number, now: Date): Date {
+  const ms = Math.min(Math.max(hiddenForMs, 0), PRESENCE_WINDOW_MS + LEASE_MS);
+  return new Date(now.getTime() - ms);
 }

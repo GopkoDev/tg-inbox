@@ -371,25 +371,23 @@ describe('inbox live socket (postgres + real websocket)', () => {
       }
     });
 
-    it('a hidden tab that reconnects keeps the time it left the screen: present until 10 min after leaving (R3, D1)', async () => {
+    it('a hidden tab that reconnects keeps the time it left the screen: present until 10 min after leaving (RR2, D1)', async () => {
       const ws = await insertWorkspace(db, `HR ${newId()}`);
       const me = await member(ws);
       const repo = createPresenceRepo(db);
       // The tab left the screen a minute ago; its socket dropped and reconnected while hidden.
-      const left = new Date(Date.now() - 60_000);
       const tab = await connect(ws, me.token);
       await lease(ws, me.accountId);
+      const sentAt = Date.now();
       tab.socket.send(
-        JSON.stringify({
-          type: 'presence',
-          v: 1,
-          on_screen: false,
-          hidden_since: left.toISOString(),
-        }),
+        JSON.stringify({ type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 }),
       );
       const [row] = await pollRows(ws, me.accountId, (r) => r[0]!.last_on_screen_at !== null);
       expect(row!.on_screen).toBe(false);
-      expect(row!.last_on_screen_at).toEqual(left);
+      // The server's own clock minus the duration: between the send and now, a minute back.
+      const left = row!.last_on_screen_at!;
+      expect(left.getTime()).toBeGreaterThanOrEqual(sentAt - 60_000);
+      expect(left.getTime()).toBeLessThanOrEqual(Date.now() - 60_000);
       await db
         .updateTable('tab_presences')
         .set({ live_until: new Date(Date.now() + 3_600_000) })

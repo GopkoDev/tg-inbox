@@ -216,33 +216,39 @@ describe('openLiveSocket', () => {
       expect(presence(FakeSocket.all[1]!)).toEqual([{ type: 'presence', v: 1, on_screen: true }]);
     });
 
-    it('a hidden tab that reconnects reports when it left the screen; visible again carries none (R3, D1)', () => {
-      vi.setSystemTime(new Date('2026-10-19T10:00:00.000Z'));
-      start();
-      const s = FakeSocket.all[0]!;
-      s.open();
-      vi.setSystemTime(new Date('2026-10-19T10:01:00.000Z'));
-      setVisibility('hidden');
-      const left = '2026-10-19T10:01:00.000Z';
-      expect(presence(s).at(-1)).toEqual({
-        type: 'presence',
-        v: 1,
-        on_screen: false,
-        hidden_since: left,
-      });
-      vi.setSystemTime(new Date('2026-10-19T10:02:00.000Z'));
-      s.drop(1001);
-      vi.advanceTimersByTime(100);
-      const again = FakeSocket.all[1]!;
-      again.open();
-      expect(presence(again)).toEqual([
-        { type: 'presence', v: 1, on_screen: false, hidden_since: left },
-      ]);
-      setVisibility('visible');
-      expect(presence(again).at(-1)).toEqual({ type: 'presence', v: 1, on_screen: true });
+    it('a hidden tab that reconnects reports how long ago it left, on the monotonic clock; visible again carries none (RR2, D1)', () => {
+      // A wall clock jumping ahead must not grant extra presence: only performance.now() counts.
+      let mono = 1_000;
+      const now = vi.spyOn(performance, 'now').mockImplementation(() => mono);
+      try {
+        start();
+        const s = FakeSocket.all[0]!;
+        s.open();
+        mono = 5_000;
+        setVisibility('hidden');
+        expect(presence(s).at(-1)).toEqual({
+          type: 'presence',
+          v: 1,
+          on_screen: false,
+          hidden_for_ms: 0,
+        });
+        vi.setSystemTime(new Date(Date.now() + 3_600_000));
+        mono = 65_000;
+        s.drop(1001);
+        vi.advanceTimersByTime(100);
+        const again = FakeSocket.all[1]!;
+        again.open();
+        expect(presence(again)).toEqual([
+          { type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 },
+        ]);
+        setVisibility('visible');
+        expect(presence(again).at(-1)).toEqual({ type: 'presence', v: 1, on_screen: true });
+      } finally {
+        now.mockRestore();
+      }
     });
 
-    it('a tab hidden since it opened has no on-screen history: no hidden_since (R3)', () => {
+    it('a tab hidden since it opened has no on-screen history: no hidden_for_ms (RR2)', () => {
       setVisibility('hidden');
       start();
       const s = FakeSocket.all[0]!;

@@ -366,22 +366,27 @@ export function createReplyRepo(db: Db): ReplyRepo {
           // the reply (started by 'message'), so the old period's ledger never mutes the new wait and
           // the team's 30 minutes count from the new message (AC-09). The fallback to the newest
           // arrival only covers a row without its message rows. A closed conversation holds no period
-          // (conversations_waiting_open_check), and a period that began after the reply (a reopen
-          // while it was in flight) is not the one it answered: both keep the row as it is.
+          // (conversations_waiting_open_check) and keeps the row as it is. With a customer message
+          // after the reply, a period that began after the reply (a reopen while it was in flight) is
+          // kept; without one, the reply answered every period, a reopen's included, and ends it.
           waiting_since: sql`CASE
-            WHEN status <> 'open' OR waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-              THEN waiting_since
+            WHEN status <> 'open' THEN waiting_since
             WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-            THEN COALESCE(
-              (SELECT min(m.received_at) FROM messages m
-                WHERE m.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId}
-                  AND m.received_at > GREATEST(conversations.last_reply_sent_at, ${sentAt}::timestamptz)),
-              last_message_received_at) END`,
+            THEN CASE
+              WHEN waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz) THEN waiting_since
+              ELSE COALESCE(
+                (SELECT min(m.received_at) FROM messages m
+                  WHERE m.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId}
+                    AND m.received_at > GREATEST(conversations.last_reply_sent_at, ${sentAt}::timestamptz)),
+                last_message_received_at) END
+            END`,
           waiting_started_by: sql`CASE
-            WHEN status <> 'open' OR waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-              THEN waiting_started_by
+            WHEN status <> 'open' THEN waiting_started_by
             WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-            THEN 'message' END`,
+            THEN CASE
+              WHEN waiting_since > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz) THEN waiting_started_by
+              ELSE 'message' END
+            END`,
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', conversationId)

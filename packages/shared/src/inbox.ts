@@ -479,13 +479,15 @@ export type LiveFrame = z.infer<typeof LiveFrame>;
 
 /**
  * The one client frame: whether this tab is on screen (events.md). Strict: anything else is ignored.
- * `hidden_since` (optional, only read with `on_screen: false`): when this tab left the screen, so a
- * hidden tab that reconnects keeps counting as present for the 10 minutes after it left (D1).
+ * `hidden_for_ms` (optional, only read with `on_screen: false`): how long ago this tab left the screen,
+ * measured on the tab's monotonic clock, so a hidden tab that reconnects keeps counting as present for
+ * the 10 minutes after it left (D1). A duration, not a wall-clock time: the server anchors it on its own
+ * clock, so a browser clock that runs ahead grants nothing.
  */
 export const PresenceFrame = z.strictObject({
   type: z.literal('presence'),
   v: z.literal(1),
   on_screen: z.boolean(),
-  hidden_since: DateTime.optional(),
+  hidden_for_ms: z.int().nonnegative().optional(),
 });
 export type PresenceFrame = z.infer<typeof PresenceFrame>;

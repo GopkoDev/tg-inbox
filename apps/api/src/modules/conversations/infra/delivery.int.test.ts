@@ -294,6 +294,37 @@ describe('reply delivery (Postgres)', () => {
     });
   });
 
+  it('sent: a reopen period after the sent time ends when no customer message came after the reply (RR1)', async () => {
+    // The customer writes at 300, the reply is accepted at 450 but settles later; a close and a reopen
+    // at 480 (the in-flight reply not counted) started a period the reply answers.
+    const s = await setup({ received: at(300) });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(300),
+    });
+    await db
+      .updateTable('conversations')
+      .set({ waiting_since: at(480), waiting_started_by: 'reopen' })
+      .where('id', '=', s.conversationId)
+      .execute();
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(450),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+  });
+
   it('sent: another conversation of the workspace keeps its period', async () => {
     const s = await setup({ received: at(0), waitingSince: at(0) });
     const contactId = await insertContact(db, { workspaceId: s.workspaceId });
