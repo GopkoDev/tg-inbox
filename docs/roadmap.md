@@ -24,7 +24,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | shipped → [`features/bot-connection`](features/bot-connection/spec.md) |
 | 4 | Shared web inbox — operators see conversations and reply; the customer receives the reply in the bot | idea-brief.md §2 Problem | M | shipped → [`features/shared-inbox`](features/shared-inbox/spec.md) |
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | M | shipped → [`features/assignment-statuses`](features/assignment-statuses/spec.md) |
-| 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | M | spec'd → [`features/operator-notifications`](features/operator-notifications/spec.md) |
+| 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | M | shipped → [`features/operator-notifications`](features/operator-notifications/spec.md) |
 | 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | S | idea |
 | 8 | Broadcasts by tag — send a message to a tagged segment, throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation | M | idea |
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
@@ -104,3 +104,4 @@ flowchart LR
 | 12 · UI redesign | 2026-10-18 | [changelog](features/ui-redesign/_ship/changelog.md) · [PR #3](https://github.com/GopkoDev/tg-inbox/pull/3) |
 | 4 · Shared web inbox | 2026-10-18 | [changelog](features/shared-inbox/_ship/changelog.md) · [PR #4](https://github.com/GopkoDev/tg-inbox/pull/4) |
 | 5 · Assignment & statuses | 2026-10-19 | [changelog](features/assignment-statuses/_ship/changelog.md) · PR pending |
+| 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · PR pending |
