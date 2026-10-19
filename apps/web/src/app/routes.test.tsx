@@ -130,9 +130,18 @@ describe('workspace frame (T3)', () => {
   it('AC-11: /settings lands on settings/bot', async () => {
     const router = renderAt('/w/w1/settings');
     await waitFor(() => expect(router.state.location.pathname).toBe('/w/w1/settings/bot'));
-    const crumbs = screen.getByRole('navigation', { name: 'breadcrumb' });
+    const crumbs = await screen.findByRole('navigation', { name: 'breadcrumb' });
     expect(within(crumbs).getByText('Settings')).toBeInTheDocument();
-    expect(within(crumbs).getByText('Bot')).toBeInTheDocument();
+    expect(await within(crumbs).findByText('Bot')).toBeInTheDocument();
+  });
+
+  it("an operator's /settings lands on settings/notifications", async () => {
+    const router = renderAt('/w/w2/settings');
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/w/w2/settings/notifications'),
+    );
+    const crumbs = await screen.findByRole('navigation', { name: 'breadcrumb' });
+    expect(await within(crumbs).findByText('Notifications')).toBeInTheDocument();
   });
 
   it('AC-20: pending entry shows the body skeleton and no page content', () => {

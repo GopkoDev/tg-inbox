@@ -1,4 +1,4 @@
-import type { FastifyInstance, InjectOptions } from 'fastify';
+import type { FastifyInstance, InjectOptions, LightMyRequestResponse } from 'fastify';
 import { expect } from 'vitest';
 import { sql } from 'kysely';
 import type { Deps } from '../deps.js';
@@ -18,7 +18,11 @@ export class Device {
     return this.cookies[SESSION_COOKIE];
   }
 
-  async request(method: 'GET' | 'POST', url: string, payload?: object) {
+  async request(
+    method: 'GET' | 'POST',
+    url: string,
+    payload?: object,
+  ): Promise<LightMyRequestResponse> {
     const options: InjectOptions = { method, url, cookies: { ...this.cookies } };
     if (payload) options.payload = payload;
     const res = await this.app.inject(options);
@@ -29,15 +33,15 @@ export class Device {
     return res;
   }
 
-  get(url: string) {
+  get(url: string): Promise<LightMyRequestResponse> {
     return this.request('GET', url);
   }
 
-  post(url: string, payload?: object) {
+  post(url: string, payload?: object): Promise<LightMyRequestResponse> {
     return this.request('POST', url, payload);
   }
 
-  signIn(email: string, password = PASSWORD) {
+  signIn(email: string, password = PASSWORD): Promise<LightMyRequestResponse> {
     return this.post('/api/auth/sign-in', { email, password });
   }
 }

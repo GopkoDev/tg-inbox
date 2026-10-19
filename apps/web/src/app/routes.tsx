@@ -7,6 +7,7 @@ import {
 } from 'react-router';
 import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
 import { getSampleContact } from '@/features/contacts/sample-source';
+import { SettingsIndexRedirect } from '@/features/settings/SettingsIndexRedirect';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
 import { InboxPage } from '@/pages/InboxPage';
@@ -79,7 +80,7 @@ const workspaceRoute: RouteObject = {
       handle: { crumb: 'Settings' },
       element: lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage'),
       children: [
-        { index: true, loader: to('settings/bot') },
+        { index: true, element: <SettingsIndexRedirect /> },
         {
           path: 'bot',
           handle: { crumb: 'Bot' },
@@ -89,6 +90,14 @@ const workspaceRoute: RouteObject = {
           path: 'team',
           handle: { crumb: 'Team' },
           element: lazyPage(() => import('@/pages/TeamPage'), 'TeamPage'),
+        },
+        {
+          path: 'notifications',
+          handle: { crumb: 'Notifications' },
+          element: lazyPage(
+            () => import('@/pages/NotificationSettingsPage'),
+            'NotificationSettingsPage',
+          ),
         },
       ],
     },
