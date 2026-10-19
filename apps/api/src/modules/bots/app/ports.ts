@@ -1,7 +1,12 @@
 import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
-import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
+import type {
+  InboundKind,
+  NormalisedEdit,
+  NormalisedMessage,
+  SenderProfile,
+} from '../domain/inbound.js';
 
 /** A Kysely handle or a transaction. */
 export type Executor = Db;
@@ -268,6 +273,28 @@ export interface ConversationsApi {
   ): Promise<'applied' | 'not_later' | 'not_found'>;
   lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
   hasConversations(workspaceId: string): Promise<boolean>;
+}
+
+/** One private message or edit from a human sender, as the interceptor sees it. No content beyond the text. */
+export interface InterceptInput {
+  workspaceId: string;
+  /** The Telegram id of the bot the update came to. */
+  telegramBotId: bigint;
+  from: SenderProfile;
+  kind: InboundKind;
+  /** The text, or the caption of any other kind; null when there is neither. */
+  text: string | null;
+  /** The update is an edit of an earlier message. */
+  edited: boolean;
+}
+
+/**
+ * Asked for every private human message or edit before it is captured (ADR-0003). `consumed`: the
+ * update is not a customer message and nothing of it is captured. Implemented by `notifications` and
+ * passed in by the composition root. A failure propagates: nothing is captured and Telegram redelivers.
+ */
+export interface InboundInterceptor {
+  intercept(input: InterceptInput): Promise<'pass' | 'consumed'>;
 }
 
 /** What `bots` calls on the contacts app layer. */

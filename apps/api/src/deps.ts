@@ -36,6 +36,12 @@ import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
+import { createIntercept } from './modules/notifications/app/intercept.js';
+import { createRedeem } from './modules/notifications/app/redeem.js';
+import { createConnectLinkRepo } from './modules/notifications/infra/connect-link-repo.js';
+import { createBotMessageSender } from './modules/notifications/infra/jobs.js';
+import { createNotificationSignals } from './modules/notifications/infra/signals.js';
+import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
@@ -174,6 +180,38 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     transaction,
     signals: botOwnerDeps.signals,
   });
+  // Order: contacts -> conversations -> bots core -> notifications -> bots ports (the inbound
+  // interceptor) -> team. `notifications` reads `bots` through these two reads only.
+  const { pingReadiness } = createPingReadiness({ bots: botRepo });
+  const inboxStatus = createInboxBotStatus({ bots: botRepo });
+
+  // --- notifications: calls the app layers of workspaces and bots (one-way: bots -> notifications by port) ---
+  const telegramLinks = createTelegramLinkRepo(db);
+  const connectLinks = createConnectLinkRepo(db);
+  const botMessages = createBotMessageSender();
+  const redeem = createRedeem({
+    transaction,
+    membership: {
+      // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+      lockActiveMembers: (tx, workspaceId, accountIds) =>
+        workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
+    },
+    links: telegramLinks,
+    connectLinks,
+    signals: createNotificationSignals(),
+    enqueue: botMessages.enqueue,
+    clock,
+  });
+  const { intercept } = createIntercept({
+    transaction,
+    links: telegramLinks,
+    redeem,
+    enqueue: botMessages.enqueue,
+    clock,
+  });
+  const interceptor = { intercept };
+  // --- end notifications dependencies ---
+
   const bots = {
     settings: botSettings,
     markNeedsToken,
@@ -185,13 +223,13 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
       clock,
       pacer: createPacer(),
     }).sendMemberMessage,
-    pingReadiness: createPingReadiness({ bots: botRepo }).pingReadiness,
+    pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
-    inboxStatus: createInboxBotStatus({ bots: botRepo }),
+    inboxStatus,
     paste: createPasteToken({ ...botOwnerDeps, conversations }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
-    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),
+    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations, interceptor }),
     healthCheck: createHealthCheck({
       bots: botRepo,
       telegram,
@@ -275,6 +313,8 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations,
     notificationReads,
     bots,
+    /** Binds the started job queue to the notifications answers (the queue starts after `buildDeps()`). */
+    bindNotificationJobs: botMessages.bind,
     inboxReads,
     inboxMedia,
     changeState,

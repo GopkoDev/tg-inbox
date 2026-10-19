@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { telegramEdit, telegramUpdate } from '../../../test/fixtures/telegram.js';
 import { createAcceptUpdate, type CaptureLog } from './accept-update.js';
-import { fakeBotRepo, fakeConversationsApi } from './fakes.js';
+import { fakeBotRepo, fakeConversationsApi, fakeInterceptor } from './fakes.js';
 import { at, botRow } from './harness.js';
 
 const BOT = botRow().id;
@@ -15,8 +15,9 @@ function setup(rows = [botRow()]) {
   const conversations = fakeConversationsApi();
   const lines: { fields: Record<string, unknown>; msg: string }[] = [];
   const log: CaptureLog = { info: (fields, msg) => lines.push({ fields, msg }) };
-  const accept = createAcceptUpdate({ bots, conversations });
-  return { bots, conversations, lines, log, accept };
+  const interceptor = fakeInterceptor();
+  const accept = createAcceptUpdate({ bots, conversations, interceptor });
+  return { bots, conversations, interceptor, lines, log, accept };
 }
 
 const update = (o: Partial<Parameters<typeof telegramUpdate>[0]> = {}) =>
@@ -138,5 +139,74 @@ describe('acceptUpdate', () => {
       throw new Error('db down');
     };
     await expect(h.accept.acceptUpdate(BOT, SECRET, update(), h.log)).rejects.toThrow('db down');
+  });
+
+  describe('the inbound interceptor (ADR-0003, AC-04, AC-11)', () => {
+    it('asks about every private human message before capturing, with the bot and the sender', async () => {
+      const h = setup();
+      await h.accept.acceptUpdate(BOT, SECRET, update({ text: 'Hi', fromId: 770001 }), h.log);
+      expect(h.interceptor.calls).toEqual([
+        {
+          workspaceId: 'ws-a',
+          telegramBotId: botRow().telegramBotId,
+          from: {
+            telegramUserId: 770001n,
+            firstName: 'Test User',
+            lastName: null,
+            username: 'test_user_770001',
+            languageCode: 'en',
+          },
+          kind: 'text',
+          text: 'Hi',
+          edited: false,
+        },
+      ]);
+      expect(h.conversations.captured).toHaveLength(1);
+    });
+
+    it('a consumed message is not captured and the webhook still answers normally', async () => {
+      const h = setup();
+      h.interceptor.answer = 'consumed';
+      expect(await h.accept.acceptUpdate(BOT, SECRET, update(), h.log)).toBe('consumed');
+      expect(h.conversations.captured).toHaveLength(0);
+      expect(h.lines.at(-1)!.fields).toMatchObject({ outcome: 'consumed' });
+    });
+
+    it('a consumed edit is not applied, and the interceptor sees the editor and the caption', async () => {
+      const h = setup();
+      h.interceptor.answer = 'consumed';
+      const edit = telegramEdit({
+        updateId: 900003,
+        messageId: 42,
+        date: EPOCH_S + 10,
+        editDate: EPOCH_S + 70,
+        kind: 'photo',
+        caption: 'new caption',
+        fromId: 770002,
+      });
+      expect(await h.accept.acceptUpdate(BOT, SECRET, edit, h.log)).toBe('consumed');
+      expect(h.conversations.edits).toHaveLength(0);
+      expect(h.interceptor.calls[0]).toMatchObject({
+        from: { telegramUserId: 770002n },
+        kind: 'photo',
+        text: 'new caption',
+        edited: true,
+      });
+    });
+
+    it('is not asked about ignored updates (group, bot sender, before the epoch)', async () => {
+      const h = setup();
+      await h.accept.acceptUpdate(BOT, SECRET, update({ chatType: 'group' }), h.log);
+      await h.accept.acceptUpdate(BOT, SECRET, update({ fromIsBot: true }), h.log);
+      await h.accept.acceptUpdate(BOT, SECRET, update({ date: EPOCH_S - 100 }), h.log);
+      expect(h.interceptor.calls).toEqual([]);
+    });
+
+    it('a failing interceptor propagates: nothing captured, Telegram redelivers', async () => {
+      const h = setup();
+      h.interceptor.fail = true;
+      await expect(h.accept.acceptUpdate(BOT, SECRET, update(), h.log)).rejects.toThrow();
+      expect(h.conversations.captured).toHaveLength(0);
+    });
   });
 });

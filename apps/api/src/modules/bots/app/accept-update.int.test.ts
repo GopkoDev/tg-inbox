@@ -30,6 +30,7 @@ describe('acceptUpdate (Postgres)', () => {
     db = createDb(database.url);
     const clock = fixedClock(new Date(T.getTime() + 60_000));
     accept = createAcceptUpdate({
+      interceptor: { intercept: async () => 'pass' },
       bots: createBotRepo(db, createTokenCipher(testBotKey)),
       conversations: createConversations({
         transaction: (fn) => db.transaction().execute(fn),

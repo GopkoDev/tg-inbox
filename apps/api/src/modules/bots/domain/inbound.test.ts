@@ -180,6 +180,13 @@ describe('classifyUpdate — edits (AC-10, AC-09 live location)', () => {
         updateId: 900005n,
         raw: (edit as unknown as { edited_message: Record<string, unknown> }).edited_message,
       },
+      sender: {
+        telegramUserId: 700001n,
+        firstName: 'Test User',
+        lastName: null,
+        username: 'test_user_700001',
+        languageCode: 'en',
+      },
     });
   });
 

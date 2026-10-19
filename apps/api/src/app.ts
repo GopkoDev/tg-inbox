@@ -23,6 +23,7 @@ import type { Config } from './platform/config.js';
 import { requireJsonBodies } from './platform/content-type.js';
 import { frameworkErrors, registerErrorHandler } from './platform/errors.js';
 import { startJobs } from './platform/jobs.js';
+import { createNotificationQueues } from './modules/notifications/infra/jobs.js';
 import { startRealtimeListener } from './platform/realtime.js';
 import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
@@ -87,6 +88,8 @@ export async function buildApp(
     replyDelivery,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL, app.log);
+  deps.bindNotificationJobs(jobs);
+  await createNotificationQueues(jobs);
   // Live sockets: the hub fans realtime signals out to the open inbox tabs (ADR-0002, ADR-0003).
   const liveHub = createLiveHub({
     sessions: sessionUseCases,

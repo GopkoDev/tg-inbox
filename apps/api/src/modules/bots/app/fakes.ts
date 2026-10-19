@@ -9,6 +9,8 @@ import type {
   FileFetch,
   ConversationsApi,
   GetMeResult,
+  InboundInterceptor,
+  InterceptInput,
   NewBot,
   SendOutcome,
   TelegramGateway,
@@ -294,4 +296,23 @@ export function fakeConversationsApi(): ConversationsApi & {
 export function fakeContactsApi(): ContactsApi & { counts: Map<string, number> } {
   const counts = new Map<string, number>();
   return { counts, countContacts: async (w) => counts.get(w) ?? 0 };
+}
+
+/** Records what the interceptor was asked; answers `pass` unless told otherwise. */
+export function fakeInterceptor(): InboundInterceptor & {
+  calls: InterceptInput[];
+  answer: 'pass' | 'consumed';
+  fail: boolean;
+} {
+  const fake = {
+    calls: [] as InterceptInput[],
+    answer: 'pass' as 'pass' | 'consumed',
+    fail: false,
+    async intercept(input: InterceptInput) {
+      fake.calls.push(input);
+      if (fake.fail) throw new Error('interceptor down');
+      return fake.answer;
+    },
+  };
+  return fake;
 }

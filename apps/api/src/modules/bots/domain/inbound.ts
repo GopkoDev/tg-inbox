@@ -87,7 +87,7 @@ export type IgnoreReason =
 
 export type InboundDecision =
   | { type: 'capture'; message: NormalisedMessage }
-  | { type: 'edit'; edit: NormalisedEdit }
+  | { type: 'edit'; edit: NormalisedEdit; sender: SenderProfile }
   | { type: 'ignore'; reason: IgnoreReason };
 
 type Obj = Record<string, unknown>;
@@ -99,6 +99,16 @@ const ignore = (reason: IgnoreReason): InboundDecision => ({ type: 'ignore', rea
 
 export function detectKind(message: Obj): InboundKind {
   return KIND_FIELDS.find((field) => message[field] !== undefined) ?? 'other';
+}
+
+function senderOf(from: Obj): SenderProfile {
+  return {
+    telegramUserId: BigInt(from.id as number),
+    firstName: from.first_name as string,
+    lastName: optionalString(from.last_name),
+    username: optionalString(from.username),
+    languageCode: optionalString(from.language_code),
+  };
 }
 
 function bodyOf(message: Obj): string | null {
@@ -152,13 +162,7 @@ export function classifyUpdate(
         sentAt: new Date((message.date as number) * 1000),
         chatId: BigInt((message.chat as Obj).id as number),
         messageId: BigInt(message.message_id as number),
-        sender: {
-          telegramUserId: BigInt(from.id as number),
-          firstName: from.first_name as string,
-          lastName: optionalString(from.last_name),
-          username: optionalString(from.username),
-          languageCode: optionalString(from.language_code),
-        },
+        sender: senderOf(from),
         raw: message,
       },
     };
@@ -167,7 +171,7 @@ export function classifyUpdate(
   if (update.edited_message !== undefined) {
     const passed = filter(update.edited_message, connectedAt, 'edit_date');
     if (typeof passed === 'string') return ignore(passed);
-    const { message } = passed;
+    const { message, from } = passed;
     const body = bodyOf(message);
     // A shared live location arrives as edits without text: nothing to change (AC-09). Any other
     // edit without text or caption removed the caption (the repository never empties a text).
@@ -183,6 +187,7 @@ export function classifyUpdate(
         updateId: BigInt(update.update_id),
         raw: message,
       },
+      sender: senderOf(from),
     };
   }
 
