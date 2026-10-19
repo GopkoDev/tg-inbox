@@ -511,6 +511,775 @@ sequenceDiagram
     Note over Web,Notif: tab closed, computer asleep or connection lost - the lease expires within 50 s and the member counts away
 ```
 
+Flows 4–18 below were added by the `sequences` stage. They use the generic runtime vocabulary: `<user>` (an operator or business owner, or the person in Telegram), `<ui>` (a tab of the web panel, or its notifications worker), `<service>` (tg-inbox's backend), `<data-store>`, `<message-bus>` (the live-signal fan-out and the job queues) and `<external-system>` (the Telegram Bot API, or the browser and operating system where a flow says so). `SCR-NN`, `OS-NN` and `TG-NN` ids refer to [`ux-flows.md`](ux-flows.md). Every persist or read note is a hint for `data-model`. The seeded flows 1–3 above are unchanged.
+
+**Assumptions (autonomous run 2026-10-19, `sequences`)**, each can be vetoed at review:
+
+- Depth = medium, size M (`.size`), route `standard` (`.route`). The pipeline confirmed every flow itself against spec §5, `ux-flows.md` and ADR-0001…0010. Each flow's prose account is the paragraph under it.
+- The same session guard (signed out, another workspace, deactivated) fronts every panel route and the live socket. It is drawn in full in flows 4, 8 and 14 and referred to elsewhere.
+- Settings — Notifications also offers "Turn off" for desktop notifications. It clears this workspace's per-browser flag and unregisters the worker only when no workspace in this browser still has the flag on (the §11 kill switch).
+- A permission prompt that the member dismisses counts as refused for that click. The next click asks again, because the browser's permission is still "not asked".
+- When the attention-count request fails, the tab keeps the last count it showed and asks again on the next frame or resync.
+- Deactivation sends the former member no bot answer. The spec asks for none, and the chat is a channel for members only.
+- The owner's "Telegram pings on / off" mark on Settings — Team is read when Team opens. It is not pushed live, because `telegram_link.changed` is account-scoped (ADR-0010).
+- Disconnect on a link that is already gone is a success that changes nothing, so a double click or a second tab shows "Not connected".
+- A bot answer job that times out may be retried and so reach the chat twice. Answers carry no state, so this is accepted.
+
+### Flow 4: The attention count follows the member across the workspace (US-01 — AC-01, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: the member opens any page of one workspace - Inbox, Contacts or Settings - in a browser tab (SCR-15)
+    U->>UI: opens a workspace page
+    UI->>S: open the workspace live connection from the frame, one per tab
+    S->>D: check the session and the membership in this workspace
+    alt not signed in
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back to the same address (SCR-09)
+    else account of another workspace, or an unknown workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member of either role
+        S-->>UI: connection open, tab presence registered - flow 7
+        UI->>S: ask for my attention count in this workspace
+        S->>D: count open conversations assigned to me or unassigned with a customer arrival after my unread floor
+        Note over S,D: reads conversations by (workspace, status, assignee) with the list's unread predicate - reuses the lens indexes, no new table
+        D-->>S: N
+        S-->>UI: attention count N for this workspace
+        alt N is 0
+            UI-->>U: no count in the tab title, no number at Inbox
+        else N above 0
+            UI-->>U: tab title starts with (N), Inbox in the navigation shows N
+        end
+        loop while the tab stays on a page of this workspace
+            B->>S: change signal on commit - a message, an activity item, a read by this account, or a resync after a gap
+            S->>UI: push the frame to the sockets of this workspace, read frames only to this account
+            UI->>UI: drop frames of another workspace, debounce 300 ms
+            UI->>S: ask for my attention count again
+            S->>D: same count
+            S-->>UI: new N
+            UI-->>U: title and Inbox badge change without a reload
+        end
+        opt the count request fails
+            UI-->>U: keep the last count shown, ask again on the next frame or resync
+        end
+        opt the member moves to Contacts or Settings of the same workspace
+            UI-->>U: the frame keeps its connection and its count
+        end
+        opt the member is deactivated meanwhile
+            S->>UI: membership deactivated frame, connection closed with access removed
+            UI-->>U: access-removed landing (SCR-07)
+        end
+    end
+    Note over U,S: Postcondition: each tab shows the count of its own workspace only - a teammate's or a closed conversation never adds to it
+```
+
+Opening any page of a workspace makes the frame open the tab's one live connection. The usual guard sends a signed-out visitor to sign in, gives another workspace's account the not-found card and gives a deactivated member the access-removed landing. For an active member of either role, the server counts open conversations that are the member's or unassigned and hold a customer arrival after the member's unread floor. It reuses the list's unread predicate and lens indexes (ADR-0008). At 0 the title and the Inbox item show nothing. Otherwise the title starts with "(N)" and Inbox shows N. Every message, activity, own-read or resync frame of this workspace triggers a refetch, debounced by 300 ms, so the count follows arrivals, reads, assignments, closes and reopens without a reload (AC-01). A failed refetch keeps the last count until the next frame. Moving to Contacts or Settings keeps the same connection and count. A deactivation closes the socket and shows the access-removed landing.
+
+### Flow 5: Turn on desktop notifications in this browser (US-02 — AC-03)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant W as #lt;ui#gt; worker
+    participant X as #lt;external-system#gt; browser
+    Note over U,UI: Precondition: an active member on Settings - Notifications (SCR-16), desktop notifications off for this browser
+    UI->>X: can this browser show notifications, and what is the current permission
+    alt not supported, or the per-browser flag cannot be stored
+        UI-->>U: desktop notifications cannot be shown in this browser, the attention count keeps working
+    else permission refused earlier
+        UI-->>U: off for this browser, and how to allow them in the site settings
+    else not asked yet, or already allowed
+        UI-->>U: Turn on desktop notifications
+        U->>UI: clicks Turn on desktop notifications
+        opt not asked yet
+            UI->>X: ask for permission, only now, on this click
+            X-->>U: allow notifications for this site (OS-01)
+            U->>X: allows, blocks or dismisses
+            X-->>UI: the answer
+        end
+        alt allowed
+            UI->>W: register the notifications-only worker for this origin
+            alt registration fails
+                W-->>UI: not registered
+                UI-->>U: desktop notifications cannot be shown in this browser, the attention count keeps working
+            else registered
+                UI->>UI: store the per-browser flag for this account and workspace
+                UI-->>U: desktop notifications on for this browser
+            end
+        else blocked or dismissed
+            UI-->>U: off for this browser, and how to allow them in the site settings
+        end
+    end
+    opt the member turns them off again
+        U->>UI: clicks Turn off
+        UI->>UI: clear the flag, unregister the worker when no workspace in this browser keeps the flag
+        UI-->>U: off for this browser
+    end
+    Note over U,UI: Postcondition: the browser is asked only on the member's click - the opt-in lives in this browser only and nothing is sent to the service
+```
+
+On Settings — Notifications the panel first asks the browser whether it can show notifications and what the permission is. A browser that cannot show them, or where the per-browser flag cannot be stored, gets "cannot be shown here", and the attention count keeps working. A permission refused earlier gets "off for this browser" with how to allow it in the site settings (AC-03). Otherwise the member sees "Turn on desktop notifications". Only that click makes the browser ask (OS-01). On "allow" the panel registers the notifications-only worker (ADR-0009) and stores the per-browser flag. A failed registration falls back to "cannot be shown here". A block or a dismissal gives "off" and how to allow it. Turning them off clears the flag and unregisters the worker once no workspace in this browser needs it.
+
+### Flow 6: One desktop notification per browser for a new customer message (US-02 — AC-02)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant T1 as #lt;ui#gt; tab 1
+    participant T2 as #lt;ui#gt; tab 2
+    participant W as #lt;ui#gt; worker
+    participant S as #lt;service#gt;
+    participant B as #lt;message-bus#gt;
+    Note over S,B: Trigger: a customer message is captured in workspace W, including one that reopens a closed conversation, and its signal is published with the write
+    Note over U,T2: Precondition: desktop notifications are on in this browser, and two tabs of W are open with working live connections
+    B->>S: conversation changed, message created, delivered on commit to every instance
+    S->>T1: push to the sockets of workspace W
+    S->>T2: push to the sockets of workspace W
+    par tab 1
+        T1->>S: refetch the row
+        S-->>T1: row with status, assignee and the new message
+    and tab 2
+        T2->>S: refetch the row
+        S-->>T2: the same row
+    end
+    Note over T1,T2: each tab decides the same way - drawn once for both
+    alt the flag is off, or the permission is no longer granted
+        T1->>T1: post nothing
+    else a teammate's conversation, a closed one, or the frame was an edit, a reply or an activity item
+        T1->>T1: post nothing
+    else open, mine or unassigned, a new customer message
+        T1->>W: candidate with workspace, conversation, message id, contact name and the conversation address
+        T2->>W: the same candidate
+        W->>W: drop a message id already handled
+        W->>W: list the window clients of this origin, most recently focused first
+        alt a client of workspace W is in focus
+            W->>W: show nothing
+        else none in focus, even if one is visible behind another window
+            W-->>U: one notification, contact name and workspace, New message, tagged by workspace and conversation (OS-02)
+            Note over W,U: a further message in that conversation replaces it under the same tag instead of stacking
+            opt the member clicks it
+                U->>W: clicks the notification
+                alt a client of workspace W is still open
+                    W->>T1: focus the most recently focused tab of W and open the conversation there
+                    T1->>S: open the thread through the usual guard
+                    T1-->>U: that conversation (SCR-02)
+                else every tab of W closed since
+                    W->>W: open the conversation address in a new window
+                    W-->>U: sign-in or the conversation, as access allows (SCR-09, SCR-02)
+                end
+            end
+        end
+    end
+    Note over S,U: Postcondition: at most one notification per browser per message, never with message text, none in a browser with no tab of W open
+```
+
+A captured customer message, including one that reopens a closed conversation, reaches every tab of the workspace. Each tab refetches the row, as it already does. A tab posts a candidate to the worker only when the opt-in and permission are on and the conversation is open and the member's or unassigned. The frame must also be a new customer message, not an edit, a reply or an activity entry. The worker drops a message id it has already handled, so two tabs give one notification. It then lists the browser's windows. If a tab of this workspace is in focus, it shows nothing. A tab that is visible but not in focus does not hold it back. Otherwise it shows `<contact name> · Acme Flowers: New message` with no text, tagged per conversation, so a further message replaces it (AC-02, ADR-0009). A click focuses the workspace tab that was most recently in focus and opens the conversation there. If every tab has closed since, the click opens the address, through sign-in if needed. A browser with no tab of the workspace gets no candidate at all.
+
+### Flow 7: A tab's presence lease from open to away (US-04 — spec §1 D1 and the §6 presence rows, feeding AC-07, AC-09)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over UI,S: Precondition: a tab of workspace W passed the guard and opened its live connection (flow 4)
+    UI->>S: presence frame with on screen true or false, sent when the connection opens
+    S->>D: register the tab - workspace, account, connection id, live until now plus 50 s, on screen as reported
+    Note over S,D: persists tab presence (connection id, workspace, account, live until, on screen, last on screen, opened at) - informs a (workspace, account, live until) index
+    opt the tab opens on screen and this member got a ping in W within the last 15 min
+        S->>D: set opened at on that ping, for the ping to panel KPI
+    end
+    loop every 25 s while the connection works
+        S->>UI: keep-alive ping
+        UI-->>S: pong
+        S->>D: extend live until to now plus 50 s, by workspace and connection id
+    end
+    U->>UI: switches tab, minimises the window, or comes back
+    UI->>S: presence frame with on screen true or false
+    S->>S: accept only a valid presence frame within 1024 bytes, ignore anything else, coalesce to one write per second per socket
+    alt the tab left the screen
+        S->>D: set on screen false and last on screen to now
+    else the tab is back on screen
+        S->>D: set on screen true
+        opt this member got a ping in W within the last 15 min
+            S->>D: set opened at on that ping
+        end
+    end
+    alt the tab closes cleanly, or the connection is closed because access ended
+        S->>D: delete this tab's presence row
+    else the computer sleeps or the connection dies without a close
+        S->>S: no pong arrives, nothing is written
+        Note over S,D: the row stops counting once live until passes, at most 50 s after the last pong - the sweep of W deletes expired rows
+    end
+    Note over S,D: away for W means no row of this member with live until in the future and either on screen or last on screen within 10 min
+    Note over U,D: Postcondition: away within 60 s of a lost tab and within 10 min plus 60 s of a hidden one - read the same by every instance and every job
+```
+
+When a tab's live connection opens, the hub registers a presence row for it, scoped by the workspace, with a lease of 50 s and the on-screen state the tab reports (ADR-0002). Every pong extends the lease. A tab that leaves the screen sends one presence frame, and the server stamps when it left. A tab that comes back clears that. Coming back, or opening on screen, within 15 minutes of a ping marks that ping opened for the §7 KPI. The server reads only well-formed presence frames, within the existing 1024-byte cap and coalesced to one write per second. A clean close, including the close when access ends, deletes the row. A sleeping computer or a dead connection stops answering, and the lease lapses at most 50 s after the last pong. The member is away for the workspace once no row has a live lease and is on screen or was within 10 minutes. That gives the spec's 60 s and 10 min + 60 s freshness on every instance.
+
+### Flow 8: Open Settings — Notifications and get a connect link (US-03 — AC-04, AC-06, AC-12, AC-13)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over U,S: Precondition: a person opens Settings - Notifications of one workspace (SCR-16)
+    U->>UI: opens Settings - Notifications
+    UI->>S: ask for my notification state in this workspace
+    S->>D: check the session and the membership in this workspace
+    alt not signed in
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back here (SCR-09)
+    else account of another workspace, or an unknown workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member of either role
+        S->>D: read my live Telegram link in this workspace and the bot's readiness
+        Note over S,D: reads Telegram links by (workspace, account) among live rows - the partial unique index
+        S-->>UI: link state, Telegram name and since when, reachability, bot readiness and whether I am an owner
+        alt connected
+            UI-->>U: Connected with name and since when, or Not reachable, or Pings paused - Disconnect only, no connect link
+        else not connected, and the bot is not connected, not working or taken over
+            UI-->>U: no connect link, pings need a working bot that receives messages - an operator is told to ask a business owner, an owner gets the way to Settings - Bot (SCR-08)
+        else not connected, and the bot is ready
+            UI-->>U: Connect Telegram
+            U->>UI: chooses Connect Telegram
+            UI->>S: create a connect link for me in this workspace
+            S->>D: one transaction - re-check the membership, take this member's connect-link lock, count their links of the last 10 min
+            Note over S,D: reads connect links by (workspace, account, created at) - informs the limit index
+            alt membership no longer active
+                S-->>UI: access removed
+                UI-->>U: access-removed landing (SCR-07)
+            else 5 links made in the last 10 min
+                S-->>UI: refused, limit reached, with the time a new link is possible
+                UI-->>U: connect links are limited to 5 per 10 minutes, try again at that time (SCR-16)
+            else connected meanwhile
+                S-->>UI: refused, already connected
+                UI-->>U: Connected, Disconnect only (SCR-16)
+            else the bot is no longer ready
+                S-->>UI: refused, pings need a working bot, with the bot state and the caller's role
+                UI-->>U: no connect link and why (SCR-16)
+            else allowed
+                S->>D: mark my previous unused link replaced, insert the new link's hash with an expiry in 10 min
+                Note over S,D: persists connect link (workspace, token hash unique, account, created at, expires at, replaced at) - the token itself is never stored
+                S-->>UI: the start link with the bot username and the token, and the expiry
+                UI-->>U: dialog with the link, a code drawn in the panel and when it expires (SCR-17)
+            end
+        end
+    end
+    opt the member asks for a new link from the dialog
+        U->>UI: asks for a new link
+        UI->>S: create a connect link again
+        Note over UI,S: the same checks - the new link replaces the previous unused one, which then answers expired in Telegram
+    end
+    Note over U,S: Postcondition: at most one usable connect link per member, at most 5 made per 10 min - the redeem is seeded flow 2, the dialog turns Connected live in flow 18
+```
+
+Settings — Notifications sits behind the usual guard (AC-12). For an active member, it reads only the caller's own live link and the bot's readiness. A connected member sees "Connected" with the Telegram name and since when, or "Not reachable" or "Pings paused". The only action is Disconnect, never a connect link (AC-06). A member who is not connected is offered no link while the bot is not connected, not working or taken over. An operator is told to ask a business owner, and an owner gets the way to Settings — Bot (AC-13). "Connect Telegram" re-checks everything in one transaction under the member's connect-link lock: the membership, the 5-per-10-minutes limit with the retry time, a link made meanwhile and the bot's readiness. Then it marks the previous unused link replaced and stores only the new token's hash, with a 10-minute expiry (ADR-0004). The dialog shows the link, a code drawn in the browser and the expiry. Asking again replaces the previous link.
+
+### Flow 9: Disconnect my Telegram (US-03 — AC-04, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: an active member sees Connected on Settings - Notifications (SCR-16)
+    U->>UI: chooses Disconnect, with no confirmation
+    UI->>S: remove my Telegram link in this workspace - the request names no account
+    S->>D: check the session and the membership, as in flow 8
+    alt not signed in, another workspace, or deactivated
+        S-->>UI: sign in first, not found, or access removed
+        UI-->>U: sign-in, not-found card or access-removed landing (SCR-09, SCR-06, SCR-07)
+    else active member
+        S->>D: one transaction - lock my live link in this workspace
+        alt no live link, already removed
+            S-->>UI: done, nothing changed
+            UI-->>U: Not connected
+        else live link
+            S->>D: mark it removed by the member, keep the times, clear the Telegram id and name
+            Note over S,D: persists Telegram link removed at and reason member - the partial unique indexes free both sides at once
+            S->>B: telegram link changed for this account, published with the write
+            S->>B: enqueue the answer notifications are off, with the Telegram user id read before clearing
+            S-->>UI: Not connected
+            UI-->>U: Not connected at once, Connect Telegram offered again while the bot is ready
+        end
+    end
+    B->>S: signal delivered on commit
+    S->>UI: the frame reaches only this member's other tabs - flow 18
+    Note over B,S: the answer job runs as flow 10 - the next sweep finds no live link, so no further ping
+    Note over U,S: Postcondition: a member removes only their own link - an owner has no way to remove it for them
+```
+
+Disconnect takes effect on the click. The route takes no account id, so a member can remove only their own link (AC-12). In one transaction the service marks the link removed by the member and clears the Telegram id and name, keeping the times for the §7 KPIs. It publishes the account-scoped `telegram_link.changed` and enqueues the "notifications are off" answer. The answer's payload carries the Telegram user id, read before it is cleared. The panel shows "Not connected" at once, and the member's other tabs follow (AC-04). With no live link left, the next sweep sends nothing to this member. A second Disconnect is a success that changes nothing.
+
+### Flow 10: The bot answers in the member's chat (US-03, US-06 — AC-04, AC-05, AC-06, AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as #lt;message-bus#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    actor U as #lt;user#gt;
+    Note over B,S: Trigger: a redeem, a disconnect or a consumed message enqueued an answer in its own transaction, with workspace, Telegram user id and answer kind
+    B->>S: deliver the answer job
+    S->>S: idempotency - a job that already completed is never delivered again, a retry reuses the same job id
+    S->>D: read the workspace name and the bot's readiness and send pause
+    alt bot not connected or not working
+        S->>S: finish without sending, nothing queued
+    else paused after a rate-limit answer
+        S->>B: retry after the pause
+    else ready
+        S->>S: build the text from the kind and the workspace name - connected and how to stop, link expired, cannot connect with the reason, already connected, notifications off, this chat only sends notifications with a panel link
+        S->>X: send the message to the member's private chat, paced with pings
+        alt accepted
+            X-->>U: the answer in the bot chat (TG-02)
+        else the person blocked the bot
+            X-->>S: forbidden
+            S->>S: finish, nothing to retry
+        else rate limited
+            X-->>S: too many requests with retry after
+            S->>D: store the bot's send pause
+            Note over S,D: persists bot send paused until
+            S->>B: retry after the pause
+        else timeout or network failure
+            X-->>S: no answer
+            S->>B: fail the attempt
+        end
+    end
+    Note over S,X: retry 2 times with backoff, each attempt expires after 30 s
+    alt retries exhausted
+        S->>B: route the job to the dead-letter queue, logged by kind and outcome code
+        Note over S,B: dead-letter after 3 failed attempts - the link state in the panel is already right, only the chat answer is lost
+    end
+    Note over B,U: Postcondition: the webhook never waits on Telegram, and no answer carries customer text
+```
+
+Every answer the bot gives in a member's chat is a job, enqueued in the transaction that decided it. The webhook therefore always answers at once. A redelivered job reuses its id, and a completed one never runs again. A bot that does not work drops the answer. A send pause postpones it. Otherwise the text is built from the kind and the workspace name and sent through `sendMemberMessage`, paced with pings and behind the same pause (ADR-0006). A person who blocked the bot ends the job. A rate-limit answer stores the pause and retries after it. A timeout fails the attempt. After two retries the job goes to the dead-letter queue. Nothing in the panel depends on the answer, so only the chat message is lost.
+
+### Flow 11: A linked member writes to the bot (US-06 — AC-11)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant X as #lt;external-system#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,X: Precondition: a person writes to the workspace's bot in a private chat - text, media, an edit, or a start through any link
+    U->>X: writes to the bot
+    X->>S: update for the workspace's bot, with the per-bot secret
+    S->>S: authenticate the bot, classify a private message or edit from a human sender
+    S->>S: idempotency - capture keeps its unique message key, and a consumed update writes nothing a redelivery could repeat
+    S->>D: is this sender's Telegram user id linked in this workspace with this bot - one indexed read
+    Note over S,D: reads Telegram links by (workspace, Telegram user id) among live rows, and compares the bot id
+    alt a start with the connect-link prefix
+        S->>S: redeem, as in seeded flow 2
+    else the sender has a live link with this bot
+        S->>S: consume - no contact, no conversation, no unread, no waiting, nothing reopens
+        S->>D: set last notice at to now only if it is empty or older than 1 hour
+        Note over S,D: persists Telegram link last notice at - a conditional update, so two updates at once give one notice
+        alt the update changed the row
+            S->>B: enqueue the answer this chat only sends notifications, with a panel link - flow 10
+        else a notice went out within the hour
+            S->>S: no answer
+        end
+        S-->>X: acknowledged
+    else no live link - never linked, or disconnected since
+        S->>D: capture as a customer message, as before - a start through a business's campaign link too
+        Note over S,D: persists contact, conversation and message, as in shared-inbox and bot-connection
+        S-->>X: acknowledged
+    else the lookup or the write fails
+        S-->>X: not acknowledged, nothing written
+    end
+    Note over X,S: retry - Telegram redelivers an unacknowledged update by itself
+    alt Telegram's own retries are exhausted
+        X->>X: dead-letter - Telegram drops the update outside tg-inbox, as in bot-connection
+    end
+    Note over U,D: Postcondition: nothing from a linked account becomes customer data - messages sent before linking stay in their conversation
+```
+
+Every private update passes the inbound interceptor before capture (ADR-0003). One indexed read finds whether the sender holds a live link in this workspace, made with this bot. A connect-link start is redeemed as in seeded flow 2. Anything else from a linked sender is consumed: text, media, an edit or a start through any link, a campaign link included. It creates no contact or conversation and changes no unread count, waiting marker or status. A conditional update of the link's notice time lets at most one "this chat only sends notifications" answer, with its panel link, go out per hour, even when two updates arrive at once (AC-11). A sender without a live link, including one who disconnected, is captured exactly as before, campaign starts included. A failure is not acknowledged, so Telegram redelivers. The consumed path writes nothing but the notice time, so a redelivery is safe. Earlier messages from the same person stay in their conversation.
+
+### Flow 12: Conversations record when a waiting period begins and ends (US-04, US-05 — AC-07, AC-08)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant X as #lt;external-system#gt;
+    actor U as #lt;user#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over S,D: Precondition: a conversation of workspace W, open or closed, with or without a current waiting period
+    alt a customer message is captured
+        X->>S: a new customer message for the conversation
+        S->>D: in the capture transaction - lock the conversation row, raise arrival, reopen if closed
+        alt it was not waiting
+            S->>D: set waiting since to the message's arrival, started by message
+        else it was already waiting
+            S->>D: leave waiting since as it is - the period goes on
+        end
+        Note over S,D: persists conversation waiting since and started by - informs a (workspace, waiting since) index over open waiting conversations
+    else a reply is marked sent
+        S->>D: in the settle transaction - clear waiting since and started by
+    else a member closes the conversation
+        U->>S: close
+        S->>D: in the close transaction - clear waiting since and started by
+    else a reopen while the customer is still waiting
+        Note over S,D: a member reopen over an unanswered message, or a reply that ends not delivered or not confirmed
+        S->>D: in the reopen transaction - set waiting since to now, started by reopen
+    else an assignee change
+        U->>S: assign, reassign or unassign
+        S->>D: change the assignee only - waiting since stays, the clock does not restart
+    end
+    Note over S,D: the migration backfills waiting since from the current waiting marker
+    Note over S,D: Postcondition: every open waiting conversation has exactly one period start, read by the sweep through waitingForPings
+```
+
+`conversations` keeps the period start in the transactions that already change the conversation (ADR-0007). Capture starts a period at the message's arrival when the conversation was not waiting, including a message that reopens a closed conversation. A message in an ongoing period leaves the start as it is. A reply marked sent and a close end the period. A reopen while the customer is still waiting starts a new period at the reopen, marked as started by a reopen. This happens on a member reopen over an unanswered message, or a reply that ends not delivered (AC-08). An assignment change never touches the start, so a reassignment keeps the clock. Waiting is measured from arrival in tg-inbox, so a recovering bot's backlog starts fresh clocks.
+
+### Flow 13: The sweep decides each member's due set and the ping's wording (US-04, US-05 — AC-07, AC-08, AC-09)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over S,D: Precondition: a sweep of workspace W with a bot that can send (seeded flow 1) - taken over counts as able to send
+    S->>D: read the live links of W with their reachability, and the presence rows of W
+    Note over S,D: reads Telegram links by (workspace) among live rows, and presence by (workspace, account, live until)
+    S->>D: read the open waiting conversations of W with period start, start kind, assignee, and for every linked member and every assignee whether they read the waiting message
+    Note over S,D: reads conversations by (workspace, waiting since) among open rows, and the per-member arrival watermarks
+    S->>D: read the ledger items of W for these periods, and each member's last ping time
+    Note over S,D: reads ping items by (workspace, conversation, waiting since) and pings by (workspace, account, created at)
+    loop each open waiting conversation, for each linked member who is away
+        alt already in this member's ledger for this period
+            S->>S: not due
+        else the member read the waiting message, and the period began with a message
+            S->>S: not due - they have seen it
+        else assigned to this member, 5 min after the period start
+            S->>S: due as yours
+        else unassigned, 5 min after the period start
+            S->>S: due as unassigned
+        else assigned to a teammate, 30 min after the period start
+            S->>S: due as a teammate's
+        else assigned to a teammate who is away, has not read it and cannot be pinged, 5 min after the period start
+            Note over S: cannot be pinged means no live link, or a link marked not reachable by an earlier failed attempt or by one in this sweep
+            S->>S: due as a teammate's
+        else otherwise
+            S->>S: not due yet, looked at again in 20 s
+        end
+    end
+    loop each member with a due set
+        alt this member's last ping in W is less than 10 min old
+            S->>S: wait - the set is combined into the ping at the member's next allowed moment
+        else allowed
+            S->>S: build the text from the workspace name, the counts and the longest wait in whole minutes - its input has no field for message text, contact names or teammate names
+            alt one conversation
+                S->>S: 1 customer is waiting, phrased as yours, unassigned or a teammate's, N min, with that conversation's address
+            else all yours
+                S->>S: N customers are waiting for your reply, the longest M min, with the mine lens
+            else all unassigned
+                S->>S: N unassigned customers are waiting, the longest M min, with the unassigned lens
+            else mixed
+                S->>S: N customers are waiting, split into yours, unassigned and a teammate's, the longest M min, with the open lens
+            end
+            S->>S: send through the per-member transaction of seeded flow 1, which re-checks every condition
+        end
+    end
+    Note over S,D: Postcondition: a ping never changes an assignee or a status - a new away assignee becomes due at once on the next sweep, and unassigning makes it due for the away members
+```
+
+The sweep reads the workspace's live links and their reachability, its presence rows, its open waiting conversations with period start, start kind, assignee and read state, and its ledger (ADR-0005). It reads read state for every linked member and every assignee, linked or not. Only away members with a live link are considered. A conversation is never due for a member who already has it in the ledger for this period. It is not due for a member who has read the waiting message either, unless the period began with a reopen (AC-07). It becomes due at 5 minutes for the assignee and for everyone on an unassigned conversation. For the rest of the team it becomes due at 30 minutes, or at 5 minutes when the assignee is away, has not read the message and cannot be pinged (AC-09). Because the sweep runs every 20 s, a member who becomes away later, a reassignment to an away member, an unassignment, a link that just turned unreachable and a recovered bot are all caught on the next run (AC-07, AC-08). A member pinged less than 10 minutes ago waits, and the set is combined into the next ping. The text is built from counts only. One conversation links to itself. An all-yours set links to the mine lens, an all-unassigned set to the unassigned lens, and a mixed set, split by kind, to the open lens (AC-08). The send itself is seeded flow 1, which re-checks every condition.
+
+### Flow 14: Follow a ping's link into the panel (US-04, US-05 — AC-07, AC-08, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant X as #lt;external-system#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    Note over U,X: Precondition: a ping is in the member's bot chat (TG-03) - its link carries no credential
+    U->>X: taps the panel link in the ping
+    X->>UI: opens the panel address - one conversation, or the inbox on the mine, unassigned or open lens
+    UI->>S: open the address through the usual guard
+    S->>D: check the session and the membership in this workspace
+    alt not signed in - for example someone else holding the phone
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back to the same address (SCR-09)
+    else account of another workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member
+        alt the ping was about one conversation
+            S-->>UI: the thread, as in shared-inbox
+            UI-->>U: that conversation (SCR-02)
+        else several
+            S-->>UI: the list page on the lens in the address
+            UI-->>U: the inbox on the mine, unassigned or open lens (SCR-01)
+        end
+        UI->>S: the frame opens its live connection, on screen
+        S->>D: register presence, and set opened at on this member's latest ping in W within the last 15 min
+        Note over S,D: persists ping opened at - for the ping to panel KPI, as in flow 7
+    end
+    Note over U,S: Postcondition: only an active member of the workspace reaches a conversation from a ping
+```
+
+A ping's link is a plain panel address with no credential. It points to one conversation, or to the inbox on the mine, unassigned or open lens. Opening it runs the usual guard. Someone not signed in, for example a person holding another's phone, is asked to sign in and comes back to the same address. Another workspace's account gets the not-found card with no hint, and a deactivated member gets the access-removed landing (AC-12). An active member lands on the conversation (SCR-02) or the lens (SCR-01) (AC-07, AC-08). The frame's live connection registers presence on screen, which also marks the member's latest ping as opened for the §7 KPI.
+
+### Flow 15: The owner sees who has pings on, and deactivation removes the link (US-05, US-03 — AC-10, AC-12, AC-05)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: a business owner of workspace W opens Settings - Team (SCR-13)
+    U->>UI: opens Settings - Team
+    UI->>S: ask for the members and their Telegram pings on or off
+    S->>D: the usual guard, owner only as the existing Team read
+    alt an operator
+        S-->>UI: refused, owner only, as today
+    else business owner
+        S->>D: read the memberships and which of them has a live link
+        Note over S,D: reads Telegram links by (workspace) among live rows - account ids only
+        S-->>UI: members, each with pings on or off - never a Telegram id or name
+        UI-->>U: Telegram pings on or off per member, with no link or unlink action
+    end
+    U->>UI: deactivates a member and confirms (SCR-14)
+    UI->>S: deactivate this member
+    S->>D: one transaction - lock the workspace row, set the membership deactivated
+    S->>D: unassign the member's conversations, as in assignment-statuses
+    S->>D: remove the member's live link with reason deactivated, clear the Telegram id and name, mark their unused connect links replaced
+    Note over S,D: persists Telegram link removed at and reason, connect link replaced at - the port runs after the unassign in the same transaction
+    S->>B: membership deactivated and telegram link changed, published with the write
+    S-->>UI: deactivated
+    UI-->>U: the member shows deactivated, with pings off
+    B->>S: signals delivered on commit
+    S->>S: close the member's sockets in W with access removed, which deletes their presence rows
+    Note over S,D: a ping send racing this transaction serialises on the membership lock - seeded flow 1 either commits just before or sees the membership inactive
+    opt the former member opens a connect link issued before
+        Note over S,D: the redeem finds it replaced or the membership inactive and answers link expired - seeded flow 2
+    end
+    opt the member is reactivated later
+        S->>D: membership active again, no link restored
+        Note over U,S: their Settings - Notifications shows Not connected
+    end
+    Note over U,S: Postcondition: no ping reaches a former member, and no bot answer is sent to them on deactivation
+```
+
+On Settings — Team, a business owner sees "Telegram pings on / off" per member, read from live links as account ids and booleans only. There is never a Telegram account and never a link or unlink action (AC-12). Deactivating a member keeps the existing transaction and now runs the composed deactivation port. It unassigns the member's conversations first. Then it removes their live link as "deactivated", clears the Telegram id and name, and marks their unused connect links replaced. The deactivation and link-change signals go out with the write, and the member's sockets close, which removes their presence (AC-10). A ping send that races the deactivation serialises on the membership lock, as seeded flow 1 shows. A connect link issued before the deactivation answers "link expired" (AC-05). Reactivation does not restore the link, so the member sees "Not connected".
+
+### Flow 16: Rotating, replacing, losing or recovering the bot (US-04, US-03 — AC-10, AC-13)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over U,S: Precondition: members of workspace W may hold Telegram links bound to its bot's Telegram id - the owner works on Settings - Bot (SCR-08)
+    alt the owner pastes a new token for the same bot - a rotation
+        U->>UI: pastes the token
+        UI->>S: connect the bot
+        S->>D: one transaction - write the bot row with the same Telegram bot id
+        S->>D: bot-connected hook - links with this bot id are kept
+        S-->>UI: connected
+    else the owner connects a different bot
+        U->>UI: pastes a token of another bot
+        UI->>S: connect the bot
+        S->>D: one transaction - write the bot row
+        S->>D: bot-connected hook - remove every live link whose bot id differs, reason bot replaced, clear Telegram ids and names
+        Note over S,D: persists Telegram link removed at and reason - reads live links by (workspace, Telegram bot id)
+        S->>B: bot changed, and telegram link changed for each affected account, published with the write
+        S-->>UI: connected
+        Note over B,UI: each affected member's Settings - Notifications shows Not connected - flow 18
+    else the owner disconnects the bot
+        U->>UI: disconnects
+        UI->>S: disconnect the bot
+        S->>D: bot row disconnected, links kept
+        S->>B: bot changed
+        Note over B,UI: linked members see Pings paused - the bot is not working
+    else the bot stops working - Telegram rejects its token
+        S->>D: bot row needs a token, as in bot-connection
+        S->>B: bot changed
+        Note over S,D: the sweep sees the bot not ready, sends nothing and queues nothing - seeded flow 1
+    else the bot is taken over - Telegram stops delivering
+        S->>D: bot row taken over, as in bot-connection
+        S->>B: bot changed
+        Note over S,D: pings still go out for customers already waiting, and no connect link is offered - flows 8 and 13
+    end
+    opt the bot works again
+        S->>D: bot row connected
+        S->>B: bot changed
+        Note over S,D: the next sweep finds conversations still waiting and not yet pinged to a member in their period due again, combined under the 10-min spacing, and the 30-min team reach still counts from each period start
+    end
+    Note over U,S: Postcondition: a link belongs to one bot - a rotation keeps it, a disconnect pauses it, a different bot removes it
+```
+
+A link is bound to the bot's Telegram id, not to the bot row (ADR-0004). A token rotation keeps the same id, so the bot-connected hook keeps every link. Connecting a different bot removes every live link made with another bot id, in the same transaction, as "bot replaced". Each affected member's tabs then show "Not connected" (AC-10). A disconnected bot, or one that needs a new token, keeps the links. Linked members see "Pings paused", and the sweep sends nothing and queues nothing. A taken-over bot can still send, so pings for customers who are already waiting continue. It offers no connect link, because it would never receive the Start (AC-13). Once the bot works again, the next sweep finds what is still waiting and not yet pinged in its period and sends it combined. The 30-minute team reach still counts from each period start.
+
+### Flow 17: Replies go first at the bot's sending limit (US-04 — AC-10, spec §6 reply delivery)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant B as #lt;message-bus#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    Note over B,X: Trigger: replies are draining for a bot while the workspace's sweep has pings to send through the same bot
+    S->>S: idempotency - the reply's in-flight mark and the ping ledger are written before each send
+    par replies
+        B->>S: deliver the reply drain job
+        S->>X: send the reply to the customer's chat, never checking the send pause
+        alt accepted
+            X-->>S: ok
+            S->>D: mark the reply sent, as in shared-inbox
+        else too many requests with retry after
+            X-->>S: rate limited
+            S->>D: store the bot's send pause until now plus retry after
+            Note over S,D: persists bot send paused until
+            S->>B: the reply drain retries on its own policy, as in shared-inbox
+        end
+    and pings
+        S->>D: read the bot's send pause
+        alt paused
+            S->>S: send no ping and no answer until the pause passes, keep the due sets
+        else not paused
+            S->>X: at most 10 member messages per second for this bot, one workspace at a time
+            alt rate limited
+                X-->>S: too many requests
+                S->>D: store the send pause, roll this ping out of the ledger - seeded flow 1
+            end
+        end
+    end
+    Note over S,X: retry - a ping is not retried, the next sweep after the pause combines whatever is still due
+    alt the reply drain exhausts its retries
+        S->>B: dead-letter the reply, as in shared-inbox
+    end
+    Note over S,X: Postcondition: reply send p95 stays within 2 s with 50 pings due on one bot - time spent paused is excluded from ping timeliness
+```
+
+Replies and pings share the bot's Telegram budget, so pings take a share and yield to replies (ADR-0006). Each send is written down before it goes out: replies through their in-flight mark and pings through the ledger. Replies go out as today and never look at the send pause. Pings and bot answers go through `sendMemberMessage`. It is paced at 10 per second per bot, a third of Telegram's limit, and refuses while a pause is stored. Any rate-limit answer stores the pause, whether a reply or a ping caused it. A rate-limited reply retries on its own policy and dead-letters as in shared-inbox. A rate-limited ping is rolled out of the ledger and its conversations stay due. The next sweep after the pause combines them. This keeps reply send p95 within 2 s while 50 pings are due on one bot, and the paused time is excluded from ping timeliness (spec §6).
+
+### Cross-cutting: Flow 18 — link and bot state reach the member's own tabs live (US-03, US-04 — AC-04, AC-06, AC-10)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt;
+    Note over B,S: Trigger: a transaction created or removed a link or changed its reachability - a redeem, a disconnect, a deactivation, a different bot, a blocked or accepted ping - or the bot changed state
+    B->>S: telegram link changed with workspace and account, or bot changed, delivered on commit to every instance
+    alt telegram link changed
+        S->>UI: only to the sockets of that account in that workspace
+    else bot changed
+        S->>UI: to every socket of the workspace
+    end
+    UI->>UI: drop frames of another workspace
+    UI->>S: refetch my notification state
+    S->>D: read my live link and the bot's readiness
+    S-->>UI: link state
+    alt connected and reachable
+        UI-->>U: Connected with name and since when - an open connect dialog turns Connected by itself (SCR-17, SCR-16)
+    else connected, not reachable
+        UI-->>U: Not reachable - you blocked the bot in Telegram, unblock it or disconnect
+    else connected, the bot not connected or not working
+        UI-->>U: Pings paused - the bot is not working
+    else connected, the bot taken over
+        UI-->>U: Connected - the inbox notice says new customer messages are not arriving
+    else not connected
+        UI-->>U: Not connected, Connect Telegram while the bot is ready
+    end
+    opt a frame cannot be parsed, or a gap is detected
+        UI->>UI: drop it and resync, then refetch the state
+    end
+    Note over U,S: Postcondition: no other account learns about a member's link - the owner's Team mark is read when Team opens
+```
+
+Every transaction that creates or removes a link, or changes its reachability, publishes `telegram_link.changed` with the workspace and account. The hub delivers it only to that account's sockets in that workspace (ADR-0010). A bot state change uses the existing `bot.changed`, sent to every socket of the workspace. Settings — Notifications and an open connect dialog refetch the member's own state. The dialog turns "Connected" by itself after the Start (AC-04). The state can also show "Not reachable" with what to do, or "Pings paused" while the bot does not work (AC-10). After a disconnect or a bot replacement it shows "Not connected". A connected member still sees no connect link (AC-06). A frame that cannot be parsed, or a gap, triggers a resync. No other account learns of a member's link, and the owner's Team mark is read when Team opens.
+
+**Coverage — every spec §4 user story and §5 acceptance criterion → where §6 shows it:**
+
+| Spec item | Shown by |
+|---|---|
+| US-01 | Flow 4, plus seeded flow 3 (the count after a captured message) |
+| US-02 | Flow 5, flow 6, seeded flow 3 |
+| US-03 | Flow 8, flow 9, flow 10, flow 18, seeded flow 2 |
+| US-04 | Flow 7, flow 12, flow 13, flow 14, flow 16, flow 17, seeded flow 1 |
+| US-05 | Flow 13 (team at 30 min, or at 5 min for an unpingable assignee), flow 14, flow 15, seeded flow 1 |
+| US-06 | Flow 11, flow 10 (the notice), seeded flow 2 (linked sender and anyone else). The end customer has no screen of their own: these are the effects on the team's inbox, as in `ux-flows.md` |
+| AC-01 | Flow 4: mine-or-unassigned open unread count, title "(N)" and Inbox badge, nothing at 0, refetch on message, activity, read and resync frames, the same connection on Contacts and Settings, one workspace per tab, either role. Seeded flow 3: the count after a captured message |
+| AC-02 | Flow 6: opt-in and permission check, mine or unassigned and open, new message only (no edit, reply or activity), a reopening message counts, one per browser through the dedupe, tag replace, focus holds back but a visible unfocused tab does not, click to the most recently focused tab, no tab means no candidate. Seeded flow 3 |
+| AC-03 | Flow 5: permission asked only on the click, refused now or earlier, unsupported, flag not storable, registration failure, the attention count keeps working |
+| AC-04 | Seeded flow 2: redeem, no contact or conversation, account-scoped signal. Flow 10: the "connected and how to stop" and "notifications off" answers. Flow 18: "Connected" without a reload. Flow 9: Disconnect at once and no further ping |
+| AC-05 | Seeded flow 2: missing, expired, used, replaced, deactivated member, link expired answer, no capture. Flow 8: a newer link replaces the older. Flow 15: deactivation marks unused links replaced. Flow 10: the answer |
+| AC-06 | Seeded flow 2: teammate's account, other account, already connected from this account (the link is used up). Flow 8: a connected member is offered Disconnect only, and "connected meanwhile" is refused. Flow 18: the state stays Connected |
+| AC-07 | Flow 13: 5 min for the assignee, unassigned to every away linked member, read holds back unless the period began with a reopen, a member who becomes away later is due on the next sweep. Flow 12: the period start at arrival or reopen. Flow 7: who counts as away. Flow 14: the single-conversation link. Seeded flow 1: the send-time re-check and the text with no customer text or contact name |
+| AC-08 | Flow 13: once per conversation per period through the ledger, 10-min spacing, combining, wording and lens per set shape, reassignment keeps the clock, an away new assignee and unassigning make it due at once. Flow 12: a period ends on a sent reply or a close and restarts on a reopen while waiting. Seeded flow 1: a member who read meanwhile drops out at send time |
+| AC-09 | Flow 13: team at 30 min, team at 5 min when the assignee is away, has not read it and has no link or an unreachable one, found earlier or in this sweep. The assignee and the status never change. Seeded flow 1: the blocked outcome that marks the link not reachable |
+| AC-10 | Seeded flow 1: closed, sent, inactive membership, bot not ready (nothing queued), blocked counts and marks Not reachable, rolled out on a rate-limit or bot-unavailable answer, reachable again on acceptance. Flow 15: deactivation removes the link before any further ping and reactivation does not restore it. Flow 16: rotation keeps, disconnect pauses, a different bot removes, taken over still sends, recovery makes due again with the 30-min reach intact. Flow 17: replies before pings at the sending limit. Flow 18: "Pings paused", "Not reachable", "Not connected" in the panel |
+| AC-11 | Flow 11: every kind of update from a linked sender is consumed, the notice at most once per hour, unlinked and disconnected senders and campaign starts without a link captured as before. Flow 10: the notice answer with its panel link. Seeded flow 2 |
+| AC-12 | Flows 4, 8 and 14: guard branches (sign in, not found with no hint, access removed). Flow 8: the state read returns only the caller's own link. Flow 9: Disconnect names no account, so only one's own link can be removed. Flow 15: Team shows on or off only, owner only, with no action. Seeded flow 2: a connect link works only for its membership, once, for 10 minutes. Flow 14: a ping opened by someone else goes through sign-in |
+| AC-13 | Flow 8: 5 links per 10 minutes with the retry time, a newer link replaces the previous, no connect link while the bot is not connected, not working or taken over, the operator is told to ask an owner, an owner is sent to Settings - Bot. Flow 16: why a taken-over bot offers no link |
+
+**Flagged by `sequences` (for `design` / `data-model` / `api` to reconcile, no ADR written):**
+
+- **No new participants.** Every flow stays within §5's containers. `<ui>` worker is the notifications service worker. `<external-system>` is the Telegram Bot API, and in flows 5 and 6 it is the browser and operating system, the second external system of §3. `<message-bus>` is `platform/realtime` (signals) and the pg-boss queues (`notifications.send-pings`, `notifications.send-bot-message`, the reply drain).
+- **A Disconnect racing a send (flow 9 vs seeded flow 1).** The send transaction re-checks "link still live" but locks only the membership. A Disconnect that commits after the send's commit and before its Telegram call can be followed by one ping, at most milliseconds later. This is the same window §8 accepts for deactivation. For a tighter AC-04 ("no further pings"), `tasks` could let the send share-lock the link row, so that a Disconnect waits for the commit. That narrows the window but cannot close the post-commit Telegram call. No ADR needed: it is a lock-order detail inside one module.
+- **The "notifications off" answer needs the Telegram user id after the link clears it (flow 9).** The job payload carries it, so a Telegram user id sits in the pg-boss job table until the job is archived. `data-model` / security review should confirm that this is acceptable under the "cleared at removal" retention of §2, or the payload could carry the link id and read the id before clearing.
+- **Bot answer retries can repeat an answer (flow 10).** After a timeout, the retry policy (limit 2) may send the same answer twice. This is accepted in the assumptions above, and it differs from the at-most-once ping send on purpose.
+- **Team mark is not live (flow 15).** `telegram_link.changed` is account-scoped (ADR-0010), so an owner's open Team page does not follow a member's connect or disconnect until it reloads. `screens` should not promise a live mark.
+- **Indexes for `data-model`** (from the persist and read notes):
+  - `telegram_links` by `(workspace_id, account_id)` and `(workspace_id, telegram_user_id)` among live rows (the partial unique indexes), plus by `(workspace_id, telegram_bot_id)` for the bot-connected hook and by `(workspace_id)` for the sweep and Team;
+  - `connect_links` by `(workspace_id, token_hash)` unique and `(workspace_id, account_id, created_at)` for the limit and the replacement;
+  - `tab_presences` by `(workspace_id, account_id, live_until)` and by `(workspace_id, live_until)` for the sweep's expiry delete;
+  - `conversations` by `(workspace_id, waiting_since)` over open rows that are waiting;
+  - `ping_items` unique `(workspace_id, account_id, conversation_id, waiting_since)`, and `pings` by `(workspace_id, account_id, created_at)` for the 10-min spacing and the opened-at update.
+- **The sweep reads read state for unlinked assignees (flow 13).** The 5-minute team reach needs the assignee's presence and watermark whether or not they are linked, as §4 choice 5 says. `waitingForPings` must take the assignees' account ids as well as the linked members'.
+
 ## 7. Deployment view
 
 Nothing changes in the topology. The feature runs in the one Node 26 process (Fastify API, the built web panel and its new static `notifications-sw.js`, webhook ingress, the live socket and the pg-boss workers) against one PostgreSQL 16 database. Added: the queues `notifications.schedule-pings` (cron every minute), `notifications.send-pings` (policy `exclusive`, `singletonKey` = workspace id, no retry: a failed run is replaced by the next chain link or by the cron) and `notifications.send-bot-message` (retry limit 2, expire 30 s). They are created and registered by `buildApp()` and added to the architecture map's queue table. A second replica needs no change. Presence, the ledger and the per-workspace singleton live in Postgres. Signals fan out through `LISTEN/NOTIFY`, and every instance's hub reports its own sockets.
