@@ -89,6 +89,11 @@ const workspaceRoute: RouteObject = {
           element: lazyPage(() => import('@/pages/TeamPage'), 'TeamPage'),
         },
         {
+          path: 'tags',
+          handle: { crumb: 'Tags' },
+          element: lazyPage(() => import('@/pages/TagSettingsPage'), 'TagSettingsPage'),
+        },
+        {
           path: 'notifications',
           handle: { crumb: 'Notifications' },
           element: lazyPage(

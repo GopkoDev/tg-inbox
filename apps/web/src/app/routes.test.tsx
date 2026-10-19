@@ -41,6 +41,7 @@ vi.mock('@/features/contacts/ContactProfile', () => ({ ContactProfile: () => nul
 // The section bodies are other tasks' business; the route tree is what is under test here.
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
+vi.mock('@/features/tags/TagsSettings', () => ({ TagsSettings: () => <p>tags body</p> }));
 
 import { useContactsStore } from '@/features/contacts/store';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
@@ -113,6 +114,13 @@ describe('workspace frame (T3)', () => {
     expect(inbox).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('settings/tags opens the Tags section with its crumb', async () => {
+    renderAt('/w/w1/settings/tags');
+    expect(await screen.findByText('tags body')).toBeInTheDocument();
+    const crumbs = screen.getByRole('navigation', { name: 'breadcrumb' });
+    expect(within(crumbs).getByText('Tags')).toBeInTheDocument();
   });
 
   it('AC-11: old /team lands on settings/team', async () => {
