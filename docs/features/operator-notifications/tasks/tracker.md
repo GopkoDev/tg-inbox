@@ -7,7 +7,7 @@
 |---|---|---|---|---|---|---|
 | T1 | [Promote migrations 04–08 (the bot send pause and the five notifications tables), regenerate DB types and add the test fixtures](./t01-promote-bot-pause-and-notifications-tables.md) | migration | Dmytro Hopko | M | — | done |
 | T2 | [Add the notifications zod contracts, the three error codes, the presence client frame and the telegram_link.changed frame and signal](./t02-notifications-contracts.md) | ports | Dmytro Hopko | M | — | done |
-| T3 | [Add the notifications domain due rules: the 5 / 30-minute marks, the unpingable assignee, read-holds-back unless reopen, the ledger and 10-minute spacing, and the presence predicate](./t03-due-rules-and-presence-predicate.md) | domain | Dmytro Hopko | M | — | todo |
+| T3 | [Add the notifications domain due rules: the 5 / 30-minute marks, the unpingable assignee, read-holds-back unless reopen, the ledger and 10-minute spacing, and the presence predicate](./t03-due-rules-and-presence-predicate.md) | domain | Dmytro Hopko | M | — | done |
 | T4 | [Add the ping text builder (TG-03), the bot answer texts (TG-02) and the connect-link rules: token and start payload, usable, 5 per 10 minutes and its retry time](./t04-ping-text-answers-and-connect-link-rules.md) | domain | Dmytro Hopko | M | — | todo |
 | T5 | [Record the waiting period in conversations — set by capture, cleared by a sent reply and a close, restarted by a reopen while waiting — and promote migrations 01–03](./t05-conversations-waiting-period.md) | app | Dmytro Hopko | M | T1 | todo |
 | T6 | [Add the conversations reads waitingForPings (period start, start kind, assignee, per-member read state) and attentionCount](./t06-conversations-reads-for-notifications.md) | infra | Dmytro Hopko | M | T5 | todo |
