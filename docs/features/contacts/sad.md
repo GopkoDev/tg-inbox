@@ -130,7 +130,7 @@ C4Context
    - [ADR-0001](adr/0001-own-tags-in-the-contacts-module-with-its-own-routes-and-compose-the-profile-conversation-from-inbox-reads.md).
 2. **A tag is identified by a stable id and kept unique by a normalised name key computed in the domain (AC-07, AC-08, AC-14, AC-02).**
    - `contacts/domain/tag-name.ts` (shared with the web through `packages/shared`) produces the **tidied name**: NFC, invisible zero-width spaces removed (U+200B, U+2060, U+FEFF; the joiners U+200C / U+200D that hold emoji and some scripts together are kept), every run of Unicode white space (with any joiner next to it) collapsed to one space, ends trimmed of spaces and joiners (a name of joiners only is empty). Length is counted in grapheme clusters (`Intl.Segmenter`), 1–32.
-   - The **name key** is the tidied name without the joiners U+200C / U+200D (so Â«VÂ», U+200C, Â«IPÂ» is the key of «VIP», never an invisible look-alike), case-folded (`toUpperCase()` then `toLowerCase()`, so ß/SS and final sigma fold together). The table holds `name` (tidied, case as typed) and `name_key`, with a unique `(workspace_id, name_key)`.
+   - The **name key** is the tidied name without the joiners U+200C / U+200D (so «V», U+200C, «IP» is the key of «VIP», never an invisible look-alike), case-folded (`toUpperCase()` then `toLowerCase()`, so ß/SS and final sigma fold together). The table holds `name` (tidied, case as typed) and `name_key`, with a unique `(workspace_id, name_key)`.
    - Every reference to a tag (contact tags, filters in the address, Settings, the picker) uses its UUIDv7 id. A rename changes `name` and `name_key` and nothing else; a tag created later with a deleted tag's name is a new id.
    - [ADR-0002](adr/0002-identify-tags-by-a-stable-id-and-keep-them-unique-by-a-normalised-name-key-computed-in-the-domain.md).
 3. **Every change of a contact's tags writes an append-only tag-history entry with the tag's name at that moment (AC-04, AC-06, AC-09, §6 history completeness, §7 KPI).**
@@ -1024,7 +1024,7 @@ Terms marked † are not yet in [CONTEXT.md](../../../CONTEXT.md) and are candid
 | Tag filter | The Contacts list's choice of tags with a mode (any of / all of / no tags) and the matching count; the size of a future segment. |
 | Tag history † | The per-contact, append-only record of every tag added, removed, merged or removed by a delete, with the member, the time, the source and the tag's name at that moment. |
 | Name key † | A tag's tidied name without joiners, case-folded; the value that is unique per workspace. |
-| Tidied name † | A tag name with invisible zero-width spaces removed (the joiners that hold emoji and some scripts together are kept), white-space runs collapsed to one space and ends trimmed; what is stored and shown. |
+| Tidied name † | A tag name in NFC with the invisible zero-width spaces U+200B / U+2060 / U+FEFF removed, every white-space run (with any joiners next to it) collapsed to one space, ends trimmed of spaces and joiners, and the joiners U+200C / U+200D inside the name (they hold emoji and some scripts together) kept; what is stored and shown. |
 | Tag-list order | Dictionary order ignoring letter case, each alphabet in its own order. |
 | First wrote / last wrote † | The Telegram send times of a contact's oldest and newest customer messages; replies and edits never count. |
 | Change signal | A small live notice carrying ids only; here `contact.changed` (one contact's tags) and `tags.changed` (the workspace's tag list). |

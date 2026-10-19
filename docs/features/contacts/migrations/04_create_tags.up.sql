@@ -1,9 +1,11 @@
 -- tags: the workspace's tags (ADR-0002). Owned by contacts. A tag is identified by its id: a rename changes
 -- name and name_key only, so contact tags, filters in addresses and history entries follow it.
---   name     — the tidied name (NFC, zero-width removed, white-space runs collapsed to one space, ends trimmed),
---              case as typed; what is shown. 1–32 graphemes, counted in the domain (Intl.Segmenter): the database
+--   name     — the tidied name (NFC, zero-width spaces U+200B/U+2060/U+FEFF removed, every white-space run with
+--              any adjacent joiners collapsed to one space, ends trimmed of spaces and joiners, the joiners
+--              U+200C/U+200D inside kept), case as typed; what is shown. 1–32 graphemes, counted in the domain (Intl.Segmenter): the database
 --              cannot count graphemes, so no CHECK encodes the limit.
---   name_key — the tidied name case-folded in the domain (toUpperCase then toLowerCase); unique per workspace, so
+--   name_key — the tidied name without the joiners U+200C/U+200D, case-folded in the domain (toUpperCase then
+--              toLowerCase); unique per workspace, so
 --              "vip", " VIP " and "VIP" are one tag (AC-08). Computed in the shared package only, never in SQL:
 --              Postgres's lower / upper fold some letters differently (ß), so no CHECK ties it to name.
 -- created_by_account_id is a cross-module composite FK to memberships, constraint only, like

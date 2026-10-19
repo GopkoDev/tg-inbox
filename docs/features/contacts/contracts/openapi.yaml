@@ -386,7 +386,8 @@ paths:
 
         One transaction, in the ADR-0004 lock order. The first outcome wins, and a refusal changes
         nothing — a tag created by name earlier in the same request is rolled back with it:
-        1. **By name only:** tidy (NFC, zero-width spaces removed — joiners kept, white-space runs → one space, ends trimmed),
+        1. **By name only:** tidy (NFC, zero-width spaces U+200B / U+2060 / U+FEFF removed, every white-space run with any
+           adjacent joiners → one space, ends trimmed of spaces and joiners, joiners U+200C / U+200D inside kept),
            count graphemes, compute the name key (the shared functions the picker uses). Not 1–32
            graphemes → `400 TAG_NAME_INVALID` (AC-07). Then the `tags:<ws>` advisory lock: a tag with
            that key is used as it is (another case or spacing, or created by a teammate a moment ago —
@@ -1015,8 +1016,9 @@ components:
       type: string
       minLength: 1
       description: |
-        `tags.name` — the tidied name (NFC, zero-width spaces removed (joiners kept), every run of white space
-        collapsed to one space, ends trimmed), letter case as typed. 1–32 graphemes (an emoji is one),
+        `tags.name` — the tidied name (NFC, zero-width spaces U+200B / U+2060 / U+FEFF removed, every run of white
+        space with any adjacent joiners collapsed to one space, ends trimmed of spaces and joiners, the joiners
+        U+200C / U+200D inside the name kept), letter case as typed. 1–32 graphemes (an emoji is one),
         counted in the domain with `Intl.Segmenter`; JSON Schema counts code points, so no `maxLength` is
         stated here. Shown as plain text only
     TagRef:

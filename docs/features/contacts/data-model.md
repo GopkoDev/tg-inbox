@@ -75,7 +75,7 @@ erDiagram
         uuid id PK
         uuid workspace_id FK "UK with id, UK with name_key"
         text name "tidied, case as typed"
-        text name_key "case-folded tidied name"
+        text name_key "tidied name without joiners, case-folded"
         uuid created_by_account_id FK
         timestamptz created_at
     }
