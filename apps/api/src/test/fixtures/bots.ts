@@ -43,6 +43,8 @@ export async function insertBot(
     username?: string;
     connectedAt?: Date;
     lastCheckedAt?: Date;
+    /** The send pause (bots.send_paused_until); defaults to none. */
+    sendPausedUntil?: Date | null;
   },
 ): Promise<InsertedBot> {
   const id = newId();
@@ -76,6 +78,7 @@ export async function insertBot(
       webhook_secret_hash: webhookSecret ? hashSecret(webhookSecret) : null,
       connected_at: connectedAt,
       last_checked_at: bot.lastCheckedAt,
+      send_paused_until: o.sendPausedUntil ?? null,
       created_at: T,
     })
     .execute();

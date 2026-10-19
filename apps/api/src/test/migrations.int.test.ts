@@ -698,6 +698,18 @@ describe('assignment-statuses migrations 01-04', () => {
           )
         ).rows.map((r) => r.is_nullable);
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
+      // Later features' migrations sit above the contract: step them off first.
+      for (const name of [
+        'create_pings',
+        'create_tab_presences',
+        'create_connect_links',
+        'create_telegram_links',
+        'add_bots_send_paused_until',
+      ]) {
+        const later = await migrator.migrateDown();
+        expect(later.error).toBeUndefined();
+        expect(later.results?.[0]?.migrationName).toContain(name);
+      }
       const down = await migrator.migrateDown();
       expect(down.error).toBeUndefined();
       expect(await nullable()).toEqual(['YES', 'YES', 'YES']);
@@ -841,6 +853,353 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(up.error).toBeUndefined();
       expect(await columns(freshDb, 'conversations')).toContain('state_version');
       expect(await columns(freshDb, 'conversation_activities')).toContain('kind');
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+describe('operator-notifications migrations 04-08', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const now = new Date('2026-01-01T00:00:00Z');
+  const later = new Date('2026-01-02T00:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  async function workspace(handle: Kysely<unknown> = db): Promise<string> {
+    const ws = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${now})`.execute(
+      handle,
+    );
+    return ws;
+  }
+
+  async function account(handle: Kysely<unknown> = db): Promise<string> {
+    const id = newId();
+    await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
+      VALUES (${id}, ${`${id}@example.test`}, 'Test User', 'h', ${now})`.execute(handle);
+    return id;
+  }
+
+  async function join(ws: string, acc: string, handle: Kysely<unknown> = db): Promise<void> {
+    await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+      VALUES (${newId()}, ${ws}, ${acc}, 'operator', 'active', ${now}, ${now})`.execute(handle);
+  }
+
+  async function member(ws: string): Promise<string> {
+    const acc = await account();
+    await join(ws, acc);
+    return acc;
+  }
+
+  async function conversation(ws: string): Promise<string> {
+    const contact = newId();
+    const id = newId();
+    const tg = Math.floor(Math.random() * 1e9);
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, ${tg}, 'Test User', ${now}, ${now})`.execute(db);
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at, status, state_version, customer_message_seq)
+      VALUES (${id}, ${ws}, ${contact}, ${tg}, ${now}, ${now}, ${now}, 'open', 0, 0)`.execute(db);
+    return id;
+  }
+
+  function link(
+    ws: string,
+    acc: string,
+    o: {
+      id?: string;
+      tgUser?: number | null;
+      displayName?: string | null;
+      removedAt?: Date | null;
+      removedReason?: string | null;
+      blockedAt?: Date | null;
+    } = {},
+  ) {
+    const has = <K extends keyof typeof o>(k: K) => k in o;
+    return sql`INSERT INTO telegram_links (id, workspace_id, account_id, telegram_bot_id,
+        telegram_user_id, display_name, linked_at, blocked_at, removed_at, removed_reason)
+      VALUES (${o.id ?? newId()}, ${ws}, ${acc}, 7001,
+        ${has('tgUser') ? o.tgUser : 5001}, ${has('displayName') ? o.displayName : 'Test User'},
+        ${now}, ${o.blockedAt ?? null}, ${o.removedAt ?? null}, ${o.removedReason ?? null})`.execute(
+      db,
+    );
+  }
+
+  function connectLink(
+    ws: string,
+    acc: string,
+    o: {
+      hash?: Buffer;
+      expiresAt?: Date;
+      usedAt?: Date | null;
+      replacedAt?: Date | null;
+    } = {},
+  ) {
+    return sql`INSERT INTO connect_links (id, workspace_id, account_id, token_hash, created_at,
+        expires_at, used_at, replaced_at)
+      VALUES (${newId()}, ${ws}, ${acc}, ${o.hash ?? Buffer.alloc(32, 1)}, ${now},
+        ${o.expiresAt ?? later}, ${o.usedAt ?? null}, ${o.replacedAt ?? null})`.execute(db);
+  }
+
+  function presence(
+    ws: string,
+    acc: string,
+    o: { liveUntil?: Date; lastOnScreenAt?: Date | null } = {},
+  ) {
+    return sql`INSERT INTO tab_presences (id, workspace_id, account_id, live_until, on_screen,
+        last_on_screen_at, opened_at)
+      VALUES (${newId()}, ${ws}, ${acc}, ${o.liveUntil ?? later}, true,
+        ${o.lastOnScreenAt ?? null}, ${now})`.execute(db);
+  }
+
+  function ping(
+    ws: string,
+    acc: string,
+    linkId: string,
+    o: { id?: string; outcome?: string; openedAt?: Date | null } = {},
+  ) {
+    return sql`INSERT INTO pings (id, workspace_id, account_id, telegram_link_id, outcome,
+        created_at, opened_at)
+      VALUES (${o.id ?? newId()}, ${ws}, ${acc}, ${linkId}, ${o.outcome ?? 'accepted'}, ${now},
+        ${o.openedAt ?? null})`.execute(db);
+  }
+
+  function item(
+    ws: string,
+    acc: string,
+    pingId: string,
+    conv: string,
+    since: Date = now,
+    itemAccount: string = acc,
+  ) {
+    return sql`INSERT INTO ping_items (id, workspace_id, ping_id, account_id, conversation_id,
+        waiting_since)
+      VALUES (${newId()}, ${ws}, ${pingId}, ${itemAccount}, ${conv}, ${since})`.execute(db);
+  }
+
+  async function exists(table: string): Promise<boolean> {
+    const { rows } = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = ${table}`.execute(db);
+    return rows[0]?.n === '1';
+  }
+
+  it('adds bots.send_paused_until and the five tables', async () => {
+    const { rows } = await sql<{ is_nullable: string }>`
+      SELECT is_nullable FROM information_schema.columns
+      WHERE table_name = 'bots' AND column_name = 'send_paused_until'`.execute(db);
+    expect(rows.map((r) => r.is_nullable)).toEqual(['YES']);
+    for (const t of ['telegram_links', 'connect_links', 'tab_presences', 'pings', 'ping_items'])
+      expect(await exists(t)).toBe(true);
+  });
+
+  it('allows one live link per membership and per Telegram user, re-link after removal, same Telegram user in another workspace (AC-06)', async () => {
+    const ws = await workspace();
+    const other = await workspace();
+    const a = await member(ws);
+    const b = await member(ws);
+    await link(ws, a);
+    await expect(link(ws, a, { tgUser: 5002 })).rejects.toThrow(
+      /telegram_links_live_workspace_id_account_id_key/,
+    );
+    await expect(link(ws, b)).rejects.toThrow(
+      /telegram_links_live_workspace_id_telegram_user_id_key/,
+    );
+    await link(ws, b, { tgUser: 5003 });
+    // The same account and Telegram user in another workspace is a separate link.
+    await join(other, a);
+    await link(other, a);
+    // After removal the member links again.
+    const removed = await member(ws);
+    await link(ws, removed, {
+      tgUser: null,
+      displayName: null,
+      removedAt: later,
+      removedReason: 'deactivated',
+    });
+    await link(ws, removed, { tgUser: 5004 });
+  });
+
+  it('rejects a link outside its own workspace membership (AC-12)', async () => {
+    const ws = await workspace();
+    const other = await workspace();
+    const foreign = await member(other);
+    await expect(link(ws, foreign)).rejects.toThrow(/telegram_links_membership_fkey/);
+    await expect(connectLink(ws, foreign)).rejects.toThrow(/connect_links_membership_fkey/);
+    await expect(presence(ws, foreign)).rejects.toThrow(/tab_presences_membership_fkey/);
+  });
+
+  it('rejects telegram_links rows that break the removal, name and user id rules', async () => {
+    const ws = await workspace();
+    const a = await member(ws);
+    await expect(
+      link(ws, a, { removedAt: later, removedReason: 'bogus', tgUser: null, displayName: null }),
+    ).rejects.toThrow(/telegram_links_removed_reason_check/);
+    await expect(link(ws, a, { removedAt: later, displayName: null })).rejects.toThrow(
+      /telegram_links_removed_pair_check/,
+    );
+    await expect(link(ws, a, { removedReason: 'member' })).rejects.toThrow(
+      /telegram_links_removed_pair_check/,
+    );
+    await expect(link(ws, a, { displayName: null })).rejects.toThrow(
+      /telegram_links_display_name_check/,
+    );
+    await expect(
+      link(ws, a, { removedAt: later, removedReason: 'member', displayName: 'Test User' }),
+    ).rejects.toThrow(/telegram_links_display_name_check/);
+    await expect(link(ws, a, { tgUser: null })).rejects.toThrow(
+      /telegram_links_telegram_user_id_check/,
+    );
+    // Only a member's own removal keeps the Telegram user id (for the "off" answer).
+    await expect(
+      link(ws, a, { removedAt: later, removedReason: 'deactivated', displayName: null }),
+    ).rejects.toThrow(/telegram_links_telegram_user_id_check/);
+    await expect(
+      link(ws, a, {
+        removedAt: new Date('2025-12-31T00:00:00Z'),
+        removedReason: 'member',
+        displayName: null,
+      }),
+    ).rejects.toThrow(/telegram_links_removed_at_check/);
+    await expect(link(ws, a, { blockedAt: new Date('2025-12-31T00:00:00Z') })).rejects.toThrow(
+      /telegram_links_blocked_at_check/,
+    );
+    await link(ws, a, { removedAt: later, removedReason: 'member', displayName: null });
+  });
+
+  it('rejects connect_links rows that break the hash, time and exclusivity rules', async () => {
+    const ws = await workspace();
+    const a = await member(ws);
+    await expect(connectLink(ws, a, { hash: Buffer.alloc(31) })).rejects.toThrow(
+      /connect_links_token_hash_length_check/,
+    );
+    await expect(connectLink(ws, a, { expiresAt: now })).rejects.toThrow(
+      /connect_links_expires_at_check/,
+    );
+    await expect(connectLink(ws, a, { usedAt: new Date('2025-12-31T00:00:00Z') })).rejects.toThrow(
+      /connect_links_used_at_check/,
+    );
+    await expect(
+      connectLink(ws, a, { replacedAt: new Date('2025-12-31T00:00:00Z') }),
+    ).rejects.toThrow(/connect_links_replaced_at_check/);
+    await expect(connectLink(ws, a, { usedAt: later, replacedAt: later })).rejects.toThrow(
+      /connect_links_used_or_replaced_check/,
+    );
+    await connectLink(ws, a, { hash: Buffer.alloc(32, 9) });
+    await expect(connectLink(ws, a, { hash: Buffer.alloc(32, 9) })).rejects.toThrow(
+      /connect_links_workspace_id_token_hash_key/,
+    );
+    // The hash is unique per workspace only.
+    const other = await workspace();
+    const b = await member(other);
+    await connectLink(other, b, { hash: Buffer.alloc(32, 9) });
+  });
+
+  it('rejects tab_presences rows whose lease or screen time precedes the open', async () => {
+    const ws = await workspace();
+    const a = await member(ws);
+    await expect(presence(ws, a, { liveUntil: now })).rejects.toThrow(
+      /tab_presences_live_until_check/,
+    );
+    await expect(
+      presence(ws, a, { lastOnScreenAt: new Date('2025-12-31T00:00:00Z') }),
+    ).rejects.toThrow(/tab_presences_last_on_screen_at_check/);
+    await presence(ws, a, { lastOnScreenAt: later });
+  });
+
+  it('rejects pings and ledger items that break the outcome, member and ledger rules (AC-08)', async () => {
+    const ws = await workspace();
+    const a = await member(ws);
+    const b = await member(ws);
+    const linkId = newId();
+    await link(ws, a, { id: linkId });
+    await expect(ping(ws, a, linkId, { outcome: 'queued' })).rejects.toThrow(/pings_outcome_check/);
+    await expect(
+      ping(ws, a, linkId, { openedAt: new Date('2025-12-31T00:00:00Z') }),
+    ).rejects.toThrow(/pings_opened_at_check/);
+    await expect(ping(ws, a, newId())).rejects.toThrow(/pings_telegram_link_id_fkey/);
+    const pingId = newId();
+    await ping(ws, a, linkId, { id: pingId, outcome: 'sending' });
+    const conv = await conversation(ws);
+    await item(ws, a, pingId, conv);
+    // Never twice per member, conversation and waiting period; a new period is a new row.
+    const second = newId();
+    await ping(ws, a, linkId, { id: second });
+    await expect(item(ws, a, second, conv)).rejects.toThrow(
+      /ping_items_conversation_id_waiting_since_account_id_key/,
+    );
+    await item(ws, a, second, conv, later);
+    // An item's member is its ping's member.
+    await expect(item(ws, a, second, await conversation(ws), now, b)).rejects.toThrow(
+      /ping_items_ping_fkey/,
+    );
+    await expect(item(ws, a, second, newId())).rejects.toThrow(/ping_items_conversation_id_fkey/);
+  });
+
+  it('cascades the items when a ping is rolled out', async () => {
+    const ws = await workspace();
+    const a = await member(ws);
+    const linkId = newId();
+    await link(ws, a, { id: linkId });
+    const pingId = newId();
+    await ping(ws, a, linkId, { id: pingId });
+    await item(ws, a, pingId, await conversation(ws));
+    await item(ws, a, pingId, await conversation(ws));
+    await sql`DELETE FROM pings WHERE id = ${pingId}`.execute(db);
+    const { rows } = await sql<{ n: string }>`
+      SELECT count(*)::text AS n FROM ping_items WHERE ping_id = ${pingId}`.execute(db);
+    expect(rows[0]?.n).toBe('0');
+  });
+
+  it('reverts 08 down to 04 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const state = async () => {
+        const tables = await sql<{ table_name: string }>`
+          SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_name IN ('telegram_links', 'connect_links', 'tab_presences', 'pings', 'ping_items')
+          ORDER BY table_name`.execute(freshDb);
+        const col = await sql<{ column_name: string }>`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'bots' AND column_name = 'send_paused_until'`.execute(freshDb);
+        return { tables: tables.rows.map((r) => r.table_name), column: col.rows.length };
+      };
+      const full = {
+        tables: ['connect_links', 'ping_items', 'pings', 'tab_presences', 'telegram_links'],
+        column: 1,
+      };
+      expect(await state()).toEqual(full);
+      for (let i = 0; i < 5; i++) {
+        const down = await migrator.migrateDown();
+        expect(down.error).toBeUndefined();
+      }
+      expect(await state()).toEqual({ tables: [], column: 0 });
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await state()).toEqual(full);
     } finally {
       await freshDb.destroy();
       await fresh.stop();

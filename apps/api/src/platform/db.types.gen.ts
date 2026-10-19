@@ -35,11 +35,23 @@ export interface Bots {
   id: string;
   last_checked_at: Timestamp | null;
   name: string;
+  send_paused_until: Timestamp | null;
   state: string;
   telegram_bot_id: Int8;
   token_encrypted: Buffer | null;
   username: string;
   webhook_secret_hash: Buffer | null;
+  workspace_id: string;
+}
+
+export interface ConnectLinks {
+  account_id: string;
+  created_at: Timestamp;
+  expires_at: Timestamp;
+  id: string;
+  replaced_at: Timestamp | null;
+  token_hash: Buffer;
+  used_at: Timestamp | null;
   workspace_id: string;
 }
 
@@ -131,6 +143,25 @@ export interface PasswordResetLinks {
   token_hash: Buffer;
 }
 
+export interface PingItems {
+  account_id: string;
+  conversation_id: string;
+  id: string;
+  ping_id: string;
+  waiting_since: Timestamp;
+  workspace_id: string;
+}
+
+export interface Pings {
+  account_id: string;
+  created_at: Timestamp;
+  id: string;
+  opened_at: Timestamp | null;
+  outcome: string;
+  telegram_link_id: string;
+  workspace_id: string;
+}
+
 export interface ReadMarks {
   account_id: string;
   conversation_id: string;
@@ -182,6 +213,30 @@ export interface SignInFailures {
   id: string;
 }
 
+export interface TabPresences {
+  account_id: string;
+  id: string;
+  last_on_screen_at: Timestamp | null;
+  live_until: Timestamp;
+  on_screen: boolean;
+  opened_at: Timestamp;
+  workspace_id: string;
+}
+
+export interface TelegramLinks {
+  account_id: string;
+  blocked_at: Timestamp | null;
+  display_name: string | null;
+  id: string;
+  last_notice_at: Timestamp | null;
+  linked_at: Timestamp;
+  removed_at: Timestamp | null;
+  removed_reason: string | null;
+  telegram_bot_id: Int8;
+  telegram_user_id: Int8 | null;
+  workspace_id: string;
+}
+
 export interface Workspaces {
   created_at: Timestamp;
   id: string;
@@ -191,6 +246,7 @@ export interface Workspaces {
 export interface DB {
   accounts: Accounts;
   bots: Bots;
+  connect_links: ConnectLinks;
   contacts: Contacts;
   conversation_activities: ConversationActivities;
   conversations: Conversations;
@@ -198,10 +254,14 @@ export interface DB {
   memberships: Memberships;
   messages: Messages;
   password_reset_links: PasswordResetLinks;
+  ping_items: PingItems;
+  pings: Pings;
   read_marks: ReadMarks;
   replies: Replies;
   reply_attempts: ReplyAttempts;
   sessions: Sessions;
   sign_in_failures: SignInFailures;
+  tab_presences: TabPresences;
+  telegram_links: TelegramLinks;
   workspaces: Workspaces;
 }
