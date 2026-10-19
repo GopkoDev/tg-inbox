@@ -37,7 +37,11 @@ Success means a pilot customer who writes while the team is away gets a reply as
 
 Sized M, not the roadmap's first-guess S: it adds a new capability area (notifications and Telegram links), new member actions with a data change, and a change to capture (linked members' messages).
 
-**D1 decided (closes roadmap open decision D1).** A member is **away from the web** for a workspace when none of their browser tabs, on any device, has that workspace's panel open with a working live connection and on screen within the last 10 minutes. A tab that is minimised, hidden behind another tab, on a sleeping computer or without a live connection does not count.
+**D1 decided (closes roadmap open decision D1).** A member is **away from the web** for a workspace when none of their browser tabs, on any device, has that workspace's panel open with a live connection that works right now and has been on screen at some moment within the last 10 minutes. A tab is **on screen** when it is the selected tab of a browser window that is not minimised, on a computer that is awake. A window covered by another program's window may still count as on screen; that is the safe direction, because the member then gets the in-web notifications. Concretely:
+
+- The tab is closed, the computer sleeps or the live connection is lost: that tab stops counting within 60 seconds.
+- The tab stays connected but is hidden behind another tab or minimised: it stops counting 10 minutes after it left the screen.
+- The member is away only when no tab of theirs counts for that workspace.
 
 Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can be vetoed at review:
 
@@ -48,6 +52,13 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 - Linking is per membership, because each workspace has its own bot. A multi-workspace member links once per workspace.
 - Desktop notifications are a per-browser opt-in, asked for only when the member clicks to turn them on. There are no sounds of our own; the operating system's notification sound applies.
 - Linking a Telegram account is the opt-in, and removing the link is the off switch. There is no separate on/off toggle, no quiet hours and no per-workspace schedule in this step (§3, §8).
+
+Clarifications (clarify, autonomous run 2026-10-19). Each one picks the most sensible reading of a point where two builders could have diverged. Any of them can be vetoed at review:
+
+- Presence is per tab: a tab needs a live connection that works now, and it must have been on screen within the last 10 minutes (D1). Desktop notifications use a stricter test: they are held back only while a tab of that workspace in this browser is **in focus**, meaning it is the selected tab of the window the member is typing in (AC-02).
+- A ping is not decided once, at the 5- or 30-minute mark. A conversation stays due for a member for as long as the wait lasts. A member who becomes away later, or becomes the assignee later, is pinged at that point, still only once per conversation per waiting period (AC-07, AC-08).
+- Every condition is checked again at the moment of sending: open, still waiting, not read, member away, membership active, bot able to send. A conversation that no longer qualifies drops out of the ping, and a ping with nothing left is not sent.
+- A Telegram link belongs to the bot it was made with. Rotating that bot's token keeps it. Disconnecting the bot pauses pings and keeps the link. Connecting a different bot to the workspace removes every link made with the old one (AC-10).
 
 ## 2. Goals
 
@@ -115,7 +126,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 
 **Given** an operator of "Acme Flowers" who turned on desktop notifications in this browser and has an "Acme Flowers" tab with a working live connection, but no "Acme Flowers" tab in this browser is on screen
 **When** a customer writes in a conversation assigned to them or unassigned
-**Then** the computer shows one notification "<contact name> · Acme Flowers": "New message". It shows no message text and appears once for this browser even with several tabs open. Further messages in that conversation replace it instead of stacking. Clicking it brings the tab forward with that conversation open. No notification appears for a conversation assigned to a teammate, for an edit, for a reply or an activity entry, or while an "Acme Flowers" tab in this browser is on screen.
+**Then** the computer shows one notification "<contact name> · Acme Flowers": "New message". It shows no message text and appears once for this browser even with several tabs open. Further messages in that conversation replace it instead of stacking. A customer message that reopens a closed conversation counts as a new message. Clicking it brings forward the "Acme Flowers" tab that was most recently in focus in this browser, with that conversation open. No notification appears for a conversation assigned to a teammate, for an edit, for a reply or an activity entry, or while an "Acme Flowers" tab in this browser is in focus (the selected tab of the window the member is working in). A tab that is visible but not in focus, for example behind another program's window, does not hold the notification back. A browser with no "Acme Flowers" tab open shows no notification for "Acme Flowers" (§3).
 
 ### AC-03 (US-02): error
 
@@ -139,43 +150,43 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 
 **Given** an operator of "Acme Flowers" who is already connected, or a Telegram account that is already connected to another member of "Acme Flowers"
 **When** they open a new connect link in a different Telegram account, or a teammate opens their own connect link from that same Telegram account
-**Then** nothing changes. A member has at most one Telegram link per workspace, and a Telegram account is linked to at most one member of a workspace. The bot answers that this Telegram account cannot be connected and why ("already receives notifications for another member of Acme Flowers" / "you are already connected from another Telegram account — disconnect it in the panel first"). An existing link is never replaced silently.
+**Then** nothing changes. A member has at most one Telegram link per workspace, and a Telegram account is linked to at most one member of a workspace. The bot answers that this Telegram account cannot be connected and why ("already receives notifications for another member of Acme Flowers" / "you are already connected from another Telegram account — disconnect it in the panel first"). An existing link is never replaced silently. A connected member who opens a new connect link from the Telegram account they are already connected with is told "you are already connected", and the link is used up. While a member is connected, the panel offers "Disconnect" and no connect link. Connecting another Telegram account means disconnecting first.
 
 ### AC-07 (US-04): happy path
 
 **Given** an operator of "Acme Flowers" with a Telegram link who is away from the web (no tab of theirs, on any device, has "Acme Flowers" open with a working live connection and on screen within the last 10 minutes), and an open conversation assigned to them in which the customer is waiting for a reply, with the message that started the wait still unread for them
 **When** 5 minutes pass since that message arrived in tg-inbox and nothing has ended the wait
-**Then** the "Acme Flowers" bot sends them one ping: "Acme Flowers: 1 customer is waiting for your reply (5 min)", with a link that opens that conversation in the panel. The ping contains no message text and no contact name. A conversation that is unassigned at that moment pings every linked member of "Acme Flowers" who is away and has not read the message. A member who is present on the web gets the in-web notifications instead (AC-01, AC-02) and no ping.
+**Then** the "Acme Flowers" bot sends them one ping: "Acme Flowers: 1 customer is waiting for your reply (5 min)", with a link that opens that conversation in the panel. The ping contains no message text and no contact name. A conversation that is unassigned at that moment pings every linked member of "Acme Flowers" who is away and has not read the message. A member who is present on the web gets the in-web notifications instead (AC-01, AC-02) and no ping at that point. If they become away later while the customer is still waiting and the message is still unread for them, the ping goes out as soon as they are counted away. The 5 minutes always run from the start of the wait. For a waiting period that began when a conversation reopened (AC-08), the clock starts at the reopen. Having read the earlier messages does not hold such a ping back, because the customer's message was read and the team's reply did not reach them.
 
 ### AC-08 (US-04): domain invariant
 
 **Given** a conversation of "Acme Flowers" for which a linked away member has been pinged
 **When** the customer writes more messages in the same waiting period, or other conversations become due for the same member within 10 minutes
-**Then** that member is pinged at most once per conversation per waiting period. Pings to one member from one workspace are at most one per 10 minutes. Conversations that become due in between are combined into the next ping ("Acme Flowers: 4 customers are waiting for your reply, the longest 12 min", with a link to the inbox's "mine" or "unassigned" lens). A waiting period ends when a reply is marked sent or the conversation is closed. The next customer message after that starts a new one. A conversation that is reopened while its customer is still waiting for a reply also starts a new one at the moment it reopens, for example after a reply ends "not delivered" (assignment-statuses AC-08). A member who becomes the assignee after the ping was due, or who reads the waiting message, is not pinged for that period.
+**Then** that member is pinged at most once per conversation per waiting period. Pings to one member from one workspace are at most one per 10 minutes. Conversations that become due in between are combined into the next ping, sent at the member's next allowed moment. A ping counts only the conversations not yet pinged to this member in their current waiting period, and the longest wait among them. If all of them are the member's own, it reads "Acme Flowers: 4 customers are waiting for your reply, the longest 12 min" and links to the inbox's "mine" lens. If all are unassigned, it says so and links to the "unassigned" lens. A mixed set reads "Acme Flowers: 4 customers are waiting for a reply (2 yours, 1 unassigned, 1 a teammate's), the longest 12 min" and links to the inbox's open conversations. A waiting period ends when a reply is marked sent or the conversation is closed. The next customer message after that starts a new one. A conversation that is reopened while its customer is still waiting for a reply also starts a new one at the moment it reopens, for example after a reply ends "not delivered" (assignment-statuses AC-08). A member who reads the waiting message before their ping is sent is not pinged for that period. A reassignment does not restart the clock. A new assignee who is away, linked and has not read the message becomes due at once if the customer has already waited 5 minutes. Unassigning a waiting conversation makes it due at once for the away members as an unassigned one. Each member still gets at most one ping per conversation per waiting period.
 
 ### AC-09 (US-05): cross-context
 
 **Given** an open conversation of "Acme Flowers" assigned to an operator, whose customer has been waiting for a reply
-**When** 30 minutes pass since the wait began and it has not ended, or 5 minutes pass and the assignee has no Telegram link or their link cannot be reached
-**Then** every other linked member of "Acme Flowers" who is away and has not read the waiting message gets the ping for it, as for an unassigned conversation (AC-07, AC-08), saying that a teammate's customer is waiting (without the teammate's name). The assignee stays the assignee, since a ping never changes the assignee or the status.
+**When** 30 minutes pass since the wait began and it has not ended, or 5 minutes pass while the assignee is away and cannot be pinged
+**Then** every other linked member of "Acme Flowers" who is away and has not read the waiting message gets the ping for it, as for an unassigned conversation (AC-07, AC-08), saying that a teammate's customer is waiting (without the teammate's name). The assignee stays the assignee, since a ping never changes the assignee or the status. "Cannot be pinged" means exactly one of two things: the assignee has no Telegram link, or their link is "Not reachable" (AC-10). That state is either already known from an earlier failed ping or found by the failed attempt at this moment. An assignee who is present on the web, or who has read the waiting message, can be reached. For them the team is pinged only at 30 minutes.
 
 ### AC-10 (US-04): cross-context
 
 **Given** a conversation of "Acme Flowers" whose ping is due
 **When** at that moment the conversation is closed, a reply was marked sent, the recipient's membership is no longer active, the bot is "not connected" or "not working", or the member blocked the bot in Telegram
-**Then** no ping reaches that member. A closed conversation or a sent reply ends the wait (AC-08). A deactivated member's Telegram link is removed as part of the deactivation, before any further ping, and is not restored when they are reactivated. While the bot does not work, nothing is retried later, and the member's panel shows "Pings paused — the bot is not working". When the member has blocked the bot, their panel shows "Not reachable — you blocked the bot in Telegram, unblock it or disconnect" until a ping reaches them again. A bot that is "taken over" can still send (shared-inbox AC-14), so pings for customers who were already waiting still go out. The panel says that new customer messages are not arriving (shared-inbox AC-14). Pings never delay or crowd out replies to customers: when the bot is at its Telegram sending limit, replies go first and pings wait or are combined.
+**Then** no ping reaches that member. A closed conversation or a sent reply ends the wait (AC-08). A deactivated member's Telegram link is removed as part of the deactivation, before any further ping, and is not restored when they are reactivated. While the bot does not work, no ping is sent and none is queued for later, and the member's panel shows "Pings paused — the bot is not working". Once the bot works again, conversations whose customers are still waiting and that were not pinged to a member in their current waiting period become due for that member again. They go out combined, under the one-per-10-minutes limit (AC-08), and the 30-minute team reach continues from the start of each wait. When the member has blocked the bot, their panel shows "Not reachable — you blocked the bot in Telegram, unblock it or disconnect" until a ping reaches them again. Pings to that member are still attempted when due. A failed attempt counts as that conversation's ping for this member in the waiting period and is not retried. A deactivated member's link is removed. A link made with the workspace's previous bot is removed when a different bot is connected, and its member sees "Not connected". A bot that is "taken over" can still send (shared-inbox AC-14), so pings for customers who were already waiting still go out. The panel says that new customer messages are not arriving (shared-inbox AC-14). Pings never delay or crowd out replies to customers: when the bot is at its Telegram sending limit, replies go first and pings wait or are combined.
 
 ### AC-11 (US-06): cross-context
 
 **Given** an operator of "Acme Flowers" whose Telegram account is linked to the "Acme Flowers" bot
 **When** they write anything in that chat, for example "ok" in answer to a ping
-**Then** the message is not captured. It creates no contact or conversation, does not reopen anything and counts toward no unread count or waiting marker. The bot answers that this chat only sends notifications and that replies to customers are written in the panel, with a link. It sends that answer at most once per hour. Messages the same person sent to the bot before they linked stay in their conversation as they were. Once they disconnect, their messages are captured as an end customer's again. Starting the bot with any other start link (a business's own campaign link) is captured as before (bot-connection AC-07).
+**Then** the message is not captured, whatever it is: text, media, an edit or a start of the bot through any link, including a business's own campaign link. It creates no contact or conversation, does not reopen anything and counts toward no unread count or waiting marker. The bot answers that this chat only sends notifications and that replies to customers are written in the panel, with a link. It sends that answer at most once per hour. Messages the same person sent to the bot before they linked stay in their conversation as they were. Once they disconnect, their messages are captured as an end customer's again. For anyone without a Telegram link to that bot, starting the bot with a business's own campaign link is captured as before (bot-connection AC-07).
 
 ### AC-12 (US-03, US-04): authorization
 
 **Given** a person who is not an active member of "Acme Flowers": an account of another workspace, a deactivated member, someone not signed in, or a Telegram user who got hold of a connect link
 **When** they try to get a connect link for "Acme Flowers", see or remove a member's Telegram link, or use a link issued to someone else
-**Then** the system refuses and changes nothing. An account of another workspace gets no hint that the workspace exists. A deactivated member gets the access-removed notice. Someone not signed in is asked to sign in first. A connect link works only for the membership it was issued to, only once and only for 10 minutes (AC-05). A member sees and removes only their own Telegram link. A business owner sees which members are connected ("Telegram pings on/off" in Team) but cannot link or unlink for them, and never sees the Telegram account itself. A ping opened by someone else leads to the panel's sign-in, never to the conversation.
+**Then** the system refuses and changes nothing. An account of another workspace gets no hint that the workspace exists. A deactivated member gets the access-removed notice. Someone not signed in is asked to sign in first. A connect link works only for the membership it was issued to, only once and only for 10 minutes (AC-05). A member sees and removes only their own Telegram link. A business owner sees which members are connected ("Telegram pings on/off" in Team) but cannot link or unlink for them, and never sees the Telegram account itself. A ping opened by someone else leads to the panel's sign-in and the workspace's usual access rules. Only an active member of "Acme Flowers" reaches the conversation.
 
 ### AC-13 (US-03): error
 
@@ -189,12 +200,13 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 |---|---|---|
 | Ping timeliness: due moment (5 min after the waiting message arrived), or for a combined ping the member's next allowed send moment (AC-08) → ping accepted by Telegram, p95, excluding time the bot spent at its sending limit with replies queued (AC-10) | ≤ 60 s | job timing log from due/allowed time to accepted send; integration test against the fake Bot API |
 | In-web latency: customer message captured → attention count / desktop notification updated in an open tab, p95 | ≤ 3 s (shared-inbox live-update target) | server-side timing from capture to push, logged per event; CI integration test asserts the push |
-| Presence freshness: a member's last eligible tab closes, loses its live connection or leaves the screen → counted away | ≤ 10 min + 60 s | integration test with a simulated dead connection (no answer to the keep-alive) and with a hidden tab |
+| Presence freshness: a member's last eligible tab closes, its computer sleeps or it loses its live connection → counted away | ≤ 60 s | integration test with a simulated dead connection (no answer to the keep-alive) and a closed tab |
+| Presence freshness: a member's last eligible tab stays connected but leaves the screen → counted away | ≤ 10 min + 60 s after it left the screen | integration test with a hidden tab |
 | Pings to non-members | 0 pings reach a Telegram account whose membership is not active at send time | send-time membership check; integration test: deactivate during a due ping → no send |
 | Ping volume per member | ≤ 1 ping per 10 min per member per workspace; ≤ 1 per conversation per waiting period | integration test; daily reconciliation query in the run book |
 | Ping content | 0 pings containing customer message text or a contact name | unit test on the ping text builder; review of the template |
 | Captured link messages | 0 contacts or conversations created from connect-link starts or linked members' messages | integration test; run-book query: contacts whose Telegram id equals a linked member's in the same workspace |
-| Reply delivery under ping load | reply send p95 unchanged (≤ shared-inbox target) with 50 pings due at once on one bot | load test against the fake Bot API |
+| Reply delivery under ping load | reply send p95 ≤ 2 s, the shared-inbox target, with 50 pings due at once on one bot | load test against the fake Bot API |
 | Connect link | single use, expires in 10 min, ≤ 5 requests per 10 min per member | integration tests (AC-05, AC-13) |
 | Availability | 99.5 % monthly (as shared-inbox §6) | uptime check on the health endpoint |
 
@@ -213,7 +225,7 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 
 ## 7. Metrics / KPIs
 
-- **Customer messages answered within 15 minutes**: baseline: TBD, measured from release for 7 days with notifications switched off (share of waiting periods ended by a sent reply within 15 min, per workspace). Target: +30 percentage points over that baseline within 30 days of release.
+- **Customer messages answered within 15 minutes**: baseline: TBD, measured over the 7 days before release in the pilot workspaces (share of waiting periods ended by a sent reply within 15 min, per workspace). There is no switch to turn the feature off for a baseline period. Target: +30 percentage points over that baseline within 30 days of release.
 - **Members with a Telegram link**: baseline: 0 % (new). Target: ≥ 60 % of active members of pilot workspaces within 30 days.
 - **Ping → panel within 15 minutes**: baseline: 0 (new). Target: ≥ 50 % of pings followed by the recipient opening the panel for that workspace within 15 min, tracked weekly. Alert if it falls 3 weeks in a row (fatigue signal).
 - **Unlinks and bot blocks by members**: baseline: 0 (new). Target: ≤ 10 % of linked members disconnect or block the bot within 30 days.
@@ -224,3 +236,26 @@ Assumptions taken in the autonomous pipeline run (2026-10-19). Any of them can b
 - [ ] Should members be able to opt in to the customer's message preview or the contact's name in pings? Default now: no, neither (§3, §6.1). Owner: Dmytro Hopko. Due: after 30 days of pilot use (look at the ping → panel KPI).
 - [ ] Do pilots need quiet hours or a per-workspace schedule for pings? Default now: no, unlinking is the off switch. Owner: Dmytro Hopko. Due: after 30 days of pilot use (watch the unlink/block KPI and pings sent between 22:00 and 08:00 workspace time).
 - [ ] Are the 5-minute ping and 30-minute team escalation thresholds right for pilots, and should owners be able to change them? Default now: fixed at 5 and 30 minutes. Owner: Dmytro Hopko. Due: after 30 days of pilot use.
+
+## Clarify log (2026-10-19)
+
+18 findings were merged from the self-sweep and the clean-context devil's-advocate. 18 are resolved and 0 deferred. The three §8 rows above were already there and wait on pilot data.
+
+- conflicting-requirement · AC-11 · resolved: "any other start link is captured" → nothing from a linked account is captured, campaign starts included; the campaign rule applies only to people without a link.
+- conflicting-requirement · §7 · resolved: baseline "from release with notifications switched off" → the 7 days before release, because the feature has no off switch.
+- vague-term · §1 D1, §6 · resolved: "away" broken down by tab state. A closed tab, a sleeping computer or a lost connection counts away within 60 s; a hidden tab that stays connected counts away 10 min after it left the screen. The presence row in §6 is split in two.
+- vague-term · §1 D1, AC-02 · resolved: "on screen" (used for presence) defined as the selected tab of a window that is not minimised. Desktop notifications use the stricter "in focus".
+- under-specified-AC · AC-07 · resolved: presence checked once when the ping is due → the conversation stays due while the wait lasts; a member who becomes away later is pinged then.
+- under-specified-AC · AC-09 · resolved: "assignee cannot be pinged" → a closed list of two cases (no link, link not reachable). A present assignee, or one who has read the message, does not trigger the team at 5 min.
+- under-specified-AC · AC-08 · resolved: what a combined ping counts → only conversations not yet pinged to this member in the period. Wording and link are set for an all-mine, all-unassigned and mixed set.
+- under-specified-AC · AC-07, AC-08 · resolved: a waiting period that starts with a reopen → the clock starts at the reopen and having read the messages does not hold the ping back.
+- under-specified-AC · AC-10 · resolved: "nothing is retried" → nothing is queued; once the bot recovers, conversations still waiting become due again, combined.
+- under-specified-AC · AC-06 · resolved: the same member relinks from the same account → "already connected" and the link is used up; a connected member is offered no connect link.
+- under-specified-AC · AC-02 · resolved: which tab a click opens → the workspace tab most recently in focus in this browser.
+- under-specified-AC · AC-08 · resolved: "a new assignee is not pinged" → a reassignment keeps the clock; a new away assignee becomes due at once; unassigning makes others due.
+- under-specified-AC · §1, AC-07 · resolved: every condition is checked again when the ping is sent; conversations that no longer qualify drop out and an empty ping is not sent.
+- under-specified-AC · AC-10 · resolved: a member who blocked the bot → attempts continue when due; a failed attempt uses up that conversation's ping for the period.
+- unstated-assumption · AC-10, §1 · resolved: what a change of bot does to Telegram links → rotating the token keeps them, disconnecting pauses them, connecting a different bot removes them.
+- unmeasured-NFR · §6 · resolved: "reply send p95 unchanged" → ≤ 2 s, the shared-inbox target.
+- under-specified-AC · AC-02 · resolved: a message that reopens a closed conversation counts as new; a browser with no tab of the workspace shows nothing.
+- vague-term · AC-12 · resolved: "a ping opened by someone else never reaches the conversation" → it goes through sign-in and the usual access rules, so only active members reach the conversation.
