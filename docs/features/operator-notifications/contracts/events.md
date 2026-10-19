@@ -115,7 +115,7 @@ Delivery (at-most-once, gap → `resync`), the 1000-byte cap and zod validation 
 
 - **Required fields:** `workspace_id`.
 - **Producer:** the job itself (the next chain link) and `notifications.schedule-pings` (the backstop).
-- **Options:** policy `exclusive`, `singletonKey = workspace_id` (at most one sweep per workspace across instances), `retryLimit = 0`. A failed run is replaced by the next chain link or by the cron (sad.md §7).
+- **Options:** policy `stately`, `singletonKey = workspace_id` (at most one sweep running and one next link waiting per workspace across instances; `exclusive` is not used because it refuses the chain's own next link while the sweep is active), `retryLimit = 0`, `expireInSeconds = 60`. A failed run is replaced by the next chain link or by the cron (sad.md §7).
 - **Work** (seeded flow 1, flow 13), every read scoped by `workspace_id`:
   1. `bots.pingReadiness(workspaceId)`. Not connected or needs a token → nothing sent, nothing queued, next link in 20 s. Send-paused until T → next link after T. Taken over counts as able to send.
   2. Drop expired presence leases. Read the live links (with `blocked_at`), the presence rows, `conversations.waitingForPings(workspaceId, { accountIds })` (linked members and assignees), the ledger items for these periods and each member's last ping.

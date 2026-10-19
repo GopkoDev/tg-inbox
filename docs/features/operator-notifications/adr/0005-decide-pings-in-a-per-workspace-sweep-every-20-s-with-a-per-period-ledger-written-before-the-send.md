@@ -39,7 +39,7 @@ Pings to one member are combined, at most one per 10 minutes per workspace and o
 
 ## Decision outcome
 
-**Chosen:** Option 1. A sweep sees every trigger as a change in state, with no hook in the modules that cause it. It is idempotent, so a lost or duplicated run cannot double-ping: the unique ledger and the exclusive key make "at most once per period" hold across instances. The 20 s period plus send time stays well inside the 60 s p95. The send-time re-check is the recomputation inside the per-member transaction. A due set that empties sends nothing.
+**Chosen:** Option 1. A sweep sees every trigger as a change in state, with no hook in the modules that cause it. It is idempotent, so a lost or duplicated run cannot double-ping: the unique ledger and the `stately` singleton key make "at most once per period" hold across instances. The 20 s period plus send time stays well inside the 60 s p95. The send-time re-check is the recomputation inside the per-member transaction. A due set that empties sends nothing.
 
 **Tenancy exception (the sixth):** *workspaces with a live Telegram link*, a read by the cron backstop only. It returns workspace ids, and every read after it is scoped. This is recorded here and in SAD §8, to be added to CLAUDE.md and the architecture map.
 
