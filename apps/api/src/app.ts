@@ -16,6 +16,7 @@ import {
   registerInboxJobs,
 } from './modules/inbox/infra/jobs.js';
 import { createLiveHub } from './modules/inbox/infra/hub.js';
+import { registerNotifications } from './modules/notifications/http/routes.js';
 import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
@@ -195,7 +196,19 @@ export async function buildApp(
         media: deps.inboxMedia,
         changes: deps.changeState,
         live: liveHub,
+        attention: deps.notificationReads.attentionCount,
         webOrigin: new URL(config.PUBLIC_WEB_URL).origin,
+        access: workspaceAccess,
+        authenticate,
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerNotifications(api, {
+        settings: deps.notificationSettings,
+        connectLinks: deps.connectLinkIssuer,
+        disconnect: deps.disconnectTelegram,
         access: workspaceAccess,
         authenticate,
       }),

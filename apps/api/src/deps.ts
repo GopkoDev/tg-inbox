@@ -36,6 +36,10 @@ import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
+import { randomBytes } from 'node:crypto';
+import { createConnectLinkIssuer } from './modules/notifications/app/connect-link.js';
+import { createDisconnectTelegram } from './modules/notifications/app/disconnect.js';
+import { createSettings } from './modules/notifications/app/settings.js';
 import { createDeliverAnswer } from './modules/notifications/app/deliver-answer.js';
 import { createLinkLifecycle } from './modules/notifications/app/link-lifecycle.js';
 import { createIntercept } from './modules/notifications/app/intercept.js';
@@ -264,6 +268,27 @@ export function buildDeps(
     panelUrl: config.PUBLIC_WEB_URL,
     ...(overrides.logger && { logger: overrides.logger }),
   });
+  // The member's own settings, connect link and disconnect (the three notifications routes).
+  const notificationBots = { inboxBotStatus: inboxStatus.inboxBotStatus, pingReadiness };
+  const notificationSettings = createSettings({ links: telegramLinks, bots: notificationBots });
+  const connectLinkIssuer = createConnectLinkIssuer({
+    transaction,
+    membership: membershipLocks,
+    links: telegramLinks,
+    connectLinks,
+    bots: notificationBots,
+    settings: notificationSettings,
+    clock,
+    randomBytes,
+  });
+  const disconnectTelegram = createDisconnectTelegram({
+    transaction,
+    links: telegramLinks,
+    signals: createNotificationSignals(),
+    enqueue: botMessages.enqueue,
+    settings: notificationSettings,
+    clock,
+  });
   const deliverAnswer = createDeliverAnswer({
     links: telegramLinks,
     bots: { pingReadiness },
@@ -374,6 +399,9 @@ export function buildDeps(
     notificationReads,
     bots,
     presence,
+    notificationSettings,
+    connectLinkIssuer,
+    disconnectTelegram,
     deliverAnswer,
     sendPings,
     /** The sixth controlled tenancy exception: workspace ids with a live link, for the cron backstop. */
