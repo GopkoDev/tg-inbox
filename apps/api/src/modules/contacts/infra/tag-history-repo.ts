@@ -4,6 +4,9 @@ import { newId } from '../../../platform/ids.js';
 import { TAG_HISTORY_PAGE_SIZE } from '../domain/tags.js';
 import type { TagHistoryRepo, TagHistoryRow } from '../app/ports.js';
 
+/** The ids are UUIDv7s from `newId()`, generated here and passed with the contact ids as arrays. */
+const idsFor = (contactIds: readonly string[]) => contactIds.map(() => newId());
+
 export function createTagHistoryRepo(db: Db): TagHistoryRepo {
   return {
     async append(entry, tx) {
@@ -72,6 +75,32 @@ export function createTagHistoryRepo(db: Db): TagHistoryRepo {
         .where('created_at', '>', since)
         .executeTakeFirstOrThrow();
       return { count: Number(row.n), oldestAt: row.oldest };
+    },
+
+    async appendMerged(workspaceId, contactIds, from, to, actorAccountId, now, tx) {
+      if (contactIds.length === 0) return;
+      await sql`
+        INSERT INTO contact_tag_history
+          (id, workspace_id, contact_id, tag_id, tag_name, kind, merged_into_tag_id, merged_into_name,
+           actor_account_id, source, created_at)
+        SELECT u.id, ${workspaceId}, u.contact_id, ${from.id}, ${from.name}, 'merged', ${to.id}, ${to.name},
+               ${actorAccountId}, 'settings', ${now}
+        FROM unnest(${idsFor(contactIds)}::uuid[], ${[...contactIds]}::uuid[]) AS u(id, contact_id)`.execute(
+        tx,
+      );
+    },
+
+    async appendDeleted(workspaceId, contactIds, tag, actorAccountId, now, tx) {
+      if (contactIds.length === 0) return;
+      await sql`
+        INSERT INTO contact_tag_history
+          (id, workspace_id, contact_id, tag_id, tag_name, kind, merged_into_tag_id, merged_into_name,
+           actor_account_id, source, created_at)
+        SELECT u.id, ${workspaceId}, u.contact_id, ${tag.id}, ${tag.name}, 'deleted', NULL, NULL,
+               ${actorAccountId}, 'settings', ${now}
+        FROM unnest(${idsFor(contactIds)}::uuid[], ${[...contactIds]}::uuid[]) AS u(id, contact_id)`.execute(
+        tx,
+      );
     },
 
     async lockMemberChanges(workspaceId, accountId, tx) {

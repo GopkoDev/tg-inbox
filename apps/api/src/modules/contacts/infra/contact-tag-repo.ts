@@ -89,5 +89,47 @@ export function createContactTagRepo(db: Db): ContactTagRepo {
         .executeTakeFirst();
       return result.numDeletedRows > 0n;
     },
+
+    async mergeInto(workspaceId, fromTagId, toTagId, tx) {
+      if (fromTagId === toTagId) throw new Error('mergeInto: a tag cannot be merged into itself');
+      const carriers = await tx
+        .selectFrom('contact_tags')
+        .select('contact_id')
+        .where('workspace_id', '=', workspaceId)
+        .where('tag_id', '=', fromTagId)
+        .execute();
+      if (carriers.length === 0) return [];
+      // 1. Contacts that carry both: the target link takes the strictly earlier addition.
+      await sql`
+        UPDATE contact_tags AS t
+        SET added_at = f.added_at, added_by_account_id = f.added_by_account_id
+        FROM contact_tags AS f
+        WHERE t.workspace_id = ${workspaceId} AND t.tag_id = ${toTagId}
+          AND f.workspace_id = t.workspace_id AND f.tag_id = ${fromTagId}
+          AND f.contact_id = t.contact_id AND f.added_at < t.added_at`.execute(tx);
+      // 2. ...and their now-duplicate links of the merged tag go.
+      await sql`
+        DELETE FROM contact_tags AS f
+        WHERE f.workspace_id = ${workspaceId} AND f.tag_id = ${fromTagId}
+          AND EXISTS (
+            SELECT 1 FROM contact_tags AS t
+            WHERE t.workspace_id = f.workspace_id AND t.tag_id = ${toTagId}
+              AND t.contact_id = f.contact_id)`.execute(tx);
+      // 3. The rest move to the target with their adder and time.
+      await sql`
+        UPDATE contact_tags SET tag_id = ${toTagId}
+        WHERE workspace_id = ${workspaceId} AND tag_id = ${fromTagId}`.execute(tx);
+      return carriers.map((r) => r.contact_id);
+    },
+
+    async deleteLinksReturning(workspaceId, tagId, tx) {
+      const rows = await tx
+        .deleteFrom('contact_tags')
+        .where('workspace_id', '=', workspaceId)
+        .where('tag_id', '=', tagId)
+        .returning('contact_id')
+        .execute();
+      return rows.map((r) => r.contact_id);
+    },
   };
 }

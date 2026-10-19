@@ -163,6 +163,21 @@ export interface ContactTagRepo {
   insert(link: NewContactTag, tx?: Executor): Promise<void>;
   /** Whether a link was removed. */
   delete(workspaceId: string, contactId: string, tagId: string, tx?: Executor): Promise<boolean>;
+  /**
+   * Owner merge, set-based, in the caller's transaction with both tag rows locked `FOR UPDATE`:
+   * where a contact carries both tags the target link takes the earlier (added_at, adder) of the
+   * two (the target's on a tie), those duplicate `from` links are deleted and the rest are
+   * re-pointed to `to`, keeping adder and time. Returns the ids of the contacts that carried
+   * `from` (for `appendMerged`, written by the caller after this call). Does not delete the tag.
+   */
+  mergeInto(
+    workspaceId: string,
+    fromTagId: string,
+    toTagId: string,
+    tx: Executor,
+  ): Promise<string[]>;
+  /** Owner delete: removes every link of the tag, returning the contact ids (the count the owner confirmed is checked against it). */
+  deleteLinksReturning(workspaceId: string, tagId: string, tx: Executor): Promise<string[]>;
 }
 
 export type MemberTagSource = 'inbox' | 'profile';
@@ -212,6 +227,25 @@ export interface TagHistoryRepo {
     since: Date,
     tx?: Executor,
   ): Promise<{ count: number; oldestAt: Date | null }>;
+  /** One `merged` entry per contact id, in one statement (names of both tags at that moment, source `settings`). */
+  appendMerged(
+    workspaceId: string,
+    contactIds: readonly string[],
+    from: { id: string; name: string },
+    to: { id: string; name: string },
+    actorAccountId: string,
+    now: Date,
+    tx: Executor,
+  ): Promise<void>;
+  /** One `deleted` entry per contact id, in one statement. */
+  appendDeleted(
+    workspaceId: string,
+    contactIds: readonly string[],
+    tag: { id: string; name: string },
+    actorAccountId: string,
+    now: Date,
+    tx: Executor,
+  ): Promise<void>;
   /** ADR-0004 step 3: `pg_advisory_xact_lock` on `tag-changes:<ws>:<account>`. */
   lockMemberChanges(workspaceId: string, accountId: string, tx: Executor): Promise<void>;
 }
