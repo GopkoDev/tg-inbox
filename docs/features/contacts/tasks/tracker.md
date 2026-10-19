@@ -29,7 +29,7 @@
 | T22 | [Build SCR-20, the TagControl, and mount it on the profile and on the inbox conversation header (SCR-02) with the contact's tags and the name linking to the profile](./t22-scr20-tag-control-and-header.md) | ui | Dmytro Hopko | M | T18, T20 | done |
 | T23 | [Build Settings — Tags (SCR-21) with the counts as links and the DeleteTagDialog (SCR-23), the owner-only Tags section in SettingsLayout and its route](./t23-scr21-settings-tags-and-scr23-delete.md) | ui | Dmytro Hopko | M | T18 | done |
 | T24 | [Build SCR-22, the RenameTagDialog with its merge step: name rules in place, TAG_NAME_TAKEN turned into the merge offer, TAG_MERGE_TARGET_CHANGED re-ask](./t24-scr22-rename-and-merge-dialog.md) | ui | Dmytro Hopko | S | T23 | done |
-| T25 | [Add browser end-to-end contacts flows against the real API: list and filter, profile reading without marking read, tagging live between two members, owner rename / merge / delete, the operator refusal](./t25-browser-e2e.md) | tests | Dmytro Hopko | M | T17, T19, T21, T22, T24 | todo |
+| T25 | [Add browser end-to-end contacts flows against the real API: list and filter, profile reading without marking read, tagging live between two members, owner rename / merge / delete, the operator refusal](./t25-browser-e2e.md) | tests | Dmytro Hopko | M | T17, T19, T21, T22, T24 | done |
 | T26 | [Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the contacts routes and tables, the contacts → workspaces edge, the new signals and the new components](./t26-docs-and-canon.md) | docs | Dmytro Hopko | S | T16, T19, T21, T22, T24 | todo |
 
 **Total:** 26 tasks, ~22.5 person-days (S = ½ day, M = 1 day).

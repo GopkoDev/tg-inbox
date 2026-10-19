@@ -60,6 +60,14 @@ export interface World {
   conversationId(actor: string, workspaceId: string, customer: string): Promise<string>;
   /** One health-check tick through the app layer, as if run once the bots are due (not waited for). */
   healthTick(): Promise<void>;
+  /** `count` customers write one message each, in order (`<prefix>01`, `<prefix>02`, …, ids from `fromId`). */
+  customersWrite(token: string, count: number, fromId: number, prefix: string): Promise<void>;
+  /** The id of the contact (found by exact first name) as seen by the member `actor`. */
+  contactId(actor: string, workspaceId: string, firstName: string): Promise<string>;
+  /** `actor` puts the tag `name` (created when new) on a contact found by first name; returns the tag id. */
+  tagContact(actor: string, workspaceId: string, firstName: string, name: string): Promise<string>;
+  /** An owner deletes a tag over HTTP, confirming its current count. */
+  deleteTag(ownerEmail: string, workspaceId: string, tagId: string): Promise<void>;
 }
 
 interface Backend {
@@ -265,6 +273,48 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
       async healthTick() {
         advance();
         await runHealthTick(ahead);
+      },
+      async customersWrite(token, count, fromId, prefix) {
+        for (let i = 1; i <= count; i++) {
+          const name = `${prefix}${String(i).padStart(2, '0')}`;
+          const status = await world.customerWrites(token, fromId + i, `Hello from ${name}`, name);
+          if (status !== 200) throw new Error(`delivery for ${name} failed: ${status}`);
+        }
+      },
+      async contactId(actor, workspaceId, firstName) {
+        const device = await deviceOf(actor);
+        const page = await device.get(
+          `/api/workspaces/${workspaceId}/contacts?q=${encodeURIComponent(firstName)}`,
+        );
+        if (page.statusCode !== 200) throw new Error(`contacts read failed: ${page.body}`);
+        const hit = (page.json().items as { id: string; first_name: string }[]).find(
+          (c) => c.first_name === firstName,
+        );
+        if (!hit) throw new Error(`no contact ${firstName}`);
+        return hit.id;
+      },
+      async tagContact(actor, workspaceId, firstName, name) {
+        const device = await deviceOf(actor);
+        const contactId = await world.contactId(actor, workspaceId, firstName);
+        const res = await device.post(`/api/workspaces/${workspaceId}/contacts/${contactId}/tags`, {
+          name,
+          source: 'profile',
+        });
+        if (res.statusCode !== 200)
+          throw new Error(`tagging failed: ${res.statusCode} ${res.body}`);
+        return res.json().tag.id as string;
+      },
+      async deleteTag(ownerEmail, workspaceId, tagId) {
+        const device = await deviceOf(ownerEmail);
+        const list = await device.get(`/api/workspaces/${workspaceId}/tags`);
+        const tag = (list.json().items as { id: string; contact_count: number }[]).find(
+          (t) => t.id === tagId,
+        );
+        if (!tag) throw new Error(`no tag ${tagId}`);
+        const res = await device.post(`/api/workspaces/${workspaceId}/tags/${tagId}/delete`, {
+          expected_count: tag.contact_count,
+        });
+        if (res.statusCode !== 200) throw new Error(`delete failed: ${res.statusCode} ${res.body}`);
       },
     };
     await use(world);
