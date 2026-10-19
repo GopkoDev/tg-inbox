@@ -30,9 +30,12 @@ const RETRYABLE = new Set<ThreadReply['failure_reason']>([
 export function ReplyDeliveryState({
   reply,
   workspaceId,
+  readOnly = false,
 }: {
   reply: ThreadReply;
   workspaceId: string;
+  /** The state line only, no «Try again» / «Send again» (the contact profile acts on nothing). */
+  readOnly?: boolean;
 }) {
   const takenOver = useInboxStore((s) => s.bot?.state === 'taken_over');
   const resendReply = useInboxStore((s) => s.resendReply);
@@ -134,7 +137,7 @@ export function ReplyDeliveryState({
           New customer messages are not arriving
         </span>
       ) : null}
-      {reply.state === 'not_delivered' && RETRYABLE.has(reply.failure_reason) ? (
+      {!readOnly && reply.state === 'not_delivered' && RETRYABLE.has(reply.failure_reason) ? (
         <Button
           type="button"
           size="sm"
@@ -147,7 +150,7 @@ export function ReplyDeliveryState({
           Try again
         </Button>
       ) : null}
-      {reply.state === 'not_confirmed' ? (
+      {!readOnly && reply.state === 'not_confirmed' ? (
         <Button
           type="button"
           size="sm"
@@ -167,13 +170,15 @@ export function ReplyDeliveryState({
         </span>
       ) : null}
       {failed ? <span role="alert">Something went wrong — try again</span> : null}
-      <SendAgainDialog
-        open={dialogOpen}
-        pending={pending}
-        problem={problem}
-        onCancel={() => setDialogOpen(false)}
-        onSendAgain={() => void sendAgain()}
-      />
+      {readOnly ? null : (
+        <SendAgainDialog
+          open={dialogOpen}
+          pending={pending}
+          problem={problem}
+          onCancel={() => setDialogOpen(false)}
+          onSendAgain={() => void sendAgain()}
+        />
+      )}
     </div>
   );
 }

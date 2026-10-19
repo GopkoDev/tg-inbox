@@ -307,3 +307,34 @@ describe('SCR-05 Send again', () => {
     expect(within(dialog()).getByText('Something went wrong — try again')).toBeInTheDocument();
   });
 });
+
+describe('ReplyDeliveryState readOnly (the contact profile history acts on nothing)', () => {
+  const showReadOnly = (r: ThreadReply) => {
+    seed([r]);
+    return render(<ReplyDeliveryState reply={r} workspaceId={WS} readOnly />);
+  };
+
+  it.each([
+    ['sending', reply(), 'Sending'],
+    ['sent', reply({ state: 'sent', sent_at: at(2) }), 'Sent'],
+    [
+      'not confirmed',
+      reply({ state: 'not_confirmed' }),
+      'Not confirmed — it may or may not have reached the customer',
+    ],
+    ['interrupted', failed('delivery_interrupted'), 'Not delivered — sending was interrupted'],
+    ['not accepted', failed('telegram_not_accepted'), 'Not delivered — Telegram did not accept it'],
+    ['blocked', failed('customer_blocked'), 'Not delivered — the customer blocked the bot'],
+  ] as const)('shows the %s state text and no button', (_name, r, text) => {
+    showReadOnly(r);
+    expect(screen.getByText(text)).toBeInTheDocument();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Send again' })).toBeNull();
+  });
+
+  it('never sends a resend request', () => {
+    showReadOnly(failed('delivery_interrupted'));
+    expect(api.resendReply).not.toHaveBeenCalled();
+  });
+});

@@ -12,6 +12,7 @@ import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
+import { ContactConversationHistory } from './ContactConversationHistory';
 import { agoText, contactFullName, formatFullDay, languageName } from './format';
 import { useContactsStore } from './store';
 import { TagHistoryList } from './TagHistoryList';
@@ -140,11 +141,6 @@ function ConversationCard({
   );
 }
 
-/** The Conversation tab: the read-only history of the contact's conversation (T21 fills it). */
-function ConversationTab() {
-  return <div data-testid="conversation-tab" />;
-}
-
 /**
  * SCR-19: a contact's profile — facts and tags, where their conversation stands, the read-only
  * history and the tag history. Follows the workspace's live frames while open; reading here never
@@ -210,7 +206,7 @@ export function ContactProfile({
           <TabsTrigger value="tag-history">Tag history</TabsTrigger>
         </TabsList>
         <TabsContent value="conversation">
-          <ConversationTab />
+          <ContactConversationHistory workspaceId={workspaceId} />
         </TabsContent>
         <TabsContent value="tag-history">
           <TagHistoryList workspaceId={workspaceId} />

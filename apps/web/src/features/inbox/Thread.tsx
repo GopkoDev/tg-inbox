@@ -1,4 +1,3 @@
-import type { ThreadItem } from '@tg/shared';
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
@@ -10,75 +9,14 @@ import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import * as source from './api-source';
-import { ActivityLine } from './ActivityLine';
 import { ConversationActions } from './ConversationActions';
 import { contactName } from './ConversationList';
-import { MessageBubble } from './MessageBubble';
-import { MessageContent } from './MessageContent';
 import { ReplyComposer } from './ReplyComposer';
-import { ReplyDeliveryState } from './ReplyDeliveryState';
+import { BubbleSkeletons, ThreadItemView } from './ThreadItemView';
 import { useInboxStore } from './store';
 
 const TOP_THRESHOLD = 48;
 const BOTTOM_THRESHOLD = 48;
-
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-
-function Item({
-  item,
-  workspaceId,
-  contactName,
-}: {
-  item: ThreadItem;
-  workspaceId: string;
-  contactName: string;
-}) {
-  if (item.type === 'activity')
-    return <ActivityLine activity={item} at={timeOf(item.position_at)} />;
-  if (item.type === 'reply')
-    return (
-      <MessageBubble
-        sender="operator"
-        text={item.body}
-        at={timeOf(item.sent_at ?? item.position_at)}
-        author={item.author.display_name}
-        footer={<ReplyDeliveryState reply={item} workspaceId={workspaceId} />}
-      />
-    );
-  const at = timeOf(item.sent_at);
-  return (
-    <MessageBubble
-      sender="customer"
-      at={at}
-      edited={item.edited_at !== null}
-      content={
-        <MessageContent
-          message={item}
-          workspaceId={workspaceId}
-          contactName={contactName}
-          at={at}
-        />
-      }
-    />
-  );
-}
-
-function BubbleSkeletons({ count }: { count: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <div
-          key={i}
-          data-testid="bubble-skeleton"
-          className={i % 2 === 0 ? 'flex justify-start' : 'flex justify-end'}
-        >
-          <Skeleton className="h-10 w-1/2 rounded-2xl" />
-        </div>
-      ))}
-    </>
-  );
-}
 
 /** SCR-02, reading side: header, paged history, live items, read marking and the phone back control. */
 export function Thread() {
@@ -269,7 +207,7 @@ export function Thread() {
           <p className="text-center text-xs text-muted-foreground">Start of the conversation</p>
         ) : null}
         {open.items.map((item) => (
-          <Item key={item.id} item={item} workspaceId={workspaceId} contactName={name} />
+          <ThreadItemView key={item.id} item={item} workspaceId={workspaceId} contactName={name} />
         ))}
       </div>
     );
