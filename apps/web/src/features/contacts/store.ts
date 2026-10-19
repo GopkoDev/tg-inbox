@@ -105,8 +105,17 @@ interface ContactsState {
   closeHeader: () => void;
   /** Re-reads a shown contact (profile and header) in the background, e.g. after `TAG_NOT_FOUND`. */
   rereadContact: (workspaceId: string, contactId: string, guard: GuardFn) => Promise<void>;
-  /** Replaces the shown tags with an answer a tag change already carries (SCR-20). */
-  applyTags: (contactId: string, tags: ContactProfile['tags']) => void;
+  /**
+   * Replaces the shown tags with an answer a tag change already carries (SCR-20). A slice whose
+   * re-read was still in flight is read again in the background: that read may carry changes
+   * newer than the write (a teammate's tag, a new Telegram name) and is dropped by the write.
+   */
+  applyTags: (
+    workspaceId: string,
+    contactId: string,
+    tags: ContactProfile['tags'],
+    guard: GuardFn,
+  ) => void;
   /**
    * Follows the workspace's live frames for whatever is open: `contact.changed`, `tags.changed`,
    * `conversation.changed` of the profile's conversation, `resync` and reconnects. Never marks read.
@@ -131,10 +140,17 @@ const readOrder = () => {
   let applied = 0;
   let newestFailed = false;
   let held: { seq: number; apply: Apply } | null = null;
+  /** The reads not answered yet, each with the opening (epoch) it belongs to. */
+  const inFlight = new Map<number, number>();
   return {
-    begin() {
+    begin(epoch = 0) {
       newestFailed = false;
-      return ++issued;
+      inFlight.set(++issued, epoch);
+      return issued;
+    },
+    /** The read answered (or was dropped): it is no longer in flight. */
+    settled(seq: number) {
+      inFlight.delete(seq);
     },
     /** A success: applied now when it is the newest read (or the newest failed), held otherwise. */
     async succeeded(seq: number, apply: Apply) {
@@ -160,10 +176,13 @@ const readOrder = () => {
     /**
      * A direct write replaced what the slice shows (e.g. a tag change's own answer): every read
      * already issued is older than it, so the held answer is dropped and no earlier read applies.
+     * Reports whether a read of this opening (`epoch`) was still in flight: its answer may carry
+     * changes newer than the write, so the caller reads the slice again.
      */
-    supersede() {
+    supersede(epoch = 0) {
       held = null;
       applied = issued;
+      return [...inFlight.values()].includes(epoch);
     },
   };
 };
@@ -284,7 +303,7 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
   ) => {
     const epoch = slice === 'profile' ? profileEpoch : headerEpoch;
     const order = contactOrder[slice];
-    const seq = order.begin();
+    const seq = order.begin(epoch);
     const stale = () =>
       !here(workspaceId) ||
       epoch !== (slice === 'profile' ? profileEpoch : headerEpoch) ||
@@ -308,6 +327,8 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
       else if (!background || !open.contact)
         set({ [slice]: { ...open, status: open.contact && background ? 'ready' : 'error' } });
       // a failed background re-read keeps what is shown
+    } finally {
+      order.settled(seq);
     }
   };
 
@@ -738,12 +759,16 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
           reads.push(readContact(workspaceId, contactId, guard, slice, true));
       await Promise.all(reads);
     },
-    applyTags(contactId, tags) {
+    applyTags(workspaceId, contactId, tags, guard) {
+      if (!here(workspaceId)) return;
       for (const slice of ['profile', 'header'] as const) {
         const open = get()[slice];
         if (open?.contactId === contactId && open.contact) {
-          contactOrder[slice].supersede();
+          const epoch = slice === 'profile' ? profileEpoch : headerEpoch;
+          const wasReading = contactOrder[slice].supersede(epoch);
           set({ [slice]: { ...open, contact: { ...open.contact, tags } } });
+          // issued after the commit, so it includes the write; a failure keeps what is shown
+          if (wasReading) void readContact(workspaceId, contactId, guard, slice, true);
         }
       }
     },

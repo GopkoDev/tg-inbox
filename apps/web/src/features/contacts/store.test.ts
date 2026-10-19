@@ -830,10 +830,41 @@ describe('contacts store: a held answer never replaces a newer write (RR3)', () 
   it('a tag added while R1 is held: R2 then fails → the added tag stays (profile and header)', async () => {
     await opened();
     const { r2, reads } = await heldThenNewest();
-    useContactsStore.getState().applyTags(C1, [tag(301, 'New')]);
+    // R2 was in flight: the fresh re-read the write starts fails too (a failure keeps what shows)
+    api.getContact.mockRejectedValue(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x'));
+    useContactsStore.getState().applyTags(A, C1, [tag(301, 'New')], guard);
     r2.reject(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x'));
     await reads;
     await settle();
+    expect(names('profile')).toEqual(['New']);
+    expect(names('header')).toEqual(['New']);
+  });
+
+  it('a re-read in flight when a tag is added: a fresh re-read is issued and its answer (with a teammate tag) shows (RR5)', async () => {
+    await opened();
+    api.listContactTagHistory.mockResolvedValue(history());
+    const inFlight = deferred<ContactProfile>();
+    const withMate = profile(C1, { tags: [tag(301, 'New'), tag(302, 'Mate')] });
+    api.getContact
+      .mockReturnValueOnce(inFlight.promise)
+      .mockReturnValueOnce(inFlight.promise)
+      .mockResolvedValue(withMate);
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    expect(api.getContact).toHaveBeenCalledTimes(2);
+    useContactsStore.getState().applyTags(A, C1, [tag(301, 'New')], guard);
+    expect(api.getContact).toHaveBeenCalledTimes(4);
+    inFlight.resolve(withMate);
+    await settle();
+    await settle();
+    expect(names('profile')).toEqual(['New', 'Mate']);
+    expect(names('header')).toEqual(['New', 'Mate']);
+  });
+
+  it('nothing in flight when a tag is added: no extra contact read (RR5)', async () => {
+    await opened();
+    useContactsStore.getState().applyTags(A, C1, [tag(301, 'New')], guard);
+    await settle();
+    expect(api.getContact).not.toHaveBeenCalled();
     expect(names('profile')).toEqual(['New']);
     expect(names('header')).toEqual(['New']);
   });

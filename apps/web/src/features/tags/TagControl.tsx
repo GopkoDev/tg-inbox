@@ -181,7 +181,7 @@ export function TagControl({
     setNameError(false);
     try {
       const answer = await call();
-      useContactsStore.getState().applyTags(contactId, answer.tags);
+      useContactsStore.getState().applyTags(workspaceId, contactId, answer.tags, guard);
       return answer;
     } catch (error) {
       await refused(error);

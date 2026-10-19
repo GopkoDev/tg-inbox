@@ -485,7 +485,7 @@ describe('SCR-20 live, keyboard and focus', () => {
     expect(optionNames()).toEqual(['Wholesale', 'Create tag "w"']);
     act(() => {
       useTagsStore.getState().replace(WS, [KYIV, VIP]);
-      useContactsStore.getState().applyTags(C1, [carried(KYIV)]);
+      useContactsStore.getState().applyTags(WS, C1, [carried(KYIV)], vi.fn());
     });
     expect(input()).toHaveValue('w');
     expect(optionNames()).toEqual(['Create tag "w"']);
