@@ -1373,7 +1373,7 @@ describe('inbox store: search results follow live changes (W4)', () => {
     expect(results()).toEqual([]);
   });
 
-  it('a conversation that joins the assignee lens re-runs the search', async () => {
+  it('a conversation that joins the assignee lens joins the results without a re-search', async () => {
     await enterAndSearch([], 'mine');
     api.listConversations.mockClear();
     api.getConversation.mockResolvedValue(
@@ -1381,7 +1381,8 @@ describe('inbox store: search results follow live changes (W4)', () => {
     );
     sockets[0]!.handlers.onFrame(changed(A, C2, 'state', null));
     await flush();
-    expect(api.listConversations.mock.calls.some((c) => c[1]?.q === 'Ada')).toBe(true);
+    expect(api.listConversations.mock.calls.some((c) => c[1]?.q === 'Ada')).toBe(false);
+    expect(results().map((c) => c.id)).toEqual([C2]);
   });
 
   it('a resync re-runs the search', async () => {
@@ -1413,7 +1414,7 @@ describe('inbox store: search results follow live changes (W4)', () => {
   });
 });
 
-describe('inbox store: background re-searches (re-review R1, R2)', () => {
+describe('inbox store: search results on live frames and resyncs (re-review R1, R2, RR1–RR3)', () => {
   const SEARCH = { status: null, assignee: 'all' } as const;
   const C3 = id(103);
   const C4 = id(104);
@@ -1425,6 +1426,20 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
   });
   const results = () => useInboxStore.getState().results;
   const rowIds = () => results()?.page?.rows.map((c) => c.id) ?? [];
+  const searchCalls = (q?: string) =>
+    api.listConversations.mock.calls.filter((c) => (q === undefined ? c[1]?.q : c[1]?.q === q));
+  /** The next search read (any query) hangs until released; other reads keep answering. */
+  const hangingSearch = () => {
+    let release!: (v: unknown) => void;
+    const fallback = api.listConversations.getMockImplementation()!;
+    let taken = false;
+    api.listConversations.mockImplementation((ws: string, params: { q?: string }) => {
+      if (!params.q || taken) return fallback(ws, params);
+      taken = true;
+      return new Promise((r) => (release = r));
+    });
+    return (v: unknown) => release(v);
+  };
   const hanging = () => {
     let release!: (v: unknown) => void;
     api.listConversations.mockImplementationOnce(() => new Promise((r) => (release = r)));
@@ -1432,6 +1447,10 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
   };
   const frame = async (cid: string) => {
     sockets[0]!.handlers.onFrame(changed(A, cid, 'state', null));
+    await flush();
+  };
+  const resync = async () => {
+    sockets[0]!.handlers.onFrame({ v: 1, workspace_id: A, type: 'resync' });
     await flush();
   };
   const enterAndSearch = async (
@@ -1454,16 +1473,12 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
     await useInboxStore.getState().search(A, q);
   };
 
-  it('R1: a coalesced re-search of the old query does not cancel the newer search typed', async () => {
+  it('R1: a resync re-search of the old query does not cancel the newer search typed', async () => {
     await enterAndSearch('al', [conv(A, C1, '2026-10-18T10:00:00.000Z', { contact: who('Alan') })]);
     const bob = [conv(A, C3, '2026-10-18T11:00:00.000Z', { contact: who('Bob') })];
-    const releaseBackground = hanging();
+    const releaseBackground = hangingSearch();
+    await resync();
     const releaseBob = hanging();
-    api.getConversation.mockResolvedValue(
-      summary(A, C2, { state_version: 1, contact: who('Alice') }),
-    );
-    await frame(C2);
-    await frame(C2);
     const typed = useInboxStore.getState().search(A, 'bob');
     releaseBackground(lensPage(A, SEARCH, [conv(A, C1, '2026-10-18T10:00:00.000Z')]));
     await flush();
@@ -1474,40 +1489,26 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
     expect(rowIds()).toEqual([C3]);
   });
 
-  it('R2: a background re-search keeps the later pages already loaded', async () => {
+  it('R2: live frames never search again; a joiner is placed among the loaded pages', async () => {
     await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
     api.listConversations.mockResolvedValueOnce(
       lensPage(A, SEARCH, [conv(A, C2, '2026-10-18T09:00:00.000Z')]),
     );
     expect(await useInboxStore.getState().loadMore(A, 'results')).toBe('loaded');
-    api.listConversations.mockResolvedValueOnce({
-      ...lensPage(A, SEARCH, [
-        conv(A, C3, '2026-10-18T13:00:00.000Z', { state_version: 1 }),
-        conv(A, C1, '2026-10-18T12:00:00.000Z'),
-      ]),
-      has_next: true,
-      next_cursor: 'q1b',
-    });
+    api.listConversations.mockClear();
     api.getConversation.mockResolvedValue(
       summary(A, C3, { state_version: 1, last_activity_at: '2026-10-18T13:00:00.000Z' }),
     );
     await frame(C3);
+    expect(searchCalls()).toEqual([]);
     expect(rowIds()).toEqual([C3, C1, C2]);
     expect(results()?.page).toMatchObject({ hasNext: false, cursor: null });
   });
 
-  it('R2: a background re-search does not drop the next page in flight', async () => {
+  it('R2: a live joiner does not drop the next page in flight', async () => {
     await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
     const releaseMore = hanging();
     const more = useInboxStore.getState().loadMore(A, 'results');
-    api.listConversations.mockResolvedValueOnce({
-      ...lensPage(A, SEARCH, [
-        conv(A, C3, '2026-10-18T13:00:00.000Z', { state_version: 1 }),
-        conv(A, C1, '2026-10-18T12:00:00.000Z'),
-      ]),
-      has_next: true,
-      next_cursor: 'q1b',
-    });
     api.getConversation.mockResolvedValue(
       summary(A, C3, { state_version: 1, last_activity_at: '2026-10-18T13:00:00.000Z' }),
     );
@@ -1517,18 +1518,15 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
     expect(rowIds()).toEqual([C3, C1, C2]);
   });
 
-  it('R2: a row that just left the lens stays out of a background re-search read before', async () => {
+  it('R2: a row that just left the lens stays out of a resync re-search read before', async () => {
     await enterAndSearch(
       'Ada',
       [conv(A, C1, '2026-10-18T12:00:00.000Z', { assignee: member(ME, 'Me'), state_version: 1 })],
       null,
       'mine',
     );
-    const releaseBackground = hanging();
-    api.getConversation.mockResolvedValueOnce(
-      summary(A, C3, { state_version: 1, assignee: member(ME, 'Me') }),
-    );
-    await frame(C3);
+    const releaseBackground = hangingSearch();
+    await resync();
     api.getConversation.mockResolvedValueOnce(
       summary(A, C1, {
         state_version: 2,
@@ -1574,34 +1572,137 @@ describe('inbox store: background re-searches (re-review R1, R2)', () => {
     expect(rowIds()).toEqual([C1]);
   });
 
-  it('R2: a frame for a row the search cannot find does not search again', async () => {
+  it('R2: a row whose contact the search cannot find does not join', async () => {
     await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')]);
     api.listConversations.mockClear();
     api.getConversation.mockResolvedValue(
       summary(A, C2, { state_version: 1, contact: who('Bob') }),
     );
     await frame(C2);
-    expect(api.listConversations.mock.calls.some((c) => c[1]?.q)).toBe(false);
+    expect(searchCalls()).toEqual([]);
+    expect(rowIds()).toEqual([C1]);
   });
 
-  it('R2: a frame for a row below the loaded results while more pages wait does not search again', async () => {
+  it('R2: a row below the loaded results while more pages wait does not join (paging reaches it)', async () => {
     await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
     api.listConversations.mockClear();
     api.getConversation.mockResolvedValue(
       summary(A, C4, { state_version: 1, last_activity_at: '2026-10-18T08:00:00.000Z' }),
     );
     await frame(C4);
-    expect(api.listConversations.mock.calls.some((c) => c[1]?.q)).toBe(false);
+    expect(searchCalls()).toEqual([]);
+    expect(rowIds()).toEqual([C1]);
   });
 
-  it('R2: a frame for a matching row that may now be on the first page searches again', async () => {
+  it('R2: a matching row within the loaded results joins directly, by the server match rule', async () => {
     await enterAndSearch('@ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
     api.listConversations.mockClear();
     api.getConversation.mockResolvedValue(
       summary(A, C4, { state_version: 1, last_activity_at: '2026-10-18T13:00:00.000Z' }),
     );
     await frame(C4);
-    expect(api.listConversations.mock.calls.some((c) => c[1]?.q === '@ada')).toBe(true);
+    expect(searchCalls()).toEqual([]);
+    expect(rowIds()).toEqual([C4, C1]);
+  });
+
+  it('RR1: after a failed typed search, neither a resync nor a live frame touches the old rows', async () => {
+    await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')]);
+    api.listConversations.mockRejectedValueOnce(new Error('offline'));
+    await useInboxStore.getState().search(A, 'Bob');
+    expect(results()).toMatchObject({ q: 'Bob', status: 'error' });
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? lensPage(ws, SEARCH, [conv(ws, C3, '2026-10-18T11:00:00.000Z', { contact: who('Bob') })])
+        : listPage(ws, []),
+    );
+    await resync();
+    api.getConversation.mockResolvedValue(
+      summary(A, C4, { state_version: 1, contact: who('Bob') }),
+    );
+    await frame(C4);
+    expect(results()).toMatchObject({ q: 'Bob', status: 'error' });
+    expect(rowIds()).toEqual([C1]);
+  });
+
+  it('RR2: a joiner below the first page but within the loaded pages joins', async () => {
+    await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
+    api.listConversations.mockResolvedValueOnce(
+      lensPage(A, SEARCH, [conv(A, C2, '2026-10-18T09:00:00.000Z')]),
+    );
+    expect(await useInboxStore.getState().loadMore(A, 'results')).toBe('loaded');
+    api.getConversation.mockResolvedValue(
+      summary(A, C3, { state_version: 1, last_activity_at: '2026-10-18T10:00:00.000Z' }),
+    );
+    await frame(C3);
+    expect(rowIds()).toEqual([C1, C3, C2]);
+  });
+
+  it('RR2: a resync replaces the results with the first page and its cursor', async () => {
+    await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')], { cursor: 'q1' });
+    api.listConversations.mockResolvedValueOnce(
+      lensPage(A, SEARCH, [conv(A, C2, '2026-10-18T09:00:00.000Z')]),
+    );
+    expect(await useInboxStore.getState().loadMore(A, 'results')).toBe('loaded');
+    expect(rowIds()).toEqual([C1, C2]);
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? {
+            ...lensPage(ws, SEARCH, [conv(ws, C3, '2026-10-18T13:00:00.000Z')]),
+            has_next: true,
+            next_cursor: 'q2',
+          }
+        : listPage(ws, []),
+    );
+    await resync();
+    expect(rowIds()).toEqual([C3]);
+    expect(results()).toMatchObject({ status: 'ready', page: { hasNext: true, cursor: 'q2' } });
+  });
+
+  it('RR3: a resync while a typed search loads re-searches once after it answers', async () => {
+    await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')]);
+    const releaseBob = hanging();
+    const typed = useInboxStore.getState().search(A, 'Bob');
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? lensPage(ws, SEARCH, [conv(ws, C4, '2026-10-18T13:00:00.000Z', { contact: who('Bob') })])
+        : listPage(ws, []),
+    );
+    await resync();
+    await resync();
+    expect(searchCalls('Bob')).toHaveLength(1);
+    releaseBob(
+      lensPage(A, SEARCH, [conv(A, C3, '2026-10-18T11:00:00.000Z', { contact: who('Bob') })]),
+    );
+    await typed;
+    await flush();
+    expect(searchCalls('Bob')).toHaveLength(2);
+    expect(results()).toMatchObject({ q: 'Bob', status: 'ready' });
+    expect(rowIds()).toEqual([C4]);
+  });
+
+  it('RR3: a resync while a typed search loads leaves the failed results as they are', async () => {
+    await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')]);
+    let fail!: (e: unknown) => void;
+    api.listConversations.mockImplementationOnce(() => new Promise((_, r) => (fail = r)));
+    const typed = useInboxStore.getState().search(A, 'Bob');
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? lensPage(ws, SEARCH, [conv(ws, C4, '2026-10-18T13:00:00.000Z', { contact: who('Bob') })])
+        : listPage(ws, []),
+    );
+    await resync();
+    fail(new Error('offline'));
+    await typed;
+    await flush();
+    // The pending re-search ran once the typed search settled; failed results are not `ready`.
+    expect(searchCalls('Bob')).toHaveLength(1);
+    expect(results()).toMatchObject({ q: 'Bob', status: 'error' });
+    expect(rowIds()).toEqual([C1]);
+    // Retrying the typed search heals it; the pending re-search does not fire again.
+    await useInboxStore.getState().search(A, 'Bob');
+    await flush();
+    expect(searchCalls('Bob')).toHaveLength(2);
+    expect(rowIds()).toEqual([C4]);
   });
 });
 

@@ -275,6 +275,8 @@ const changing = new Set<string>();
 let listSeq = 0;
 /** Bumped by every search run and by clearing it: an answer of an earlier one is stale. */
 let searchSeq = 0;
+/** A resync re-search asked while a typed search was loading: it runs once that one settles. */
+let searchPending = false;
 /**
  * Rows that left the lenses through a live summary, with that summary's state version: a page
  * read before it (an older version) must not bring them back.
@@ -355,23 +357,6 @@ function mergeConversations(list: Conversation[], page: readonly Conversation[])
 }
 
 /**
- * A background re-search merged into the results shown: inside the page's span the page decides
- * (a shown row it lacks has left, unless it is newer than the page's first row); rows below the
- * span came from later pages and stay, so the paging already done (and a page in flight) holds.
- * An empty page means nothing matches any more.
- */
-function mergeResults(list: Conversation[], page: readonly Conversation[]): Conversation[] {
-  const sorted = [...page].sort(byActivity);
-  const first = sorted[0];
-  const last = sorted.at(-1);
-  if (!first || !last) return [];
-  const kept = list.filter(
-    (c) => byActivity(c, first) < 0 || byActivity(c, last) > 0 || page.some((p) => p.id === c.id),
-  );
-  return appendRows(kept, page);
-}
-
-/**
  * Whether the inbox search for `q` may find `row`: the server's match (trimmed text, a leading `@`
  * dropped, case-folded substring of "first last" or the username), mirrored on the row's contact.
  */
@@ -408,6 +393,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     changing.clear();
     departed.clear();
     searchSeq++;
+    searchPending = false;
     set({ ...EMPTY });
   };
 
@@ -498,7 +484,6 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     if (incoming.workspace_id !== workspaceId || get().workspaceId !== workspaceId) return;
     const { close_snapshot: snapshot, ...row } = incoming;
     void snapshot;
-    let searchAgain = false;
     set((s) => {
       const open = s.thread;
       const thread =
@@ -519,55 +504,47 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           conversations = s.conversations.filter((c) => c.id !== incoming.id);
         }
       }
-      // The search results take the same change; one the search may now find is searched again.
+      // The search results take the same change directly; a live frame never searches again.
       let results = s.results;
-      const found = results?.page?.rows.find((c) => c.id === incoming.id);
+      const page = results?.page;
+      const found = page?.rows.find((c) => c.id === incoming.id);
       const belongs = belongsToLens(row, s.lens, account, true);
-      if (results?.page && found) {
+      if (results && page && found) {
         if (notOlder(row, found)) {
           const rows = belongs
-            ? upsertConversation(results.page.rows, row)
-            : results.page.rows.filter((c) => c.id !== incoming.id);
-          results = { ...results, page: { ...results.page, rows } };
+            ? upsertConversation(page.rows, row)
+            : page.rows.filter((c) => c.id !== incoming.id);
+          results = { ...results, page: { ...page, rows } };
         }
-      } else if (results && belongs && mayJoin(results, row)) searchAgain = true;
+      } else if (results?.status === 'ready' && page && belongs && mayJoin(page, results.q, row))
+        results = { ...results, page: { ...page, rows: upsertConversation(page.rows, row) } };
       return { thread, conversations, results };
     });
-    if (searchAgain) coalesce('search', () => searchAgainNow(workspaceId));
   };
 
   /**
-   * Whether a row the results lack may join them on a re-search: the search may find its contact,
-   * and it sorts within the loaded results (or all of them are loaded) — one sorting below them
-   * while more pages wait is reached by paging on. Other frames never re-search.
+   * Whether a row the results lack joins them: the search finds its contact, and it sorts within
+   * the loaded results (or all of them are loaded) — one sorting below them while more pages wait
+   * is reached by paging on. Only results that are `ready` take joiners: while a query is loading
+   * or failed, the rows shown are an earlier query's.
    */
-  const mayJoin = (results: SearchResults, row: Conversation) => {
-    if (!mayMatch(row, results.q)) return false;
-    const lastShown = results.page?.rows.at(-1);
-    return !results.page?.hasNext || !lastShown || byActivity(row, lastShown) <= 0;
-  };
-
-  /** A coalesced re-search runs for the query shown when it runs, not when it was asked. */
-  const searchAgainNow = async (workspaceId: string) => {
-    const shown = get().results;
-    if (get().workspaceId !== workspaceId || !shown) return;
-    await runSearch(workspaceId, shown.q, { background: true });
+  const mayJoin = (page: NonNullable<SearchResults['page']>, q: string, row: Conversation) => {
+    if (!mayMatch(row, q)) return false;
+    const lastShown = page.rows.at(-1);
+    return !page.hasNext || !lastShown || byActivity(row, lastShown) <= 0;
   };
 
   const runSearch = async (workspaceId: string, q: string, options: { background: boolean }) => {
     const startedAt = epoch;
-    // A background re-search never invalidates a search typed (only a search typed or cleared
-    // does), and leaves one in flight to answer for itself.
-    if (options.background && get().results?.status === 'loading') return;
+    // A background re-search (resync) applies only to `ready` results of the same query and never
+    // invalidates a search typed; only a search typed or cleared bumps `searchSeq`.
+    if (options.background && (get().results?.q !== q || get().results?.status !== 'ready')) return;
     const seq = options.background ? searchSeq : ++searchSeq;
     const assignee = get().lens.assignee;
     if (!options.background)
       set((s) => ({ results: { q, status: 'loading', page: s.results?.page ?? null } }));
     const mine = () =>
-      current(workspaceId, startedAt) &&
-      seq === searchSeq &&
-      get().results?.q === q &&
-      (!options.background || get().results?.status !== 'loading');
+      current(workspaceId, startedAt) && seq === searchSeq && get().results?.q === q;
     try {
       const page = await source.listConversations(
         workspaceId,
@@ -583,36 +560,19 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         get().lens.assignee !== assignee
       )
         return;
+      // A full replace by the first page and its cursor: a newer shown copy stays, a row that
+      // left the lens since the read stays out.
       set((s) => {
-        const shown = s.results?.q === q ? s.results.page : null;
-        if (!options.background || !shown)
-          return {
-            results: {
-              q,
-              status: 'ready',
-              page: {
-                rows: appendRows(shown?.rows ?? [], page.items).filter((c) =>
-                  page.items.some((p) => p.id === c.id),
-                ),
-                hasNext: page.has_next,
-                cursor: page.next_cursor,
-              },
-            },
-          };
-        // The paging done (and a page in flight) stays unless the page reaches past every row
-        // shown; ending at the last row shown, the page's cursor and the one shown are the same.
-        const last = [...page.items].sort(byActivity).at(-1);
-        const lastShown = shown.rows.at(-1);
-        const reaches = !last || !lastShown || byActivity(last, lastShown) > 0;
+        const shown = s.results?.q === q ? (s.results.page?.rows ?? []) : [];
+        const rows = appendRows(
+          shown.filter((c) => page.items.some((p) => p.id === c.id)),
+          page.items,
+        );
         return {
           results: {
             q,
             status: 'ready',
-            page: {
-              rows: mergeResults(shown.rows, page.items),
-              hasNext: reaches ? page.has_next : shown.hasNext,
-              cursor: reaches ? page.next_cursor : shown.cursor,
-            },
+            page: { rows, hasNext: page.has_next, cursor: page.next_cursor },
           },
         };
       });
@@ -620,6 +580,15 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       noteGuard(error, workspaceId, startedAt);
       const now = get().results;
       if (mine() && now && !options.background) set({ results: { ...now, status: 'error' } });
+    } finally {
+      // A resync re-search asked while this typed search loaded runs once it settled; after a
+      // failure the results are not `ready`, so it changes nothing (Retry searches again).
+      if (!options.background && seq === searchSeq && searchPending) {
+        searchPending = false;
+        const shown = get().results;
+        if (current(workspaceId, startedAt) && shown)
+          void runSearch(workspaceId, shown.q, { background: true });
+      }
     }
   };
 
@@ -751,7 +720,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         loadSummary(workspaceId, open.conversationId),
       );
     const search = get().results;
-    if (search) reads.push(runSearch(workspaceId, search.q, { background: true }));
+    if (search?.status === 'loading') searchPending = true;
+    else if (search) reads.push(runSearch(workspaceId, search.q, { background: true }));
     await Promise.all(reads);
   };
 
@@ -1110,6 +1080,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     },
     clearSearch() {
       searchSeq++;
+      searchPending = false;
       set({ results: null });
     },
     async loadMore(workspaceId, target) {
