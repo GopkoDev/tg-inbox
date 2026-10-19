@@ -49,11 +49,12 @@ interface Handlers {
   onInvalidFrame: () => void;
 }
 const sockets: { workspaceId: string; handlers: Handlers; close: ReturnType<typeof vi.fn> }[] = [];
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: (workspaceId: string, handlers: Handlers) => {
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: (workspaceId: string, handlers: Handlers) => {
     const s = { workspaceId, handlers, close: vi.fn() };
     sockets.push(s);
-    return s;
+    return s.close;
   },
 }));
 
@@ -159,7 +160,7 @@ beforeEach(() => {
 });
 
 describe('inbox store: entering a workspace', () => {
-  it('starts loading, opens one socket, loads the first page and the bot status', async () => {
+  it('starts loading, subscribes once to the frame connection, loads the first page and the bot status', async () => {
     const p = useInboxStore.getState().enter(A);
     expect(useInboxStore.getState()).toMatchObject({
       workspaceId: A,
@@ -173,13 +174,13 @@ describe('inbox store: entering a workspace', () => {
     expect(useInboxStore.getState().conversations.map((c) => c.id)).toEqual([C1]);
   });
 
-  it('entering the same workspace again opens no second socket', async () => {
+  it('entering the same workspace again subscribes no second time', async () => {
     await useInboxStore.getState().enter(A);
     await useInboxStore.getState().enter(A);
     expect(sockets).toHaveLength(1);
   });
 
-  it('a switch resets the store and closes the old socket before anything renders; the old rows are never visible', async () => {
+  it('a switch resets the store and drops the old subscription before anything renders; the old rows are never visible', async () => {
     await useInboxStore.getState().enter(A);
     const seen: string[][] = [];
     const unsub = useInboxStore.subscribe((s) =>
@@ -189,7 +190,7 @@ describe('inbox store: entering a workspace', () => {
       listPage(ws, [conv(ws, C2, '2026-10-18T11:00:00.000Z')]),
     );
     const p = useInboxStore.getState().enter(B);
-    // synchronously after the call: old socket closed, nothing of A remains
+    // synchronously after the call: old subscription dropped, nothing of A remains
     expect(sockets[0]!.close).toHaveBeenCalled();
     expect(useInboxStore.getState()).toMatchObject({
       workspaceId: B,

@@ -7,8 +7,9 @@ vi.mock('@/features/inbox/api-source', () => ({
   listConversations: (...a: unknown[]) => listConversations(...a),
   getInboxBotStatus: async () => new Promise(() => undefined),
 }));
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: () => ({ close: vi.fn() }),
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: () => vi.fn(),
 }));
 vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));
 vi.mock('@/features/workspaces/guard', () => ({ useGuard: () => vi.fn() }));

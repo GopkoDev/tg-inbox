@@ -19,14 +19,15 @@ const live = vi.hoisted(() => ({
   reconnected: null as null | (() => void),
   frame: null as null | ((f: unknown) => void),
 }));
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: (
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: (
     _ws: string,
     handlers: { onReconnected: () => void; onFrame: (f: unknown) => void },
   ) => {
     live.reconnected = handlers.onReconnected;
     live.frame = handlers.onFrame;
-    return { close: vi.fn() };
+    return vi.fn();
   },
 }));
 

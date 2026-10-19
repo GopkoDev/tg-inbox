@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { Route, Routes } from 'react-router';
+import { Link, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -17,6 +17,19 @@ vi.mock('@/features/workspaces/api', () => ({
   enterWorkspace: (id: string) => enterWorkspace(id),
 }));
 
+const live = vi.hoisted(() => ({
+  opened: [] as { workspaceId: string; close: () => void }[],
+}));
+vi.mock('@/shared/api/live-connection', () => ({
+  openLiveConnection: (workspaceId: string) => {
+    const c = { workspaceId, close: vi.fn() };
+    live.opened.push(c);
+    return c;
+  },
+  subscribeLive: () => () => undefined,
+  liveStatus: () => 'idle',
+}));
+
 import { AppShell } from './app-shell';
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
@@ -27,8 +40,24 @@ function renderShell(path = '/w/w1') {
     <InDataRouter initialEntries={[path]}>
       <Routes>
         <Route path="/w/:workspaceId" element={<AppShell />}>
-          <Route index element={<p>shell body</p>} />
-          <Route path="inbox" element={<p>inbox body</p>} />
+          <Route
+            index
+            element={
+              <>
+                <p>shell body</p>
+                <Link to="/w/w2">go to bolt</Link>
+              </>
+            }
+          />
+          <Route
+            path="inbox"
+            element={
+              <>
+                <p>inbox body</p>
+                <Link to="/w/w1/settings/bot">go to settings</Link>
+              </>
+            }
+          />
           <Route path="settings/*" element={<p>bot body</p>} />
         </Route>
         <Route path="/sign-in" element={<p>sign-in screen</p>} />
@@ -38,6 +67,7 @@ function renderShell(path = '/w/w1') {
 }
 
 beforeEach(() => {
+  live.opened.length = 0;
   stubRadixDom();
   vi.resetAllMocks();
   getMe.mockReturnValue(new Promise(() => undefined));
@@ -175,5 +205,53 @@ describe('AppShell', () => {
       'collapsed',
     );
     document.cookie = 'sidebar_state=; path=/; max-age=0';
+  });
+
+  describe('the tab live connection (SAD §4, ADR-0002)', () => {
+    it('opens none while the workspace is entering, then exactly one for it once ready', async () => {
+      let resolve!: (w: typeof acme) => void;
+      enterWorkspace.mockReturnValue(new Promise((r) => (resolve = r)));
+      renderShell();
+      expect(live.opened).toHaveLength(0);
+      resolve(acme);
+      expect(await screen.findByText('shell body')).toBeInTheDocument();
+      expect(live.opened.map((c) => c.workspaceId)).toEqual(['w1']);
+    });
+
+    it('opens none for a workspace the person cannot enter', async () => {
+      enterWorkspace.mockRejectedValue(new ApiError(404, 'NOT_FOUND' as never, 'x'));
+      renderShell();
+      expect(await screen.findByText('Page not found')).toBeInTheDocument();
+      expect(live.opened).toHaveLength(0);
+    });
+
+    it('survives navigation between workspace pages', async () => {
+      enterWorkspace.mockResolvedValue(acme);
+      renderShell('/w/w1/inbox');
+      fireEvent.click(await screen.findByRole('link', { name: 'go to settings' }));
+      expect(await screen.findByText('bot body')).toBeInTheDocument();
+      expect(live.opened).toHaveLength(1);
+      expect(live.opened[0]!.close).not.toHaveBeenCalled();
+    });
+
+    it('a workspace switch closes the old connection and opens the new one', async () => {
+      enterWorkspace.mockImplementation(async (id: string) => (id === 'w1' ? acme : bolt));
+      renderShell();
+      fireEvent.click(await screen.findByRole('link', { name: 'go to bolt' }));
+      await waitFor(() => expect(live.opened.map((c) => c.workspaceId)).toEqual(['w1', 'w2']));
+      expect(live.opened[0]!.close).toHaveBeenCalledTimes(1);
+      expect(live.opened[1]!.close).not.toHaveBeenCalled();
+    });
+
+    it('leaving the frame (sign-out) closes it', async () => {
+      enterWorkspace.mockResolvedValue(acme);
+      signOut.mockResolvedValue(undefined);
+      renderShell();
+      await screen.findByText('shell body');
+      openMenu('o@x.io');
+      fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
+      await waitFor(() => expect(screen.getByText('sign-in screen')).toBeInTheDocument());
+      expect(live.opened[0]!.close).toHaveBeenCalledTimes(1);
+    });
   });
 });

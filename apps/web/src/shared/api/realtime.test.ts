@@ -18,7 +18,11 @@ class FakeSocket implements SocketLike {
   open() {
     this.onopen?.();
   }
-  send(data: unknown) {
+  sent: string[] = [];
+  send = (data: string) => {
+    this.sent.push(data);
+  };
+  receive(data: unknown) {
     this.onmessage?.({ data: typeof data === 'string' ? data : JSON.stringify(data) });
   }
   drop(code: number) {
@@ -72,10 +76,10 @@ describe('openLiveSocket', () => {
     const { handlers } = start();
     const s = FakeSocket.all[0]!;
     s.open();
-    s.send(changed);
-    s.send({ v: 1, workspace_id: W1, type: 'something.new' });
-    s.send('not json');
-    s.send({ ...changed, change: 'bogus' });
+    s.receive(changed);
+    s.receive({ v: 1, workspace_id: W1, type: 'something.new' });
+    s.receive('not json');
+    s.receive({ ...changed, change: 'bogus' });
     expect(handlers.onFrame).toHaveBeenCalledTimes(1);
     expect(handlers.onFrame).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'conversation.changed' }),
@@ -93,11 +97,11 @@ describe('openLiveSocket', () => {
     openLiveSocket(W1, handlers, { createSocket: (url) => new FakeSocket(url) });
     const s = FakeSocket.all[0]!;
     s.open();
-    s.send(changed);
+    s.receive(changed);
     expect(onInvalidFrame).not.toHaveBeenCalled();
-    s.send('not json');
-    s.send({ v: 1, workspace_id: W1, type: 'something.new' });
-    s.send({ ...changed, change: 'bogus' });
+    s.receive('not json');
+    s.receive({ v: 1, workspace_id: W1, type: 'something.new' });
+    s.receive({ ...changed, change: 'bogus' });
     expect(onInvalidFrame).toHaveBeenCalledTimes(3);
     expect(FakeSocket.all).toHaveLength(1);
   });
@@ -140,7 +144,7 @@ describe('openLiveSocket', () => {
     s.open();
     client.close();
     expect(s.close).toHaveBeenCalled();
-    s.send(changed);
+    s.receive(changed);
     s.drop(1001);
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.all).toHaveLength(1);
@@ -153,5 +157,70 @@ describe('openLiveSocket', () => {
     client.close();
     vi.advanceTimersByTime(60_000);
     expect(FakeSocket.all).toHaveLength(1);
+  });
+
+  describe('presence frames (AC-07)', () => {
+    const setVisibility = (state: 'visible' | 'hidden') => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+      document.dispatchEvent(new Event('visibilitychange'));
+    };
+    const presence = (s: FakeSocket) => s.sent.map((m) => JSON.parse(m));
+    afterEach(() => setVisibility('visible'));
+
+    it('sends on_screen true once right after the socket opens while the tab is visible', () => {
+      start();
+      const s = FakeSocket.all[0]!;
+      expect(s.sent).toEqual([]);
+      s.open();
+      expect(presence(s)).toEqual([{ type: 'presence', v: 1, on_screen: true }]);
+    });
+
+    it('a tab hidden at open sends on_screen false first', () => {
+      setVisibility('hidden');
+      start();
+      FakeSocket.all[0]!.open();
+      expect(presence(FakeSocket.all[0]!)).toEqual([{ type: 'presence', v: 1, on_screen: false }]);
+    });
+
+    it('sends on every visibilitychange while open', () => {
+      start();
+      const s = FakeSocket.all[0]!;
+      s.open();
+      setVisibility('hidden');
+      setVisibility('visible');
+      expect(presence(s).map((f) => f.on_screen)).toEqual([true, false, true]);
+    });
+
+    it('sends nothing while the socket is not open and again after a reconnect opens', () => {
+      start();
+      const s = FakeSocket.all[0]!;
+      setVisibility('hidden');
+      expect(s.sent).toEqual([]);
+      s.open();
+      s.drop(1006);
+      setVisibility('visible');
+      expect(s.sent).toHaveLength(1);
+      vi.advanceTimersByTime(100);
+      FakeSocket.all[1]!.open();
+      expect(presence(FakeSocket.all[1]!)).toEqual([{ type: 'presence', v: 1, on_screen: true }]);
+    });
+
+    it('close() removes the visibilitychange listener', () => {
+      const { client } = start();
+      const s = FakeSocket.all[0]!;
+      s.open();
+      client.close();
+      setVisibility('hidden');
+      expect(s.sent).toHaveLength(1);
+    });
+
+    it('a session-ended close removes the listener too', () => {
+      start();
+      const s = FakeSocket.all[0]!;
+      s.open();
+      s.drop(4401);
+      setVisibility('hidden');
+      expect(s.sent).toHaveLength(1);
+    });
   });
 });

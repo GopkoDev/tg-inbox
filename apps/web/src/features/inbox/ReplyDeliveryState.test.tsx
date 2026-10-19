@@ -12,8 +12,9 @@ vi.mock('./api-source', () => ({
   resendReply: (...a: unknown[]) => api.resendReply(...a),
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
 }));
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: () => ({ close: vi.fn() }),
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: () => vi.fn(),
 }));
 
 import { ReplyDeliveryState } from './ReplyDeliveryState';

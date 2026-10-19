@@ -32,11 +32,12 @@ interface Handlers {
   onFrame: (f: unknown) => void;
 }
 const sockets: { handlers: Handlers }[] = [];
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: (_ws: string, handlers: Handlers) => {
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: (_ws: string, handlers: Handlers) => {
     const s = { handlers, close: vi.fn() };
     sockets.push(s);
-    return s;
+    return s.close;
   },
 }));
 

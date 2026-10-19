@@ -1,4 +1,4 @@
-import { LiveFrame } from '@tg/shared';
+import { LiveFrame, type PresenceFrame } from '@tg/shared';
 import { API_BASE_URL } from './client';
 
 /** The slice of `WebSocket` this client uses; tests pass a fake. */
@@ -8,6 +8,8 @@ export interface SocketLike {
   onclose: ((event: { code: number }) => void) | null;
   onerror: (() => void) | null;
   close: (code?: number) => void;
+  /** Sends one text frame (the presence frame); only called while the socket is open. */
+  send: (data: string) => void;
 }
 
 export interface LiveHandlers {
@@ -43,7 +45,7 @@ function liveUrl(workspaceId: string): string {
 }
 
 /**
- * One live socket for one workspace (ADR-0002). Reconnects with backoff after 1001 or any drop,
+ * One live socket for one workspace (ADR-0002). Sends the presence frame after every open and on visibilitychange. Reconnects with backoff after 1001 or any drop,
  * never after 4401/4403. Frames that fail the shared schema (unknown types) are dropped and reported to `onInvalidFrame`.
  */
 export function openLiveSocket(
@@ -58,6 +60,28 @@ export function openLiveSocket(
   let attempt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let socket: SocketLike | undefined;
+  let open = false;
+
+  // Presence (events.md): `on_screen` right after every open and on every visibilitychange.
+  const sendPresence = () => {
+    if (!open || !socket) return;
+    const frame: PresenceFrame = {
+      type: 'presence',
+      v: 1,
+      on_screen: document.visibilityState === 'visible',
+    };
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch {
+      // a socket closing underneath: the close event drives the reconnect
+    }
+  };
+  document.addEventListener('visibilitychange', sendPresence);
+  const stop = () => {
+    stopped = true;
+    open = false;
+    document.removeEventListener('visibilitychange', sendPresence);
+  };
 
   const connect = () => {
     const current = createSocket(liveUrl(workspaceId));
@@ -68,6 +92,8 @@ export function openLiveSocket(
       // missed signals.
       const missed = attempt > 0;
       attempt = 0;
+      open = true;
+      sendPresence();
       if (missed) handlers.onReconnected();
     };
     current.onmessage = (event) => {
@@ -85,8 +111,9 @@ export function openLiveSocket(
     };
     current.onclose = (event) => {
       if (stopped) return;
+      open = false;
       if (NO_RECONNECT.has(event.code)) {
-        stopped = true;
+        stop();
         handlers.onClosed(event.code);
         return;
       }
@@ -98,7 +125,7 @@ export function openLiveSocket(
   connect();
   return {
     close() {
-      stopped = true;
+      stop();
       clearTimeout(timer);
       socket?.close();
     },

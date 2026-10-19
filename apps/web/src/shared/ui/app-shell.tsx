@@ -17,6 +17,7 @@ import { useGuard, type GuardFn } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
+import { openLiveConnection } from '@/shared/api/live-connection';
 import { initials } from '@/shared/lib/initials';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
@@ -207,6 +208,15 @@ export function AppShell() {
     },
     [guard, markError, workspaceId],
   );
+  // The tab's one live connection for this workspace (SAD §4): opened once the workspace is
+  // entered, kept across the pages inside, closed on a switch or when the frame goes away. The
+  // pages (inbox, attention count, settings) subscribe to it.
+  const entered = entry.status === 'ready';
+  useEffect(() => {
+    if (!entered) return;
+    const connection = openLiveConnection(workspaceId);
+    return () => connection.close();
+  }, [entered, workspaceId]);
   const current = useWorkspaceStore((s) => s.current);
   const notice = useWorkspaceStore((s) => s.accessRemovedNotice);
   const isOwner = current?.role === 'owner';
