@@ -143,7 +143,7 @@ Clarifications (clarify, autonomous run 2026-10-19). Each one picks the most sen
 ### AC-08 (US-03) — domain invariant
 
 **Given** "Acme Flowers" has the tag "VIP" and 100 tags in total, and a contact that carries 20 tags
-**When** an operator types "vip", " VIP " or "V  I P" with other spacing variants for a contact, or two members create "Kyiv" for different contacts at the same moment, or someone tries to create a 101st tag or add a 21st tag to that contact
+**When** an operator types "vip", " VIP " or "VIP  " (other letter case, or spaces around the name) for a contact, or two members create "Kyiv" for different contacts at the same moment, or someone tries to create a 101st tag or add a 21st tag to that contact
 **Then** a name that differs from an existing tag only in letter case or spacing is the existing tag ("vip" applies "VIP"), and two members creating the same new name at the same moment end up with one tag applied to both contacts — a workspace never holds two tags with the same name; the 101st tag is not created and the tag control says a workspace can have at most 100 tags and a business owner can merge or delete some in Settings; the 21st tag is not added (and a new name typed for it is not created either) and the control says a contact can carry at most 20 tags; both limits hold when members act at the same moment
 
 ### AC-09 (US-04) — happy path
