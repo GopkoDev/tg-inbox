@@ -1658,6 +1658,20 @@ describe('inbox store: search results on live frames and resyncs (re-review R1, 
     expect(results()).toMatchObject({ status: 'ready', page: { hasNext: true, cursor: 'q2' } });
   });
 
+  it('a resync keeps a shown row newer than the re-read page (it arrived live after the read)', async () => {
+    await enterAndSearch('Ada', [
+      conv(A, C2, '2026-10-18T14:00:00.000Z'),
+      conv(A, C1, '2026-10-18T12:00:00.000Z'),
+    ]);
+    api.listConversations.mockImplementation(async (ws: string, params: { q?: string }) =>
+      params.q
+        ? lensPage(ws, SEARCH, [conv(ws, C3, '2026-10-18T13:00:00.000Z')])
+        : listPage(ws, []),
+    );
+    await resync();
+    expect(rowIds()).toEqual([C2, C3]);
+  });
+
   it('RR3: a resync while a typed search loads re-searches once after it answers', async () => {
     await enterAndSearch('Ada', [conv(A, C1, '2026-10-18T12:00:00.000Z')]);
     const releaseBob = hanging();

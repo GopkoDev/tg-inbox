@@ -560,12 +560,18 @@ export const useInboxStore = create<InboxState>()((set, get) => {
         get().lens.assignee !== assignee
       )
         return;
-      // A full replace by the first page and its cursor: a newer shown copy stays, a row that
-      // left the lens since the read stays out.
+      // A full replace by the first page and its cursor: a newer shown copy stays, a shown row
+      // newer than the page's first row arrived live after the read and stays, a row that left
+      // the lens since the read stays out.
       set((s) => {
         const shown = s.results?.q === q ? (s.results.page?.rows ?? []) : [];
+        const first = [...page.items].sort(byActivity)[0];
         const rows = appendRows(
-          shown.filter((c) => page.items.some((p) => p.id === c.id)),
+          shown.filter(
+            (c) =>
+              page.items.some((p) => p.id === c.id) ||
+              (first !== undefined && byActivity(c, first) < 0),
+          ),
           page.items,
         );
         return {
