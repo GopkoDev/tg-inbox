@@ -1,4 +1,4 @@
-import { formatBotDay, formatBotTime } from '@/features/bot/settings/format';
+import { formatBotClock, formatBotDay, formatBotTime } from '@/features/bot/settings/format';
 import { relativeTime } from '@/features/inbox/relative-time';
 
 /** First and last name, a missing last name simply left out. */
@@ -32,4 +32,30 @@ export function lastWrote(iso: string | null, now: Date = new Date()) {
   return iso
     ? { text: relativeTime(iso, now), title: formatBotTime(iso) }
     : { text: 'Never', title: undefined };
+}
+
+const FULL_DAY = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+/** «2 Sep 2026» for the profile's facts line. */
+export const formatFullDay = (iso: string) => FULL_DAY.format(new Date(iso));
+
+/** «19 Oct, 10:02»: a history line's time, in the viewer's locale and time zone. */
+export const formatHistoryTime = (iso: string) => `${formatBotDay(iso)}, ${formatBotClock(iso)}`;
+
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+
+/** «just now» / «3 min ago» / «2 h ago» / «yesterday» / «19 Oct» for the profile's facts line. */
+export function agoText(iso: string, now: Date = new Date()): string {
+  const diff = now.getTime() - new Date(iso).getTime();
+  if (diff < MINUTE) return 'just now';
+  if (diff < HOUR) return `${Math.floor(diff / MINUTE)} min ago`;
+  if (diff < DAY) return `${Math.floor(diff / HOUR)} h ago`;
+  if (diff < 2 * DAY) return 'yesterday';
+  return formatBotDay(iso);
 }

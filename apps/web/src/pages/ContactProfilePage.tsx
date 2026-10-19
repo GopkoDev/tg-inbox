@@ -1,12 +1,8 @@
 import { useParams } from 'react-router';
-import { ContactProfilePreview } from '@/features/contacts/ContactProfilePreview';
-import { getSampleContact } from '@/features/contacts/sample-source';
-import { NotFoundCard } from './NotFoundPage';
+import { ContactProfile } from '@/features/contacts/ContactProfile';
 
-/** SCR-10: the contact profile preview; an unknown contact shows the frame's not-found card. */
+/** SCR-19: a contact's profile; keyed by contact so moving between profiles starts fresh. */
 export function ContactProfilePage() {
-  const { contactId = '' } = useParams();
-  const contact = getSampleContact(contactId);
-  if (!contact) return <NotFoundCard headingLevel={1} />;
-  return <ContactProfilePreview contact={contact} />;
+  const { workspaceId = '', contactId = '' } = useParams();
+  return <ContactProfile key={contactId} workspaceId={workspaceId} contactId={contactId} />;
 }
