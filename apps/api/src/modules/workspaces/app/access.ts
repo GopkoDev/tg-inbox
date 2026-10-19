@@ -68,6 +68,13 @@ export function createWorkspaceAccess(deps: WorkspaceAccessDeps) {
       return uow.run((repos) => guard(repos, accountId, workspaceId));
     },
 
+    /** The workspace's name; null when it does not exist. For texts the bot sends. */
+    async workspaceName(workspaceId: string): Promise<string | null> {
+      if (!UUID.test(workspaceId)) return null;
+      const workspace = await uow.run((repos) => repos.workspaces.findById(workspaceId));
+      return workspace?.name ?? null;
+    },
+
     /** Of `accountIds`, those with an active membership in the workspace (socket re-validation, delivery pre-check). */
     activeMembersAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]> {
       return uow.run((repos) => repos.memberships.activeAccountIdsAmong(workspaceId, accountIds));

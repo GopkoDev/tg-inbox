@@ -269,3 +269,24 @@ export type EnqueueBotMessage = (
   workspaceId: string,
   message: BotMessage,
 ) => Promise<void>;
+
+/** What `bots.sendMemberMessage` answers; it never throws. */
+export type MemberSendOutcome =
+  | { outcome: 'accepted' }
+  | { outcome: 'blocked' }
+  | { outcome: 'rate_limited'; retryAfter: Date }
+  | { outcome: 'bot_unavailable' }
+  | { outcome: 'transient' };
+
+/** Sends plain text to a member's private chat through the workspace's bot (paced, behind the pause). */
+export type SendMemberMessage = (request: {
+  workspaceId: string;
+  telegramUserId: bigint;
+  text: string;
+}) => Promise<MemberSendOutcome>;
+
+/** The workspace facts a text needs. */
+export interface WorkspaceNames {
+  /** Null when the workspace is gone. */
+  workspaceName(workspaceId: string): Promise<string | null>;
+}

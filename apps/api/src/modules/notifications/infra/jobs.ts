@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { jobDb, type Jobs } from '../../../platform/jobs.js';
+import type { Clock } from '../../../platform/clock.js';
+import type { DeliverAnswer } from '../app/deliver-answer.js';
 import type { BotMessage, EnqueueBotMessage } from '../app/ports.js';
 
 export const SEND_BOT_MESSAGE_QUEUE = 'notifications.send-bot-message';
@@ -58,6 +60,20 @@ export function toJobPayload(workspaceId: string, message: BotMessage): SendBotM
   };
 }
 
+/** The inverse of `toJobPayload`: the answer a validated payload stands for. */
+export function fromJobPayload(job: SendBotMessageJob): BotMessage {
+  if (job.kind === 'link_expired')
+    return { kind: job.kind, telegramUserId: BigInt(job.telegram_user_id) };
+  if (job.kind === 'cannot_connect') {
+    return {
+      kind: job.kind,
+      telegramUserId: BigInt(job.telegram_user_id),
+      reason: job.reason,
+    };
+  }
+  return { kind: job.kind, telegramLinkId: job.telegram_link_id };
+}
+
 /** Creates the answer queue and its dead letter (no handler: the panel state is already right). */
 export async function createNotificationQueues(boss: Jobs): Promise<void> {
   await boss.createQueue(SEND_BOT_MESSAGE_DLQ);
@@ -87,4 +103,71 @@ export function createBotMessageSender(): { enqueue: EnqueueBotMessage; bind(bos
       });
     },
   };
+}
+
+export interface NotificationJobsLogger {
+  info(obj: object, msg: string): void;
+  error(obj: object, msg: string): void;
+}
+
+export interface NotificationJobsOptions {
+  /** Idle poll of the answer worker; 0.5 s keeps "Connected" prompt (the minimum pg-boss allows). */
+  pollingIntervalSeconds?: number;
+}
+
+export interface NotificationJobsDeps {
+  deliverAnswer: DeliverAnswer;
+  logger: NotificationJobsLogger;
+  clock: Clock;
+}
+
+/**
+ * Registers the workers of the notifications queues (the queues are created by
+ * `createNotificationQueues`). Logs carry the workspace id, the kind and an outcome code only: never
+ * the text, a display name, a token or a Telegram user id.
+ */
+export async function registerNotificationJobs(
+  boss: Jobs,
+  deps: NotificationJobsDeps,
+  options: NotificationJobsOptions = {},
+): Promise<void> {
+  const { deliverAnswer, logger } = deps;
+  const polling = { pollingIntervalSeconds: options.pollingIntervalSeconds ?? 0.5 };
+
+  await boss.work(SEND_BOT_MESSAGE_QUEUE, { ...polling, includeMetadata: true }, async (jobs) => {
+    for (const job of jobs) {
+      // An invalid payload throws: it fails visibly and the retries dead-letter it.
+      const payload = SendBotMessageJob.parse(job.data);
+      const message = fromJobPayload(payload);
+      const lastAttempt = job.retryCount >= job.retryLimit;
+      const delivered = await deliverAnswer.deliver(payload.workspace_id, message, { lastAttempt });
+      logger.info(
+        { workspaceId: payload.workspace_id, kind: payload.kind, outcome: delivered.result },
+        'send-bot-message job',
+      );
+      if (delivered.result === 'retry_at') {
+        // Telegram's limit is a delayed job of its own, never a pg-boss retry (it would use them up).
+        await boss.send(SEND_BOT_MESSAGE_QUEUE, payload, { startAfter: delivered.at });
+      } else if (delivered.result === 'failed') {
+        throw new Error('the answer was not accepted');
+      }
+    }
+  });
+
+  // A dead-lettered answer is not retried, but a removed link's Telegram id must still go.
+  await boss.work(SEND_BOT_MESSAGE_DLQ, polling, async (jobs) => {
+    for (const job of jobs) {
+      const parsed = SendBotMessageJob.safeParse(job.data);
+      if (!parsed.success) continue;
+      await deliverAnswer.clearOnDeadLetter(parsed.data.workspace_id, fromJobPayload(parsed.data));
+      logger.error(
+        {
+          alert: 'notifications.send-bot-message.dead-letter',
+          workspaceId: parsed.data.workspace_id,
+          kind: parsed.data.kind,
+        },
+        'an answer to a member gave up',
+      );
+    }
+  });
 }

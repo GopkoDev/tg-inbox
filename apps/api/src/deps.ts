@@ -36,6 +36,7 @@ import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
+import { createDeliverAnswer } from './modules/notifications/app/deliver-answer.js';
 import { createIntercept } from './modules/notifications/app/intercept.js';
 import { createPresence } from './modules/notifications/app/presence.js';
 import { createRedeem } from './modules/notifications/app/redeem.js';
@@ -221,17 +222,27 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   });
   // --- end notifications dependencies ---
 
+  const sendMemberMessage = createSendMemberMessage({
+    bots: botRepo,
+    telegram,
+    markNeedsToken,
+    clock,
+    pacer: createPacer(),
+  }).sendMemberMessage;
+  const deliverAnswer = createDeliverAnswer({
+    links: telegramLinks,
+    bots: { pingReadiness },
+    workspaces: workspaceAccess,
+    send: sendMemberMessage,
+    panelUrl: config.PUBLIC_WEB_URL,
+    clock,
+  });
+
   const bots = {
     settings: botSettings,
     markNeedsToken,
     sendText: createSendText({ bots: botRepo, telegram, markNeedsToken, clock }).sendText,
-    sendMemberMessage: createSendMemberMessage({
-      bots: botRepo,
-      telegram,
-      markNeedsToken,
-      clock,
-      pacer: createPacer(),
-    }).sendMemberMessage,
+    sendMemberMessage,
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus,
@@ -323,6 +334,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     notificationReads,
     bots,
     presence,
+    deliverAnswer,
     /** Binds the started job queue to the notifications answers (the queue starts after `buildDeps()`). */
     bindNotificationJobs: botMessages.bind,
     inboxReads,
