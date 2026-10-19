@@ -15,8 +15,12 @@ export const SCHEDULE_PINGS_QUEUE = 'notifications.schedule-pings';
 export const SendPingsJob = z.strictObject({ workspace_id: z.uuid() });
 export type SendPingsJob = z.infer<typeof SendPingsJob>;
 
-/** A sweep that never returns is failed after this long; the cron then restarts the chain. */
-const SEND_PINGS_EXPIRE_SECONDS = 60;
+/**
+ * A sweep that never returns is failed after this long; the cron then restarts the chain. A live
+ * sweep never gets near it: it starts no send after `SWEEP_SEND_BUDGET_MS` (30 s) and one send is at
+ * most the 10 s Telegram timeout plus pacing.
+ */
+export const SEND_PINGS_EXPIRE_SECONDS = 60;
 
 const id = z.uuid();
 const userId = z.string().regex(/^[1-9][0-9]{0,19}$/);
@@ -109,9 +113,18 @@ export async function createNotificationQueues(boss: Jobs): Promise<void> {
 }
 
 /**
+ * A refusal answer (`link_expired`, `cannot_connect`) goes to whoever sent the start, so anyone can
+ * ask for one: at most one of each is queued per (workspace, Telegram user) per one-minute slot, the extras
+ * are dropped silently. A flood of fake `/start tgi_…` from one account then costs one send a minute
+ * and cannot exhaust the bot's Telegram limit (whose 429 pauses every member send of the bot).
+ */
+export const REFUSAL_ANSWER_SLOT_SECONDS = 60;
+
+/**
  * The pg-boss instance is started by the composition root after `buildDeps()`, so the use cases get
  * this late-bound sender; it puts the job on the caller's transaction (committed or rolled back with
- * the rows beside it, ADR-0004) and fails loudly if used before `bind`.
+ * the rows beside it, ADR-0004) and fails loudly if used before `bind`. Refusals are throttled by a
+ * pg-boss singleton slot (`REFUSAL_ANSWER_SLOT_SECONDS`): a conditional insert, no extra table.
  */
 export function createBotMessageSender(): { enqueue: EnqueueBotMessage; bind(boss: Jobs): void } {
   let boss: Jobs | undefined;
@@ -121,8 +134,16 @@ export function createBotMessageSender(): { enqueue: EnqueueBotMessage; bind(bos
     },
     async enqueue(tx, workspaceId, message) {
       if (!boss) throw new Error('the job queue is not started');
+      const throttle =
+        message.kind === 'link_expired' || message.kind === 'cannot_connect'
+          ? {
+              singletonKey: `refusal:${workspaceId}:${message.telegramUserId}:${message.kind}`,
+              singletonSeconds: REFUSAL_ANSWER_SLOT_SECONDS,
+            }
+          : {};
       await boss.send(SEND_BOT_MESSAGE_QUEUE, toJobPayload(workspaceId, message), {
         db: jobDb(tx),
+        ...throttle,
       });
     },
   };

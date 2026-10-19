@@ -185,14 +185,17 @@ export type SendOutcome =
 /**
  * The answer to a message to a member (a ping or a bot answer). `rate_limited`: the bot is paused
  * until `retryAfter`; `blocked`: the member cannot receive it (blocked the bot, or the account is
- * gone); `transient`: Telegram may or may not have taken it.
+ * gone); `transient`: Telegram definitely did not take it (an error answer, or the request was never
+ * written), safe to retry; `unknown`: a timeout or a connection lost after the request was written,
+ * so it may have been delivered and must not be retried.
  */
 export type MemberMessageOutcome =
   | { outcome: 'accepted' }
   | { outcome: 'blocked' }
   | { outcome: 'rate_limited'; retryAfter: Date }
   | { outcome: 'bot_unavailable' }
-  | { outcome: 'transient' };
+  | { outcome: 'transient' }
+  | { outcome: 'unknown' };
 
 /** `getFile` timeout (sad.md §8). */
 export const GET_FILE_TIMEOUT = 5000;

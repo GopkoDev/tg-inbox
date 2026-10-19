@@ -12,8 +12,9 @@ interface WaitingRow {
 
 export function createNotificationQueries(db: Db): NotificationReads {
   return {
-    async waitingForPings(workspaceId, { conversationIds, accountIds }) {
+    async waitingForPings(workspaceId, { conversationIds, accountIds }, tx) {
       if (conversationIds?.length === 0) return [];
+      const exec = tx ?? db;
       // Open and waiting only (a closed row never holds a period, conversations_waiting_open_check):
       // the partial index (workspace_id, waiting_since) serves the filter and the order.
       const narrowed = conversationIds ? sql`AND c.id = ANY(${conversationIds}::uuid[])` : sql``;
@@ -29,7 +30,7 @@ export function createNotificationQueries(db: Db): NotificationReads {
         WHERE c.workspace_id = ${workspaceId}
           AND c.status = 'open' AND c.waiting_since IS NOT NULL
           ${narrowed}
-        ORDER BY c.waiting_since, c.id`.execute(db);
+        ORDER BY c.waiting_since, c.id`.execute(exec);
       if (rows.length === 0) return [];
 
       const wanted = new Set(accountIds);
@@ -37,7 +38,7 @@ export function createNotificationQueries(db: Db): NotificationReads {
       const marks =
         wanted.size === 0
           ? []
-          : await db
+          : await exec
               .selectFrom('read_marks')
               .select(['conversation_id', 'account_id', 'read_through_at'])
               .where('workspace_id', '=', workspaceId)

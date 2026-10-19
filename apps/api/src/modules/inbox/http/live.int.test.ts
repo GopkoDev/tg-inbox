@@ -346,6 +346,31 @@ describe('inbox live socket (postgres + real websocket)', () => {
       expect(isAway(await live(11 * 60_000), at(11 * 60_000))).toBe(true);
     });
 
+    it('a tab that opens hidden, or reconnects hidden, stays never-on-screen: away at once (D1, AC-07)', async () => {
+      const ws = await insertWorkspace(db, `HO ${newId()}`);
+      const me = await member(ws);
+      const repo = createPresenceRepo(db);
+      for (let reconnect = 0; reconnect < 2; reconnect += 1) {
+        const tab = await connect(ws, me.token);
+        await lease(ws, me.accountId);
+        tab.socket.send(JSON.stringify({ type: 'presence', v: 1, on_screen: false }));
+        await new Promise((r) => setTimeout(r, 1500));
+        const [row] = await leases(ws, me.accountId);
+        expect(row!.on_screen).toBe(false);
+        expect(row!.last_on_screen_at).toBeNull();
+        const now = new Date();
+        expect(
+          isAway(
+            [...((await repo.listLive(ws, now, [me.accountId])).get(me.accountId) ?? [])],
+            now,
+          ),
+        ).toBe(true);
+        tab.socket.terminate();
+        await tab.closed;
+        await pollRows(ws, me.accountId, (r) => r.length === 0);
+      }
+    });
+
     it('junk and oversized frames are ignored and the lease stays as it was', async () => {
       const ws = await insertWorkspace(db, `J ${newId()}`);
       const me = await member(ws);

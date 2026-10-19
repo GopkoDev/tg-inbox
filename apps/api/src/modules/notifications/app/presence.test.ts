@@ -46,8 +46,8 @@ function fakePresenceRepo(): PresenceRepo & { rows: Row[] } {
     async setScreen(w, id, onScreen, when) {
       const r = find(w, id);
       if (!r) return false;
+      if (onScreen || r.onScreen) r.lastOnScreenAt = later(r.lastOnScreenAt, when);
       r.onScreen = onScreen;
-      r.lastOnScreenAt = later(r.lastOnScreenAt, when);
       return true;
     },
     async close(w, id) {

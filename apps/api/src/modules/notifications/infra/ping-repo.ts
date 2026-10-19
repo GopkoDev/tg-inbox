@@ -8,6 +8,12 @@ const OPEN_WINDOW_MS = 15 * 60_000;
 
 export function createPingRepo(db: Db): PingRepo {
   return {
+    async lockMember(workspaceId, accountId, tx) {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`pings:${workspaceId}:${accountId}`}, 0))`.execute(
+        tx,
+      );
+    },
+
     async insertWithItems(workspaceId, ping, items, tx) {
       await tx
         .insertInto('pings')

@@ -235,8 +235,11 @@ export function notificationsHarness() {
       return accountIds.filter((a) => members.get(w)?.has(a));
     },
   };
+  /** The executor each bot read was given (undefined: outside any transaction), in call order. */
+  const botReads: (Executor | undefined)[] = [];
   const botPort: BotReadiness = {
-    async inboxBotStatus(w) {
+    async inboxBotStatus(w, tx) {
+      botReads.push(tx);
       const b = bots.get(w);
       const state = !b || b.state === 'disconnected' ? 'not_connected' : b.state;
       return {
@@ -246,7 +249,8 @@ export function notificationsHarness() {
         receiving: state === 'connected',
       } satisfies InboxBotStatus;
     },
-    async pingReadiness(w) {
+    async pingReadiness(w, tx) {
+      botReads.push(tx);
       const b = bots.get(w);
       return b ? { ...b } : null;
     },
@@ -269,6 +273,7 @@ export function notificationsHarness() {
     transaction,
     membership,
     botPort,
+    botReads,
     signalPort,
     startPings: async (_tx: Executor, workspaceId: string) => {
       pingStarts.push(workspaceId);
@@ -302,10 +307,15 @@ export interface FakePing extends NewPing {
 }
 
 /** In-memory pings + ping_items: the ledger's unique key and the cascade of the SQL. */
-export function fakePingRepo(): PingRepo & { rows: FakePing[] } {
+export function fakePingRepo(): PingRepo & { rows: FakePing[]; locks: string[] } {
   const rows: FakePing[] = [];
+  const locks: string[] = [];
   return {
     rows,
+    locks,
+    async lockMember(w, accountId) {
+      locks.push(`${w}:${accountId}`);
+    },
     async insertWithItems(w, ping, items) {
       const taken = (item: PingPeriod) =>
         rows.some(
@@ -393,8 +403,8 @@ export function fakePresenceRepo(): PresenceRepo & { rows: FakeLease[] } {
     async setScreen(w, id, onScreen, now) {
       const row = find(w, id);
       if (!row) return false;
+      if (onScreen || row.onScreen) row.lastOnScreenAt = now;
       row.onScreen = onScreen;
-      row.lastOnScreenAt = now;
       return true;
     },
     async close(w, id) {
@@ -437,15 +447,23 @@ export interface FakeWaiting extends WaitingRead {
 }
 
 /** The waiting conversations of `conversations`, as a list a test edits between reads. */
-export function fakeWaitingReads(): WaitingReads & { rows: FakeWaiting[]; reads: number } {
+export function fakeWaitingReads(): WaitingReads & {
+  rows: FakeWaiting[];
+  reads: number;
+  txs: (Executor | undefined)[];
+} {
   const state = {
     rows: [] as FakeWaiting[],
     reads: 0,
+    /** The executor of each read (undefined: outside any transaction). */
+    txs: [] as (Executor | undefined)[],
     async waitingForPings(
       w: string,
       query: { conversationIds?: string[]; accountIds: string[] },
+      tx?: Executor,
     ): Promise<WaitingRead[]> {
       state.reads += 1;
+      state.txs.push(tx);
       return state.rows
         .filter(
           (r) =>

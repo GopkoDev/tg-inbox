@@ -361,12 +361,19 @@ export function createReplyRepo(db: Db): ReplyRepo {
         .set({
           last_reply_sent_at: sql`GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)`,
           last_activity_at: sql`GREATEST(last_message_received_at, last_reply_sent_at, ${sentAt}::timestamptz)`,
-          // A sent reply ends the waiting period (AC-08) unless a customer message arrived after it:
-          // then the customer is still waiting by the list marker and the period keeps running.
+          // A sent reply ends the waiting period (AC-08). When a customer message arrived after it,
+          // the customer is still waiting, but on a new period: it began with the first message after
+          // the reply (started by 'message'), so the old period's ledger never mutes the new wait and
+          // the team's 30 minutes count from the new message (AC-09). The fallback to the newest
+          // arrival only covers a row without its message rows.
           waiting_since: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-            THEN waiting_since END`,
+            THEN COALESCE(
+              (SELECT min(m.received_at) FROM messages m
+                WHERE m.workspace_id = ${workspaceId} AND m.conversation_id = ${conversationId}
+                  AND m.received_at > GREATEST(conversations.last_reply_sent_at, ${sentAt}::timestamptz)),
+              last_message_received_at) END`,
           waiting_started_by: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
-            THEN waiting_started_by END`,
+            THEN 'message' END`,
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', conversationId)

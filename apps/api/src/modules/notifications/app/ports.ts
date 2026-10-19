@@ -155,7 +155,10 @@ export interface PresenceRepo {
   open(workspaceId: string, lease: NewPresence, tx?: Executor): Promise<void>;
   /** A pong: moves `live_until` forward, never back. False when the lease is not in the workspace. */
   extend(workspaceId: string, id: string, liveUntil: Date, tx?: Executor): Promise<boolean>;
-  /** The tab went on or off screen at `at`. */
+  /**
+   * The tab went on or off screen at `at`. `last_on_screen_at` moves to `at` while on screen and on a
+   * real on -> off transition only: an off frame on a never-on-screen lease keeps it NULL (D1).
+   */
   setScreen(
     workspaceId: string,
     id: string,
@@ -206,6 +209,12 @@ export interface PingRepo {
     items: PingPeriod[],
     tx: Executor,
   ): Promise<'inserted' | 'lost'>;
+  /**
+   * Takes the transaction-level advisory lock `pings:<workspace>:<account>`: one member's send
+   * transactions run one at a time across sweeps and instances, so the spacing re-check that follows
+   * sees the other's committed ping (AC-08). Taken after the membership share lock, before the link.
+   */
+  lockMember(workspaceId: string, accountId: string, tx: Executor): Promise<void>;
   /** The member's newest ping in the workspace (any outcome), for the 10-minute spacing. */
   lastPingAt(workspaceId: string, accountId: string, tx?: Executor): Promise<Date | null>;
   /** The members already pinged for these periods. */
@@ -239,10 +248,13 @@ export interface MembershipLocks {
   lockActiveMembers(tx: Executor, workspaceId: string, accountIds: string[]): Promise<string[]>;
 }
 
-/** The slice of `bots` notifications reads. */
+/** The slice of `bots` notifications reads; `tx` joins a caller's transaction (never a 2nd connection). */
 export interface BotReadiness {
-  inboxBotStatus(workspaceId: string): Promise<InboxBotStatus>;
-  pingReadiness(workspaceId: string): Promise<{
+  inboxBotStatus(workspaceId: string, tx?: Executor): Promise<InboxBotStatus>;
+  pingReadiness(
+    workspaceId: string,
+    tx?: Executor,
+  ): Promise<{
     state: 'connected' | 'needs_token' | 'taken_over' | 'disconnected';
     telegramBotId: bigint;
     username: string;
@@ -273,13 +285,17 @@ export type EnqueueBotMessage = (
   message: BotMessage,
 ) => Promise<void>;
 
-/** What `bots.sendMemberMessage` answers; it never throws. */
+/**
+ * What `bots.sendMemberMessage` answers; it never throws. `transient`: definitely not sent (safe to
+ * retry); `unknown`: may have been delivered (never retried, so a member never gets it twice).
+ */
 export type MemberSendOutcome =
   | { outcome: 'accepted' }
   | { outcome: 'blocked' }
   | { outcome: 'rate_limited'; retryAfter: Date }
   | { outcome: 'bot_unavailable' }
-  | { outcome: 'transient' };
+  | { outcome: 'transient' }
+  | { outcome: 'unknown' };
 
 /** Sends plain text to a member's private chat through the workspace's bot (paced, behind the pause). */
 export type SendMemberMessage = (request: {
@@ -305,8 +321,10 @@ export interface WaitingRead {
 }
 
 export interface WaitingReads {
+  /** `tx` joins the caller's transaction (the send-time re-check). */
   waitingForPings(
     workspaceId: string,
     query: { conversationIds?: string[]; accountIds: string[] },
+    tx?: Executor,
   ): Promise<WaitingRead[]>;
 }

@@ -5,6 +5,7 @@ import { createDb, type Db } from '../../../platform/db.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
 import {
   insertConversation,
+  insertMessage,
   insertReply,
   insertReplyAttempt,
 } from '../../../test/fixtures/conversations.js';
@@ -201,6 +202,34 @@ describe('reply delivery (Postgres)', () => {
     });
     expect(await conversation(newer.conversationId)).toMatchObject({
       waiting_since: at(900),
+      waiting_started_by: 'message',
+    });
+  });
+
+  it('sent: a customer message newer than the sent time starts a new period at the first such message (B7, AC-08)', async () => {
+    // Waiting since 0; the reply goes out at 500 while the customer writes again at 600 and 700.
+    const s = await setup({ received: at(700), waitingSince: at(0) });
+    for (const [n, t] of [0, 600, 700].entries()) {
+      await insertMessage(db, {
+        workspaceId: s.workspaceId,
+        conversationId: s.conversationId,
+        telegramMessageId: BigInt(n + 1),
+        receivedAt: at(t),
+      });
+    }
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(500),
+    });
+    // The wait the reply answered is over; the new one began with the message at 600.
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: at(600),
       waiting_started_by: 'message',
     });
   });

@@ -53,7 +53,7 @@ export interface LiveHubDeps {
 export interface LiveHub {
   /** Registers the socket and its presence lease (a fresh connection id, not on screen until its first frame). */
   attach(socket: LiveSocket, owner: LiveSocketOwner): void;
-  /** The socket closed or failed: its lease is deleted. */
+  /** The socket closed or failed: its lease is deleted (a server stop leaves it to expire instead). */
   detach(socket: LiveSocket): void;
   /** A pong arrived: the socket's lease is extended. */
   pong(socket: LiveSocket): void;
@@ -76,6 +76,7 @@ export const CLOSE_GOING_AWAY = 1001;
 /** The presence state of one socket (ADR-0002). */
 interface Conn {
   id: string;
+  socket: LiveSocket;
   owner: LiveSocketOwner;
   /** Presence calls of one socket run in order: a close never overtakes the open. */
   queue: Promise<void>;
@@ -119,6 +120,29 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
     clearTimeout(conn.timer);
     run(conn, () => presence.closed(conn.owner.workspaceId, conn.id));
   };
+  /** Writes the pending screen state, if any. */
+  const flush = (conn: Conn) => {
+    const onScreen = conn.pending;
+    conn.pending = undefined;
+    if (onScreen === undefined) return;
+    run(conn, () =>
+      presence.screen(conn.owner.workspaceId, conn.id, conn.owner.accountId, onScreen),
+    );
+  };
+  /**
+   * One write per socket per window: a frame outside a window is written at once (leading edge, so
+   * a reconnected tab's opening frame is not held back), frames inside it collapse into one trailing
+   * write with the last value, which opens the next window.
+   */
+  const openWindow = (conn: Conn) => {
+    conn.timer = setTimeout(() => {
+      conn.timer = undefined;
+      if (conn.pending === undefined || conns.get(conn.socket) !== conn) return;
+      flush(conn);
+      openWindow(conn);
+    }, coalesceMs);
+    conn.timer.unref();
+  };
   const close = (socket: LiveSocket, code: number, reason: string) => {
     sockets.delete(socket);
     release(socket);
@@ -138,6 +162,7 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       sockets.set(socket, owner);
       const conn: Conn = {
         id: newId(),
+        socket,
         owner,
         queue: Promise.resolve(),
         pending: undefined,
@@ -169,18 +194,10 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       }
       const frame = PresenceFrame.safeParse(json);
       if (!frame.success) return;
-      // One write per socket per window, the last value wins.
       conn.pending = frame.data.on_screen;
-      conn.timer ??= setTimeout(() => {
-        conn.timer = undefined;
-        const onScreen = conn.pending;
-        conn.pending = undefined;
-        if (onScreen === undefined) return;
-        run(conn, () =>
-          presence.screen(conn.owner.workspaceId, conn.id, conn.owner.accountId, onScreen),
-        );
-      }, coalesceMs);
-      conn.timer.unref();
+      if (conn.timer) return;
+      flush(conn);
+      openWindow(conn);
     },
 
     dispatch(signal) {
@@ -276,9 +293,21 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       if (revalidateTimer) clearInterval(revalidateTimer);
       pingTimer = revalidateTimer = null;
       const open = [...conns.values()];
-      for (const socket of [...sockets.keys()])
-        close(socket, CLOSE_GOING_AWAY, 'server going away');
-      // The leases are gone before the database is released.
+      // Server-initiated 1001 (a deploy or restart): the leases are NOT deleted. The tab reconnects
+      // to another instance and registers a new lease; until then the old one keeps counting and
+      // expires by itself at most 50 s after its last pong, so an on-screen member is never made to
+      // look away by a restart (ADR-0002). A pending screen state is still written.
+      for (const conn of open) {
+        clearTimeout(conn.timer);
+        conn.timer = undefined;
+        flush(conn);
+      }
+      conns.clear();
+      for (const socket of [...sockets.keys()]) {
+        sockets.delete(socket);
+        safe(() => socket.close(CLOSE_GOING_AWAY, 'server going away'));
+      }
+      // The pending writes finish before the database is released.
       await Promise.all(open.map((c) => c.queue));
     },
   };

@@ -12,6 +12,12 @@ export const PRESENCE_WINDOW_MS = 10 * MINUTE_MS;
 export const LEASE_MS = 50_000;
 /** The per-workspace sweep period (ADR-0005). */
 export const SWEEP_EVERY_MS = 20_000;
+/**
+ * A sweep starts no member send after this long. One send is at most the 10 s Telegram timeout plus
+ * pacing, so a sweep ends well before the `send-pings` job expiry (60 s), which the cron would
+ * otherwise treat as dead and start a second sweep beside it.
+ */
+export const SWEEP_SEND_BUDGET_MS = 30_000;
 /** At most this many member sends per second per bot (ADR-0006). */
 export const SENDS_PER_SECOND = 10;
 /** A tab opened within this span of a ping counts as "ping to panel" (spec section 7). */

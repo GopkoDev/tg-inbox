@@ -30,6 +30,13 @@ function setup() {
 }
 
 describe('mySettings (AC-04, AC-06, AC-10, AC-13)', () => {
+  it("joins the caller's transaction for the bot read too (B4)", async () => {
+    const { h, settings } = setup();
+    const tx = {} as Parameters<typeof settings.mySettings>[1];
+    await settings.mySettings({ workspaceId: W, accountId: A, role: 'operator' }, tx);
+    expect(h.botReads).toEqual([tx]);
+  });
+
   it('not connected with a working bot: can_connect', async () => {
     const { settings } = setup();
     const s = await settings.mySettings({ workspaceId: W, accountId: A, role: 'operator' });

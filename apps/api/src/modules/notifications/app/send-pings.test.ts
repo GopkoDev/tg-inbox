@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PING_SPACING_MS, SWEEP_EVERY_MS } from '../domain/constants.js';
+import { PING_SPACING_MS, SWEEP_EVERY_MS, SWEEP_SEND_BUDGET_MS } from '../domain/constants.js';
 import { pingText } from '../domain/ping-text.js';
 import {
   fakePingRepo,
@@ -33,7 +33,7 @@ function setup() {
   const sent: { telegramUserId: bigint; text: string; pingAtCall: string | undefined }[] = [];
   const script: MemberSendOutcome[] = [];
   const logs: object[] = [];
-  const hooks: { beforeLock?: () => void } = {};
+  const hooks: { beforeLock?: () => void; onSend?: () => void } = {};
   const sweep = createSendPings({
     transaction: h.transaction,
     membership: {
@@ -54,6 +54,7 @@ function setup() {
         text,
         pingAtCall: pings.rows.find((r) => r.accountId === accountOf(telegramUserId))?.outcome,
       });
+      hooks.onSend?.();
       return script.shift() ?? { outcome: 'accepted' };
     },
     signals: h.signalPort,
@@ -379,6 +380,25 @@ describe('runSweep (flow 12)', () => {
     });
   });
 
+  it('stops sending once the sweep budget is spent and runs again at once, so a sweep ends well inside its job expiry (B3)', async () => {
+    const s = setup();
+    const [C, D] = ['0199a000-0000-7000-8000-0000000000b3', '0199a000-0000-7000-8000-0000000000b4'];
+    s.h.addMember(W, C);
+    s.h.addMember(W, D);
+    for (const m of [A, B, C, D]) s.link(m);
+    s.waiting(C1);
+    s.h.clock.set(min(5));
+    // Each send takes 12 s (a slow Telegram, under the 10 s timeout plus pacing).
+    s.hooks.onSend = () => s.h.clock.advance(12_000);
+    const result = await s.sweep.runSweep(W);
+    expect(SWEEP_SEND_BUDGET_MS).toBe(30_000);
+    expect(s.sent).toHaveLength(3);
+    expect(result.nextRunAt).toEqual(new Date(min(5).getTime() + 36_000));
+    // The next sweep picks up the member who was left.
+    await s.sweep.runSweep(W);
+    expect(s.sent).toHaveLength(4);
+  });
+
   describe('outcomes (events.md table)', () => {
     it('accepted clears blocked_at and signals once', async () => {
       const s = setup();
@@ -457,6 +477,50 @@ describe('runSweep (flow 12)', () => {
       await s.sweep.runSweep(W);
       expect(s.sent).toHaveLength(1);
       expect(s.pings.rows).toEqual([]);
+    });
+
+    it("the outcome touches only the link the ping went to, never the member's newer link (B6)", async () => {
+      for (const [answer, blockedBefore] of [
+        [{ outcome: 'blocked' }, null],
+        [{ outcome: 'accepted' }, min(1)],
+      ] as const) {
+        const s = setup();
+        s.link(A);
+        s.waiting(C1, { assignee: A });
+        s.h.clock.set(min(5));
+        s.script.push(answer);
+        // While the ping is in flight the member disconnects and connects again (a new link row).
+        s.hooks.onSend = () => {
+          const old = s.h.links.rows[0]!;
+          old.removedAt = min(5);
+          old.removedReason = 'member';
+          s.h.links.rows.push({
+            ...old,
+            id: 'tl-new',
+            telegramUserId: 9999n,
+            blockedAt: blockedBefore,
+            removedAt: null,
+            removedReason: null,
+          });
+        };
+        await s.sweep.runSweep(W);
+        const fresh = s.h.links.rows.find((r) => r.id === 'tl-new')!;
+        expect(fresh.blockedAt).toEqual(blockedBefore);
+        expect(s.h.signals).toEqual([]);
+      }
+    });
+
+    it('unknown (maybe delivered) is a failed attempt that counts and is never sent again', async () => {
+      const s = setup();
+      s.link(A);
+      s.waiting(C1, { assignee: A });
+      s.h.clock.set(min(5));
+      s.script.push({ outcome: 'unknown' });
+      await s.sweep.runSweep(W);
+      expect(s.pings.rows.map((r) => [r.accountId, r.outcome])).toEqual([[A, 'failed']]);
+      s.h.clock.set(min(20));
+      await s.sweep.runSweep(W);
+      expect(s.sent).toHaveLength(1);
     });
 
     it('transient is a failed attempt that counts, with no retry, and the loop continues', async () => {

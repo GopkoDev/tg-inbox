@@ -36,7 +36,10 @@ export function createPresenceRepo(db: Db): PresenceRepo {
         .updateTable('tab_presences')
         .set({
           on_screen: onScreen,
-          last_on_screen_at: sql`GREATEST(last_on_screen_at, ${at}::timestamptz)`,
+          // Stamped while on screen and on a real on -> off transition only: an off frame on a tab
+          // that was never on screen keeps NULL (away), a repeated off keeps the time it left (D1).
+          last_on_screen_at: sql`CASE WHEN ${onScreen}::boolean OR on_screen
+            THEN GREATEST(last_on_screen_at, ${at}::timestamptz) ELSE last_on_screen_at END`,
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', id)

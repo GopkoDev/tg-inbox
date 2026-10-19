@@ -23,16 +23,21 @@ export type DeliverResult =
   | { result: 'done' }
   /** Telegram's limit: send again at `at` as a new delayed job (never a pg-boss retry). */
   | { result: 'retry_at'; at: Date }
-  /** A timeout or network failure: fail the attempt so pg-boss retries. */
-  | { result: 'failed' };
+  /** Telegram definitely did not take it: fail the attempt so pg-boss retries. */
+  | { result: 'failed' }
+  /**
+   * A timeout or a connection lost after the request was written: it may have been delivered, so it
+   * is finished without a retry (a retry could send the answer twice). The worker logs it.
+   */
+  | { result: 'unknown' };
 
 export interface DeliverAnswer {
   /**
    * One `notifications.send-bot-message` job (flow 10). Reads nothing the job did not name: the
    * recipient comes from the link row (or the payload's Telegram user id for the two answers that
    * have no link). `lastAttempt`: pg-boss will not retry after this run.
-   * For `notifications_off` every finish - sent, blocked, bot not working, the last failed attempt -
-   * clears the removed link's Telegram user id. Never logs or returns the text or the id.
+   * For `notifications_off` every finish - sent, blocked, bot not working, unknown, the last failed
+   * attempt - clears the removed link's Telegram user id. Never logs or returns the text or the id.
    */
   deliver(
     workspaceId: string,
@@ -93,6 +98,9 @@ export function createDeliverAnswer(deps: DeliverAnswerDeps): DeliverAnswer {
         case 'transient':
           if (options.lastAttempt) await clearId(workspaceId, message);
           return { result: 'failed' };
+        case 'unknown':
+          await clearId(workspaceId, message);
+          return { result: 'unknown' };
         case 'accepted':
         case 'blocked':
         case 'bot_unavailable':

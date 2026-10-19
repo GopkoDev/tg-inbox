@@ -3,6 +3,7 @@ import { newId } from '../../../platform/ids.js';
 import {
   PING_SPACING_MS,
   SWEEP_EVERY_MS,
+  SWEEP_SEND_BUDGET_MS,
   TEAM_AFTER_MS,
   WAIT_AFTER_MS,
 } from '../domain/constants.js';
@@ -26,7 +27,10 @@ import type {
 export interface SendPingsDeps {
   transaction: Transaction;
   membership: MembershipLocks;
-  links: Pick<TelegramLinkRepo, 'listLive' | 'findLiveByAccount' | 'markBlocked' | 'clearBlocked'>;
+  links: Pick<
+    TelegramLinkRepo,
+    'listLive' | 'findLiveByAccount' | 'findById' | 'markBlocked' | 'clearBlocked'
+  >;
   presence: Pick<PresenceRepo, 'deleteExpired' | 'listLive'>;
   pings: PingRepo;
   reads: WaitingReads;
@@ -76,10 +80,11 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
     tx?: Executor,
   ): Promise<MemberDue[]> {
     const accountIds = only ? [only.accountId] : live.map((l) => l.accountId);
-    const waiting = await reads.waitingForPings(workspaceId, {
-      ...(only && { conversationIds: only.conversationIds }),
-      accountIds,
-    });
+    const waiting = await reads.waitingForPings(
+      workspaceId,
+      { ...(only && { conversationIds: only.conversationIds }), accountIds },
+      tx,
+    );
     if (waiting.length === 0) return [];
     const whose = new Set(accountIds);
     for (const c of waiting) if (c.assigneeAccountId) whose.add(c.assigneeAccountId);
@@ -112,15 +117,19 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
   }
 
   /**
-   * The member's send transaction (sad.md §8): the membership `FOR SHARE`, the link row `FOR SHARE`
-   * (a Disconnect waits for the commit), a fresh recompute, then the ledger insert. Commits before
-   * anything is sent. Null when nothing is due any more.
+   * The member's send transaction (sad.md §8): the membership `FOR SHARE`, the member's advisory lock
+   * `pings:<ws>:<account>` (two sweeps - one past its job expiry and the cron's new one, or two
+   * instances - prepare one member one at a time, so the spacing re-check sees the other's ping), the
+   * link row `FOR SHARE` (a Disconnect waits for the commit), a fresh recompute, then the ledger
+   * insert. Every read joins the transaction: it never waits on a second pool connection while it
+   * holds these locks. Commits before anything is sent. Null when nothing is due any more.
    */
   async function prepare(workspaceId: string, candidate: MemberDue): Promise<Prepared | null> {
     return transaction(async (tx) => {
       const { accountId } = candidate;
       const active = await membership.lockActiveMembers(tx, workspaceId, [accountId]);
       if (!active.includes(accountId)) return null;
+      await pings.lockMember(workspaceId, accountId, tx);
       const link = await links.findLiveByAccount(workspaceId, accountId, { lock: 'share' }, tx);
       if (!link) return null;
       const now = clock.now();
@@ -169,6 +178,7 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
 
   async function sendOne(
     workspaceId: string,
+    workspaceName: string,
     candidate: MemberDue,
     bot: { sendPausedUntil: Date | null },
   ): Promise<{ stop: Date | null }> {
@@ -177,9 +187,8 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
     const { pingId, link, due } = prepared;
     const accountId = link.accountId;
 
-    const name = await workspaces.workspaceName(workspaceId);
-    if (name === null || link.telegramUserId === null) {
-      // The workspace is gone: nothing to send, and the conversations stay due.
+    if (link.telegramUserId === null) {
+      // Nothing to send to; the conversations stay due.
       await transaction((tx) => pings.rollOut(workspaceId, pingId, tx));
       return { stop: null };
     }
@@ -188,7 +197,7 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
     const sentAt = clock.now();
     const oldest = Math.min(...due.items.map((i) => i.waitingSince.getTime()));
     const message = pingText({
-      workspaceName: name,
+      workspaceName,
       workspaceId,
       panelUrl,
       mine: count('mine'),
@@ -204,23 +213,29 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
       text: `${message.text}\n${message.url}`,
     });
 
+    const liveTarget = async (tx: Executor) => {
+      const target = await links.findById(workspaceId, link.id, tx);
+      return target && target.removedAt === null ? target : null;
+    };
     let stop: Date | null = null;
     await transaction(async (tx) => {
       switch (outcome.outcome) {
         case 'accepted': {
           await pings.setOutcome(workspaceId, pingId, 'accepted', tx);
-          const current = await links.findLiveByAccount(workspaceId, accountId, {}, tx);
-          if (current?.blockedAt && (await links.clearBlocked(workspaceId, current.id, tx))) {
+          // Only the link the ping went to, and only while it is still live: a link made after a
+          // Disconnect during the send is another chat whose reachability this answer says nothing of.
+          const target = await liveTarget(tx);
+          if (target?.blockedAt && (await links.clearBlocked(workspaceId, target.id, tx))) {
             await signals.telegramLinkChanged(tx, workspaceId, accountId);
           }
           return;
         }
         case 'blocked': {
           await pings.setOutcome(workspaceId, pingId, 'blocked', tx);
-          const current = await links.findLiveByAccount(workspaceId, accountId, {}, tx);
-          if (current) {
-            const first = current.blockedAt === null;
-            await links.markBlocked(workspaceId, current.id, clock.now(), tx);
+          const target = await liveTarget(tx);
+          if (target) {
+            const first = target.blockedAt === null;
+            await links.markBlocked(workspaceId, target.id, clock.now(), tx);
             if (first) await signals.telegramLinkChanged(tx, workspaceId, accountId);
           }
           return;
@@ -235,7 +250,8 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
           stop = new Date(clock.now().getTime() + SWEEP_EVERY_MS);
           return;
         case 'transient':
-          // The attempt counts for the period and is not retried.
+        case 'unknown':
+          // The attempt counts for the period and is not retried (an unknown one may have arrived).
           await pings.setOutcome(workspaceId, pingId, 'failed', tx);
           return;
       }
@@ -278,6 +294,11 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
         return { nextRunAt: bot.sendPausedUntil };
       }
 
+      // Read before any send transaction opens, so none of them waits on it.
+      const workspaceName = await workspaces.workspaceName(workspaceId);
+      // The workspace is gone: nothing to send; the next sweep finds no live link and ends the chain.
+      if (workspaceName === null) return { nextRunAt: regular };
+
       await presence.deleteExpired(workspaceId, started);
       const dues = await compute(workspaceId, started, live, null);
 
@@ -288,7 +309,11 @@ export function createSendPings(deps: SendPingsDeps): SendPings {
           if (soonest < nextRunAt.getTime()) nextRunAt = new Date(soonest);
           continue;
         }
-        const { stop } = await sendOne(workspaceId, due, bot);
+        // The budget keeps the whole sweep - plus one send in flight - well inside the job's expiry,
+        // so the cron never starts a second sweep beside a live one; the rest go in the next run, now.
+        const now = clock.now();
+        if (now.getTime() - started.getTime() >= SWEEP_SEND_BUDGET_MS) return { nextRunAt: now };
+        const { stop } = await sendOne(workspaceId, workspaceName, due, bot);
         if (stop) return { nextRunAt: stop };
       }
       return { nextRunAt };

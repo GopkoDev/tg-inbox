@@ -32,7 +32,7 @@ export function createSettings({ links, bots }: SettingsDeps): Settings {
     async mySettings({ workspaceId, accountId, role }, tx) {
       const [link, bot] = await Promise.all([
         links.findLiveByAccount(workspaceId, accountId, {}, tx),
-        bots.inboxBotStatus(workspaceId),
+        bots.inboxBotStatus(workspaceId, tx),
       ]);
       if (!link) {
         return {

@@ -311,23 +311,45 @@ describe('live hub presence (ADR-0002, AC-07)', () => {
     ]);
   });
 
-  it('detach, an access close and stop each delete the lease once', async () => {
+  it('detach and an access close each delete the lease once; a server stop (1001) leaves it to expire', async () => {
     const { hub, open, presence, members } = setup();
     const ws = newId();
     const [a1, a2, a3] = [newId(), newId(), newId()];
     const x = open(ws, a1);
     open(ws, a2);
-    open(ws, a3);
+    const z = open(ws, a3);
     hub.detach(x.socket);
     hub.detach(x.socket);
     members.get(ws)!.delete(a2);
     await hub.revalidate();
     await hub.stop();
     await new Promise((r) => setTimeout(r, 0));
+    expect(z.socket.closed?.code).toBe(1001);
     const closed = presence.calls.filter((c) => c.startsWith('closed'));
+    // A deploy must not make an on-screen member look away: the tab reconnects to another instance
+    // while the old lease still counts until it passes (at most 50 s).
     expect(closed.map((c) => c.split('|')[2]).sort()).toEqual(
-      [0, 1, 2].map((i) => connOf(presence, i)).sort(),
+      [0, 1].map((i) => connOf(presence, i)).sort(),
     );
+  });
+
+  it('a stop still writes a pending screen state before the database is released', async () => {
+    vi.useFakeTimers();
+    try {
+      const { hub, open, presence } = setup({}, { presenceCoalesceMs: 1000 });
+      const [ws, me] = [newId(), newId()];
+      const x = open(ws, me);
+      hub.message(x.socket, Buffer.from(frame(true)));
+      hub.message(x.socket, Buffer.from(frame(false)));
+      await hub.stop();
+      expect(presence.calls.filter((c) => c.startsWith('screen'))).toEqual([
+        `screen|${ws}|${connOf(presence)}|${me}|true`,
+        `screen|${ws}|${connOf(presence)}|${me}|false`,
+      ]);
+      expect(presence.calls.filter((c) => c.startsWith('closed'))).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a membership.deactivated close deletes the lease', async () => {
@@ -339,24 +361,38 @@ describe('live hub presence (ADR-0002, AC-07)', () => {
     expect(presence.calls.filter((c) => c.startsWith('closed'))).toHaveLength(1);
   });
 
-  it('coalesces a burst of frames into one screen write with the last value', async () => {
+  it("writes a socket's first frame at once, then coalesces a burst into one write with the last value", async () => {
     vi.useFakeTimers();
     try {
       const { hub, open, presence } = setup({}, { presenceCoalesceMs: 1000 });
       const [ws, me] = [newId(), newId()];
       const x = open(ws, me);
-      for (const v of [true, false, true, false, true, false, true, false, true, false]) {
+      const screens = () => presence.calls.filter((c) => c.startsWith('screen'));
+      // Leading edge: the opening frame of a reconnected tab is not held back by the window.
+      hub.message(x.socket, Buffer.from(frame(true)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screens()).toEqual([`screen|${ws}|${connOf(presence)}|${me}|true`]);
+      for (const v of [false, true, false, true, false, true, false, true, false]) {
         hub.message(x.socket, Buffer.from(frame(v)));
       }
       await vi.advanceTimersByTimeAsync(999);
-      expect(presence.calls.filter((c) => c.startsWith('screen'))).toEqual([]);
+      expect(screens()).toHaveLength(1);
       await vi.advanceTimersByTimeAsync(2);
-      expect(presence.calls.filter((c) => c.startsWith('screen'))).toEqual([
+      expect(screens()).toEqual([
+        `screen|${ws}|${connOf(presence)}|${me}|true`,
         `screen|${ws}|${connOf(presence)}|${me}|false`,
       ]);
+      // Within the next window: held back again, at most one write per window.
       hub.message(x.socket, Buffer.from(frame(true)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screens()).toHaveLength(2);
       await vi.advanceTimersByTimeAsync(1000);
-      expect(presence.calls.filter((c) => c.startsWith('screen'))).toHaveLength(2);
+      expect(screens()).toHaveLength(3);
+      // A quiet window later, the next frame is written at once.
+      await vi.advanceTimersByTimeAsync(5000);
+      hub.message(x.socket, Buffer.from(frame(false)));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(screens()).toHaveLength(4);
     } finally {
       vi.useRealTimers();
     }
@@ -393,10 +429,14 @@ describe('live hub presence (ADR-0002, AC-07)', () => {
       const { hub, open, presence } = setup({}, { presenceCoalesceMs: 100 });
       const x = open(newId(), newId());
       hub.message(x.socket, Buffer.from(frame(true)));
+      hub.message(x.socket, Buffer.from(frame(false)));
       hub.detach(x.socket);
       hub.message(x.socket, Buffer.from(frame(true)));
       await vi.advanceTimersByTimeAsync(500);
-      expect(presence.calls.filter((c) => c.startsWith('screen'))).toEqual([]);
+      // Only the leading write of the first frame; the pending one died with the socket.
+      expect(
+        presence.calls.filter((c) => c.startsWith('screen')).map((c) => c.split('|')[4]),
+      ).toEqual(['true']);
     } finally {
       vi.useRealTimers();
     }

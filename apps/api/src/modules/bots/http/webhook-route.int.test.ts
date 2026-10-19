@@ -460,6 +460,33 @@ describe('POST /api/telegram/webhook/:botId (postgres)', () => {
       expect(jobs.map((j) => j.telegram_user_id)).toEqual(['880100', '880101', '880102']);
     });
 
+    it('a flood of fake starts from one Telegram user queues one refusal answer a minute (B2, AC-05)', async () => {
+      const b = await withMember();
+      // The throttle is a one-minute slot: start the flood well inside one.
+      for (;;) {
+        const { rows } = await sql<{
+          s: number;
+        }>`select extract(second from now())::int as s`.execute(db);
+        if (rows[0]!.s < 45) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      const before = (await botMessageJobs()).length;
+      for (let n = 1; n <= 12; n += 1) {
+        const fake = `tgi_${String(n).padStart(2, '0')}${'q'.repeat(41)}`;
+        expect((await deliver(b, start(`/start ${fake}`, 880200, 100 + n))).statusCode).toBe(200);
+      }
+      // Another user's refusal is not held back by the first one's.
+      expect(
+        (await deliver(b, start(`/start tgi_${'w'.repeat(43)}`, 880201, 200))).statusCode,
+      ).toBe(200);
+      await noCustomerRows(b.workspaceId);
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => [j.kind, j.telegram_user_id])).toEqual([
+        ['link_expired', '880200'],
+        ['link_expired', '880201'],
+      ]);
+    });
+
     it('anything from a linked sender is consumed: text, media, edit, campaign start - at most one notice an hour', async () => {
       const b = await withMember({ linked: true });
       const before = (await botMessageJobs()).length;

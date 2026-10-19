@@ -36,7 +36,7 @@ The producer, the heartbeat (ping every 25 s), the 5 s re-check, the at-most-onc
 
 - **Opener:** the workspace frame (SCR-15), on every page of the workspace, one socket per tab, shared by the inbox, attention and notifications stores (ADR-0002).
 - **Direction:** server → client **and** client → server. The client sends only `presence`. The server reads only `presence` and ignores anything else without closing the socket.
-- **Lifecycle side effects:** open → a presence lease for this connection (assumption 6). Pong → the lease is extended. A clean close, including `4403` / `4401` when access ends → the lease is deleted. A dead connection stops counting once its lease passes, at most 50 s after the last pong (flow 7).
+- **Lifecycle side effects:** open → a presence lease for this connection (assumption 6). Pong → the lease is extended. A clean close, including `4403` / `4401` when access ends → the lease is deleted. A server-initiated `1001` (deploy, restart) does **not** delete it: the tab reconnects to another instance with a new lease, and the old one keeps counting until it lapses, so a restart never makes an on-screen member look away. A dead connection stops counting once its lease passes, at most 50 s after the last pong (flow 7).
 
 ### Frame: `presence` (v1) — client → server, added
 
@@ -48,8 +48,8 @@ The producer, the heartbeat (ping every 25 s), the 5 s re-check, the at-most-onc
 - **When sent:** once right after the socket opens, and on every `visibilitychange`.
 - **Server handling** (flow 7):
   - parsed with zod; a frame that fails (unknown type, extra or wrong fields, over the existing 1024-byte inbound cap `LIVE_MAX_INBOUND_BYTES`) is ignored;
-  - coalesced to one write per second per socket, the last value wins;
-  - `on_screen: false` → `tab_presences.on_screen = false`, `last_on_screen_at = now`;
+  - at most one write per second per socket: a frame outside a window is written at once (leading edge, so a reconnected tab's opening frame is not held back), frames inside it collapse into one trailing write with the last value;
+  - `on_screen: false` → `tab_presences.on_screen = false`; `last_on_screen_at = now` **only on a real on → off transition** (the lease was on screen). An off frame on a lease that was never on screen (a tab that opened or reconnected hidden) keeps `last_on_screen_at` NULL, so it counts away at once; a repeated off frame keeps the time the tab left;
   - `on_screen: true` → `on_screen = true`. If this member got a ping in this workspace within the last 15 min, that ping's `opened_at` is set (spec §7 "ping → panel" KPI). The same happens when the first frame after open says `true`.
   - every write is scoped by the socket's workspace id and connection id, so a frame affects only its own member's lease (sad.md §8 *Untrusted content*).
 - **Away for W** = no lease of this member with `live_until > now` and (`on_screen` or `last_on_screen_at > now − 10 min`). That gives the spec §6 freshness: away ≤ 60 s after a lost tab, ≤ 10 min + 60 s after a hidden one.
@@ -130,7 +130,10 @@ Delivery (at-most-once, gap → `resync`), the 1000-byte cap and zod validation 
 | `blocked` (403 "blocked by the user") | `outcome = blocked` — the attempt counts for the period, no retry | `blocked_at = now` if null | `telegram_link.changed` if it was null | continues |
 | `rate_limited(retryAfter)` (429) | deleted with its items (`ON DELETE CASCADE`) — the conversations stay due | — | — | **stops**; `bots.send_paused_until = now + retry_after` (later value kept); next link after the pause |
 | `bot_unavailable` (401) | deleted with its items | — | `bot.changed` (bots marks `needs_token`) | **stops** |
-| `transient` (timeout, network) | `outcome = failed` — the attempt counts, no retry | — | — | continues |
+| `transient` (Telegram answered an error without `retry_after`, or the request was never written: definitely not delivered) | `outcome = failed` — the attempt counts, no retry | — | — | continues |
+| `unknown` (timeout or connection lost after the request was written: may have been delivered) | `outcome = failed` — the attempt counts, never retried | — | — | continues |
+
+  The member's send transaction (step 5) takes the membership `FOR SHARE`, then the advisory lock `pings:<workspace>:<account>`, then the link `FOR SHARE`, and only then re-reads the due set and the last ping, all on the transaction's own connection. Two sweeps of one workspace (one past its job expiry and the cron's new one, or two instances) therefore prepare one member one at a time, and the second sees the first's ping and keeps the 10-minute spacing. A sweep starts no member send after 30 s (`SWEEP_SEND_BUDGET_MS`); the rest go in the next link, enqueued at once, so a live sweep always ends inside `expireInSeconds = 60`. The outcome transaction updates only the link the ping went to, and only while it is still live (a link made after a Disconnect during the send is untouched).
 
   A process that dies between steps 5 and 6 leaves `outcome = sending`, which counts like `failed` (data-model assumption 8): never re-pinged in that period.
   7. Enqueue the next link: `startAfter` 20 s, or the end of the send pause.
@@ -176,7 +179,8 @@ Delivery (at-most-once, gap → `resync`), the 1000-byte cap and zod validation 
 
   Deactivation and a different bot enqueue nothing (flows 15, 16).
 - **Options:** `retryLimit = 2` with backoff, `expireInSeconds = 30`, `deadLetter = notifications.send-bot-message-dlq` (sad.md §7, flow 10).
-- **Work** (flow 10): read the workspace name and `pingReadiness`. Bot not connected or not working → finish without sending. Send-paused → retry after the pause. Else build the text and call `sendMemberMessage` (paced with pings, behind the same pause). Outcomes: `accepted` → done; `blocked` → done, nothing to retry; `rate_limited` → store the pause, retry after it; `transient` → fail the attempt (pg-boss retries). For `notifications_off`, every finish — sent, blocked, bot not working, or the last failed attempt — clears the removed link's `telegram_user_id` (data-model assumption 3).
+- **Work** (flow 10): read the workspace name and `pingReadiness`. Bot not connected or not working → finish without sending. Send-paused → retry after the pause. Else build the text and call `sendMemberMessage` (paced with pings, behind the same pause). Outcomes: `accepted` → done; `blocked` → done, nothing to retry; `rate_limited` → store the pause, retry after it; `transient` (definitely not delivered) → fail the attempt (pg-boss retries); `unknown` (may have been delivered) → done without a retry, logged with outcome `unknown`, so a member never gets the same answer twice. For `notifications_off`, every finish — sent, blocked, bot not working, unknown, or the last failed attempt — clears the removed link's `telegram_user_id` (data-model assumption 3).
+- **Refusal throttle:** `link_expired` and `cannot_connect` go to whoever sent the start, so anyone can ask for one. At most one of each kind is queued per (workspace, Telegram user) per one-minute slot (pg-boss `singletonKey = refusal:<workspace>:<telegram user>:<kind>`, `singletonSeconds = 60`, a conditional insert); the extras are consumed silently (the update is still not captured). A flood of fake `/start tgi_…` from one account therefore costs one send a minute and cannot run the bot into Telegram's limit. A `429` still pauses every member send of the bot: Telegram's answer does not say whether the limit was the chat's or the bot's, and ignoring its `retry_after` risks a longer flood wait that would also hold up customer replies; with pings ≤ 1 per member per 10 min and refusals ≤ 1 per user per minute, no single member chat can produce the burst that triggers it.
 - **Idempotency:** pg-boss job id; a completed job never runs again. A retry after a timeout may repeat the answer in the chat; answers carry no state, so this is accepted (sad.md §6 assumptions).
 - **Dead-letter:** after 3 failed attempts the job goes to `notifications.send-bot-message-dlq`, logged by kind and outcome code. Nothing in the panel depends on the answer. A run-book integrity query catches a member-removed link that still holds a Telegram id an hour later (data-model assumption 3).
 - **Origin:** seeded flow 2 "enqueue the answer …"; flows 9, 10, 11.

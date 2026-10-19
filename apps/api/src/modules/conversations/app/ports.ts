@@ -605,11 +605,13 @@ export interface NotificationReads {
   /**
    * The open waiting conversations of the workspace, oldest period first, optionally narrowed to
    * `conversationIds`. `accountIds` are the members whose read state is wanted; the assignee's is
-   * returned whether or not they are listed (the 5-minute team reach, flow 13).
+   * returned whether or not they are listed (the 5-minute team reach, flow 13). `tx` joins the
+   * caller's transaction (the ping send's re-check, under its locks).
    */
   waitingForPings(
     workspaceId: string,
     query: { conversationIds?: string[]; accountIds: string[] },
+    tx?: Executor,
   ): Promise<WaitingConversation[]>;
   /**
    * Open conversations that are the member's or unassigned and have a customer arrival after the

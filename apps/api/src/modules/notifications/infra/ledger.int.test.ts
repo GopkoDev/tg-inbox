@@ -108,6 +108,29 @@ describe('presence and ping ledger repositories (Postgres)', () => {
       expect(await lease(id)).toMatchObject({ on_screen: true, last_on_screen_at: sec(30) });
     });
 
+    it('an off frame stamps last_on_screen_at only when the tab really leaves the screen (D1)', async () => {
+      const { accountId, a } = await twoWorkspacesWithLinks(db);
+      // A tab that opened hidden and was never on screen: an off frame keeps it never-on-screen.
+      const hidden = await insertPresence(db, {
+        workspaceId: a.workspaceId,
+        accountId,
+        openedAt: sec(0),
+        onScreen: false,
+      });
+      expect(await presence.setScreen(a.workspaceId, hidden, false, sec(20))).toBe(true);
+      expect(await lease(hidden)).toMatchObject({ on_screen: false, last_on_screen_at: null });
+      // A tab that already left at 20 s: a repeated off frame keeps the time it left.
+      const left = await insertPresence(db, {
+        workspaceId: a.workspaceId,
+        accountId,
+        openedAt: sec(0),
+        onScreen: false,
+        lastOnScreenAt: sec(20),
+      });
+      await presence.setScreen(a.workspaceId, left, false, sec(40));
+      expect(await lease(left)).toMatchObject({ on_screen: false, last_on_screen_at: sec(20) });
+    });
+
     it('close deletes the lease, only inside its workspace', async () => {
       const { accountId, a, b } = await twoWorkspacesWithLinks(db);
       const id = await insertPresence(db, { workspaceId: a.workspaceId, accountId });

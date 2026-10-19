@@ -81,7 +81,7 @@ export function createConnectLinkIssuer(deps: ConnectLinkIssuerDeps): ConnectLin
         if (await links.findLiveByAccount(workspaceId, accountId, {}, tx)) {
           throw new TelegramAlreadyLinkedError(await settings.mySettings(input, tx));
         }
-        const bot = await bots.pingReadiness(workspaceId);
+        const bot = await bots.pingReadiness(workspaceId, tx);
         if (!bot || bot.state !== 'connected') {
           throw new PingsNeedWorkingBotError(await settings.mySettings(input, tx));
         }

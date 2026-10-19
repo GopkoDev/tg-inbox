@@ -12,7 +12,9 @@ import { createNotificationSignals } from '../infra/signals.js';
 import { createPingRepo } from '../infra/ping-repo.js';
 import { createPresenceRepo } from '../infra/presence-repo.js';
 import { createTelegramLinkRepo } from '../infra/telegram-link-repo.js';
-import type { SendMemberMessage, TelegramLinkRepo } from './ports.js';
+import { createDb } from '../../../platform/db.js';
+import { createNotificationQueries } from '../../conversations/infra/notification-queries.js';
+import type { PingRepo, SendMemberMessage, TelegramLinkRepo, WaitingReads } from './ports.js';
 import { createSendPings } from './send-pings.js';
 
 const NOW = new Date('2026-10-19T12:00:00Z');
@@ -70,10 +72,13 @@ describe('runSweep (Postgres + fake Bot API)', () => {
   /** Test seams: wrap one port of the real use case. */
   function build(options: {
     links?: (real: TelegramLinkRepo) => TelegramLinkRepo;
+    pings?: (real: PingRepo) => PingRepo;
+    reads?: (real: WaitingReads) => WaitingReads;
     beforeMembershipLock?: () => Promise<void>;
     send?: SendMemberMessage;
   }) {
     const realLinks = createTelegramLinkRepo(db());
+    const realPings = createPingRepo(db());
     return createSendPings({
       transaction: (fn) => db().transaction().execute(fn),
       membership: {
@@ -88,8 +93,8 @@ describe('runSweep (Postgres + fake Bot API)', () => {
       },
       links: options.links ? options.links(realLinks) : realLinks,
       presence: createPresenceRepo(db()),
-      pings: createPingRepo(db()),
-      reads: deps.notificationReads,
+      pings: options.pings ? options.pings(realPings) : realPings,
+      reads: options.reads ? options.reads(deps.notificationReads) : deps.notificationReads,
       bots: deps.bots,
       workspaces: deps.workspaceAccess,
       send: options.send ?? deps.bots.sendMemberMessage,
@@ -271,6 +276,80 @@ describe('runSweep (Postgres + fake Bot API)', () => {
         },
       }).runSweep(s.workspaceId);
       expect(sends(s)).toEqual([]);
+    });
+
+    it('two sweeps that see different conversations of one member at once still send one ping (B3, AC-08)', async () => {
+      const s = await seed();
+      const second = await insertConversation(db(), {
+        workspaceId: s.workspaceId,
+        contactId: await insertContact(db(), {
+          workspaceId: s.workspaceId,
+          telegramUserId: nextUser++,
+        }),
+        assigneeAccountId: s.accountId,
+        waitingSince: ago(6),
+        waitingStartedBy: 'message',
+      });
+      // Each sweep's first read sees one of the two (a sweep that overran its expiry and the cron's
+      // new one read at different moments); the ledger items are disjoint, so only a per-member
+      // lock keeps the 10-minute spacing.
+      const seeing =
+        (only: string) =>
+        (real: WaitingReads): WaitingReads => ({
+          async waitingForPings(w, query, ...rest) {
+            const rows = await real.waitingForPings(w, query, ...rest);
+            return query.conversationIds ? rows : rows.filter((r) => r.conversationId === only);
+          },
+        });
+      // The winner holds its send transaction open a while after the ledger insert.
+      const slowCommit = (real: PingRepo): PingRepo => ({
+        ...real,
+        async insertWithItems(...args) {
+          const result = await real.insertWithItems(...args);
+          await pause(400);
+          return result;
+        },
+      });
+      await Promise.all([
+        build({ reads: seeing(s.conversationId), pings: slowCommit }).runSweep(s.workspaceId),
+        build({ reads: seeing(second), pings: slowCommit }).runSweep(s.workspaceId),
+      ]);
+      expect(await pingRows(s)).toHaveLength(1);
+      expect(sends(s)).toHaveLength(1);
+    });
+
+    it('a send transaction never needs a second pool connection (B4)', async () => {
+      const s = await seed();
+      // One connection, and a short wait for it: a read outside the open transaction would starve.
+      const single = createDb(database.url, { max: 1, connectionTimeoutMillis: 1000 });
+      try {
+        const sweep = createSendPings({
+          transaction: (fn) => single.transaction().execute(fn),
+          membership: {
+            lockActiveMembers: (tx, w, ids) =>
+              deps.workspaceAccess.lockActiveMembers(
+                tx as Parameters<typeof deps.workspaceAccess.lockActiveMembers>[0],
+                w,
+                ids,
+              ),
+          },
+          links: createTelegramLinkRepo(single),
+          presence: createPresenceRepo(single),
+          pings: createPingRepo(single),
+          reads: createNotificationQueries(single),
+          bots: deps.bots,
+          workspaces: deps.workspaceAccess,
+          send: deps.bots.sendMemberMessage,
+          signals: createNotificationSignals(),
+          clock,
+          panelUrl: 'http://localhost:5173',
+        });
+        await sweep.runSweep(s.workspaceId);
+        expect(sends(s)).toHaveLength(1);
+        expect(await pingRows(s)).toMatchObject([{ outcome: 'accepted' }]);
+      } finally {
+        await single.destroy();
+      }
     });
 
     it('two workers sweeping at once leave one ping and one ledger item per period (QG-1 f)', async () => {

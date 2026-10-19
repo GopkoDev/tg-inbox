@@ -137,13 +137,17 @@ describe('sendMemberMessage', () => {
     expect(calls(h)).toHaveLength(0);
   });
 
-  it.each([
-    { outcome: 'unknown' },
-    { outcome: 'not_accepted' },
-  ] as const satisfies readonly SendOutcome[])('%j is transient', async (outcome) => {
+  it('not accepted without a retry_after is transient: Telegram definitely did not take it', async () => {
     const { h, send } = setup();
-    h.telegram.sendResult = outcome;
+    h.telegram.sendResult = { outcome: 'not_accepted' } satisfies SendOutcome;
     expect(await send.sendMemberMessage(req)).toEqual({ outcome: 'transient' });
+    expect(h.bots.rows[0]!.sendPausedUntil ?? null).toBeNull();
+  });
+
+  it('a timeout or a reset after the request was written is unknown: it may have been delivered', async () => {
+    const { h, send } = setup();
+    h.telegram.sendResult = { outcome: 'unknown' } satisfies SendOutcome;
+    expect(await send.sendMemberMessage(req)).toEqual({ outcome: 'unknown' });
     expect(h.bots.rows[0]!.sendPausedUntil ?? null).toBeNull();
   });
 

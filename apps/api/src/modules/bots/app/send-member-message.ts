@@ -73,7 +73,7 @@ export function createSendMemberMessage({
           return { outcome: 'rate_limited', retryAfter };
         }
         case 'unknown':
-          return { outcome: 'transient' };
+          return { outcome: 'unknown' };
       }
     },
   };

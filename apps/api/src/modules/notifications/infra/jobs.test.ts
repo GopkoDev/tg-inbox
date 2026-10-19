@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
-import { SWEEP_EVERY_MS } from '../domain/constants.js';
+import { SWEEP_EVERY_MS, SWEEP_SEND_BUDGET_MS } from '../domain/constants.js';
 import {
+  SEND_PINGS_EXPIRE_SECONDS,
   createSchedulePingsHandler,
   createSendPingsHandler,
   SendBotMessageJob,
@@ -11,6 +12,12 @@ import {
 
 const W = '0199a000-0000-7000-8000-0000000000a1';
 const L = '0199a000-0000-7000-8000-0000000000c1';
+
+describe('send-pings expiry (B3)', () => {
+  it('outlasts the send budget plus one 10 s send and pacing, so the cron never starts a second sweep beside a live one', () => {
+    expect(SEND_PINGS_EXPIRE_SECONDS * 1000).toBeGreaterThanOrEqual(SWEEP_SEND_BUDGET_MS + 20_000);
+  });
+});
 
 describe('SendBotMessageJob (events.md)', () => {
   it.each(['connected', 'already_connected', 'notifications_off', 'chat_only_notifications'])(

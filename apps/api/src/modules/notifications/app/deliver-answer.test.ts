@@ -176,6 +176,13 @@ describe('deliverAnswer (flow 10)', () => {
     expect(await s.deliver.deliver(W, withLink('connected'))).toEqual({ result: 'failed' });
   });
 
+  it('unknown (maybe delivered) is never retried: a second answer would be a duplicate', async () => {
+    const s = setup({ outcome: { outcome: 'unknown' } });
+    s.link();
+    expect(await s.deliver.deliver(W, withLink('connected'))).toEqual({ result: 'unknown' });
+    expect(s.sent).toHaveLength(1);
+  });
+
   it('an answer for a link that is gone or removed is dropped, not sent', async () => {
     const s = setup();
     expect(await s.deliver.deliver(W, withLink('connected'))).toEqual({ result: 'done' });
@@ -198,6 +205,7 @@ describe('deliverAnswer (flow 10)', () => {
       ['accepted', { outcome: 'accepted' }],
       ['blocked', { outcome: 'blocked' }],
       ['bot_unavailable', { outcome: 'bot_unavailable' }],
+      ['unknown', { outcome: 'unknown' }],
     ] as const)('after %s', async (_name, outcome) => {
       const s = setup({ outcome });
       const row = s.link(removed);

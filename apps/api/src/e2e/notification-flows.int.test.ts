@@ -313,7 +313,12 @@ describe('operator-notifications end-to-end stories (postgres + pg-boss worker +
     const w = await workspace();
     const a = await person(w.ws, { name: 'Anna A' });
     const b = await person(w.ws, { name: 'Boris B' });
-    const [tgA, tgB, tgX] = [nextTelegramUser++, nextTelegramUser++, nextTelegramUser++];
+    const [tgA, tgB, tgX, tgY] = [
+      nextTelegramUser++,
+      nextTelegramUser++,
+      nextTelegramUser++,
+      nextTelegramUser++,
+    ];
     const expectOnly = async (tgId: number, kind: AnswerKind, reason?: CannotConnectReason) => {
       await waitFor(() => expect(sentTo(w, tgId)).toContain(answerFor(w, kind, reason)));
     };
@@ -325,12 +330,10 @@ describe('operator-notifications end-to-end stories (postgres + pg-boss worker +
     await expectOnly(tgX, 'link_expired');
     expect(await liveLinks(w.ws)).toHaveLength(0);
 
-    // Expired: past 10 minutes.
+    // Expired: past 10 minutes. (Another Telegram user: one refusal of a kind per user a minute.)
     clock.advance(11 * MINUTE);
-    expect((await deliver(w, tgX, newer)).statusCode).toBe(200);
-    await waitFor(() =>
-      expect(sentTo(w, tgX).filter((t) => t === answerFor(w, 'link_expired'))).toHaveLength(2),
-    );
+    expect((await deliver(w, tgY, newer)).statusCode).toBe(200);
+    await expectOnly(tgY, 'link_expired');
     expect(await liveLinks(w.ws)).toHaveLength(0);
 
     // Used: a link works once.

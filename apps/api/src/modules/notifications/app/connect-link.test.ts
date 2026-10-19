@@ -35,6 +35,17 @@ function setup() {
 }
 
 describe('createConnectLink (AC-04, AC-05, AC-06, AC-12, AC-13)', () => {
+  it('reads the bot inside its own transaction, never on a second connection (B4)', async () => {
+    const { h, issuer } = setup();
+    await issuer.createConnectLink(input);
+    h.setBot(W, { state: 'needs_token' });
+    await expect(issuer.createConnectLink({ ...input, accountId: B })).rejects.toBeInstanceOf(
+      PingsNeedWorkingBotError,
+    );
+    expect(h.botReads.length).toBeGreaterThanOrEqual(3);
+    expect(h.botReads.every((tx) => tx !== undefined)).toBe(true);
+  });
+
   it('issues a t.me link, stores only the hash, expires in 10 minutes', async () => {
     const { h, issuer } = setup();
     const issued = await issuer.createConnectLink(input);
