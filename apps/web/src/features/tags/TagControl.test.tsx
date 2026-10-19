@@ -377,6 +377,20 @@ describe('SCR-20 limits and refusals (AC-08, AC-14, AC-15)', () => {
     ).toBeInTheDocument();
   });
 
+  it('409 CONTACT_TAG_LIMIT_REACHED re-reads the contact: its 20 tags show and the rows are disabled', async () => {
+    api.addContactTag.mockRejectedValue(
+      refusal(409, ErrorCode.CONTACT_TAG_LIMIT_REACHED, { limit: 20 }),
+    );
+    api.getContact.mockResolvedValue(contact(twenty));
+    renderControl([]);
+    await openControl();
+    fireEvent.click(option('VIP'));
+    await flush();
+    expect(api.getContact).toHaveBeenCalledWith(WS, C1, { background: true });
+    expect(within(popover()).getByRole('button', { name: 'Remove tag T0' })).toBeEnabled();
+    expect(option('VIP')).toBeDisabled();
+  });
+
   it('409 TAG_LIMIT_REACHED on create: the workspace limit, picking existing still works', async () => {
     api.addContactTag.mockRejectedValueOnce(
       refusal(409, ErrorCode.TAG_LIMIT_REACHED, { limit: 100 }),
@@ -476,6 +490,19 @@ describe('SCR-20 live, keyboard and focus', () => {
     expect(input()).toHaveValue('w');
     expect(optionNames()).toEqual(['Create tag "w"']);
     expect(within(popover()).getByRole('button', { name: 'Remove tag Kyiv' })).toBeInTheDocument();
+  });
+
+  it('reopened after a tags.changed while closed: the tags are read again in the background', async () => {
+    renderControl([]);
+    await openControl();
+    expect(optionNames()).toHaveLength(5);
+    fireEvent.keyDown(input(), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    // a teammate deleted three tags while the control was closed
+    api.listTags.mockResolvedValue({ workspace_id: WS, items: [KYIV, VIP] });
+    await openControl();
+    expect(api.listTags).toHaveBeenLastCalledWith(WS, { background: true });
+    expect(optionNames()).toEqual(['Kyiv', 'VIP']);
   });
 
   it('Up / Down move the active option, Enter picks it, Esc closes and focus returns to Add tag', async () => {

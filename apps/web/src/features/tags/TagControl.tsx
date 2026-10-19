@@ -78,12 +78,14 @@ export function TagControl({
   const items = useTagsStore((s) => (s.workspaceId === workspaceId ? s.items : NO_TAGS));
   const status = useTagsStore((s) => (s.workspaceId === workspaceId ? s.status : 'loading'));
 
-  // The workspace's tags follow `tags.changed` while the control is open.
+  // The workspace's tags follow `tags.changed` while the control is open. Frames that came while
+  // it was closed were not followed, so every opening reads them again: in the background when a
+  // list is already shown, with the skeletons otherwise.
   useEffect(() => {
     if (!open) return;
     const store = useTagsStore.getState();
-    if (store.workspaceId !== workspaceId || store.status !== 'ready')
-      void store.load(workspaceId, guard, {});
+    const shown = store.workspaceId === workspaceId && store.status === 'ready';
+    void store.load(workspaceId, guard, shown ? { background: true } : {});
     return useTagsStore.getState().watch(workspaceId, guard);
     // the guard is stable per address; the tags are read once per opening
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,7 +145,9 @@ export function TagControl({
       case ErrorCode.TAG_LIMIT_REACHED:
         return setNotice('workspace_limit');
       case ErrorCode.CONTACT_TAG_LIMIT_REACHED:
-        return setNotice('contact_limit');
+        // the host shows fewer tags than the contact carries: re-read so the rows disable
+        setNotice('contact_limit');
+        return void useContactsStore.getState().rereadContact(workspaceId, contactId, guard);
       case ErrorCode.TAG_NOT_FOUND:
         setNotice('gone');
         void useTagsStore.getState().load(workspaceId, guard, { background: true });

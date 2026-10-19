@@ -479,6 +479,145 @@ describe('contacts store: live frames', () => {
   });
 });
 
+describe('contacts store: overlapping re-reads (AC-06, AC-13)', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  }
+  async function opened() {
+    openEverything();
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    await useContactsStore.getState().openProfile(A, C1, guard);
+    await useContactsStore.getState().openHeader(A, C1, guard);
+    useContactsStore.getState().watch(A, guard);
+    vi.clearAllMocks();
+  }
+  const tagged = (name: string) =>
+    profile(C1, {
+      tags: [
+        {
+          id: id(300),
+          name,
+          added_by: { account_id: id(800), display_name: 'Test User' },
+          added_at: at(1),
+        },
+      ],
+    });
+  const changed = frame({
+    type: 'conversation.changed',
+    conversation_id: CONV,
+    item: { type: 'message', id: id(503) },
+    change: 'created',
+  });
+
+  it('two contact re-reads answering in reverse order: the newer answer stays', async () => {
+    await opened();
+    const older = deferred<ContactProfile>();
+    const newer = deferred<ContactProfile>();
+    api.getContact
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(older.promise)
+      .mockReturnValueOnce(newer.promise)
+      .mockReturnValueOnce(newer.promise);
+    api.listContactTagHistory.mockResolvedValue(history());
+    emit(frame({ type: 'tags.changed' }));
+    emit(frame({ type: 'tags.changed' }));
+    newer.resolve(tagged('VIP'));
+    await settle();
+    older.resolve(profile());
+    await settle();
+    expect(useContactsStore.getState().profile!.contact!.tags.map((t) => t.name)).toEqual(['VIP']);
+    expect(useContactsStore.getState().header!.contact!.tags.map((t) => t.name)).toEqual(['VIP']);
+  });
+
+  it('two tag-history re-reads answering in reverse order: the newer answer stays', async () => {
+    await opened();
+    const older = deferred<TagHistoryPage>();
+    const newer = deferred<TagHistoryPage>();
+    api.getContact.mockResolvedValue(profile());
+    api.listContactTagHistory.mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    newer.resolve(history({ items: [{ id: id(702) } as never, { id: id(701) } as never] }));
+    await settle();
+    older.resolve(history({ items: [{ id: id(701) } as never] }));
+    await settle();
+    expect(useContactsStore.getState().history!.items.map((e) => e.id)).toEqual([id(702), id(701)]);
+  });
+
+  it('two conversation summary re-reads answering in reverse order: the newer summary stays', async () => {
+    await opened();
+    const olderSummary = deferred<ConversationSummary>();
+    const newerSummary = deferred<ConversationSummary>();
+    api.getContact.mockResolvedValue(profile());
+    api.getContactConversation
+      .mockReturnValueOnce(olderSummary.promise)
+      .mockReturnValueOnce(newerSummary.promise);
+    api.listThreadItems.mockResolvedValue(thread([message(1, 1), message(2, 2)]));
+    emit(changed);
+    emit(changed);
+    newerSummary.resolve(summary({ unread_count: 3, status: 'closed' }));
+    await settle();
+    olderSummary.resolve(summary({ unread_count: 2 }));
+    await settle();
+    expect(useContactsStore.getState().conversation!.summary!.status).toBe('closed');
+  });
+
+  it('two thread re-reads answering in reverse order: the newer items stay', async () => {
+    await opened();
+    api.getContact.mockResolvedValue(profile());
+    api.getContactConversation.mockResolvedValue(summary());
+    const olderItems = deferred<ThreadPage>();
+    const newerItems = deferred<ThreadPage>();
+    api.listThreadItems
+      .mockReturnValueOnce(olderItems.promise)
+      .mockReturnValueOnce(newerItems.promise);
+    emit(changed);
+    await settle();
+    emit(changed);
+    await settle();
+    expect(api.listThreadItems).toHaveBeenCalledTimes(2);
+    const edited = { ...message(2, 2), body: 'm2 edited' } as ThreadMessage;
+    newerItems.resolve(thread([message(1, 1), edited]));
+    await settle();
+    olderItems.resolve(thread([message(1, 1), message(2, 2)]));
+    await settle();
+    const items = useContactsStore.getState().conversation!.items;
+    expect(items.map((i) => (i as ThreadMessage).body)).toEqual(['m1', 'm2 edited']);
+  });
+
+  it('a next history page answering after a first-page re-read moved the cursor is dropped', async () => {
+    openEverything();
+    api.listContactTagHistory.mockResolvedValue(
+      history({ items: [{ id: id(710) } as never], has_next: true, next_cursor: 'h1' }),
+    );
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    await useContactsStore.getState().openProfile(A, C1, guard);
+    useContactsStore.getState().watch(A, guard);
+    const more = deferred<TagHistoryPage>();
+    api.listContactTagHistory.mockReturnValueOnce(more.promise);
+    const loading = useContactsStore.getState().loadMoreHistory(A, guard);
+    // a new entry arrives: the first page now ends one entry later
+    api.listContactTagHistory.mockResolvedValueOnce(
+      history({
+        items: [{ id: id(711) } as never, { id: id(710) } as never],
+        has_next: true,
+        next_cursor: 'h2',
+      }),
+    );
+    emit(frame({ type: 'contact.changed', contact_id: C1, change: 'tags' }));
+    await settle();
+    // the page after h1 starts with the entry the fresh first page already ends with's successor
+    more.resolve(history({ items: [{ id: id(709) } as never], has_next: true, next_cursor: 'h3' }));
+    await loading;
+    const h = useContactsStore.getState().history!;
+    expect(h.items.map((e) => e.id)).toEqual([id(711), id(710)]);
+    expect(h.nextCursor).toBe('h2');
+    expect(h.more).toBe('idle');
+  });
+});
+
 describe('contacts store never marks read (ADR-0006, AC-05)', () => {
   it('issues no mark-read request on any path: open, page, retry, live, close', async () => {
     openEverything();

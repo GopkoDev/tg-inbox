@@ -124,6 +124,15 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
   /** Counts every profile / header open: late answers of a closed one are dropped. */
   let profileEpoch = 0;
   let headerEpoch = 0;
+  /**
+   * Count every read of one slice (latest wins): two overlapping background re-reads may answer in
+   * reverse order, and the older snapshot must not replace the newer one.
+   */
+  const contactSeq = { profile: 0, header: 0 };
+  let historySeq = 0;
+  let historyMoreSeq = 0;
+  let summarySeq = 0;
+  let itemsSeq = 0;
 
   const here = (workspaceId: string) => get().workspaceId === workspaceId;
   const enter = (workspaceId: string) => {
@@ -223,9 +232,11 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = slice === 'profile' ? profileEpoch : headerEpoch;
+    const seq = ++contactSeq[slice];
     const stale = () =>
       !here(workspaceId) ||
       epoch !== (slice === 'profile' ? profileEpoch : headerEpoch) ||
+      seq !== contactSeq[slice] ||
       get()[slice]?.contactId !== contactId;
     try {
       const contact = await getContact(workspaceId, contactId, background ? BACKGROUND : {});
@@ -248,8 +259,24 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     guard: GuardFn,
     options: { background?: boolean; after?: string },
   ) => {
-    const stale = () => !here(workspaceId) || get().history?.contactId !== contactId;
     const epoch = profileEpoch;
+    const after = options.after;
+    // A first page: the latest read wins. A next page: dropped when a first-page re-read moved the
+    // cursor meanwhile (appending it would skip or repeat entries).
+    const seq = after ? 0 : ++historySeq;
+    const more = after ? ++historyMoreSeq : 0;
+    const stale = () =>
+      !here(workspaceId) ||
+      epoch !== profileEpoch ||
+      get().history?.contactId !== contactId ||
+      (!after && seq !== historySeq);
+    const moved = () => {
+      const open = get().history!;
+      if (!after || open.nextCursor === after) return false;
+      if (more === historyMoreSeq && open.more === 'loading')
+        set({ history: { ...open, more: 'idle' } });
+      return true;
+    };
     try {
       const page = await listContactTagHistory(
         workspaceId,
@@ -257,9 +284,9 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
         options.after ? { after: options.after } : {},
         options.background ? BACKGROUND : {},
       );
-      if (stale() || epoch !== profileEpoch || page.workspace_id !== workspaceId) return;
+      if (stale() || page.workspace_id !== workspaceId || moved()) return;
       const open = get().history!;
-      const known = options.after ? open.items : [];
+      const known = after ? open.items : [];
       const shown = new Set(known.map((e) => e.id));
       set({
         history: {
@@ -268,14 +295,15 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
           items: [...known, ...page.items.filter((e) => !shown.has(e.id))],
           hasNext: page.has_next,
           nextCursor: page.next_cursor,
-          more: 'idle',
+          // a next page still in flight settles `more` itself
+          more: !after && open.more === 'loading' ? 'loading' : 'idle',
         },
       });
     } catch (error) {
-      if (stale() || epoch !== profileEpoch) return;
+      if (stale() || moved()) return;
       if (await guarded(error, workspaceId, guard)) return;
       const open = get().history!;
-      if (options.after) set({ history: { ...open, more: 'error' } });
+      if (after) set({ history: { ...open, more: 'error' } });
       else if (!(options.background && open.status === 'ready'))
         set({ history: { ...open, status: 'error' } });
       // a failed background re-read keeps the entries shown
@@ -292,9 +320,11 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = profileEpoch;
+    const seq = ++itemsSeq;
     const stale = () =>
       !here(workspaceId) ||
       epoch !== profileEpoch ||
+      seq !== itemsSeq ||
       get().conversation?.contactId !== contactId ||
       get().conversation?.summary?.id !== conversationId;
     try {
@@ -359,8 +389,12 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     background: boolean,
   ) => {
     const epoch = profileEpoch;
+    const seq = ++summarySeq;
     const stale = () =>
-      !here(workspaceId) || epoch !== profileEpoch || get().conversation?.contactId !== contactId;
+      !here(workspaceId) ||
+      epoch !== profileEpoch ||
+      seq !== summarySeq ||
+      get().conversation?.contactId !== contactId;
     try {
       const summary = await getContactConversation(
         workspaceId,
