@@ -1,0 +1,823 @@
+# Derived contract for operator-notifications. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (telegram_links, connect_links, conversations.waiting_since)
+#                           + the existing schema (bots.state / username, memberships.role / state,
+#                           conversations + read_marks for the attention count)
+#   error responses       ← sad.md §6 flows 4, 8, 9, 15, 18 and seeded flow 2 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The live frames
+# (telegram_link.changed, the client → server presence frame) and the three pg-boss queues are in
+# events.md.
+#
+# THIS IS A DELTA over the shipped contracts:
+#   - shared-inbox (../../shared-inbox/contracts/openapi.yaml): the inbox routes, the live socket, the
+#     guard responses, ErrorEnvelope, InboxBotStatus;
+#   - assignment-statuses (../../assignment-statuses/contracts/openapi.yaml): the current inbox shapes
+#     (unchanged by this feature);
+#   - workspace-operators (../../workspace-operators/contracts/openapi.yaml): the Team routes,
+#     Membership, Role, the owner-only guard response.
+#   Every operation and schema here carries `x-delta: added` or `x-delta: changed`. An operation or
+#   schema that is not listed here is unchanged and stays defined in its original contract. A changed
+#   schema is restated in full (the shipped schemas are closed: `additionalProperties: false` / zod
+#   strictObject) and names the fields it adds in `x-delta-fields`. Unchanged pieces are external
+#   $refs, never copies.
+#
+# Desktop notifications (US-02, AC-02, AC-03) have NO server-side state: the opt-in is a per-browser
+# flag and the notifications-only service worker decides on its own (sad.md flow 5 postcondition
+# "nothing is sent to the service", ADR-0009). They add no operation here.
+#
+# Deviations from the api-skill defaults are the repo's, recorded in api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - no Idempotency-Key header: every change is idempotent by state (a second Disconnect is a 200 that
+#     changes nothing; a new connect link replaces the previous unused one)
+openapi: 3.1.0
+
+info:
+  title: operator-notifications API (delta over shared-inbox, assignment-statuses, workspace-operators)
+  version: 0.1.0
+  description: |
+    Tells a workspace's members about customers who need them (spec §1). Operators answer only from
+    the web panel, and the panel shows a new customer message only to someone who is looking at it.
+    For pilot teams this is the risk "slow replies from a web-only workspace": if tg-inbox is slower to
+    tell operators than the forwarder bots they use today, they go back to the forwarder.
+
+    The HTTP surface is small, because most of the feature runs in jobs and on the live socket
+    (events.md):
+    - **Attention count** (US-01): `GET …/inbox/attention`, the number of open conversations that are
+      the caller's or unassigned and hold customer messages the caller has not read. The workspace
+      frame refetches it on change frames (ADR-0008).
+    - **Settings — Notifications** (US-03): the caller's own Telegram link state, a single-use connect
+      link (5 per 10 minutes, 10-minute expiry, ADR-0004) and Disconnect. The routes take no account
+      id: a member reads and removes only their own link (AC-12).
+    - **Settings — Team** (US-05, AC-12): the owner-only member list now marks each member "Telegram
+      pings on / off", never the Telegram account.
+    - **Live socket** (US-04): the tab now sends a `presence` frame so the server knows whether the
+      member is away from the web (ADR-0002).
+
+    Every route sits behind the workspace-access guard. A caller who was never a member gets
+    `404 NOT_FOUND` with no hint, a deactivated member `403 ACCESS_REMOVED`, a signed-out caller
+    `401 UNAUTHENTICATED`. Telegram display names are returned as data and shown as plain text only
+    (spec §6.1). No answer ever carries a Telegram user id, a connect token after its one issue, a
+    message text or a ping text.
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+security:
+  - SessionCookie: []
+
+tags:
+  - name: notifications
+    description: Module `notifications` (ADR-0001). Owns Telegram links, connect links, presence leases and the ping ledger. Reaches `workspaces`, `conversations` and `bots` through their app layers
+  - name: inbox
+    description: Module `inbox`. Serves the attention route (a `conversations` read) and the live socket
+  - name: workspaces
+    description: Module `workspaces`. The Team read gains the pings mark through the port `buildDeps()` fills from `notifications` (sad.md §5 construction order)
+
+paths:
+  # ───────────────────────── added operations ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/attention:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [inbox]
+      summary: Read my attention count in this workspace (US-01)
+      description: |
+        Flow 4 and seeded flow 3 (AC-01, AC-12; ADR-0008). Counts the open conversations of this
+        workspace that are assigned to the caller or unassigned and hold a customer arrival after the
+        caller's unread floor (the later of `read_marks.read_through_at` and
+        `memberships.active_since`, the list's unread predicate). A teammate's conversation and a
+        closed one never count. Both roles get the same answer.
+
+        The workspace frame (SCR-15) reads it on open and again, debounced by 300 ms, after every
+        `conversation.changed` frame (message, activity, own read) and every `resync` of this
+        workspace (events.md). At 0 the tab title and the Inbox item show nothing; otherwise the title
+        starts with "(N)" and Inbox shows N. A failed read keeps the last count shown until the next
+        frame.
+
+        Served by `conversations.attentionCount(workspaceId, accountId, activeSince)` through the
+        existing lens indexes (data-model "Reused"). No new table, no new index.
+      operationId: getAttentionCount
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The caller's attention count in this workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AttentionCount" }
+              examples:
+                three:
+                  summary: 2 of mine and 1 unassigned have unread customer messages (AC-01)
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", count: 3 }
+                none:
+                  summary: Nothing needs me — no count in the title, no number at Inbox
+                  value: { workspace_id: "01920000-0000-7000-8000-000000000001", count: 0 }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/notifications:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [notifications]
+      summary: Read my notification settings in this workspace — Telegram link state and the bot's readiness (US-03, US-04)
+      description: |
+        Flows 8 and 18 (AC-04, AC-06, AC-10, AC-12, AC-13; SCR-16, SCR-17). Readable by every active
+        member of either role. It reads **only the caller's own** live Telegram link
+        (`telegram_links_live_workspace_id_account_id_key`) and the bot's readiness (`bots`
+        `pingReadiness`). The answer never carries the Telegram user id.
+
+        The panel shows (flow 18):
+        - `telegram.state: connected`, `pings: on` → "Connected" with the Telegram name and since when,
+          Disconnect only, no connect link (AC-06). With a taken-over bot the inbox notice says new
+          customer messages are not arriving (shared-inbox AC-14);
+        - `pings: not_reachable` → "Not reachable — you blocked the bot in Telegram, unblock it or
+          disconnect" (AC-10);
+        - `pings: paused` → "Pings paused — the bot is not working" (AC-10);
+        - `telegram.state: not_connected` and `can_connect: true` → "Connect Telegram";
+        - `telegram.state: not_connected` and `can_connect: false` → no connect link: Telegram pings
+          need a working bot that receives messages. With `caller_role: operator` the panel says to
+          ask a business owner; with `owner` it links to Settings — Bot (SCR-08) (AC-13).
+
+        Re-read after every `telegram_link.changed` frame (the caller's own sockets only) and every
+        `bot.changed` frame of this workspace (events.md), so SCR-16 and an open connect dialog turn
+        "Connected", "Not reachable", "Pings paused" or "Not connected" without a reload (AC-04).
+
+        Desktop notifications are not part of this answer: their opt-in lives in this browser only
+        (flow 5, ADR-0009).
+      operationId: getNotificationSettings
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The caller's notification settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationSettings" }
+              examples:
+                notConnectedBotReady:
+                  summary: Not connected, the bot works — "Connect Telegram" is offered
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    caller_role: operator
+                    bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                    telegram: { state: not_connected }
+                    can_connect: true
+                connected:
+                  summary: Connected and reachable
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    caller_role: operator
+                    bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                    telegram: { state: connected, display_name: "Test User", linked_at: "2026-10-19T09:12:00Z", blocked_at: null, pings: on }
+                    can_connect: false
+                notReachable:
+                  summary: Connected, but the member blocked the bot in Telegram (AC-10)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    caller_role: owner
+                    bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                    telegram: { state: connected, display_name: "Test User", linked_at: "2026-10-19T09:12:00Z", blocked_at: "2026-10-19T14:40:05Z", pings: not_reachable }
+                    can_connect: false
+                pingsPaused:
+                  summary: Connected, the bot needs a new token (AC-10)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    caller_role: operator
+                    bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: needs_token, can_reply: false, receiving: false }
+                    telegram: { state: connected, display_name: "Test User", linked_at: "2026-10-19T09:12:00Z", blocked_at: null, pings: paused }
+                    can_connect: false
+                noWorkingBot:
+                  summary: Not connected, the bot is taken over — no connect link, an operator asks an owner (AC-13)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    caller_role: operator
+                    bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: taken_over, can_reply: true, receiving: false }
+                    telegram: { state: not_connected }
+                    can_connect: false
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/notifications/telegram/connect-link:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    post:
+      x-delta: added
+      tags: [notifications]
+      summary: Create a single-use connect link for my Telegram (US-03)
+      description: |
+        Flow 8 (AC-04, AC-05, AC-06, AC-12, AC-13; ADR-0004; SCR-17). No request body. The link is for
+        the caller's own membership; the request names no account.
+
+        The checks run in flow 8's order, in one transaction under the `connect-links:<ws>:<account>`
+        advisory lock. The first outcome wins, and nothing is created on a refusal:
+        1. The caller's membership is re-checked → deactivated meanwhile → `403 ACCESS_REMOVED`.
+        2. 5 connect links created by the caller in this workspace within the last 10 minutes
+           (`connect_links.created_at`) → `429 CONNECT_LINK_LIMIT_REACHED` with the time the oldest of
+           them leaves the window (AC-13). Refused requests create no row and never count.
+        3. The caller has a live Telegram link (connected meanwhile, for example from another tab) →
+           `409 TELEGRAM_ALREADY_LINKED` with the current settings (AC-06).
+        4. The bot is not `connected` (not connected, needs a new token, or taken over — a taken-over
+           bot would never receive the Start) → `409 PINGS_NEED_WORKING_BOT` with the current settings
+           (bot state and caller role) (AC-13).
+        5. Otherwise → `201`: the caller's previous unused link is marked replaced (it then answers
+           "link expired" in Telegram, AC-05), and a new one is stored — **only the SHA-256 hash** of
+           its 32 random bytes, expiring in 10 minutes.
+
+        The answer is the only time the token exists outside the member's Telegram: it is never stored,
+        logged or returned again. The panel shows the link, draws its scannable code in the browser and
+        shows the expiry. Pressing Start within 10 minutes redeems it (seeded flow 2) and the dialog
+        turns "Connected" through `telegram_link.changed` (events.md). Asking again from the dialog
+        repeats this request.
+      operationId: createConnectLink
+      responses:
+        "201":
+          description: The connect link, shown once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/IssuedConnectLink" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                bot_username: "test_flowers_bot"
+                url: "https://t.me/test_flowers_bot?start=tgi_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                expires_at: "2026-10-19T09:22:00Z"
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../assignment-statuses/contracts/openapi.yaml#/components/responses/CallerAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+        "409":
+          description: |
+            One of two refusals. Nothing is created in either. `details.settings` is the caller's
+            current `NotificationSettings`, so the panel re-renders SCR-16 from it.
+            - `TELEGRAM_ALREADY_LINKED`: the caller already has a live Telegram link in this workspace
+              (AC-06). The panel shows "Connected" with Disconnect only.
+            - `PINGS_NEED_WORKING_BOT`: the bot is not connected, needs a new token or is taken over
+              (AC-13). The panel shows no connect link and why — ask a business owner, or (owner) go to
+              Settings — Bot.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TelegramAlreadyLinkedError" }
+                  - { $ref: "#/components/schemas/PingsNeedWorkingBotError" }
+              examples:
+                alreadyLinked:
+                  value:
+                    error:
+                      code: TELEGRAM_ALREADY_LINKED
+                      message: "You are already connected — disconnect first to connect another Telegram account"
+                      details:
+                        settings:
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          caller_role: operator
+                          bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                          telegram: { state: connected, display_name: "Test User", linked_at: "2026-10-19T09:12:00Z", blocked_at: null, pings: on }
+                          can_connect: false
+                noWorkingBot:
+                  value:
+                    error:
+                      code: PINGS_NEED_WORKING_BOT
+                      message: "Telegram pings need a working bot that receives messages"
+                      details:
+                        settings:
+                          workspace_id: "01920000-0000-7000-8000-000000000001"
+                          caller_role: owner
+                          bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: needs_token, can_reply: false, receiving: false }
+                          telegram: { state: not_connected }
+                          can_connect: false
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/ConnectLinkLimitReached" }
+
+  /api/workspaces/{workspaceId}/notifications/telegram/disconnect:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    post:
+      x-delta: added
+      tags: [notifications]
+      summary: Disconnect my Telegram — remove my Telegram link in this workspace (US-03)
+      description: |
+        Flow 9 (AC-04, AC-12). No request body and no confirmation. The request names no account, so a
+        member removes only their own link; a business owner has no way to remove it for them.
+
+        In one transaction the caller's live link is locked, marked removed by the member
+        (`removed_reason = member`), and its display name is cleared; the Telegram user id stays only
+        until the "notifications are off" answer job has finished (data-model assumption 3). The
+        account-scoped `telegram_link.changed` signal and the `notifications.send-bot-message` job
+        (`kind: notifications_off`) are published with the write (events.md). With no live link left,
+        the next sweep sends this member no ping.
+
+        A caller with no live link (already removed — a double click, a second tab, a deactivation or
+        a different bot) gets the same `200` and nothing changes. The answer is the caller's settings
+        after the change, so the panel shows "Not connected" at once and offers "Connect Telegram"
+        again while the bot is ready.
+      operationId: disconnectTelegram
+      responses:
+        "200":
+          description: The link is removed, or there was none. The caller's current settings
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/NotificationSettings" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                caller_role: operator
+                bot: { workspace_id: "01920000-0000-7000-8000-000000000001", state: connected, can_reply: true, receiving: true }
+                telegram: { state: not_connected }
+                can_connect: true
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+
+  # ───────────────────────── changed operations ─────────────────────────
+  /api/workspaces/{workspaceId}/memberships:
+    parameters:
+      - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["response.items[].telegram_pings"]
+      tags: [workspaces]
+      summary: List the workspace's members, now with "Telegram pings on / off" per member (US-07 of workspace-operators; US-05, AC-12 here)
+      description: |
+        Flow 15 (AC-12; SCR-13). Unchanged from workspace-operators except that every `Membership` now
+        carries `telegram_pings`: true when the member has a live Telegram link in this workspace. It
+        is read through the `notifications` port that `buildDeps()` gives `team` (sad.md §5), as
+        account ids and booleans only. Never a Telegram id or name, and no link or unlink action
+        (AC-12). A deactivated member is always `false` (the link is removed with the deactivation and
+        not restored on reactivation, AC-10).
+
+        Read when Settings — Team opens. It is **not** pushed live: `telegram_link.changed` is
+        account-scoped (ADR-0010), so an open Team page follows a member's connect or disconnect only
+        on its next read.
+
+        Parameters, paging, ordering and the other answers are unchanged (owner only:
+        `403 OWNER_ONLY` for an operator).
+      operationId: listMemberships
+      parameters:
+        - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/After"
+        - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/Before"
+        - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of members
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MembershipPage" }
+              example:
+                items:
+                  - id: "01920000-0000-7000-8000-0000000000c1"
+                    display_name: "Test User"
+                    email: "owner@example.test"
+                    role: owner
+                    state: active
+                    created_at: "2026-10-01T09:00:00Z"
+                    deactivated_at: null
+                    telegram_pings: true
+                  - id: "01920000-0000-7000-8000-0000000000c2"
+                    display_name: "Test User 2"
+                    email: "operator@example.test"
+                    role: operator
+                    state: active
+                    created_at: "2026-10-02T09:00:00Z"
+                    deactivated_at: null
+                    telegram_pings: false
+                has_next: false
+                has_prev: false
+                next_cursor: null
+        "400": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/OwnerRouteForbidden" }
+        "404": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/memberships/{membershipId}/deactivate:
+    parameters:
+      - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/MembershipId"
+    post:
+      x-delta: changed
+      x-delta-fields: [response.telegram_pings]
+      tags: [workspaces]
+      summary: Deactivate a member — now also removes their Telegram link (US-06 of workspace-operators; AC-10, AC-05 here)
+      description: |
+        Flow 15 (AC-05, AC-10; SCR-14). Unchanged request, checks and refusals (workspace-operators;
+        the unassign of assignment-statuses). **Added** inside the same deactivation transaction, after
+        `conversations.unassignDeactivatedMember`: the `notifications` deactivation port removes the
+        member's live Telegram link (`removed_reason = deactivated`, Telegram id and display name
+        cleared) and marks their unused connect links replaced, so a link issued earlier answers "link
+        expired" (AC-05). `telegram_link.changed` is published with `membership.deactivated`. A ping
+        send racing this transaction serialises on the membership lock (seeded flow 1). The former
+        member gets no bot answer.
+
+        The answer `Membership` now carries `telegram_pings`, always `false` here.
+      operationId: deactivateMembership
+      responses:
+        "200":
+          description: The member, deactivated (or already deactivated)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membership" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c2"
+                display_name: "Test User 2"
+                email: "operator@example.test"
+                role: operator
+                state: deactivated
+                created_at: "2026-10-02T09:00:00Z"
+                deactivated_at: "2026-10-19T15:30:00Z"
+                telegram_pings: false
+        "400": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/MalformedBody" }
+        "401": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/OwnerRouteForbidden" }
+        "404": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/WorkspaceOrItemNotFound" }
+        "413": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "409":
+          description: Unchanged (workspace-operators) — `LAST_ACTIVE_OWNER`
+          content:
+            application/json:
+              schema: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: LAST_ACTIVE_OWNER, message: "A workspace must always have at least one active business owner" }
+
+  /api/workspaces/{workspaceId}/memberships/{membershipId}/reactivate:
+    parameters:
+      - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../workspace-operators/contracts/openapi.yaml#/components/parameters/MembershipId"
+    post:
+      x-delta: changed
+      x-delta-fields: [response.telegram_pings]
+      tags: [workspaces]
+      summary: Reactivate a member — their Telegram link is not restored (AC-10)
+      description: |
+        Flow 15 (AC-10). Unchanged request, checks and refusals (workspace-operators). The link removed
+        at deactivation stays removed: the member's Settings — Notifications shows "Not connected" and
+        they connect again themselves. The answer `Membership` now carries `telegram_pings`, always
+        `false` here.
+      operationId: reactivateMembership
+      responses:
+        "200":
+          description: The member, active again (or already active)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Membership" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c2"
+                display_name: "Test User 2"
+                email: "operator@example.test"
+                role: operator
+                state: active
+                created_at: "2026-10-02T09:00:00Z"
+                deactivated_at: null
+                telegram_pings: false
+        "400": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/MalformedBody" }
+        "401": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/OwnerRouteForbidden" }
+        "404": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/WorkspaceOrItemNotFound" }
+        "413": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+
+  /api/workspaces/{workspaceId}/inbox/live:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["client → server frame presence", "server → client frame telegram_link.changed", "close deletes the tab's presence lease"]
+      tags: [inbox]
+      summary: Open this tab's live socket for one workspace — now opened by the workspace frame and carrying presence (US-01, US-04)
+      description: |
+        Flows 4, 7 and 18, seeded flow 3 (AC-01, AC-04, AC-07, AC-09; ADR-0002, ADR-0010). The upgrade,
+        the guard, the `Origin` check, the heartbeat (ping every 25 s), the 5 s re-check and the close
+        codes are unchanged (shared-inbox `openLiveSocket`).
+
+        **Changed:**
+        - The socket is opened by the **workspace frame** (SCR-15) on every page of the workspace —
+          Inbox, Contacts, Settings — one per tab, shared by the inbox, attention and notifications
+          stores. The path stays under `…/inbox/live`.
+        - The channel is no longer server → client only. The tab sends the `presence` frame
+          (`{ "type": "presence", "v": 1, "on_screen": <bool> }`) when the socket opens and on every
+          Page Visibility change. It is the **only** frame the server reads: zod-parsed, within the
+          existing 1024-byte inbound cap, coalesced to one write per second per socket; anything else
+          is ignored without closing the socket (events.md).
+        - The open registers a presence lease for this connection (50 s, extended by every pong), and
+          a clean close — including the `4403` / `4401` closes when access ends — deletes it. A dead
+          connection stops counting at most 50 s after its last pong (spec §6 presence rows).
+        - A new server → client frame, `telegram_link.changed`, is delivered only to the sockets of
+          the account it concerns (events.md).
+      operationId: openLiveSocket
+      parameters:
+        - in: header
+          name: Upgrade
+          required: true
+          schema: { type: string, const: websocket }
+        - in: header
+          name: Origin
+          required: true
+          description: Unchanged. Must equal the panel's origin
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        "101":
+          description: Switching protocols. The socket carries the frames in events.md (shared-inbox, assignment-statuses and this feature)
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          description: Unchanged — the membership is deactivated, or `Origin` is not the panel's origin
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                accessRemoved:
+                  value:
+                    error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+                foreignOrigin:
+                  value:
+                    error: { code: FORBIDDEN, message: "Forbidden" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Restated only because a security requirement names a local scheme. Identical to the shared-inbox / workspace-operators scheme (workspace-operators ADR-0002)
+
+  responses:
+    ConnectLinkLimitReached:
+      description: |
+        `CONNECT_LINK_LIMIT_REACHED` — the caller created 5 connect links in this workspace within the
+        last 10 minutes (AC-13, spec §6 "≤ 5 requests per 10 min per member"). Only created links count
+        (`connect_links.created_at`); a refused request creates none. Nothing is created.
+        `details.retry_at` is when the oldest counted link leaves the 10-minute window; `Retry-After`
+        gives the same time in whole seconds. The panel says "connect links are limited to 5 per 10
+        minutes — try again at <time>" (SCR-16). Mirrors shared-inbox `ReplyLimitReached`
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1, maximum: 600 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ConnectLinkLimitReachedError" }
+          example:
+            error:
+              code: CONNECT_LINK_LIMIT_REACHED
+              message: "Connect links are limited to 5 per 10 minutes — you can ask for a new one in 4 minutes"
+              details: { limit: 5, window_seconds: 600, retry_at: "2026-10-19T09:26:30Z" }
+
+  schemas:
+    # ───────── attention ─────────
+    AttentionCount:
+      x-delta: added
+      type: object
+      required: [workspace_id, count]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        count:
+          type: integer
+          minimum: 0
+          description: |
+            Open conversations (`conversations.status = 'open'`) of this workspace whose
+            `assignee_account_id` is the caller or null and that hold a customer message received after
+            the caller's unread floor (the list's unread predicate). Not capped
+
+    # ───────── notification settings ─────────
+    NotificationSettings:
+      x-delta: added
+      type: object
+      description: |
+        The caller's own notification settings for this workspace (SCR-16). Answer of
+        `getNotificationSettings` and `disconnectTelegram`, and `details.settings` of the
+        `createConnectLink` refusals
+      required: [workspace_id, caller_role, bot, telegram, can_connect]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        caller_role:
+          $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/Role"
+          description: "`memberships.role` of the caller. Picks the no-working-bot guidance: an operator asks a business owner, an owner gets the way to Settings — Bot (AC-13)"
+        bot:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/InboxBotStatus"
+          description: The bot's state as the inbox shows it (`bots` `pingReadiness`). `needs_token` is "not working"; `taken_over` can still send pings but never receives a Start
+        telegram: { $ref: "#/components/schemas/TelegramLinkState" }
+        can_connect:
+          type: boolean
+          description: True only when `telegram.state` is `not_connected` and `bot.state` is `connected` — the conditions under which `createConnectLink` can succeed (rate limit aside). A connected member is never offered a connect link (AC-06, AC-13)
+
+    TelegramLinkState:
+      x-delta: added
+      description: The caller's live Telegram link in this workspace (`telegram_links` with `removed_at IS NULL`), or none
+      oneOf:
+        - { $ref: "#/components/schemas/TelegramNotConnected" }
+        - { $ref: "#/components/schemas/TelegramConnected" }
+      discriminator:
+        propertyName: state
+        mapping:
+          not_connected: "#/components/schemas/TelegramNotConnected"
+          connected: "#/components/schemas/TelegramConnected"
+
+    TelegramNotConnected:
+      x-delta: added
+      type: object
+      description: No live link — never linked, disconnected, removed by a deactivation or by a different bot (AC-10)
+      required: [state]
+      additionalProperties: false
+      properties:
+        state: { const: not_connected }
+
+    TelegramConnected:
+      x-delta: added
+      type: object
+      description: A live link. Never carries the Telegram user id (spec §6.1)
+      required: [state, display_name, linked_at, blocked_at, pings]
+      additionalProperties: false
+      properties:
+        state: { const: connected }
+        display_name:
+          type: string
+          minLength: 1
+          description: "`telegram_links.display_name` — the member's Telegram name, taken at redeem. Shown only to this member, as plain text (SCR-16, sad.md §8 Untrusted content)"
+        linked_at:
+          type: string
+          format: date-time
+          description: "`telegram_links.linked_at` — \"Connected since\""
+        blocked_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`telegram_links.blocked_at` — since when Telegram answered a ping \"blocked by the user\"; null while reachable. Cleared by the next accepted ping (data-model assumption 2)"
+        pings: { $ref: "#/components/schemas/PingsState" }
+
+    PingsState:
+      x-delta: added
+      type: string
+      description: |
+        Derived, not stored — what the SCR-16 status line says (flow 18 order, first match wins):
+        - `not_reachable`: `blocked_at` is set — "Not reachable — you blocked the bot in Telegram,
+          unblock it or disconnect" (AC-10);
+        - `paused`: the bot is `not_connected` or `needs_token` — "Pings paused — the bot is not
+          working". Nothing is sent and nothing is queued (AC-10);
+        - `on`: otherwise, including a `taken_over` bot, which still sends (AC-10).
+      enum: [on, paused, not_reachable]
+
+    IssuedConnectLink:
+      x-delta: added
+      type: object
+      description: A freshly created connect link (SCR-17). Returned once, never again
+      required: [workspace_id, bot_username, url, expires_at]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        bot_username:
+          type: string
+          description: "`bots.username` of the workspace's bot (`pingReadiness`), for \"open the chat with @…\""
+        url:
+          type: string
+          format: uri
+          pattern: "^https://t\\.me/[A-Za-z0-9_]+\\?start=tgi_[A-Za-z0-9_-]{43}$"
+          description: |
+            The Telegram start link `https://t.me/<bot_username>?start=tgi_<token>`, where `<token>` is
+            32 random bytes in base64url (43 characters, ADR-0004). The 47-character start payload fits
+            Telegram's limit. Only `connect_links.token_hash` (SHA-256 of the 32 bytes) is stored. The
+            panel draws the scannable code from this URL in the browser
+        expires_at:
+          type: string
+          format: date-time
+          description: "`connect_links.expires_at` = `created_at` + 10 minutes (AC-05)"
+
+    # ───────── team (changed) ─────────
+    Membership:
+      x-delta: changed
+      x-delta-fields: [telegram_pings]
+      type: object
+      description: One member on Settings — Team. The fields up to `deactivated_at` are unchanged from workspace-operators
+      required: [id, display_name, email, role, state, created_at, deactivated_at, telegram_pings]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        display_name: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/DisplayName" }
+        email: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/Email" }
+        role: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/Role" }
+        state: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/MembershipState" }
+        created_at: { type: string, format: date-time, description: When the person joined }
+        deactivated_at: { type: [string, "null"], format: date-time }
+        telegram_pings:
+          type: boolean
+          description: "\"Telegram pings on / off\" (AC-12): true when the member has a live `telegram_links` row in this workspace. Never the Telegram account itself. Always false for a deactivated member"
+
+    MembershipPage:
+      x-delta: changed
+      x-delta-fields: ["items[] is the changed Membership"]
+      type: object
+      required: [items, has_next, has_prev, next_cursor]
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/Membership" }
+        has_next: { type: boolean }
+        has_prev: { type: boolean }
+        next_cursor: { type: [string, "null"], format: uuid }
+
+    # ───────── errors (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      x-delta: changed
+      x-delta-fields: [CONNECT_LINK_LIMIT_REACHED, TELEGRAM_ALREADY_LINKED, PINGS_NEED_WORKING_BOT]
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts — the codes this delta uses.
+
+        Existing: UNAUTHENTICATED 401, ACCESS_REMOVED 403, OWNER_ONLY 403, FORBIDDEN 403 (socket
+        origin), NOT_FOUND 404, VALIDATION_ERROR 400, UNSUPPORTED_MEDIA_TYPE 415, LAST_ACTIVE_OWNER 409,
+        INTERNAL_ERROR 500.
+
+        Added by this feature (sad.md §8 Error handling; names fixed here):
+        - CONNECT_LINK_LIMIT_REACHED 429 — a `TooManyRequestsError`-class refusal with its own code,
+          `retry_at` and `Retry-After`, as `REPLY_LIMIT_REACHED` / `CHANGE_LIMIT_REACHED`;
+        - TELEGRAM_ALREADY_LINKED 409 — a `ConflictError`-class refusal (AC-06);
+        - PINGS_NEED_WORKING_BOT 409 — a `ConflictError`-class refusal (AC-13).
+
+        Refusals in Telegram (link expired, cannot connect, already connected) are bot answers, not
+        HTTP errors (events.md `notifications.send-bot-message`); the webhook keeps answering `200`.
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - NOT_FOUND
+        - FORBIDDEN
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - OWNER_ONLY
+        - LAST_ACTIVE_OWNER
+        - CONNECT_LINK_LIMIT_REACHED
+        - TELEGRAM_ALREADY_LINKED
+        - PINGS_NEED_WORKING_BOT
+
+    ConnectLinkLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: CONNECT_LINK_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, window_seconds, retry_at]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 5 }
+                window_seconds: { type: integer, const: 600 }
+                retry_at:
+                  type: string
+                  format: date-time
+                  description: When the oldest of the 5 counted links (`connect_links.created_at`) leaves the 10-minute window
+
+    TelegramAlreadyLinkedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TELEGRAM_ALREADY_LINKED }
+            message: { type: string }
+            details:
+              type: object
+              required: [settings]
+              additionalProperties: false
+              properties:
+                settings: { $ref: "#/components/schemas/NotificationSettings" }
+
+    PingsNeedWorkingBotError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: PINGS_NEED_WORKING_BOT }
+            message: { type: string }
+            details:
+              type: object
+              required: [settings]
+              additionalProperties: false
+              properties:
+                settings: { $ref: "#/components/schemas/NotificationSettings" }
