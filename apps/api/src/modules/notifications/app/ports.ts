@@ -1,4 +1,5 @@
 import type { Db } from '../../../platform/db.js';
+import type { PresenceLease } from '../domain/presence.js';
 
 /** A Kysely handle or a transaction. */
 export type Executor = Db;
@@ -133,4 +134,89 @@ export interface ConnectLinkRepo {
   insert(workspaceId: string, link: NewConnectLink, tx?: Executor): Promise<void>;
   /** Uses an unused, not replaced link; false when it is not (or not in the workspace). */
   markUsed(workspaceId: string, linkId: string, at: Date, tx?: Executor): Promise<boolean>;
+}
+
+export interface NewPresence {
+  /** The hub's connection id of the socket. */
+  id: string;
+  accountId: string;
+  liveUntil: Date;
+  onScreen: boolean;
+  at: Date;
+}
+
+/** Per-tab presence leases (ADR-0002); a clean close or expiry deletes the row. */
+export interface PresenceRepo {
+  /** A tab opened: stores the lease; a tab that opens on screen counts as on screen at `at`. */
+  open(workspaceId: string, lease: NewPresence, tx?: Executor): Promise<void>;
+  /** A pong: moves `live_until` forward, never back. False when the lease is not in the workspace. */
+  extend(workspaceId: string, id: string, liveUntil: Date, tx?: Executor): Promise<boolean>;
+  /** The tab went on or off screen at `at`. */
+  setScreen(
+    workspaceId: string,
+    id: string,
+    onScreen: boolean,
+    at: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+  close(workspaceId: string, id: string, tx?: Executor): Promise<boolean>;
+  /** Deletes leases whose `live_until` is not after `now`; of one member when `accountId` is given. */
+  deleteExpired(workspaceId: string, now: Date, accountId?: string, tx?: Executor): Promise<number>;
+  /** Live leases (`live_until` after `now`) by member; for the given members when `accountIds` is. */
+  listLive(
+    workspaceId: string,
+    now: Date,
+    accountIds?: string[],
+    tx?: Executor,
+  ): Promise<Map<string, PresenceLease[]>>;
+}
+
+export type PingOutcome = 'sending' | 'accepted' | 'blocked' | 'failed';
+
+export interface NewPing {
+  id: string;
+  accountId: string;
+  telegramLinkId: string;
+  createdAt: Date;
+}
+
+/** A conversation's waiting period: the ledger's unit. */
+export interface PingPeriod {
+  conversationId: string;
+  waitingSince: Date;
+}
+
+export interface LedgerEntry extends PingPeriod {
+  accountId: string;
+}
+
+export interface PingRepo {
+  /**
+   * Inserts a `sending` ping and one ledger item per period in the caller's transaction. When any
+   * (conversation, period, member) was pinged already, another worker won: the ping is removed again
+   * and the result is `lost`, so nothing is sent.
+   */
+  insertWithItems(
+    workspaceId: string,
+    ping: NewPing,
+    items: PingPeriod[],
+    tx: Executor,
+  ): Promise<'inserted' | 'lost'>;
+  /** The member's newest ping in the workspace (any outcome), for the 10-minute spacing. */
+  lastPingAt(workspaceId: string, accountId: string, tx?: Executor): Promise<Date | null>;
+  /** The members already pinged for these periods. */
+  ledger(workspaceId: string, periods: PingPeriod[], tx?: Executor): Promise<LedgerEntry[]>;
+  setOutcome(
+    workspaceId: string,
+    pingId: string,
+    outcome: PingOutcome,
+    tx?: Executor,
+  ): Promise<boolean>;
+  /** Deletes a ping Telegram did not accept, with its items (cascade): the conversations are due again. */
+  rollOut(workspaceId: string, pingId: string, tx?: Executor): Promise<boolean>;
+  /**
+   * The member opened a ping link at `now`: marks their newest delivered (`accepted` or `sending`)
+   * ping created within the last 15 minutes as opened, once. False when there is none.
+   */
+  markOpened(workspaceId: string, accountId: string, now: Date, tx?: Executor): Promise<boolean>;
 }
