@@ -1,6 +1,6 @@
 ---
 status: Living
-updated_at: '2026-10-18'
+updated_at: '2026-10-19'
 ---
 
 # Domain Context — tg-inbox
@@ -15,9 +15,11 @@ updated_at: '2026-10-18'
 - Business owner — a workspace member with the owner role: manages the workspace's team (invites, deactivates and reactivates operators and other business owners) and can do everything an operator can. NOT Platform admin (an owner manages only their own workspace).
 - Change signal — a small live notice («this conversation, item or bot changed») pushed to the open inboxes of one workspace, carrying ids only; the browser then re-reads what changed. NOT the change itself (it carries no text or content) and NOT a notification to the end customer.
 - Client reply key — the id the browser gives a reply before sending it, so a repeated submit of the same reply finds it instead of creating a second one. NOT the reply's own id and NOT a Telegram message id.
+- Close snapshot — what a member's close was shown: the conversation's customer message counter plus the latest reply's id and state; the close is re-checked under the conversation row lock against it, and asks again when it no longer matches. NOT the state version (that guards the whole change, the snapshot only the close reasons).
 - Contact — an end customer as known to one workspace, created automatically from their Telegram profile (name, username, language) the first time they write to the workspace's business bot and refreshed on later messages; the same person writing to two workspaces' bots is two separate contacts. NOT Account (a contact never signs in) and NOT End customer in general (a contact is that person's record inside one workspace).
 - Conversation status — whether a conversation still needs the team (open) or is done (closed); a closed conversation leaves the default working list and opens again when its end customer writes a new message or one of its replies ends not delivered or not confirmed. NOT Delivery state (that belongs to a reply) and NOT Waiting for a reply (a derived marker, not a member's decision).
-- Conversation — the one continuous thread between a workspace and one contact, holding every message that contact sent to the business bot (and, from the inbox step on, the operators' replies). NOT Message (a conversation holds many messages) and NOT a support ticket (it is not opened per issue; statuses arrive with the assignment step).
+- Conversation — the one continuous thread between a workspace and one contact, holding every message that contact sent to the business bot (and, from the inbox step on, the operators' replies). NOT Message (a conversation holds many messages) and NOT a support ticket (it is not opened per issue; it is closed and reopened, never replaced).
+- Customer message counter — a per-conversation count raised by capture, under the conversation row lock, for every newly captured customer message; it orders arrivals by commit. NOT a message id and NOT the unread count (that is per member).
 - Delivery state — what a reply shows about its way to Telegram: sending, sent, not delivered (with its reason) or not confirmed. NOT read status (tg-inbox never knows whether the end customer read a reply).
 - Drain — the per-conversation delivery job that sends that conversation's pending replies one at a time, oldest first. NOT a broadcast and NOT a retry of an unconfirmed reply (those are resent only by a member).
 - End customer — a person who writes to a workspace's bot in Telegram and never uses the web panel. NOT Operator (operators answer end customers from the web).
@@ -31,6 +33,7 @@ updated_at: '2026-10-18'
 - Platform admin — a member of the tg-inbox team who creates workspaces by hand together with the invitation for their first business owner, and issues password-reset links on request (there is no self-serve signup). NOT Business owner (a platform admin acts across workspaces, outside the web panel).
 - Position time — where an item sits in a conversation's thread: a message by its Telegram send time (second precision), a reply by when a member (re)sent it, an activity entry by when the change happened; edits never move an item. NOT arrival time (a late redelivery arrives late but sits at its send time).
 - Reply — a text an operator or business owner writes in a conversation in the inbox, which the business bot sends to that conversation's end customer in Telegram; the team sees which member wrote it, the end customer sees only the bot. NOT Message (a message comes from the end customer) and NOT a broadcast (a reply goes to one end customer, inside their conversation).
+- State version — the per-conversation integer raised by every change of assignee or status, by a member or automatically; a member's change carries the version they saw, and a mismatch asks them first. NOT an optimistic lock on the whole row (messages and replies do not raise it).
 - Unread — the customer messages that arrived in tg-inbox after a member's arrival watermark and after their membership became active; counted per member, by arrival. NOT unanswered (see Waiting for a reply) and never counts replies.
 - Waiting for a reply — a conversation whose end customer wrote after the last reply marked sent; the one shared marker before conversation statuses exist. NOT Unread (waiting is the same for the whole team).
 - Workspace — one business on the platform and the boundary of all its data (bot, conversations, contacts, team). NOT Account (one account can belong to several workspaces).
