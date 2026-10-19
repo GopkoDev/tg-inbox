@@ -5,7 +5,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
-| T1 | [Add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order](./t01-shared-tag-name-rules.md) | domain | Dmytro Hopko | S | — | todo |
+| T1 | [Add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order](./t01-shared-tag-name-rules.md) | domain | Dmytro Hopko | S | — | done |
 | T2 | [Promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally](./t02-promote-wrote-times-and-capture-widening.md) | migration | Dmytro Hopko | M | — | todo |
 | T3 | [Promote migrations 04–06 (tags, contact_tags, contact_tag_history), regenerate DB types and add the tag fixtures](./t03-promote-tag-tables-and-fixtures.md) | migration | Dmytro Hopko | M | T1, T2 | todo |
 | T4 | [Add the contacts zod contracts, the eight tag error codes, and the contact.changed / tags.changed frames and signals with their hub mapping](./t04-contacts-contracts-codes-and-frames.md) | ports | Dmytro Hopko | M | T1 | todo |
