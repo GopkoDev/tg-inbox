@@ -700,6 +700,9 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'add_contacts_list_indexes',
+        'backfill_contacts_wrote_times',
+        'add_contacts_wrote_times',
         'add_conversations_waiting_index',
         'backfill_conversations_waiting_period',
         'add_conversations_waiting_period',
@@ -1201,7 +1204,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < 11; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -1217,6 +1220,8 @@ describe('operator-notifications migrations 04-08', () => {
 });
 
 const LAST_PRE_WAITING = '1791681110002_create_pings';
+const WAITING_COLUMNS = '1791681110003_add_conversations_waiting_period';
+const WAITING_BACKFILL = '1791681110004_backfill_conversations_waiting_period';
 
 describe('operator-notifications migrations 01-03', () => {
   let database: TestDatabase;
@@ -1412,9 +1417,9 @@ describe('operator-notifications migrations 01-03', () => {
       WHERE id = ${conv}`.execute(db);
     const other = await seed(db, ws, account, SHAPES[2]!);
     const migrator = migratorFor(db);
-    const sqlOfBackfill = await migrator.migrateDown(); // reverts 03 only
+    const sqlOfBackfill = await migrator.migrateTo(WAITING_BACKFILL); // reverts 03 and what sits above
     expect(sqlOfBackfill.error).toBeUndefined();
-    const second = await migrator.migrateDown(); // reverts 02: a no-op
+    const second = await migrator.migrateTo(WAITING_COLUMNS); // reverts 02: a no-op
     expect(second.error).toBeUndefined();
     const again = await migrator.migrateToLatest(); // re-runs 02 and 03
     expect(again.error).toBeUndefined();
@@ -1479,6 +1484,186 @@ describe('operator-notifications migrations 01-03', () => {
       const up = await migrator.migrateToLatest();
       expect(up.error).toBeUndefined();
       expect(await state()).toEqual(full);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_WROTE = '1791681110005_add_conversations_waiting_index';
+
+describe('contacts migrations 01-03', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const day = (d: number, h = 10) => new Date(Date.UTC(2026, 1, d, h));
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  const migratorFor = (handle: Kysely<unknown>) =>
+    new Migrator({
+      db: handle,
+      provider: new TSFileMigrationProvider({
+        migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+      }),
+    });
+
+  async function workspace(handle: Kysely<unknown>) {
+    const ws = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${day(1)})`.execute(
+      handle,
+    );
+    return ws;
+  }
+
+  async function contactWithMessages(
+    handle: Kysely<unknown>,
+    ws: string,
+    tg: number,
+    messages: Array<{ sent: Date; received?: Date; edited?: Date }>,
+  ) {
+    const contact = newId();
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, ${tg}, 'Test User', ${day(1)}, ${day(1)})`.execute(handle);
+    if (messages.length === 0) return contact;
+    const conv = newId();
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at, status, state_version, customer_message_seq)
+      VALUES (${conv}, ${ws}, ${contact}, ${tg}, ${day(1)}, ${day(1)}, ${day(1)}, 'open', 0, ${messages.length})`.execute(
+      handle,
+    );
+    for (const [i, m] of messages.entries())
+      await sql`INSERT INTO messages (id, workspace_id, conversation_id, telegram_message_id, kind, body,
+          telegram_message, sent_at, received_at, edited_at, edit_update_id)
+        VALUES (${newId()}, ${ws}, ${conv}, ${i + 1}, 'text', 'hi', ${JSON.stringify({ message_id: i + 1 })}::jsonb,
+          ${m.sent}, ${m.received ?? m.sent}, ${m.edited ?? null}, ${m.edited ? 9000 + i : null})`.execute(
+        handle,
+      );
+    return contact;
+  }
+
+  async function wrote(handle: Kysely<unknown>, contact: string) {
+    const { rows } = await sql<{ first_wrote_at: Date | null; last_wrote_at: Date | null }>`
+      SELECT first_wrote_at, last_wrote_at FROM contacts WHERE id = ${contact}`.execute(handle);
+    return rows[0]!;
+  }
+
+  it('backfills the four audit shapes from the send times of the messages', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      expect((await migrator.migrateTo(LAST_PRE_WROTE)).error).toBeUndefined();
+      const a = await workspace(freshDb);
+      const b = await workspace(freshDb);
+      const a1 = await contactWithMessages(freshDb, a, 1, [
+        { sent: day(1) },
+        { sent: day(2), edited: day(5) },
+        { sent: day(3), received: day(4) },
+      ]);
+      const a2 = await contactWithMessages(freshDb, a, 2, [{ sent: day(1, 12) }]);
+      const a3 = await contactWithMessages(freshDb, a, 3, []);
+      const b1 = await contactWithMessages(freshDb, b, 1, [{ sent: day(9, 9) }]);
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await wrote(freshDb, a1)).toEqual({ first_wrote_at: day(1), last_wrote_at: day(3) });
+      expect(await wrote(freshDb, a2)).toEqual({
+        first_wrote_at: day(1, 12),
+        last_wrote_at: day(1, 12),
+      });
+      expect(await wrote(freshDb, a3)).toEqual({ first_wrote_at: null, last_wrote_at: null });
+      expect(await wrote(freshDb, b1)).toEqual({
+        first_wrote_at: day(9, 9),
+        last_wrote_at: day(9, 9),
+      });
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('a re-run of the backfill never narrows a range capture widened', async () => {
+    const ws = await workspace(db);
+    const c = await contactWithMessages(db, ws, 11, [{ sent: day(3) }]);
+    await sql`UPDATE contacts SET first_wrote_at = ${day(1)}, last_wrote_at = ${day(8)} WHERE id = ${c}`.execute(
+      db,
+    );
+    const backfill =
+      await import('../../migrations/1791681110007_backfill_contacts_wrote_times.js');
+    await backfill.up(db);
+    expect(await wrote(db, c)).toEqual({ first_wrote_at: day(1), last_wrote_at: day(8) });
+  });
+
+  it('refuses one time without the other and first after last, on the named checks', async () => {
+    const ws = await workspace(db);
+    const c = await contactWithMessages(db, ws, 12, []);
+    await expect(
+      sql`UPDATE contacts SET first_wrote_at = ${day(1)} WHERE id = ${c}`.execute(db),
+    ).rejects.toThrow(/contacts_wrote_pair_check/);
+    await expect(
+      sql`UPDATE contacts SET last_wrote_at = ${day(1)} WHERE id = ${c}`.execute(db),
+    ).rejects.toThrow(/contacts_wrote_pair_check/);
+    await expect(
+      sql`UPDATE contacts SET first_wrote_at = ${day(2)}, last_wrote_at = ${day(1)} WHERE id = ${c}`.execute(
+        db,
+      ),
+    ).rejects.toThrow(/contacts_wrote_order_check/);
+    await sql`UPDATE contacts SET first_wrote_at = ${day(1)}, last_wrote_at = ${day(1)} WHERE id = ${c}`.execute(
+      db,
+    );
+  });
+
+  it('adds the keyset index and the unique (workspace_id, id) index', async () => {
+    const { rows } = await sql<{ indexname: string; indexdef: string }>`
+      SELECT indexname, indexdef FROM pg_indexes
+      WHERE indexname IN ('contacts_workspace_id_last_wrote_at_id_idx', 'contacts_workspace_id_id_key')`.execute(
+      db,
+    );
+    const def = (n: string) => rows.find((r) => r.indexname === n)?.indexdef ?? '';
+    expect(def('contacts_workspace_id_last_wrote_at_id_idx')).toMatch(
+      /\(workspace_id, last_wrote_at DESC NULLS LAST, id DESC\)/,
+    );
+    expect(def('contacts_workspace_id_id_key')).toMatch(/UNIQUE INDEX .*\(workspace_id, id\)/);
+  });
+
+  it('reverts 03 to 01 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const state = async () => {
+        const col = await sql<{ column_name: string }>`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'contacts' AND column_name LIKE '%wrote_at' ORDER BY column_name`.execute(
+          freshDb,
+        );
+        const idx = await sql<{ indexname: string }>`
+          SELECT indexname FROM pg_indexes
+          WHERE indexname IN ('contacts_workspace_id_last_wrote_at_id_idx', 'contacts_workspace_id_id_key')`.execute(
+          freshDb,
+        );
+        const chk = await sql<{ conname: string }>`
+          SELECT conname FROM pg_constraint WHERE conname LIKE 'contacts_wrote_%'`.execute(freshDb);
+        return { columns: col.rows.length, indexes: idx.rows.length, checks: chk.rows.length };
+      };
+      expect(await state()).toEqual({ columns: 2, indexes: 2, checks: 2 });
+      expect((await migrator.migrateTo(LAST_PRE_WROTE)).error).toBeUndefined();
+      expect(await state()).toEqual({ columns: 0, indexes: 0, checks: 0 });
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await state()).toEqual({ columns: 2, indexes: 2, checks: 2 });
     } finally {
       await freshDb.destroy();
       await fresh.stop();

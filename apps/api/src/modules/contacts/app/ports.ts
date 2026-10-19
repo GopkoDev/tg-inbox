@@ -17,6 +17,9 @@ export interface ContactRecord extends ContactProfile {
   workspaceId: string;
   profileSeenAt: Date;
   createdAt: Date;
+  /** Send times of the oldest / newest own message; null only for a contact with none. */
+  firstWroteAt: Date | null;
+  lastWroteAt: Date | null;
 }
 
 /** What list rows and thread headers show of a contact. */
@@ -44,7 +47,8 @@ export interface UpsertResult {
 export interface ContactRepo {
   /**
    * One contact per (workspace, Telegram user). Inserts it, or refreshes its profile only when
-   * `seenAt` is strictly newer than the stored one (AC-08); always returns the contact's id.
+   * `seenAt` (the message's send time) is strictly newer than the stored one (AC-08); first and
+   * last wrote widen on every call (LEAST / GREATEST). Always returns the contact's id.
    */
   upsertFromProfile(
     workspaceId: string,

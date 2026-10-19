@@ -58,9 +58,11 @@ export interface ConnectLinks {
 export interface Contacts {
   created_at: Timestamp;
   first_name: string;
+  first_wrote_at: Timestamp | null;
   id: string;
   language_code: string | null;
   last_name: string | null;
+  last_wrote_at: Timestamp | null;
   profile_seen_at: Timestamp;
   telegram_user_id: Int8;
   username: string | null;

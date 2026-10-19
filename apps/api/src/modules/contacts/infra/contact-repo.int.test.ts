@@ -54,8 +54,57 @@ describe('contact repository', () => {
         language_code: 'uk',
         profile_seen_at: at(1),
         created_at: at(100),
+        first_wrote_at: at(1),
+        last_wrote_at: at(1),
       },
     ]);
+  });
+
+  describe('first and last wrote (ADR-0005, AC-01)', () => {
+    const wrote = async (w: string) => {
+      const [row] = await rowsOf(w);
+      return { first: row!.first_wrote_at, last: row!.last_wrote_at, name: row!.first_name };
+    };
+
+    it('widens last wrote on a newer message and keeps first wrote', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(10), at(100));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Newer' }, at(20), at(101));
+      expect(await wrote(w)).toEqual({ first: at(10), last: at(20), name: 'Newer' });
+    });
+
+    it('lowers first wrote for an older message delivered after a newer one, leaving the profile', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(20), at(100));
+      const older = await repo.upsertFromProfile(w, { ...p, firstName: 'Older' }, at(5), at(101));
+      expect(older.created).toBe(false);
+      expect(await wrote(w)).toEqual({ first: at(5), last: at(20), name: 'Test User' });
+      const [row] = await rowsOf(w);
+      expect(row!.profile_seen_at).toEqual(at(20));
+    });
+
+    it('a message between the two times changes nothing; a redelivered duplicate changes nothing', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(10), at(100));
+      await repo.upsertFromProfile(w, p, at(30), at(101));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Mid' }, at(20), at(102));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Dup' }, at(30), at(103));
+      await repo.upsertFromProfile(w, p, at(10), at(104));
+      expect(await wrote(w)).toEqual({ first: at(10), last: at(30), name: 'Test User' });
+    });
+
+    it('isolation: the same Telegram user in another workspace keeps its own times', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const p = profile();
+      await repo.upsertFromProfile(a, p, at(10), at(100));
+      await repo.upsertFromProfile(b, p, at(50), at(100));
+      await repo.upsertFromProfile(a, p, at(5), at(101));
+      expect(await wrote(a)).toMatchObject({ first: at(5), last: at(10) });
+      expect(await wrote(b)).toMatchObject({ first: at(50), last: at(50) });
+    });
   });
 
   it('refreshes only from a newer message and returns the existing id otherwise (AC-08)', async () => {

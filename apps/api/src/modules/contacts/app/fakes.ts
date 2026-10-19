@@ -13,9 +13,22 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
       );
       if (!existing) {
         const id = newId();
-        rows.push({ ...profile, id, workspaceId, profileSeenAt: seenAt, createdAt: now });
+        rows.push({
+          ...profile,
+          id,
+          workspaceId,
+          profileSeenAt: seenAt,
+          createdAt: now,
+          firstWroteAt: seenAt,
+          lastWroteAt: seenAt,
+        });
         return { contactId: id, created: true };
       }
+      const t = seenAt.getTime();
+      if (existing.firstWroteAt === null || t < existing.firstWroteAt.getTime())
+        existing.firstWroteAt = seenAt;
+      if (existing.lastWroteAt === null || t > existing.lastWroteAt.getTime())
+        existing.lastWroteAt = seenAt;
       if (shouldRefreshProfile(existing.profileSeenAt, seenAt)) {
         Object.assign(existing, profile, { profileSeenAt: seenAt });
       }

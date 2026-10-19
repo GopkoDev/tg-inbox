@@ -6,7 +6,7 @@
 | # | Task | Layer | Owner | Estimate | Blocked by | Status |
 |---|---|---|---|---|---|---|
 | T1 | [Add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order](./t01-shared-tag-name-rules.md) | domain | Dmytro Hopko | S | — | done |
-| T2 | [Promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally](./t02-promote-wrote-times-and-capture-widening.md) | migration | Dmytro Hopko | M | — | todo |
+| T2 | [Promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally](./t02-promote-wrote-times-and-capture-widening.md) | migration | Dmytro Hopko | M | — | done |
 | T3 | [Promote migrations 04–06 (tags, contact_tags, contact_tag_history), regenerate DB types and add the tag fixtures](./t03-promote-tag-tables-and-fixtures.md) | migration | Dmytro Hopko | M | T1, T2 | todo |
 | T4 | [Add the contacts zod contracts, the eight tag error codes, and the contact.changed / tags.changed frames and signals with their hub mapping](./t04-contacts-contracts-codes-and-frames.md) | ports | Dmytro Hopko | M | T1 | todo |
 | T5 | [Add the tags domain: the limits (100 per workspace, 20 per contact, 60 per 60 s, 50 per page), the history kinds and sources, the merge link rule and the rate-limit retry time](./t05-tags-domain-limits-and-merge-rules.md) | domain | Dmytro Hopko | S | T1 | todo |
