@@ -116,5 +116,6 @@ Internal — queues `notifications.schedule-pings` (cron every minute, payload `
 ## Definition of Done
 
 - [ ] Integration tests with a controllable clock pass QG-1 scenarios (a)–(f): one ping within a sweep at 5 minutes, combining under the 10-minute spacing with the lens link, a member who becomes away later, reassign and unassign making due at once, nothing sent while the bot needs a token then one combined ping, and two concurrent workers leaving one ledger item per period; the cron restarts a broken chain.
+- [ ] QG-1 scenario (g): an assigned conversation still waiting at 30 minutes reaches every other away, linked, unread member as a teammate's customer, and at 5 minutes when the away unread assignee has no link or a not-reachable one (incl. a blocked first attempt bringing the team in at the next sweep); in (a) and (b) the logged due-to-accepted time of each ping is ≤ 60 s with paused time separate (test-plan.md, AC-09, §6 ping timeliness)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

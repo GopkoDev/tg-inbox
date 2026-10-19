@@ -146,5 +146,6 @@ Internal — consumed by the `notifications.send-pings` job (T17). Ping links us
 ## Definition of Done
 
 - [ ] Unit and integration tests prove the sweep skips a bot that does not work and waits out a pause, the per-member transaction re-checks every condition under the membership and link share locks and writes the ledger before the call, each sendMemberMessage outcome updates the ping, the link and its signal as the events table says, and a deactivation or a disconnect that commits before the send transaction leads to no ping.
+- [ ] a bot that is taken over still sends pings for customers who were already waiting (test-plan.md, AC-10)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

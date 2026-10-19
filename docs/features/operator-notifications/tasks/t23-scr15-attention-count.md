@@ -109,5 +109,6 @@ Reads `getAttentionCount` â†’ `{ workspace_id, count }` (`401` / `403` / `404` â
 ## Definition of Done
 
 - [ ] Testing Library tests cover every SCR-15 state this feature adds in screens.md (count above 0 and 0, operator Settings item, loading, live change within the debounce, failed read keeps the last count, collapsed tooltip, phone header badge, inherited states without a count), with the title prefix and badge driven by getAttentionCount.
+- [ ] the attention store refetches, debounced, on a message, an activity, this account's read change, membership.deactivated and resync, and drops a late answer of another workspace (test-plan.md, AC-01)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

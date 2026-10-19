@@ -159,5 +159,6 @@ Exercises `createConnectLink`, `getNotificationSettings`, `disconnectTelegram`, 
 ## Definition of Done
 
 - [ ] The e2e stories pass against Postgres and the fake Bot API (connect and answers, every redeem refusal, ping to an away member with blocked and recovered reachability, deactivation during a due ping, bot replaced, linked-member interception, cross-workspace refusals), the integrity queries return no row, the load test keeps reply p95 within 2 s with 50 pings due, and the secrecy scan finds no token, hash, ping text, contact name or message text and the Telegram user id only where F-3 allows.
+- [ ] a captured customer message's frame reaches a connected socket and GET inbox/attention returns the new count within 3 s, and the eight integrity queries listed in test-plan.md (pings to inactive members, duplicate ledger items, pings < 10 min apart, contacts equal to a linked member, links of another bot, live links of inactive members, member-removed links still holding a Telegram id after 1 h, waiting conversations without a period) return no row (test-plan.md, §6)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

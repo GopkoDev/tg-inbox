@@ -364,7 +364,7 @@
         "AC-09",
         "AC-10"
       ],
-      "dod": "Unit and integration tests prove the sweep skips a bot that does not work and waits out a pause, the per-member transaction re-checks every condition under the membership and link share locks and writes the ledger before the call, each sendMemberMessage outcome updates the ping, the link and its signal as the events table says, and a deactivation or a disconnect that commits before the send transaction leads to no ping.",
+      "dod": "Unit and integration tests prove the sweep skips a bot that does not work and waits out a pause, the per-member transaction re-checks every condition under the membership and link share locks and writes the ledger before the call, each sendMemberMessage outcome updates the ping, the link and its signal as the events table says, and a deactivation or a disconnect that commits before the send transaction leads to no ping; a bot that is taken over still sends pings for customers who were already waiting (test-plan.md, AC-10).",
       "files_hint": [
         "apps/api/src/modules/notifications/app/send-pings.ts",
         "apps/api/src/modules/notifications/app/send-pings.test.ts",
@@ -384,7 +384,7 @@
         "AC-08",
         "AC-10"
       ],
-      "dod": "Integration tests with a controllable clock pass QG-1 scenarios (a)–(f): one ping within a sweep at 5 minutes, combining under the 10-minute spacing with the lens link, a member who becomes away later, reassign and unassign making due at once, nothing sent while the bot needs a token then one combined ping, and two concurrent workers leaving one ledger item per period; the cron restarts a broken chain.",
+      "dod": "Integration tests with a controllable clock pass QG-1 scenarios (a)–(f): one ping within a sweep at 5 minutes, combining under the 10-minute spacing with the lens link, a member who becomes away later, reassign and unassign making due at once, nothing sent while the bot needs a token then one combined ping, and two concurrent workers leaving one ledger item per period; the cron restarts a broken chain; QG-1 scenario (g): an assigned conversation still waiting at 30 minutes reaches every other away, linked, unread member as a teammate's customer, and at 5 minutes when the away unread assignee has no link or a not-reachable one (incl. a blocked first attempt bringing the team in at the next sweep); in (a) and (b) the logged due-to-accepted time of each ping is ≤ 60 s with paused time separate (test-plan.md, AC-09, §6 ping timeliness).",
       "files_hint": [
         "apps/api/src/modules/notifications/infra/jobs.ts",
         "apps/api/src/app.ts",
@@ -486,7 +486,7 @@
         "AC-11",
         "AC-12"
       ],
-      "dod": "The e2e stories pass against Postgres and the fake Bot API (connect and answers, every redeem refusal, ping to an away member with blocked and recovered reachability, deactivation during a due ping, bot replaced, linked-member interception, cross-workspace refusals), the integrity queries return no row, the load test keeps reply p95 within 2 s with 50 pings due, and the secrecy scan finds no token, hash, ping text, contact name or message text and the Telegram user id only where F-3 allows.",
+      "dod": "The e2e stories pass against Postgres and the fake Bot API (connect and answers, every redeem refusal, ping to an away member with blocked and recovered reachability, deactivation during a due ping, bot replaced, linked-member interception, cross-workspace refusals), the integrity queries return no row, the load test keeps reply p95 within 2 s with 50 pings due, and the secrecy scan finds no token, hash, ping text, contact name or message text and the Telegram user id only where F-3 allows; a captured customer message's frame reaches a connected socket and GET inbox/attention returns the new count within 3 s, and the eight integrity queries listed in test-plan.md (pings to inactive members, duplicate ledger items, pings < 10 min apart, contacts equal to a linked member, links of another bot, live links of inactive members, member-removed links still holding a Telegram id after 1 h, waiting conversations without a period) return no row (test-plan.md, §6).",
       "files_hint": [
         "apps/api/src/e2e/notification-flows.int.test.ts",
         "apps/api/src/e2e/notification-load.int.test.ts",
@@ -529,7 +529,7 @@
         "AC-01",
         "AC-12"
       ],
-      "dod": "Testing Library tests cover every SCR-15 state this feature adds in screens.md (count above 0 and 0, operator Settings item, loading, live change within the debounce, failed read keeps the last count, collapsed tooltip, phone header badge, inherited states without a count), with the title prefix and badge driven by getAttentionCount.",
+      "dod": "Testing Library tests cover every SCR-15 state this feature adds in screens.md (count above 0 and 0, operator Settings item, loading, live change within the debounce, failed read keeps the last count, collapsed tooltip, phone header badge, inherited states without a count), with the title prefix and badge driven by getAttentionCount; the attention store refetches, debounced, on a message, an activity, this account's read change, membership.deactivated and resync, and drops a late answer of another workspace (test-plan.md, AC-01).",
       "files_hint": [
         "apps/web/src/features/attention/store.ts",
         "apps/web/src/features/attention/api.ts",
@@ -617,7 +617,7 @@
       "acs": [
         "AC-02"
       ],
-      "dod": "Unit tests prove the notifier posts only for new customer messages in open conversations that are the member's or unassigned with the flag and permission on, and the worker shows nothing while a workspace tab is focused, shows one notification per message across tabs with tag replacement and renotify, and a click focuses the most recently focused workspace tab with the conversation or opens its address.",
+      "dod": "Unit tests prove the notifier posts only for new customer messages in open conversations that are the member's or unassigned with the flag and permission on, and the worker shows nothing while a workspace tab is focused, shows one notification per message across tabs with tag replacement and renotify, and a click focuses the most recently focused workspace tab with the conversation or opens its address; a customer message that reopens a closed conversation is posted as a new message (test-plan.md, AC-02).",
       "files_hint": [
         "apps/web/src/features/notifications/notifier.ts",
         "apps/web/src/features/notifications/notifier.test.ts",

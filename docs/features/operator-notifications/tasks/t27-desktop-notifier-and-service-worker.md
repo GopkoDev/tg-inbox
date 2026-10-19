@@ -98,5 +98,6 @@ Consumes `conversation.changed` (`created` / `message`) and the row re-read it a
 ## Definition of Done
 
 - [ ] Unit tests prove the notifier posts only for new customer messages in open conversations that are the member's or unassigned with the flag and permission on, and the worker shows nothing while a workspace tab is focused, shows one notification per message across tabs with tag replacement and renotify, and a click focuses the most recently focused workspace tab with the conversation or opens its address.
+- [ ] a customer message that reopens a closed conversation is posted as a new message (test-plan.md, AC-02)
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
