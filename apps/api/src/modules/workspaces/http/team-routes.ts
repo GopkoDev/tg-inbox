@@ -46,6 +46,7 @@ const member = (m: MemberView) => ({
   state: m.state,
   created_at: m.createdAt.toISOString(),
   deactivated_at: m.deactivatedAt?.toISOString() ?? null,
+  telegram_pings: m.telegramPings,
 });
 
 const pageOf = <T, U>(

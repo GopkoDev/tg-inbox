@@ -16,6 +16,7 @@ import { assertKeepsActiveOwner, assertNotAMember } from '../domain/team-rules.j
 import type {
   InvitationRecord,
   MembershipRecord,
+  LinkedAccounts,
   OnMembershipDeactivated,
   PageQuery,
   UnitOfWork,
@@ -38,6 +39,8 @@ export interface TeamDeps {
   publish: (tx: Transaction<DB>, signal: RealtimeSignal) => Promise<void>;
   /** Runs inside the deactivation transaction (wired to `conversations` by the composition root). */
   onMembershipDeactivated: OnMembershipDeactivated;
+  /** Which accounts have a live Telegram link here (wired to `notifications` by the composition root). */
+  linkedAccounts: LinkedAccounts;
   /** PUBLIC_WEB_URL from config, injected by the composition root. */
   publicWebUrl: string;
 }
@@ -64,6 +67,8 @@ export interface MemberView {
   state: MembershipRecord['state'];
   createdAt: Date;
   deactivatedAt: Date | null;
+  /** A live Telegram link in this workspace; always false for a deactivated member. */
+  telegramPings: boolean;
 }
 
 export interface Paged<T> {
@@ -114,7 +119,11 @@ export function createTeam(deps: TeamDeps) {
     return m;
   }
 
-  async function memberViews(rows: MembershipRecord[]): Promise<MemberView[]> {
+  /** `linked` is empty for the answers that are always `false` (deactivate, reactivate). */
+  async function memberViews(
+    rows: MembershipRecord[],
+    linked: ReadonlySet<string> = new Set(),
+  ): Promise<MemberView[]> {
     if (rows.length === 0) return [];
     const found = await accounts.getAccountsByIds([...new Set(rows.map((r) => r.accountId))]);
     const byId = new Map(found.map((a) => [a.id, a]));
@@ -128,6 +137,7 @@ export function createTeam(deps: TeamDeps) {
         state: r.state,
         createdAt: r.createdAt,
         deactivatedAt: r.deactivatedAt,
+        telegramPings: r.state === 'active' && linked.has(r.accountId),
       };
     });
   }
@@ -217,9 +227,14 @@ export function createTeam(deps: TeamDeps) {
       });
     },
 
-    listMemberships(workspaceId: string, page: PageQuery): Promise<Paged<MemberView>> {
+    async listMemberships(workspaceId: string, page: PageQuery): Promise<Paged<MemberView>> {
+      const linked = await deps.linkedAccounts(workspaceId);
       return uow.run((repos) =>
-        paged(page, (q) => repos.memberships.list(workspaceId, q), memberViews),
+        paged(
+          page,
+          (q) => repos.memberships.list(workspaceId, q),
+          (rows) => memberViews(rows, linked),
+        ),
       );
     },
 

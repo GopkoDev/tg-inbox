@@ -63,6 +63,7 @@ const mem = (id: string, name: string, over: Record<string, unknown> = {}) => ({
   state: 'active' as const,
   created_at: '2026-01-01T00:00:00.000Z',
   deactivated_at: null,
+  telegram_pings: false,
   ...over,
 });
 const page = <T,>(items: T[], has_next = false) => ({

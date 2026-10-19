@@ -113,6 +113,7 @@ function setup() {
       deactivated.push(event);
       if (port.fail) throw new Error('port failed');
     },
+    linkedAccounts: async () => new Set<string>(),
     publicWebUrl: 'http://web.test',
     accounts: {
       findAccountIdByEmail: async (email) =>

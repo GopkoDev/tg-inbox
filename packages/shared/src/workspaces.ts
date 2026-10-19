@@ -139,6 +139,8 @@ export const Membership = z.strictObject({
   state: MembershipState,
   created_at: DateTime,
   deactivated_at: DateTime.nullable(),
+  /** True when the member has a live Telegram link in this workspace; never the Telegram account itself. */
+  telegram_pings: z.boolean(),
 });
 export type Membership = z.infer<typeof Membership>;
 export const MembershipPage = page(Membership);

@@ -176,6 +176,8 @@ export function buildDeps(
     clock,
     accounts: accountUseCases,
     publish,
+    // Read through notifications (account ids only; built below, called later): `workspaces` imports nothing from it.
+    linkedAccounts: (workspaceId) => notificationSettings.linkedAccounts(workspaceId),
     // Composed port (sad.md §11): unassign the member's conversations, then remove their Telegram link.
     onMembershipDeactivated: async (tx, event) => {
       await conversations.unassignDeactivatedMember(tx, event);

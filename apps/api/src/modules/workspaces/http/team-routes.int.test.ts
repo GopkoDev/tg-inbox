@@ -1,11 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { IssuedInvitation, MembershipPage, PendingInvitationPage } from '@tg/shared';
+import { IssuedInvitation, Membership, MembershipPage, PendingInvitationPage } from '@tg/shared';
 import { buildApp } from '../../../app.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { createDb, type Db } from '../../../platform/db.js';
 import { hashToken } from '../../../platform/tokens.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
+import { insertTelegramLink } from '../../../test/fixtures/notifications.js';
 import {
   insertInvitation,
   insertMembership,
@@ -293,5 +294,79 @@ describe('owner-only team routes (postgres)', () => {
       .executeTakeFirstOrThrow();
     expect(mb.state).toBe('active');
     expect(ib.state).toBe('pending');
+  });
+
+  it("AC-12/AC-10: telegram_pings per member from this workspace's live links; false once deactivated or reactivated; no Telegram id or name", async () => {
+    const a = await insertWorkspace(db);
+    const b = await insertWorkspace(db);
+    const owner = await member(a, 'owner');
+    const linked = await member(a, 'operator');
+    const unlinked = await member(a, 'operator');
+    const elsewhere = await member(a, 'operator');
+    const removedLink = await member(a, 'operator');
+    await insertTelegramLink(db, {
+      workspaceId: a,
+      accountId: linked.accountId,
+      displayName: 'Maria Linked',
+      linkedAt: new Date('2026-02-01T00:00:00Z'),
+      telegramUserId: 777000111n,
+    });
+    // linked in another workspace only, and a removed link here: both false in A
+    await insertMembership(db, b, { accountId: elsewhere.accountId });
+    await insertTelegramLink(db, { workspaceId: b, accountId: elsewhere.accountId });
+    await insertTelegramLink(db, {
+      workspaceId: a,
+      accountId: removedLink.accountId,
+      linkedAt: new Date('2026-02-01T00:00:00Z'),
+      removed: { at: NOW, reason: 'member' },
+      telegramUserId: 777000222n,
+    });
+
+    const list = await call(owner, 'GET', `${base(a)}/memberships`);
+    expect(list.statusCode).toBe(200);
+    const pings = new Map(
+      MembershipPage.parse(list.json()).items.map((m) => [m.id, m.telegram_pings]),
+    );
+    expect(pings.get(owner.membershipId)).toBe(false);
+    expect(pings.get(linked.membershipId)).toBe(true);
+    expect(pings.get(unlinked.membershipId)).toBe(false);
+    expect(pings.get(elsewhere.membershipId)).toBe(false);
+    expect(pings.get(removedLink.membershipId)).toBe(false);
+    for (const secret of ['Maria Linked', '777000111', '777000222']) {
+      expect(list.body).not.toContain(secret);
+    }
+
+    // Deactivating removes the link and answers false; reactivating does not restore it.
+    const off = await call(
+      owner,
+      'POST',
+      `${base(a)}/memberships/${linked.membershipId}/deactivate`,
+    );
+    expect(off.statusCode).toBe(200);
+    expect(Membership.parse(off.json())).toMatchObject({
+      state: 'deactivated',
+      telegram_pings: false,
+    });
+    const on = await call(
+      owner,
+      'POST',
+      `${base(a)}/memberships/${linked.membershipId}/reactivate`,
+    );
+    expect(on.statusCode).toBe(200);
+    expect(Membership.parse(on.json())).toMatchObject({ state: 'active', telegram_pings: false });
+    for (const res of [off, on]) {
+      expect(res.body).not.toContain('Maria Linked');
+      expect(res.body).not.toContain('777000111');
+    }
+    const after = await call(owner, 'GET', `${base(a)}/memberships`);
+    expect(
+      MembershipPage.parse(after.json()).items.find((m) => m.id === linked.membershipId)
+        ?.telegram_pings,
+    ).toBe(false);
+
+    // An operator is still refused.
+    const op = await call(unlinked, 'GET', `${base(a)}/memberships`);
+    expect(op.statusCode).toBe(403);
+    expect(op.json().error.code).toBe('OWNER_ONLY');
   });
 });

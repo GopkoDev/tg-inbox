@@ -2,7 +2,7 @@ import type { NotificationSettings } from '@tg/shared';
 import type { BotReadiness, TelegramLinkRepo, Executor } from './ports.js';
 
 export interface SettingsDeps {
-  links: Pick<TelegramLinkRepo, 'findLiveByAccount'>;
+  links: Pick<TelegramLinkRepo, 'findLiveByAccount' | 'listLive'>;
   bots: BotReadiness;
 }
 
@@ -19,10 +19,16 @@ export interface Settings {
    * never read. `tx` joins a caller's transaction (the refusals and Disconnect build their answer in it).
    */
   mySettings(input: SettingsInput, tx?: Executor): Promise<NotificationSettings>;
+  /** The accounts with a live link in this workspace: ids only, for the Team mark (AC-12). */
+  linkedAccounts(workspaceId: string): Promise<Set<string>>;
 }
 
 export function createSettings({ links, bots }: SettingsDeps): Settings {
   return {
+    async linkedAccounts(workspaceId) {
+      return new Set((await links.listLive(workspaceId)).map((link) => link.accountId));
+    },
+
     async mySettings({ workspaceId, accountId, role }, tx) {
       const [link, bot] = await Promise.all([
         links.findLiveByAccount(workspaceId, accountId, {}, tx),

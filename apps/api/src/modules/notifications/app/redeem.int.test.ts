@@ -74,6 +74,7 @@ describe('redeem (Postgres): uniqueness races and deactivation lock order', () =
         const link = await links.findLiveByAccount(workspaceId, accountId, { lock: true }, tx);
         if (link) await links.remove(workspaceId, link.id, 'deactivated', at, tx);
       },
+      linkedAccounts: async () => new Set<string>(),
       publicWebUrl: 'https://inbox.example.test',
     });
     const go = (
