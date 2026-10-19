@@ -781,3 +781,97 @@ describe('contacts store: a superseded success is not lost (RR1)', () => {
     expect(c.items.map((i) => i.id)).toEqual([id(501), id(502)]);
   });
 });
+
+describe('contacts store: a held answer never replaces a newer write (RR3)', () => {
+  function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+  const tag = (n: number, name: string) => ({
+    id: id(n),
+    name,
+    added_by: { account_id: id(800), display_name: 'Test User' },
+    added_at: at(1),
+  });
+  async function opened() {
+    openEverything();
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    await useContactsStore.getState().openProfile(A, C1, guard);
+    await useContactsStore.getState().openHeader(A, C1, guard);
+    useContactsStore.getState().watch(A, guard);
+    vi.clearAllMocks();
+    guard.mockResolvedValue('handled');
+  }
+  /** R1 (profile + header) answers and is held while R2 (profile + header) is still in flight. */
+  async function heldThenNewest() {
+    const r1 = deferred<ContactProfile>();
+    const r2 = deferred<ContactProfile>();
+    api.getContact
+      .mockReturnValueOnce(r1.promise)
+      .mockReturnValueOnce(r1.promise)
+      .mockReturnValueOnce(r2.promise)
+      .mockReturnValueOnce(r2.promise);
+    const reads = Promise.all([
+      useContactsStore.getState().rereadContact(A, C1, guard),
+      useContactsStore.getState().rereadContact(A, C1, guard),
+    ]);
+    r1.resolve(profile(C1, { first_name: 'Ada Old', tags: [tag(300, 'Old')] }));
+    await settle();
+    return { r2, reads };
+  }
+  const names = (slice: 'profile' | 'header') =>
+    useContactsStore.getState()[slice]!.contact!.tags.map((t) => t.name);
+
+  it('a tag added while R1 is held: R2 then fails → the added tag stays (profile and header)', async () => {
+    await opened();
+    const { r2, reads } = await heldThenNewest();
+    useContactsStore.getState().applyTags(C1, [tag(301, 'New')]);
+    r2.reject(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'x'));
+    await reads;
+    await settle();
+    expect(names('profile')).toEqual(['New']);
+    expect(names('header')).toEqual(['New']);
+  });
+
+  it('the newest read answers 404 while R1 is held → not found, the held answer does not show', async () => {
+    await opened();
+    const { r2, reads } = await heldThenNewest();
+    r2.reject(new ApiError(404, ErrorCode.NOT_FOUND, 'x'));
+    await reads;
+    await settle();
+    expect(useContactsStore.getState().profile).toMatchObject({
+      status: 'not_found',
+      contact: null,
+    });
+    expect(useContactsStore.getState().header).toMatchObject({
+      status: 'not_found',
+      contact: null,
+    });
+  });
+
+  it.each([401, 403])(
+    'the newest read answers %i while R1 is held → the guard takes over, the held answer does not show',
+    async (status) => {
+      await opened();
+      const before = useContactsStore.getState().profile!.contact!;
+      const { r2, reads } = await heldThenNewest();
+      r2.reject(
+        new ApiError(
+          status,
+          status === 401 ? ErrorCode.UNAUTHENTICATED : ErrorCode.ACCESS_REMOVED,
+          'x',
+        ),
+      );
+      await reads;
+      await settle();
+      expect(guard).toHaveBeenCalled();
+      expect(useContactsStore.getState().profile!.contact).toEqual(before);
+      expect(useContactsStore.getState().header!.contact).toEqual(before);
+    },
+  );
+});

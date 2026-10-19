@@ -157,6 +157,14 @@ const readOrder = () => {
       applied = fallback.seq;
       return fallback.apply;
     },
+    /**
+     * A direct write replaced what the slice shows (e.g. a tag change's own answer): every read
+     * already issued is older than it, so the held answer is dropped and no earlier read applies.
+     */
+    supersede() {
+      held = null;
+      applied = issued;
+    },
   };
 };
 
@@ -733,8 +741,10 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     applyTags(contactId, tags) {
       for (const slice of ['profile', 'header'] as const) {
         const open = get()[slice];
-        if (open?.contactId === contactId && open.contact)
+        if (open?.contactId === contactId && open.contact) {
+          contactOrder[slice].supersede();
           set({ [slice]: { ...open, contact: { ...open.contact, tags } } });
+        }
       }
     },
     watch(workspaceId, guard) {
