@@ -148,6 +148,80 @@ describe('state changes (Postgres)', () => {
     expect(await activityCount(id)).toBe(1);
   });
 
+  describe('the waiting period (AC-07, AC-08)', () => {
+    const period = (id: string) =>
+      db
+        .selectFrom('conversations')
+        .select(['waiting_since', 'waiting_started_by', 'status'])
+        .where('id', '=', id)
+        .executeTakeFirstOrThrow();
+    const reopen = (w: string, actor: string, id: string, version: number) =>
+      inTx<ChangeResult>((tx) =>
+        sc().changeStatus(tx, {
+          workspaceId: w,
+          actorAccountId: actor,
+          conversationId: id,
+          to: 'open',
+          expectedStateVersion: version,
+        }),
+      );
+
+    it('assign and unassign leave the period; a confirmed close ends it; a member reopen over an unanswered message restarts it as reopen at the clock time', async () => {
+      const { a, sharedAccountId } = await twoWorkspacesWithInbox(db);
+      const w = a.workspaceId;
+      const id = await conversation(w, {
+        lastMessageReceivedAt: B,
+        lastReplySentAt: null,
+        waitingSince: at(7),
+        waitingStartedBy: 'message',
+      });
+      expect((await assign(w, a.accountId, id, sharedAccountId)).outcome).toBe('recorded');
+      expect(await period(id)).toMatchObject({
+        waiting_since: at(7),
+        waiting_started_by: 'message',
+      });
+      expect((await assign(w, a.accountId, id, null, 1)).outcome).toBe('recorded');
+      expect(await period(id)).toMatchObject({
+        waiting_since: at(7),
+        waiting_started_by: 'message',
+      });
+      const refused = await close(w, a.accountId, id, { version: 2 });
+      expect(refused.outcome).toBe('needs_confirmation');
+      const snapshot = (refused as Extract<ChangeResult, { outcome: 'needs_confirmation' }>)
+        .snapshot;
+      expect(
+        (await close(w, a.accountId, id, { version: 2, confirm: true, snapshot })).outcome,
+      ).toBe('recorded');
+      expect(await period(id)).toEqual({
+        waiting_since: null,
+        waiting_started_by: null,
+        status: 'closed',
+      });
+      expect((await reopen(w, a.accountId, id, 3)).outcome).toBe('recorded');
+      expect(await period(id)).toEqual({
+        waiting_since: NOW,
+        waiting_started_by: 'reopen',
+        status: 'open',
+      });
+    });
+
+    it('a member reopen of a conversation whose last reply is newer than the customer message stays not waiting', async () => {
+      const { a } = await twoWorkspacesWithInbox(db);
+      const id = await conversation(a.workspaceId, {
+        status: 'closed',
+        lastMessageReceivedAt: B,
+        lastReplySentAt: at(10),
+        lastActivityAt: at(10),
+      });
+      expect((await reopen(a.workspaceId, a.accountId, id, 0)).outcome).toBe('recorded');
+      expect(await period(id)).toEqual({
+        waiting_since: null,
+        waiting_started_by: null,
+        status: 'open',
+      });
+    });
+  });
+
   it('QG-1 (a): a close with each reason is refused, and close-anyway with the returned snapshot closes', async () => {
     const { a } = await twoWorkspacesWithInbox(db);
     const w = a.workspaceId;

@@ -361,6 +361,12 @@ export function createReplyRepo(db: Db): ReplyRepo {
         .set({
           last_reply_sent_at: sql`GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)`,
           last_activity_at: sql`GREATEST(last_message_received_at, last_reply_sent_at, ${sentAt}::timestamptz)`,
+          // A sent reply ends the waiting period (AC-08) unless a customer message arrived after it:
+          // then the customer is still waiting by the list marker and the period keeps running.
+          waiting_since: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+            THEN waiting_since END`,
+          waiting_started_by: sql`CASE WHEN last_message_received_at > GREATEST(last_reply_sent_at, ${sentAt}::timestamptz)
+            THEN waiting_started_by END`,
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', conversationId)

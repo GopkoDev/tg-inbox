@@ -144,6 +144,55 @@ describe('conversations use cases', () => {
     expect(messages.rows.map((m) => m.telegramMessageId)).toEqual([1n, 2n]);
   });
 
+  describe('the waiting period (AC-07, AC-08)', () => {
+    it('a message into a conversation that is not waiting starts a message period at its arrival', async () => {
+      const { conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      expect(conversations.rows[0]!.waiting).toEqual({ since: at(100), startedBy: 'message' });
+    });
+
+    it('a further message keeps the period start', async () => {
+      const { clock, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      clock.set(at(400));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      expect(conversations.rows[0]!.waiting).toEqual({ since: at(100), startedBy: 'message' });
+    });
+
+    it('a duplicate redelivery starts nothing', async () => {
+      const { conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      conversations.rows[0]!.waiting = null;
+      await useCases.captureInbound('ws-a', message());
+      expect(conversations.rows[0]!.waiting).toBeNull();
+    });
+
+    it('a message after a sent reply starts a new period, at its arrival and not at Telegram date', async () => {
+      const { clock, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      const row = conversations.rows[0]!;
+      row.lastReplySentAt = at(200);
+      row.waiting = null;
+      clock.set(at(900));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n, sentAt: at(5) }));
+      expect(row.waiting).toEqual({ since: at(900), startedBy: 'message' });
+    });
+
+    it('a message into a closed conversation reopens it with a message period at its arrival', async () => {
+      const { clock, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      const row = conversations.rows[0]!;
+      row.status = 'closed';
+      row.waiting = null;
+      clock.set(at(300));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      expect(row).toMatchObject({
+        status: 'open',
+        waiting: { since: at(300), startedBy: 'message' },
+      });
+    });
+  });
+
   it('a redelivery is already_present and stored once (AC-11)', async () => {
     const { messages, useCases } = setup();
     await useCases.captureInbound('ws-a', message());

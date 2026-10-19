@@ -92,6 +92,8 @@ export interface Conversations {
   state_version: number;
   status: string;
   telegram_chat_id: Int8;
+  waiting_since: Timestamp | null;
+  waiting_started_by: string | null;
   workspace_id: string;
 }
 

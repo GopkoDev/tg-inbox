@@ -57,6 +57,8 @@ describe('conversation repository', () => {
         assignee_account_id: null,
         state_version: 0,
         customer_message_seq: 0,
+        waiting_since: null,
+        waiting_started_by: null,
       },
     ]);
   });
@@ -127,6 +129,25 @@ describe('conversation repository', () => {
     });
   });
 
+  it('raiseReceived returns the running waiting period start and leaves it alone', async () => {
+    const w = await insertWorkspace(db);
+    const contactId = await insertContact(db, { workspaceId: w, telegramUserId: 5009n });
+    const since = new Date(NOW.getTime() - 60_000);
+    const id = await insertConversation(db, {
+      workspaceId: w,
+      contactId,
+      waitingSince: since,
+      waitingStartedBy: 'message',
+    });
+    expect((await repo.raiseReceived(w, id, NOW)).waitingSince).toEqual(since);
+    const row = await db
+      .selectFrom('conversations')
+      .select(['waiting_since', 'waiting_started_by'])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ waiting_since: since, waiting_started_by: 'message' });
+  });
+
   it('raiseReceived raises the counter by one and returns the state under the lock', async () => {
     const w = await insertWorkspace(db);
     const contactId = await insertContact(db, { workspaceId: w, telegramUserId: 5008n });
@@ -141,6 +162,7 @@ describe('conversation repository', () => {
       status: 'closed',
       assigneeAccountId: null,
       stateVersion: 3,
+      waitingSince: null,
     });
     const row = await db
       .selectFrom('conversations')
@@ -268,6 +290,80 @@ describe('conversation repository', () => {
         stateVersion: (v1 ?? 0) + 1,
         lastActivityAt: before?.lastActivityAt,
       });
+    });
+
+    it('writeState writes, keeps and clears the waiting period with the state in one UPDATE', async () => {
+      const { a } = await twoWorkspacesWithInbox(db);
+      const id = a.conversationId;
+      const read = () =>
+        db
+          .selectFrom('conversations')
+          .select(['waiting_since', 'waiting_started_by', 'status'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+      await lock((tx) =>
+        repo.writeState(a.workspaceId, id, { waiting: { since: NOW, startedBy: 'reopen' } }, tx),
+      );
+      expect(await read()).toMatchObject({ waiting_since: NOW, waiting_started_by: 'reopen' });
+      await lock((tx) => repo.writeState(a.workspaceId, id, { assigneeAccountId: null }, tx));
+      expect(await read()).toMatchObject({ waiting_since: NOW, waiting_started_by: 'reopen' });
+      await lock((tx) =>
+        repo.writeState(a.workspaceId, id, { status: 'closed', waiting: null }, tx),
+      );
+      expect(await read()).toEqual({
+        waiting_since: null,
+        waiting_started_by: null,
+        status: 'closed',
+      });
+    });
+
+    it('isolation: writeState of a waiting period never touches another workspace’s conversation', async () => {
+      const { a, b } = await twoWorkspacesWithInbox(db);
+      const result = await lock((tx) =>
+        repo.writeState(
+          b.workspaceId,
+          a.conversationId,
+          { waiting: { since: NOW, startedBy: 'message' } },
+          tx,
+        ),
+      );
+      expect(result).toBeNull();
+      const row = await db
+        .selectFrom('conversations')
+        .select('waiting_since')
+        .where('id', '=', a.conversationId)
+        .executeTakeFirstOrThrow();
+      expect(row.waiting_since).toBeNull();
+    });
+
+    it('writeWaiting starts a period only on an open conversation without one, and keeps the version', async () => {
+      const { a, b } = await twoWorkspacesWithInbox(db);
+      const id = a.conversationId;
+      const read = () =>
+        db
+          .selectFrom('conversations')
+          .select(['waiting_since', 'waiting_started_by', 'state_version'])
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow();
+      const before = (await read()).state_version;
+      // another workspace's id scope: nothing is written
+      expect(await repo.writeWaiting(b.workspaceId, id, { since: NOW, startedBy: 'message' })).toBe(
+        false,
+      );
+      expect((await read()).waiting_since).toBeNull();
+      expect(await repo.writeWaiting(a.workspaceId, id, { since: NOW, startedBy: 'message' })).toBe(
+        true,
+      );
+      expect(await read()).toEqual({
+        waiting_since: NOW,
+        waiting_started_by: 'message',
+        state_version: before,
+      });
+      const later = new Date(NOW.getTime() + 1000);
+      expect(
+        await repo.writeWaiting(a.workspaceId, id, { since: later, startedBy: 'reopen' }),
+      ).toBe(false);
+      expect((await read()).waiting_since).toEqual(NOW);
     });
 
     it('isolation: writeState never touches another workspace’s conversation', async () => {

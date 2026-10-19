@@ -700,6 +700,9 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'add_conversations_waiting_index',
+        'backfill_conversations_waiting_period',
+        'add_conversations_waiting_period',
         'create_pings',
         'create_tab_presences',
         'create_connect_links',
@@ -1192,11 +1195,282 @@ describe('operator-notifications migrations 04-08', () => {
         column: 1,
       };
       expect(await state()).toEqual(full);
-      for (let i = 0; i < 5; i++) {
+      // 03, 02 and 01 sit above 08: step them off first.
+      for (let i = 0; i < 8; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
       expect(await state()).toEqual({ tables: [], column: 0 });
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await state()).toEqual(full);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_WAITING = '1791681110002_create_pings';
+
+describe('operator-notifications migrations 01-03', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const minute = (m: number) => new Date(Date.UTC(2026, 0, 1, 10, m));
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  const migratorFor = (handle: Kysely<unknown>) =>
+    new Migrator({
+      db: handle,
+      provider: new TSFileMigrationProvider({
+        migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+      }),
+    });
+
+  async function workspaceWithMember(handle: Kysely<unknown>) {
+    const ws = newId();
+    const account = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${minute(0)})`.execute(
+      handle,
+    );
+    await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
+      VALUES (${account}, ${`${account}@example.test`}, 'Test User', 'h', ${minute(0)})`.execute(
+      handle,
+    );
+    await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+      VALUES (${newId()}, ${ws}, ${account}, 'operator', 'active', ${minute(0)}, ${minute(0)})`.execute(
+      handle,
+    );
+    return { ws, account };
+  }
+
+  type History = {
+    /** Customer messages by minute. */
+    messages: number[];
+    /** The last sent reply, minute. */
+    reply?: number;
+    status?: 'open' | 'closed';
+    /** Activity entries by minute. */
+    entries?: Array<{ at: number; kind: 'closed' | 'reopened'; cause?: string }>;
+    expect: { startedBy: 'message' | 'reopen'; at: number } | null;
+  };
+
+  /** The ten history shapes of the data-model audit (minutes). */
+  const SHAPES: History[] = [
+    { messages: [1], expect: { startedBy: 'message', at: 1 } },
+    { messages: [1], reply: 2, expect: null },
+    { messages: [1, 3, 4], reply: 2, expect: { startedBy: 'message', at: 3 } },
+    {
+      messages: [1],
+      status: 'closed',
+      entries: [{ at: 2, kind: 'closed' }],
+      expect: null,
+    },
+    {
+      messages: [1],
+      entries: [
+        { at: 2, kind: 'closed' },
+        { at: 3, kind: 'reopened' },
+      ],
+      expect: { startedBy: 'reopen', at: 3 },
+    },
+    {
+      messages: [1],
+      reply: 2,
+      entries: [
+        { at: 3, kind: 'closed' },
+        { at: 4, kind: 'reopened' },
+      ],
+      expect: null,
+    },
+    {
+      messages: [1, 3],
+      entries: [
+        { at: 2, kind: 'closed' },
+        { at: 3, kind: 'reopened', cause: 'customer_wrote' },
+      ],
+      expect: { startedBy: 'message', at: 3 },
+    },
+    {
+      messages: [1],
+      entries: [
+        { at: 2, kind: 'closed' },
+        { at: 3, kind: 'reopened', cause: 'reply_not_delivered' },
+      ],
+      expect: { startedBy: 'reopen', at: 3 },
+    },
+    {
+      messages: [1, 5],
+      reply: 2,
+      entries: [
+        { at: 3, kind: 'closed' },
+        { at: 4, kind: 'reopened' },
+      ],
+      expect: { startedBy: 'message', at: 5 },
+    },
+    {
+      messages: [1, 2],
+      entries: [
+        { at: 3, kind: 'closed' },
+        { at: 4, kind: 'reopened' },
+        { at: 5, kind: 'closed' },
+        { at: 6, kind: 'reopened' },
+      ],
+      expect: { startedBy: 'reopen', at: 6 },
+    },
+  ];
+
+  async function seed(handle: Kysely<unknown>, ws: string, actor: string, h: History) {
+    const contact = newId();
+    const conv = newId();
+    const tg = Math.floor(Math.random() * 1e9);
+    const lastMessage = Math.max(...h.messages);
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, ${tg}, 'Test User', ${minute(0)}, ${minute(0)})`.execute(handle);
+    const last = Math.max(lastMessage, h.reply ?? 0);
+    await sql`INSERT INTO conversations (id, workspace_id, contact_id, telegram_chat_id, created_at,
+        last_activity_at, last_message_received_at, last_reply_sent_at, status, state_version,
+        customer_message_seq)
+      VALUES (${conv}, ${ws}, ${contact}, ${tg}, ${minute(0)}, ${minute(last)}, ${minute(lastMessage)},
+        ${h.reply === undefined ? null : minute(h.reply)}, ${h.status ?? 'open'}, 0, ${h.messages.length})`.execute(
+      handle,
+    );
+    for (const [i, m] of h.messages.entries())
+      await sql`INSERT INTO messages (id, workspace_id, conversation_id, telegram_message_id, kind, body,
+          telegram_message, sent_at, received_at)
+        VALUES (${newId()}, ${ws}, ${conv}, ${i + 1}, 'text', 'hi',
+          ${JSON.stringify({ message_id: i + 1 })}::jsonb, ${minute(m)}, ${minute(m)})`.execute(
+        handle,
+      );
+    for (const e of h.entries ?? []) {
+      const cause = e.cause ?? 'member';
+      await sql`INSERT INTO conversation_activities (id, workspace_id, conversation_id, kind, cause,
+          actor_account_id, previous_assignee_account_id, new_assignee_account_id, position_at, created_at)
+        VALUES (${newId()}, ${ws}, ${conv}, ${e.kind}, ${cause},
+          ${cause === 'member' ? actor : null}, null, null, ${minute(e.at)}, ${minute(e.at)})`.execute(
+        handle,
+      );
+    }
+    return conv;
+  }
+
+  async function waiting(handle: Kysely<unknown>, conv: string) {
+    const { rows } = await sql<{ waiting_since: Date | null; waiting_started_by: string | null }>`
+      SELECT waiting_since, waiting_started_by FROM conversations WHERE id = ${conv}`.execute(
+      handle,
+    );
+    return rows[0]!;
+  }
+
+  it('backfills the ten audit history shapes and leaves answered and closed rows NULL', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const down = await migrator.migrateTo(LAST_PRE_WAITING);
+      expect(down.error).toBeUndefined();
+      const { ws, account } = await workspaceWithMember(freshDb);
+      const ids: string[] = [];
+      for (const h of SHAPES) ids.push(await seed(freshDb, ws, account, h));
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      for (const [i, h] of SHAPES.entries()) {
+        expect(await waiting(freshDb, ids[i]!), `shape ${i + 1}`).toEqual(
+          h.expect
+            ? { waiting_since: minute(h.expect.at), waiting_started_by: h.expect.startedBy }
+            : { waiting_since: null, waiting_started_by: null },
+        );
+      }
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('a re-run of the backfill fills only rows still NULL and keeps the others', async () => {
+    const { ws, account } = await workspaceWithMember(db);
+    const conv = await seed(db, ws, account, SHAPES[0]!);
+    await sql`UPDATE conversations SET waiting_since = ${minute(9)}, waiting_started_by = 'reopen'
+      WHERE id = ${conv}`.execute(db);
+    const other = await seed(db, ws, account, SHAPES[2]!);
+    const migrator = migratorFor(db);
+    const sqlOfBackfill = await migrator.migrateDown(); // reverts 03 only
+    expect(sqlOfBackfill.error).toBeUndefined();
+    const second = await migrator.migrateDown(); // reverts 02: a no-op
+    expect(second.error).toBeUndefined();
+    const again = await migrator.migrateToLatest(); // re-runs 02 and 03
+    expect(again.error).toBeUndefined();
+    expect(await waiting(db, conv)).toEqual({
+      waiting_since: minute(9),
+      waiting_started_by: 'reopen',
+    });
+    expect(await waiting(db, other)).toEqual({
+      waiting_since: minute(3),
+      waiting_started_by: 'message',
+    });
+  });
+
+  it('rejects an unknown start kind, a start without a kind and a closed conversation still waiting', async () => {
+    const { ws, account } = await workspaceWithMember(db);
+    const conv = await seed(db, ws, account, SHAPES[1]!);
+    await expect(
+      sql`UPDATE conversations SET waiting_since = ${minute(1)}, waiting_started_by = 'other'
+        WHERE id = ${conv}`.execute(db),
+    ).rejects.toThrow(/conversations_waiting_started_by_check/);
+    await expect(
+      sql`UPDATE conversations SET waiting_since = ${minute(1)} WHERE id = ${conv}`.execute(db),
+    ).rejects.toThrow(/conversations_waiting_pair_check/);
+    await expect(
+      sql`UPDATE conversations SET status = 'closed', waiting_since = ${minute(1)},
+          waiting_started_by = 'message' WHERE id = ${conv}`.execute(db),
+    ).rejects.toThrow(/conversations_waiting_open_check/);
+    await sql`UPDATE conversations SET waiting_since = ${minute(1)}, waiting_started_by = 'message'
+      WHERE id = ${conv}`.execute(db);
+  });
+
+  it('adds the partial index on (workspace_id, waiting_since)', async () => {
+    const { rows } = await sql<{ indexdef: string }>`
+      SELECT indexdef FROM pg_indexes
+      WHERE indexname = 'conversations_workspace_id_waiting_since_idx'`.execute(db);
+    expect(rows[0]?.indexdef).toMatch(/\(workspace_id, waiting_since\)/);
+    expect(rows[0]?.indexdef).toMatch(/WHERE \(waiting_since IS NOT NULL\)/);
+  });
+
+  it('reverts 03 to 01 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const state = async () => {
+        const col = await sql<{ column_name: string }>`
+          SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'conversations' AND column_name LIKE 'waiting%'
+          ORDER BY column_name`.execute(freshDb);
+        const idx = await sql<{ indexname: string }>`
+          SELECT indexname FROM pg_indexes
+          WHERE indexname = 'conversations_workspace_id_waiting_since_idx'`.execute(freshDb);
+        return { columns: col.rows.map((r) => r.column_name), index: idx.rows.length };
+      };
+      const full = { columns: ['waiting_started_by', 'waiting_since'].sort(), index: 1 };
+      expect(await state()).toEqual(full);
+      const down = await migrator.migrateTo(LAST_PRE_WAITING);
+      expect(down.error).toBeUndefined();
+      expect(await state()).toEqual({ columns: [], index: 0 });
       const up = await migrator.migrateToLatest();
       expect(up.error).toBeUndefined();
       expect(await state()).toEqual(full);

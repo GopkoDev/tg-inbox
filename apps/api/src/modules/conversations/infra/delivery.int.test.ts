@@ -45,7 +45,9 @@ describe('reply delivery (Postgres)', () => {
       clock,
     });
 
-  async function setup(conversation: { received?: Date; closed?: boolean } = {}) {
+  async function setup(
+    conversation: { received?: Date; closed?: boolean; waitingSince?: Date } = {},
+  ) {
     const workspaceId = await insertWorkspace(db);
     const { accountId } = await insertMembership(db, workspaceId);
     const contactId = await insertContact(db, { workspaceId });
@@ -57,6 +59,9 @@ describe('reply delivery (Postgres)', () => {
       lastMessageReceivedAt: received,
       ...(conversation.closed
         ? { status: 'closed' as const, assigneeAccountId: accountId, stateVersion: 3 }
+        : {}),
+      ...(conversation.waitingSince
+        ? { waitingSince: conversation.waitingSince, waitingStartedBy: 'message' as const }
         : {}),
     });
     return { workspaceId, accountId, conversationId };
@@ -164,6 +169,62 @@ describe('reply delivery (Postgres)', () => {
       last_message_received_at: at(0),
     });
     expect(stateSignals(replyId)).toHaveLength(1);
+  });
+
+  it('sent: ends the waiting period; a customer message newer than the sent time keeps it (AC-08)', async () => {
+    const s = await setup({ received: at(0), waitingSince: at(0) });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 1n,
+      sentAt: at(500),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+
+    const newer = await setup({ received: at(900), waitingSince: at(900) });
+    const b = await pending(newer);
+    await delivery().startAttempt({ ...ids(newer), replyId: b.replyId });
+    await delivery().finishAttempt({
+      ...ids(newer),
+      attemptId: b.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 2n,
+      sentAt: at(500),
+    });
+    expect(await conversation(newer.conversationId)).toMatchObject({
+      waiting_since: at(900),
+      waiting_started_by: 'message',
+    });
+  });
+
+  it('sent: another conversation of the workspace keeps its period', async () => {
+    const s = await setup({ received: at(0), waitingSince: at(0) });
+    const contactId = await insertContact(db, { workspaceId: s.workspaceId });
+    const other = await insertConversation(db, {
+      workspaceId: s.workspaceId,
+      contactId,
+      waitingSince: at(0),
+      waitingStartedBy: 'message',
+    });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 1n,
+      sentAt: at(500),
+    });
+    expect(await conversation(other)).toMatchObject({ waiting_since: at(0) });
   });
 
   it('sent: activity stays at a later customer message; reply time never moves backwards', async () => {
@@ -597,6 +658,42 @@ describe('reply delivery (Postgres)', () => {
         expect(await delivery().finishAttempt(input)).toBe(false);
         await expectReopenedOnce(s, before);
       }
+    });
+
+    it('restarts the waiting period as reopen at the reopen time, only over a waiting customer', async () => {
+      const waitingOne = await setup({ closed: true });
+      const { replyId, attemptId } = await pending(waitingOne);
+      await delivery().startAttempt({ ...ids(waitingOne), replyId });
+      await delivery().finishAttempt({
+        ...ids(waitingOne),
+        attemptId,
+        attemptOutcome: 'refused',
+        replyState: 'not_delivered',
+        failureReason: 'telegram_not_accepted',
+      });
+      expect(await conversation(waitingOne.conversationId)).toMatchObject({
+        status: 'open',
+        waiting_since: at(1000),
+        waiting_started_by: 'reopen',
+      });
+
+      const answered = await setup({ closed: true });
+      await db
+        .updateTable('conversations')
+        .set({ last_reply_sent_at: at(5), last_activity_at: at(5) })
+        .where('id', '=', answered.conversationId)
+        .execute();
+      const p = await pending(answered);
+      await delivery().skipReply({
+        ...ids(answered),
+        replyId: p.replyId,
+        failureReason: 'bot_not_working',
+      });
+      expect(await conversation(answered.conversationId)).toMatchObject({
+        status: 'open',
+        waiting_since: null,
+        waiting_started_by: null,
+      });
     });
 
     it('skipReply, once', async () => {

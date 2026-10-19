@@ -212,6 +212,79 @@ describe('conversations capture (Postgres)', () => {
     ).toBe('not_found');
   });
 
+  describe('the waiting period (AC-07, AC-08, ADR-0007)', () => {
+    const period = (w: string) =>
+      db
+        .selectFrom('conversations')
+        .select(['waiting_since', 'waiting_started_by', 'status'])
+        .where('workspace_id', '=', w)
+        .executeTakeFirstOrThrow();
+    const capture = (clockAt: Date, w: string, user: bigint, id: bigint) => {
+      const clock = fixedClock(clockAt);
+      return createConversations({
+        transaction: (fn) => db.transaction().execute(fn),
+        conversations: createConversationRepo(db),
+        messages: createMessageRepo(db),
+        activities: createActivityRepo(db),
+        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        signals: createConversationSignals(),
+        clock,
+      }).captureInbound(w, message(user, id, { sentAt: at(1) }));
+    };
+
+    it('starts at the arrival, not the Telegram date; a second message and a redelivery keep it', async () => {
+      const w = await insertWorkspace(db);
+      const user = BigInt(nextUser++);
+      await capture(at(100), w, user, 1n);
+      expect(await period(w)).toEqual({
+        waiting_since: at(100),
+        waiting_started_by: 'message',
+        status: 'open',
+      });
+      await capture(at(400), w, user, 2n);
+      await capture(at(500), w, user, 2n);
+      expect(await period(w)).toMatchObject({ waiting_since: at(100) });
+    });
+
+    it('a message after a sent reply starts a new period', async () => {
+      const w = await insertWorkspace(db);
+      const user = BigInt(nextUser++);
+      await capture(at(100), w, user, 1n);
+      await db
+        .updateTable('conversations')
+        .set({
+          waiting_since: null,
+          waiting_started_by: null,
+          last_reply_sent_at: at(200),
+          last_activity_at: at(200),
+        })
+        .where('workspace_id', '=', w)
+        .execute();
+      await capture(at(900), w, user, 2n);
+      expect(await period(w)).toMatchObject({
+        waiting_since: at(900),
+        waiting_started_by: 'message',
+      });
+    });
+
+    it('a message into a closed conversation reopens it with a message period at its arrival', async () => {
+      const w = await insertWorkspace(db);
+      const user = BigInt(nextUser++);
+      await capture(at(100), w, user, 1n);
+      await db
+        .updateTable('conversations')
+        .set({ status: 'closed', waiting_since: null, waiting_started_by: null })
+        .where('workspace_id', '=', w)
+        .execute();
+      await capture(at(300), w, user, 2n);
+      expect(await period(w)).toEqual({
+        waiting_since: at(300),
+        waiting_started_by: 'message',
+        status: 'open',
+      });
+    });
+  });
+
   describe('reopen on a customer message (AC-06, AC-07, ADR-0004)', () => {
     function at_(clockAt: Date) {
       const clock = fixedClock(clockAt);
@@ -247,7 +320,13 @@ describe('conversations capture (Postgres)', () => {
       await build().captureInbound(w, message(user, 1n));
       await db
         .updateTable('conversations')
-        .set({ status: 'closed', assignee_account_id: accountId, state_version: 4 })
+        .set({
+          status: 'closed',
+          assignee_account_id: accountId,
+          state_version: 4,
+          waiting_since: null,
+          waiting_started_by: null,
+        })
         .where('workspace_id', '=', w)
         .execute();
       return { w, accountId, user };
