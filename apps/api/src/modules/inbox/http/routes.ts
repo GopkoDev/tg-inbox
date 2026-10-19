@@ -110,8 +110,10 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       live.attach(socket, owner);
       socket.on('close', () => live.detach(socket));
       socket.on('error', () => live.detach(socket));
-      // The channel is server → client only: inbound frames are ignored.
-      socket.on('message', () => undefined);
+      // The server pings every 25 s; each pong extends this tab's presence lease (ADR-0002).
+      socket.on('pong', () => live.pong(socket));
+      // The one client frame is `presence`; the hub ignores anything else without closing.
+      socket.on('message', (data: unknown) => live.message(socket, data));
     },
   );
 

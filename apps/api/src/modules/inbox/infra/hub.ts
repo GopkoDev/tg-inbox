@@ -1,5 +1,6 @@
 import type { LiveFrame } from '@tg/shared';
-import { LiveFrame as LiveFrameSchema } from '@tg/shared';
+import { LiveFrame as LiveFrameSchema, PresenceFrame } from '@tg/shared';
+import { newId } from '../../../platform/ids.js';
 import type { RealtimeSignal } from '../../../platform/realtime.js';
 
 /** The slice of a WebSocket the hub needs (a `ws` socket satisfies it). */
@@ -15,19 +16,49 @@ export interface LiveSocketOwner {
   sessionId: string;
 }
 
+/** What the hub reports about each socket to `notifications` (its presence use cases). */
+export interface PresencePort {
+  opened(
+    workspaceId: string,
+    accountId: string,
+    connectionId: string,
+    onScreen: boolean,
+  ): Promise<void>;
+  alive(workspaceId: string, connectionId: string): Promise<void>;
+  screen(
+    workspaceId: string,
+    connectionId: string,
+    accountId: string,
+    onScreen: boolean,
+  ): Promise<void>;
+  closed(workspaceId: string, connectionId: string): Promise<void>;
+}
+
+/** The one client frame is tiny; anything larger is ignored unread (events.md, `LIVE_MAX_INBOUND_BYTES`). */
+export const LIVE_MAX_INBOUND_BYTES = 1024;
+
 export interface LiveHubDeps {
   sessions: { liveSessionIds(sessionIds: readonly string[]): Promise<string[]> };
   members: {
     activeMembersAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
   };
+  presence: PresencePort;
   logger: { warn(obj: object, msg: string): void; error(obj: object, msg: string): void };
   pingMs?: number;
   revalidateMs?: number;
+  /** One presence write per socket per this many ms, last value wins (default 1000). */
+  presenceCoalesceMs?: number;
 }
 
 export interface LiveHub {
+  /** Registers the socket and its presence lease (a fresh connection id, not on screen until its first frame). */
   attach(socket: LiveSocket, owner: LiveSocketOwner): void;
+  /** The socket closed or failed: its lease is deleted. */
   detach(socket: LiveSocket): void;
+  /** A pong arrived: the socket's lease is extended. */
+  pong(socket: LiveSocket): void;
+  /** A client frame arrived. Only a valid `presence` frame is read; everything else is ignored. */
+  message(socket: LiveSocket, data: unknown): void;
   /** Turns a realtime signal into frames for the sockets it concerns (events.md). */
   dispatch(signal: RealtimeSignal): void;
   /** Tells every socket that signals may have been missed. */
@@ -42,9 +73,22 @@ export const CLOSE_ACCESS_REMOVED = 4403;
 export const CLOSE_SESSION_ENDED = 4401;
 export const CLOSE_GOING_AWAY = 1001;
 
+/** The presence state of one socket (ADR-0002). */
+interface Conn {
+  id: string;
+  owner: LiveSocketOwner;
+  /** Presence calls of one socket run in order: a close never overtakes the open. */
+  queue: Promise<void>;
+  /** Waiting to be written: the last `on_screen` the tab reported. */
+  pending: boolean | undefined;
+  timer: NodeJS.Timeout | undefined;
+}
+
 export function createLiveHub(deps: LiveHubDeps): LiveHub {
-  const { sessions, members, logger } = deps;
+  const { sessions, members, presence, logger } = deps;
+  const coalesceMs = deps.presenceCoalesceMs ?? 1000;
   const sockets = new Map<LiveSocket, LiveSocketOwner>();
+  const conns = new Map<LiveSocket, Conn>();
   let pingTimer: NodeJS.Timeout | null = null;
   let revalidateTimer: NodeJS.Timeout | null = null;
   let revalidating = false;
@@ -56,8 +100,28 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       // A socket that is already closing: the close event will detach it.
     }
   };
+  /**
+   * Presence is best effort and fails safe: a lost write can only make a member away sooner (the lease
+   * expires), never present. Logged by code only.
+   */
+  const run = (conn: Conn, fn: () => Promise<void>) => {
+    conn.queue = conn.queue
+      .then(fn)
+      .catch((err: unknown) =>
+        logger.warn({ code: (err as { code?: string } | null)?.code }, 'presence write failed'),
+      );
+  };
+  /** Ends the socket's presence: drops a pending write and deletes the lease, once. */
+  const release = (socket: LiveSocket) => {
+    const conn = conns.get(socket);
+    if (!conn) return;
+    conns.delete(socket);
+    clearTimeout(conn.timer);
+    run(conn, () => presence.closed(conn.owner.workspaceId, conn.id));
+  };
   const close = (socket: LiveSocket, code: number, reason: string) => {
     sockets.delete(socket);
+    release(socket);
     safe(() => socket.close(code, reason));
   };
   const send = (socket: LiveSocket, frame: LiveFrame) => {
@@ -72,9 +136,51 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
   return {
     attach(socket, owner) {
       sockets.set(socket, owner);
+      const conn: Conn = {
+        id: newId(),
+        owner,
+        queue: Promise.resolve(),
+        pending: undefined,
+        timer: undefined,
+      };
+      conns.set(socket, conn);
+      // Registered hidden: a tab that never sends its frame counts as connected but not on screen,
+      // the safe direction (events.md, assumption 6).
+      run(conn, () => presence.opened(owner.workspaceId, owner.accountId, conn.id, false));
     },
     detach(socket) {
       sockets.delete(socket);
+      release(socket);
+    },
+
+    pong(socket) {
+      const conn = conns.get(socket);
+      if (conn) run(conn, () => presence.alive(conn.owner.workspaceId, conn.id));
+    },
+
+    message(socket, data) {
+      const conn = conns.get(socket);
+      if (!conn || !Buffer.isBuffer(data) || data.byteLength > LIVE_MAX_INBOUND_BYTES) return;
+      let json: unknown;
+      try {
+        json = JSON.parse(data.toString('utf8'));
+      } catch {
+        return;
+      }
+      const frame = PresenceFrame.safeParse(json);
+      if (!frame.success) return;
+      // One write per socket per window, the last value wins.
+      conn.pending = frame.data.on_screen;
+      conn.timer ??= setTimeout(() => {
+        conn.timer = undefined;
+        const onScreen = conn.pending;
+        conn.pending = undefined;
+        if (onScreen === undefined) return;
+        run(conn, () =>
+          presence.screen(conn.owner.workspaceId, conn.id, conn.owner.accountId, onScreen),
+        );
+      }, coalesceMs);
+      conn.timer.unref();
     },
 
     dispatch(signal) {
@@ -169,8 +275,11 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
       if (pingTimer) clearInterval(pingTimer);
       if (revalidateTimer) clearInterval(revalidateTimer);
       pingTimer = revalidateTimer = null;
+      const open = [...conns.values()];
       for (const socket of [...sockets.keys()])
         close(socket, CLOSE_GOING_AWAY, 'server going away');
+      // The leases are gone before the database is released.
+      await Promise.all(open.map((c) => c.queue));
     },
   };
 }

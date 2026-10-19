@@ -37,7 +37,10 @@ import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js'
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
 import { createIntercept } from './modules/notifications/app/intercept.js';
+import { createPresence } from './modules/notifications/app/presence.js';
 import { createRedeem } from './modules/notifications/app/redeem.js';
+import { createPingRepo } from './modules/notifications/infra/ping-repo.js';
+import { createPresenceRepo } from './modules/notifications/infra/presence-repo.js';
 import { createConnectLinkRepo } from './modules/notifications/infra/connect-link-repo.js';
 import { createBotMessageSender } from './modules/notifications/infra/jobs.js';
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
@@ -210,6 +213,12 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     clock,
   });
   const interceptor = { intercept };
+  // What the live-socket hub reports: one lease per open tab (ADR-0002).
+  const presence = createPresence({
+    presence: createPresenceRepo(db),
+    pings: createPingRepo(db),
+    clock,
+  });
   // --- end notifications dependencies ---
 
   const bots = {
@@ -313,6 +322,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     conversations,
     notificationReads,
     bots,
+    presence,
     /** Binds the started job queue to the notifications answers (the queue starts after `buildDeps()`). */
     bindNotificationJobs: botMessages.bind,
     inboxReads,

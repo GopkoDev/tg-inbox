@@ -8,6 +8,9 @@ import { newId } from '../../../platform/ids.js';
 import { publish, type RealtimeSignal } from '../../../platform/realtime.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
 import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
+import { insertPing, insertTelegramLink } from '../../../test/fixtures/notifications.js';
+import { createPresenceRepo } from '../../notifications/infra/presence-repo.js';
+import { isAway, isPresent } from '../../notifications/domain/presence.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../../../test/postgres.js';
 
 const ORIGIN = 'http://localhost:5173';
@@ -214,13 +217,247 @@ describe('inbox live socket (postgres + real websocket)', () => {
     expect(tab.socket.readyState).toBe(1);
   });
 
-  it('closes a socket that sends a frame over 1 KiB: the channel is server to client (B7)', async () => {
+  it('ignores a frame over 1 KiB without closing, and closes only one far over the transport cap', async () => {
     const ws = await insertWorkspace(db, `P ${newId()}`);
     const me = await member(ws);
     const tab = await connect(ws, me.token);
-    tab.socket.send('x'.repeat(2048));
+    tab.socket.send(
+      JSON.stringify({ type: 'presence', v: 1, on_screen: true, pad: 'x'.repeat(2048) }),
+    );
+    await signal(changed(ws));
+    await until(() => tab.frames.length === 1);
+    expect(tab.socket.readyState).toBe(1);
+    tab.socket.send('x'.repeat(64 * 1024));
     const close = await tab.closed;
     expect(close.code).toBe(1009);
+  });
+
+  describe('presence leases (ADR-0002, AC-07)', () => {
+    const leases = (workspaceId: string, accountId: string) =>
+      db
+        .selectFrom('tab_presences')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('account_id', '=', accountId)
+        .execute();
+    const lease = async (workspaceId: string, accountId: string, n = 1) => {
+      let rows = await leases(workspaceId, accountId);
+      const start = Date.now();
+      while (rows.length < n && Date.now() - start < 3000) {
+        await new Promise((r) => setTimeout(r, 25));
+        rows = await leases(workspaceId, accountId);
+      }
+      return rows;
+    };
+    const pollRows = async (
+      workspaceId: string,
+      accountId: string,
+      ok: (rows: Awaited<ReturnType<typeof leases>>) => boolean,
+    ) => {
+      const start = Date.now();
+      let rows = await leases(workspaceId, accountId);
+      while (!ok(rows) && Date.now() - start < 4000) {
+        await new Promise((r) => setTimeout(r, 25));
+        rows = await leases(workspaceId, accountId);
+      }
+      return rows;
+    };
+
+    it('registers a hidden 50 s lease on open, extends it on a pong and deletes it on a clean close', async () => {
+      const ws = await insertWorkspace(db, `L ${newId()}`);
+      const me = await member(ws);
+      const before = Date.now();
+      const tab = await connect(ws, me.token);
+      const [row] = await lease(ws, me.accountId);
+      expect(row!.on_screen).toBe(false);
+      expect(row!.last_on_screen_at).toBeNull();
+      expect(row!.live_until.getTime()).toBeGreaterThanOrEqual(before + 49_000);
+      expect(row!.live_until.getTime()).toBeLessThanOrEqual(Date.now() + 50_000);
+      // Move the lease back, then a pong (the browser answers the server ping with one) pushes it out.
+      await db
+        .updateTable('tab_presences')
+        .set({ live_until: new Date(Date.now() + 5_000) })
+        .where('id', '=', row!.id)
+        .execute();
+      tab.socket.pong();
+      const [extended] = await pollRows(
+        ws,
+        me.accountId,
+        (r) => r[0]!.live_until.getTime() > Date.now() + 40_000,
+      );
+      expect(extended!.live_until.getTime()).toBeGreaterThan(Date.now() + 40_000);
+      // The in-memory test transport does not end the stream on a close handshake alone, so the
+      // tab goes away by dropping the connection; the hub's detach path is the same.
+      tab.socket.terminate();
+      await tab.closed;
+      expect(await pollRows(ws, me.accountId, (r) => r.length === 0)).toEqual([]);
+    });
+
+    it('a dead socket counts away once its lease passes; a closed one at once', async () => {
+      const ws = await insertWorkspace(db, `D ${newId()}`);
+      const me = await member(ws);
+      await connect(ws, me.token);
+      const [row] = await lease(ws, me.accountId);
+      const repo = createPresenceRepo(db);
+      const at = (ms: number) => new Date(Date.now() + ms);
+      // On screen at 50 s... not yet: it opened hidden, so it is away straight away.
+      expect(
+        isAway(
+          [...((await repo.listLive(ws, at(0), [me.accountId])).get(me.accountId) ?? [])],
+          at(0),
+        ),
+      ).toBe(true);
+      await db
+        .updateTable('tab_presences')
+        .set({ on_screen: true })
+        .where('id', '=', row!.id)
+        .execute();
+      const live = async (ms: number) => [
+        ...((await repo.listLive(ws, at(ms), [me.accountId])).get(me.accountId) ?? []),
+      ];
+      expect(isPresent(await live(0), at(0))).toBe(true);
+      // No pong for 60 s: the lease has passed.
+      expect(isAway(await live(60_000), at(60_000))).toBe(true);
+    });
+
+    it('a presence frame sets the screen state: present for 10 minutes after leaving, then away', async () => {
+      const ws = await insertWorkspace(db, `H ${newId()}`);
+      const me = await member(ws);
+      const tab = await connect(ws, me.token);
+      await lease(ws, me.accountId);
+      tab.socket.send(JSON.stringify({ type: 'presence', v: 1, on_screen: true }));
+      const [shown] = await pollRows(ws, me.accountId, (r) => r[0]!.on_screen);
+      expect(shown!.on_screen).toBe(true);
+      tab.socket.send(JSON.stringify({ type: 'presence', v: 1, on_screen: false }));
+      const [hidden] = await pollRows(ws, me.accountId, (r) => !r[0]!.on_screen);
+      expect(hidden!.on_screen).toBe(false);
+      expect(hidden!.last_on_screen_at).not.toBeNull();
+      // Keep the lease live for the check, then look at 9 and 11 minutes after leaving.
+      await db
+        .updateTable('tab_presences')
+        .set({ live_until: new Date(Date.now() + 3_600_000) })
+        .execute();
+      const repo = createPresenceRepo(db);
+      const at = (ms: number) => new Date(hidden!.last_on_screen_at!.getTime() + ms);
+      const live = async (ms: number) => [
+        ...((await repo.listLive(ws, at(ms), [me.accountId])).get(me.accountId) ?? []),
+      ];
+      expect(isPresent(await live(9 * 60_000), at(9 * 60_000))).toBe(true);
+      expect(isAway(await live(11 * 60_000), at(11 * 60_000))).toBe(true);
+    });
+
+    it('junk and oversized frames are ignored and the lease stays as it was', async () => {
+      const ws = await insertWorkspace(db, `J ${newId()}`);
+      const me = await member(ws);
+      const tab = await connect(ws, me.token);
+      await lease(ws, me.accountId);
+      for (const data of [
+        'not json',
+        JSON.stringify({ type: 'nope' }),
+        JSON.stringify({ type: 'presence', v: 1, on_screen: 'yes' }),
+        JSON.stringify({ type: 'presence', v: 1, on_screen: true, pad: 'x'.repeat(3000) }),
+      ]) {
+        tab.socket.send(data);
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      const [row] = await leases(ws, me.accountId);
+      expect(row!.on_screen).toBe(false);
+      expect(tab.socket.readyState).toBe(1);
+    });
+
+    it('a burst of frames ends with the last value', async () => {
+      const ws = await insertWorkspace(db, `B ${newId()}`);
+      const me = await member(ws);
+      const tab = await connect(ws, me.token);
+      await lease(ws, me.accountId);
+      for (const v of [true, false, true, false, true]) {
+        tab.socket.send(JSON.stringify({ type: 'presence', v: 1, on_screen: v }));
+      }
+      const [row] = await pollRows(ws, me.accountId, (r) => r[0]!.on_screen);
+      expect(row!.on_screen).toBe(true);
+    });
+
+    it('opening or coming back on screen within 15 minutes of a ping marks that ping opened', async () => {
+      const ws = await insertWorkspace(db, `O ${newId()}`);
+      const me = await member(ws);
+      const link = await insertTelegramLink(db, { workspaceId: ws, accountId: me.accountId });
+      const ping = await insertPing(db, {
+        workspaceId: ws,
+        accountId: me.accountId,
+        telegramLinkId: link.id,
+        createdAt: new Date(Date.now() - 5 * 60_000),
+      });
+      const tab = await connect(ws, me.token);
+      await lease(ws, me.accountId);
+      const openedAt = async () =>
+        (
+          await db
+            .selectFrom('pings')
+            .select('opened_at')
+            .where('id', '=', ping.id)
+            .executeTakeFirstOrThrow()
+        ).opened_at;
+      expect(await openedAt()).toBeNull();
+      tab.socket.send(JSON.stringify({ type: 'presence', v: 1, on_screen: true }));
+      const start = Date.now();
+      while ((await openedAt()) === null && Date.now() - start < 4000) {
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      expect(await openedAt()).not.toBeNull();
+    });
+
+    it("4403 on deactivation deletes the lease; only that workspace's lease", async () => {
+      const [a, b] = [
+        await insertWorkspace(db, `XA ${newId()}`),
+        await insertWorkspace(db, `XB ${newId()}`),
+      ];
+      const me = await member(a);
+      await insertMembership(db, b, { accountId: me.accountId });
+      const tabA = await connect(a, me.token);
+      await connect(b, me.token);
+      await lease(a, me.accountId);
+      await lease(b, me.accountId);
+      await db.transaction().execute(async (trx) => {
+        await trx
+          .updateTable('memberships')
+          .set({ state: 'deactivated', deactivated_at: new Date() })
+          .where('workspace_id', '=', a)
+          .where('account_id', '=', me.accountId)
+          .execute();
+        await publish(trx, {
+          type: 'membership.deactivated',
+          v: 1,
+          workspace_id: a,
+          account_id: me.accountId,
+        });
+      });
+      expect((await tabA.closed).code).toBe(4403);
+      expect(await pollRows(a, me.accountId, (r) => r.length === 0)).toEqual([]);
+      expect(await leases(b, me.accountId)).toHaveLength(1);
+    });
+  });
+
+  it("telegram_link.changed reaches only that account's sockets in that workspace", async () => {
+    const [a, b] = [
+      await insertWorkspace(db, `TA ${newId()}`),
+      await insertWorkspace(db, `TB ${newId()}`),
+    ];
+    const [me, mate] = [await member(a), await member(a)];
+    await insertMembership(db, b, { accountId: me.accountId });
+    const mine = await connect(a, me.token);
+    const mineOther = await connect(b, me.token);
+    const theirs = await connect(a, mate.token);
+    await signal({
+      type: 'telegram_link.changed',
+      v: 1,
+      workspace_id: a,
+      account_id: me.accountId,
+    });
+    await signal({ type: 'bot.changed', v: 1, workspace_id: a });
+    await until(() => theirs.frames.length === 1 && mine.frames.length === 2);
+    expect(mine.frames[0]).toEqual({ type: 'telegram_link.changed', v: 1, workspace_id: a });
+    expect(theirs.frames).toEqual([{ type: 'bot.changed', v: 1, workspace_id: a }]);
+    expect(mineOther.frames).toEqual([]);
   });
 
   it('closes open sockets with 1001 when the server shuts down (B8, events.md)', async () => {

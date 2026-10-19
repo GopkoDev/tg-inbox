@@ -29,7 +29,7 @@ import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
 
 /** Largest client frame the live socket accepts; bigger frames close it with 1009. */
-const LIVE_MAX_INBOUND_BYTES = 1024;
+const LIVE_TRANSPORT_MAX_BYTES = 8 * 1024;
 import type { Clock } from './platform/clock.js';
 
 /** Composition root: builds every dependency and registers every module plugin. */
@@ -56,8 +56,9 @@ export async function buildApp(
   // (1005); the hub closes them with 1001 first (events.md).
   let closeLiveSockets = async (): Promise<void> => {};
   await app.register(websocket, {
-    // The live channel is server to client: a client frame is never read, so keep it tiny.
-    options: { maxPayload: LIVE_MAX_INBOUND_BYTES },
+    // The only client frame is the tiny `presence` frame. The hub ignores anything over
+    // LIVE_MAX_INBOUND_BYTES unread without closing; this transport cap is the hard limit above it.
+    options: { maxPayload: LIVE_TRANSPORT_MAX_BYTES },
     preClose: async () => {
       await closeLiveSockets();
       for (const client of app.websocketServer.clients) client.close(1001, 'server going away');
@@ -94,6 +95,7 @@ export async function buildApp(
   const liveHub = createLiveHub({
     sessions: sessionUseCases,
     members: workspaceAccess,
+    presence: deps.presence,
     logger: app.log,
   });
   const realtime = await startRealtimeListener(config.DATABASE_URL, app.log);
