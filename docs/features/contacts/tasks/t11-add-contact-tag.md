@@ -159,5 +159,6 @@ No DB changes (writes `tags`, `contact_tags`, `contact_tag_history` through T6 /
 ## Definition of Done
 
 - [ ] Unit and integration tests prove every branch of the add path in the ADR-0004 lock order — name rules, find-or-create by key with one tag under concurrent creation, exact 100 and 20 limits under concurrency with the new tag rolled back on refusal, the no-op that records and counts nothing, the 61st change refused with its retry time, TAG_NOT_FOUND for a deleted or foreign tag — and that a recorded add writes one added entry and publishes contact.changed (plus tags.changed when the tag was created).
+- [ ] Integration tests also prove a tag renamed between the pick and the add is added under its new name with no tag of the old name created (AC-14), create + add counts as one change, and changes in another workspace of the same account do not count toward this workspace's limit (AC-15) (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

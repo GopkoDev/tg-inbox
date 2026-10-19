@@ -222,7 +222,7 @@
         "AC-04",
         "AC-13"
       ],
-      "dod": "Unit tests prove the list use case normalises the search, refuses none-with-tags, reports missing tag ids and echoes the filter, and that the profile and the tag-history page name adders and actors through the workspaces port, deactivated members included, with not-found for foreign ids; buildDeps wires the contacts → workspaces edge.",
+      "dod": "Unit tests prove the list use case normalises the search, refuses none-with-tags, reports missing tag ids and echoes the filter, and that the profile and the tag-history page name adders and actors through the workspaces port, deactivated members included, with not-found for foreign ids; buildDeps wires the contacts → workspaces edge. Unit tests also prove any of / all of with no tag chosen filter nothing (matching_count equals total_count) and a tag renamed since the link was saved still resolves and filters (test plan AC-02).",
       "files_hint": [
         "apps/api/src/modules/contacts/app/contacts.ts",
         "apps/api/src/modules/contacts/app/contacts.test.ts",
@@ -251,7 +251,7 @@
         "AC-14",
         "AC-15"
       ],
-      "dod": "Unit and integration tests prove every branch of the add path in the ADR-0004 lock order — name rules, find-or-create by key with one tag under concurrent creation, exact 100 and 20 limits under concurrency with the new tag rolled back on refusal, the no-op that records and counts nothing, the 61st change refused with its retry time, TAG_NOT_FOUND for a deleted or foreign tag — and that a recorded add writes one added entry and publishes contact.changed (plus tags.changed when the tag was created).",
+      "dod": "Unit and integration tests prove every branch of the add path in the ADR-0004 lock order — name rules, find-or-create by key with one tag under concurrent creation, exact 100 and 20 limits under concurrency with the new tag rolled back on refusal, the no-op that records and counts nothing, the 61st change refused with its retry time, TAG_NOT_FOUND for a deleted or foreign tag — and that a recorded add writes one added entry and publishes contact.changed (plus tags.changed when the tag was created). Integration tests also prove a tag renamed between the pick and the add is added under its new name with no tag of the old name created (AC-14), create + add counts as one change, and changes in another workspace of the same account do not count toward this workspace's limit (AC-15) (test plan).",
       "files_hint": [
         "apps/api/src/modules/contacts/app/tags.ts",
         "apps/api/src/modules/contacts/app/tags.test.ts",
@@ -299,7 +299,7 @@
         "AC-14",
         "AC-15"
       ],
-      "dod": "Unit and integration tests prove listTags in tag-list order with zero counts, rename keeping the id and writing no history, the case-only rename, the same-text no-op, TAG_NAME_TAKEN with the holder and its count, the confirmed merge on the AC-09 seed (14 on VIP, adders kept, one merged entry per carrier of the merged tag) with TAG_MERGE_TARGET_CHANGED when the target moved, no deadlock against a racing member add, one tags.changed per change and the tag.merged log line with ids only.",
+      "dod": "Unit and integration tests prove listTags in tag-list order with zero counts, rename keeping the id and writing no history, the case-only rename, the same-text no-op, TAG_NAME_TAKEN with the holder and its count, the confirmed merge on the AC-09 seed (14 on VIP, adders kept, one merged entry per carrier of the merged tag) with TAG_MERGE_TARGET_CHANGED when the target moved, no deadlock against a racing member add, one tags.changed per change and the tag.merged log line with ids only. Tests also prove a rename follows the AC-07 name rules (TAG_NAME_INVALID, nothing changed), a history entry written before a rename still reads under the old name (AC-04), and an owner's merged entries never count toward the member limit while rename never answers TAG_CHANGE_LIMIT_REACHED (AC-15) (test plan).",
       "files_hint": [
         "apps/api/src/modules/contacts/app/tag-admin.ts",
         "apps/api/src/modules/contacts/app/tag-admin.test.ts",
@@ -389,7 +389,7 @@
         "AC-12",
         "AC-13"
       ],
-      "dod": "The API e2e stories pass against Postgres and the fake Bot API, the cross-workspace suite refuses every foreign contact or tag on every contacts and tags route with no hint, the four integrity queries return no row, no frame, signal or log line carries a tag or contact name, and on a 10 000-contact, 100-tag seed the list (every filter mode including all-of, with counts) and the profile stay within 500 ms, a tag change within 300 ms, owner merge and delete within 2 s and change-to-push within 3 s.",
+      "dod": "The API e2e stories pass against Postgres and the fake Bot API, the cross-workspace suite refuses every foreign contact or tag on every contacts and tags route with no hint, the four integrity queries return no row, no frame, signal or log line carries a tag or contact name, and on a 10 000-contact, 100-tag seed the list (every filter mode including all-of, with counts) and the profile stay within 500 ms, a tag change within 300 ms, owner merge and delete within 2 s and change-to-push within 3 s. The AC-05 story asserts the unread count, the attention count and the ping sweep's due set are unchanged after the profile reads while a customer message arrives; the AC-06 story asserts the list filter finds the contact by its new tags and the fake Bot API records no send for any tag change; the AC-09 story asserts tags.changed from rename, merge and delete reaches every socket of the workspace; the AC-10 check asserts listTags contact_count equals listContacts mode=any matching_count for every seeded tag; the AC-13 story proves a renamed customer keeps the tags, a deactivated adder stays named, tagging works with the bot disconnected and the same Telegram user in another workspace is a separate contact with none of the tags (test plan).",
       "files_hint": [
         "apps/api/src/e2e/contacts-flows.int.test.ts",
         "apps/api/src/e2e/contacts-tenancy.int.test.ts",
@@ -434,7 +434,7 @@
         "AC-03",
         "AC-10"
       ],
-      "dod": "Testing Library tests cover every SCR-18 state in screens.md (loading, default with «Never» / «Unknown» / «no username», show more without repeats, more failed, filtered with «N of M contacts match», filter open with the three modes and the no-tags rule, missing-tag notice, both empty states, error, phone), the address round-trips search, mode and tag ids through reload and back, and ContactsPreview is gone.",
+      "dod": "Testing Library tests cover every SCR-18 state in screens.md (loading, default with «Never» / «Unknown» / «no username», show more without repeats, more failed, filtered with «N of M contacts match», filter open with the three modes and the no-tags rule, missing-tag notice, both empty states, error, phone), the address round-trips search, mode and tag ids through reload and back, and ContactsPreview is gone. Component tests also prove a row's contact name opens the profile at its address (AC-04), a workspace switch starts with no search and no filter (AC-02), and that a 401 on listContacts returns to the same address (search and filter included) after sign-in while 403 ACCESS_REMOVED shows the access-removed landing (AC-12) (test plan).",
       "files_hint": [
         "apps/web/src/features/contacts/ContactsTable.tsx",
         "apps/web/src/features/contacts/ContactsTable.test.tsx",

@@ -129,5 +129,6 @@ No DB changes (reads T7 / T9 repositories).
 ## Definition of Done
 
 - [ ] Unit tests prove the list use case normalises the search, refuses none-with-tags, reports missing tag ids and echoes the filter, and that the profile and the tag-history page name adders and actors through the workspaces port, deactivated members included, with not-found for foreign ids; buildDeps wires the contacts → workspaces edge.
+- [ ] Unit tests also prove any of / all of with no tag chosen filter nothing (matching_count equals total_count) and a tag renamed since the link was saved still resolves and filters (test plan AC-02).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

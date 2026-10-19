@@ -133,5 +133,6 @@ No DB changes (updates `tags.name` / `name_key`; merge through T8).
 ## Definition of Done
 
 - [ ] Unit and integration tests prove listTags in tag-list order with zero counts, rename keeping the id and writing no history, the case-only rename, the same-text no-op, TAG_NAME_TAKEN with the holder and its count, the confirmed merge on the AC-09 seed (14 on VIP, adders kept, one merged entry per carrier of the merged tag) with TAG_MERGE_TARGET_CHANGED when the target moved, no deadlock against a racing member add, one tags.changed per change and the tag.merged log line with ids only.
+- [ ] Tests also prove a rename follows the AC-07 name rules (TAG_NAME_INVALID, nothing changed), a history entry written before a rename still reads under the old name (AC-04), and an owner's merged entries never count toward the member limit while rename never answers TAG_CHANGE_LIMIT_REACHED (AC-15) (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

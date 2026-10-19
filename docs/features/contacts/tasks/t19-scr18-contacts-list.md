@@ -138,5 +138,6 @@ No DB changes.
 ## Definition of Done
 
 - [ ] Testing Library tests cover every SCR-18 state in screens.md (loading, default with «Never» / «Unknown» / «no username», show more without repeats, more failed, filtered with «N of M contacts match», filter open with the three modes and the no-tags rule, missing-tag notice, both empty states, error, phone), the address round-trips search, mode and tag ids through reload and back, and ContactsPreview is gone.
+- [ ] Component tests also prove a row's contact name opens the profile at its address (AC-04), a workspace switch starts with no search and no filter (AC-02), and that a 401 on listContacts returns to the same address (search and filter included) after sign-in while 403 ACCESS_REMOVED shows the access-removed landing (AC-12) (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
