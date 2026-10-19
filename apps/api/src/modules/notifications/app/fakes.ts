@@ -6,13 +6,23 @@ import type {
   ConnectLinkRepo,
   Executor,
   MembershipLocks,
+  LedgerEntry,
+  NewPing,
+  NewPresence,
   NewTelegramLink,
+  PingOutcome,
+  PingPeriod,
+  PingRepo,
+  PresenceRepo,
+  WaitingRead,
+  WaitingReads,
   NotificationSignals,
   TelegramLink,
   TelegramLinkRepo,
   Transaction,
 } from './ports.js';
 import type { InboxBotStatus } from '@tg/shared';
+import type { PresenceLease } from '../domain/presence.js';
 
 export const T0 = new Date('2026-10-19T10:00:00Z');
 export const at = (seconds: number) => new Date(T0.getTime() + seconds * 1000);
@@ -272,3 +282,172 @@ export function notificationsHarness() {
   };
 }
 export type NotificationsHarness = ReturnType<typeof notificationsHarness>;
+
+export interface FakePing extends NewPing {
+  workspaceId: string;
+  outcome: PingOutcome;
+  items: PingPeriod[];
+}
+
+/** In-memory pings + ping_items: the ledger's unique key and the cascade of the SQL. */
+export function fakePingRepo(): PingRepo & { rows: FakePing[] } {
+  const rows: FakePing[] = [];
+  return {
+    rows,
+    async insertWithItems(w, ping, items) {
+      const taken = (item: PingPeriod) =>
+        rows.some(
+          (r) =>
+            r.workspaceId === w &&
+            r.accountId === ping.accountId &&
+            r.items.some(
+              (i) =>
+                i.conversationId === item.conversationId &&
+                i.waitingSince.getTime() === item.waitingSince.getTime(),
+            ),
+        );
+      if (items.some(taken)) return 'lost';
+      rows.push({ ...ping, workspaceId: w, outcome: 'sending', items });
+      return 'inserted';
+    },
+    async lastPingAt(w, accountId) {
+      const times = rows
+        .filter((r) => r.workspaceId === w && r.accountId === accountId)
+        .map((r) => r.createdAt.getTime());
+      return times.length ? new Date(Math.max(...times)) : null;
+    },
+    async ledger(w, periods) {
+      const out: LedgerEntry[] = [];
+      for (const r of rows) {
+        if (r.workspaceId !== w) continue;
+        for (const i of r.items) {
+          if (
+            periods.some(
+              (p) =>
+                p.conversationId === i.conversationId &&
+                p.waitingSince.getTime() === i.waitingSince.getTime(),
+            )
+          ) {
+            out.push({ ...i, accountId: r.accountId });
+          }
+        }
+      }
+      return out;
+    },
+    async setOutcome(w, pingId, outcome) {
+      const row = rows.find((r) => r.workspaceId === w && r.id === pingId);
+      if (row) row.outcome = outcome;
+      return Boolean(row);
+    },
+    async rollOut(w, pingId) {
+      const at = rows.findIndex((r) => r.workspaceId === w && r.id === pingId);
+      if (at >= 0) rows.splice(at, 1);
+      return at >= 0;
+    },
+    async markOpened() {
+      return false;
+    },
+  };
+}
+
+interface FakeLease extends PresenceLease {
+  workspaceId: string;
+  id: string;
+  accountId: string;
+}
+
+/** In-memory tab_presences. */
+export function fakePresenceRepo(): PresenceRepo & { rows: FakeLease[] } {
+  const rows: FakeLease[] = [];
+  const find = (w: string, id: string) => rows.find((r) => r.workspaceId === w && r.id === id);
+  return {
+    rows,
+    async open(w, lease: NewPresence) {
+      rows.push({
+        workspaceId: w,
+        id: lease.id,
+        accountId: lease.accountId,
+        liveUntil: lease.liveUntil,
+        onScreen: lease.onScreen,
+        lastOnScreenAt: lease.onScreen ? lease.at : null,
+      });
+    },
+    async extend(w, id, liveUntil) {
+      const row = find(w, id);
+      if (!row) return false;
+      if (liveUntil > row.liveUntil) row.liveUntil = liveUntil;
+      return true;
+    },
+    async setScreen(w, id, onScreen, now) {
+      const row = find(w, id);
+      if (!row) return false;
+      row.onScreen = onScreen;
+      row.lastOnScreenAt = now;
+      return true;
+    },
+    async close(w, id) {
+      const at = rows.findIndex((r) => r.workspaceId === w && r.id === id);
+      if (at >= 0) rows.splice(at, 1);
+      return at >= 0;
+    },
+    async deleteExpired(w, now, accountId) {
+      let n = 0;
+      for (let i = rows.length - 1; i >= 0; i -= 1) {
+        const r = rows[i]!;
+        if (
+          r.workspaceId === w &&
+          r.liveUntil <= now &&
+          (!accountId || r.accountId === accountId)
+        ) {
+          rows.splice(i, 1);
+          n += 1;
+        }
+      }
+      return n;
+    },
+    async listLive(w, now, accountIds) {
+      const out = new Map<string, PresenceLease[]>();
+      for (const r of rows) {
+        if (r.workspaceId !== w || r.liveUntil <= now) continue;
+        if (accountIds && !accountIds.includes(r.accountId)) continue;
+        out.set(r.accountId, [
+          ...(out.get(r.accountId) ?? []),
+          { liveUntil: r.liveUntil, onScreen: r.onScreen, lastOnScreenAt: r.lastOnScreenAt },
+        ]);
+      }
+      return out;
+    },
+  };
+}
+
+export interface FakeWaiting extends WaitingRead {
+  workspaceId: string;
+}
+
+/** The waiting conversations of `conversations`, as a list a test edits between reads. */
+export function fakeWaitingReads(): WaitingReads & { rows: FakeWaiting[]; reads: number } {
+  const state = {
+    rows: [] as FakeWaiting[],
+    reads: 0,
+    async waitingForPings(
+      w: string,
+      query: { conversationIds?: string[]; accountIds: string[] },
+    ): Promise<WaitingRead[]> {
+      state.reads += 1;
+      return state.rows
+        .filter(
+          (r) =>
+            r.workspaceId === w &&
+            (!query.conversationIds || query.conversationIds.includes(r.conversationId)),
+        )
+        .map((r): WaitingRead => ({
+          conversationId: r.conversationId,
+          assigneeAccountId: r.assigneeAccountId,
+          waitingSince: r.waitingSince,
+          startedBy: r.startedBy,
+          readBy: new Set(r.readBy),
+        }));
+    },
+  };
+  return state;
+}

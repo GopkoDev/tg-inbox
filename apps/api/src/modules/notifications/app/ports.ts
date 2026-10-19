@@ -43,11 +43,14 @@ export type TelegramLinkInsert =
   | { ok: false; reason: 'telegram_user_linked' };
 
 export interface TelegramLinkRepo {
-  /** `lock`: `FOR UPDATE` on the live row, for the rest of the transaction `tx`. */
+  /**
+   * `lock: true`: `FOR UPDATE` on the live row; `'share'`: `FOR SHARE` (a ping send, so a Disconnect
+   * waits for it); both for the rest of the transaction `tx`.
+   */
   findLiveByAccount(
     workspaceId: string,
     accountId: string,
-    options?: { lock?: boolean },
+    options?: { lock?: boolean | 'share' },
     tx?: Executor,
   ): Promise<TelegramLink | null>;
   findLiveByTelegramUser(
@@ -289,4 +292,21 @@ export type SendMemberMessage = (request: {
 export interface WorkspaceNames {
   /** Null when the workspace is gone. */
   workspaceName(workspaceId: string): Promise<string | null>;
+}
+
+/** One open conversation in a waiting period, as the sweep reads it from `conversations`. */
+export interface WaitingRead {
+  conversationId: string;
+  assigneeAccountId: string | null;
+  waitingSince: Date;
+  startedBy: 'message' | 'reopen';
+  /** Accounts, among those asked for and the assignee, that read the waiting message. */
+  readBy: Set<string>;
+}
+
+export interface WaitingReads {
+  waitingForPings(
+    workspaceId: string,
+    query: { conversationIds?: string[]; accountIds: string[] },
+  ): Promise<WaitingRead[]>;
 }

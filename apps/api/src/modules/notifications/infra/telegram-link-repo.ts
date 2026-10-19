@@ -41,6 +41,7 @@ export function createTelegramLinkRepo(db: Db): TelegramLinkRepo {
         .where('account_id', '=', accountId)
         .where('removed_at', 'is', null)
         .$if(options?.lock === true, (qb) => qb.forUpdate())
+        .$if(options?.lock === 'share', (qb) => qb.forShare())
         .executeTakeFirst();
       return row ? toLink(row) : null;
     },
