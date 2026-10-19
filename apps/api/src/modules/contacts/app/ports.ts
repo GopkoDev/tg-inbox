@@ -294,3 +294,8 @@ export interface ContactListQuery {
   /** All contacts of the workspace. */
   totalCount(workspaceId: string): Promise<number>;
 }
+
+/** What `contacts` uses of `workspaces` (sad.md §5): names of adders and actors, deactivated members included. */
+export interface DisplayNames {
+  displayNames(workspaceId: string, accountIds: readonly string[]): Promise<Map<string, string>>;
+}

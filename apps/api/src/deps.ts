@@ -52,8 +52,12 @@ import { createConnectLinkRepo } from './modules/notifications/infra/connect-lin
 import { createBotMessageSender, createPingStarter } from './modules/notifications/infra/jobs.js';
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
-import { createContacts } from './modules/contacts/app/contacts.js';
+import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
+import { createContactListQuery } from './modules/contacts/infra/contact-list-query.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
+import { createContactTagRepo } from './modules/contacts/infra/contact-tag-repo.js';
+import { createTagHistoryRepo } from './modules/contacts/infra/tag-history-repo.js';
+import { createTagRepo } from './modules/contacts/infra/tag-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
@@ -382,6 +386,18 @@ export function buildDeps(
   });
   // --- end inbox dependencies ---
 
+  // --- contacts reads: the list, the profile and its tag history; the contacts -> workspaces edge
+  // (display names of adders and actors, deactivated members included) is wired here. ---
+  const contactReads = createContactReads({
+    repo: createContactRepo(db),
+    lists: createContactListQuery(db),
+    tags: createTagRepo(db),
+    contactTags: createContactTagRepo(db),
+    tagHistory: createTagHistoryRepo(db),
+    workspaces: workspaceAccess,
+  });
+  // --- end contacts reads ---
+
   return {
     config,
     clock,
@@ -397,6 +413,7 @@ export function buildDeps(
     team,
     workspaceAdmin,
     contacts,
+    contactReads,
     conversations,
     notificationReads,
     bots,
