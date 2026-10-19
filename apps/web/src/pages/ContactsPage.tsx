@@ -1,17 +1,13 @@
 import { useParams } from 'react-router';
-import { ContactsPreview } from '@/features/contacts/ContactsPreview';
-import { SampleDataBadge } from '@/shared/ui/sample-data-badge';
+import { ContactsTable } from '@/features/contacts/ContactsTable';
 
-/** SCR-09: the contacts preview on sample data. */
+/** SCR-18: the workspace's contacts; keyed by workspace so a switch starts with no search and no filter. */
 export function ContactsPage() {
   const { workspaceId = '' } = useParams();
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-2">
-        <h1 className="text-xl font-semibold">Contacts</h1>
-        <SampleDataBadge />
-      </div>
-      <ContactsPreview workspaceId={workspaceId} />
+      <h1 className="text-xl font-semibold">Contacts</h1>
+      <ContactsTable key={workspaceId} workspaceId={workspaceId} />
     </div>
   );
 }
