@@ -191,7 +191,26 @@ export function notificationsHarness() {
   const events: string[] = [];
   let seed = 0;
 
-  const transaction: Transaction = (fn) => fn({} as Executor);
+  /**
+   * Runs `fn`; when it throws, undoes the connect-link state changes and the signals and jobs it
+   * made (the writes of other, already committed transactions stay).
+   */
+  const transaction: Transaction = async (fn) => {
+    const marks = connectLinks.rows.map((r) => ({ r, usedAt: r.usedAt, replacedAt: r.replacedAt }));
+    const sizes = { rows: connectLinks.rows.length, signals: signals.length, jobs: jobs.length };
+    try {
+      return await fn({} as Executor);
+    } catch (err) {
+      for (const m of marks) {
+        m.r.usedAt = m.usedAt;
+        m.r.replacedAt = m.replacedAt;
+      }
+      connectLinks.rows.length = sizes.rows;
+      signals.length = sizes.signals;
+      jobs.length = sizes.jobs;
+      throw err;
+    }
+  };
   const membership: MembershipLocks = {
     async lockActiveMembers(_tx, w, accountIds) {
       events.push('lock-membership');
