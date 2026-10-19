@@ -21,6 +21,8 @@ export interface BotRecord {
   /** The last Bot API exchange that had an outcome; null only when disconnected. */
   lastCheckedAt: Date | null;
   createdAt: Date;
+  /** Bot sends to members are refused until then (ADR-0006); null or past: not paused. */
+  sendPausedUntil: Date | null;
 }
 
 export interface NewBot {
@@ -108,6 +110,11 @@ export interface BotRepo {
     ifWritten?: LiveRowGuard,
   ): Promise<boolean>;
   /**
+   * Stores `send_paused_until = max(stored, until)` after a Telegram 429 on this bot (a reply or a
+   * member message); false when the bot is not in the workspace.
+   */
+  pauseSends(workspaceId: string, botId: string, until: Date, tx?: Executor): Promise<boolean>;
+  /**
    * A live bot with its decrypted token, for a Bot API call right after. `token` is null when the
    * stored token cannot be decrypted (the key was lost or changed, ADR-0006): the bot then needs
    * a new token.
@@ -170,6 +177,18 @@ export type SendOutcome =
   | { outcome: 'not_accepted'; retryAfterMs?: number }
   | { outcome: 'unknown' };
 
+/**
+ * The answer to a message to a member (a ping or a bot answer). `rate_limited`: the bot is paused
+ * until `retryAfter`; `blocked`: the member cannot receive it (blocked the bot, or the account is
+ * gone); `transient`: Telegram may or may not have taken it.
+ */
+export type MemberMessageOutcome =
+  | { outcome: 'accepted' }
+  | { outcome: 'blocked' }
+  | { outcome: 'rate_limited'; retryAfter: Date }
+  | { outcome: 'bot_unavailable' }
+  | { outcome: 'transient' };
+
 /** `getFile` timeout (sad.md §8). */
 export const GET_FILE_TIMEOUT = 5000;
 /** A media download is aborted after this long without a byte (sad.md §8). */
@@ -205,7 +224,13 @@ export interface TelegramGateway {
    * Plain text (no `parse_mode`). Never throws: every answer, a timeout included, is an outcome.
    * A call that may have been written is never repeated here.
    */
-  sendText(token: string, chatId: bigint, text: string, timeoutMs: number): Promise<SendOutcome>;
+  sendText(
+    token: string,
+    chatId: bigint,
+    text: string,
+    timeoutMs: number,
+    options?: { disableLinkPreview?: boolean },
+  ): Promise<SendOutcome>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */

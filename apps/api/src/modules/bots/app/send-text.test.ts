@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest';
 import type { GatewayOutcome } from '../../inbox/domain/delivery.js';
-import { botRow, createBotsHarness } from './harness.js';
+import { at, botRow, createBotsHarness } from './harness.js';
 import { createMarkNeedsToken } from './mark-needs-token.js';
 import { createSendText } from './send-text.js';
 import { SEND_TIMEOUT, type SendOutcome } from './ports.js';
@@ -98,6 +98,38 @@ describe('sendText', () => {
     expect(await sendText.sendText(req)).toEqual(outcome);
     expect(h.bots.rows[0]!.state).toBe('connected');
     expect(h.signals.published).toEqual([]);
+  });
+});
+
+describe('sendText and the send pause (ADR-0006)', () => {
+  it('a 429 stores the pause as now + retry_after and returns the outcome unchanged', async () => {
+    const { h, sendText } = setup();
+    h.telegram.sendResult = { outcome: 'not_accepted', retryAfterMs: 5000 };
+    expect(await sendText.sendText(req)).toEqual(h.telegram.sendResult);
+    expect(h.bots.rows[0]!.sendPausedUntil).toEqual(new Date(h.clock.now().getTime() + 5000));
+  });
+
+  it('keeps a later stored pause', async () => {
+    const later = new Date(at(600).getTime() + 600_000);
+    const { h, sendText } = setup([botRow({ sendPausedUntil: later })]);
+    h.telegram.sendResult = { outcome: 'not_accepted', retryAfterMs: 5000 };
+    await sendText.sendText(req);
+    expect(h.bots.rows[0]!.sendPausedUntil).toEqual(later);
+  });
+
+  it('a not_accepted without retry_after stores nothing', async () => {
+    const { h, sendText } = setup();
+    h.telegram.sendResult = { outcome: 'not_accepted' };
+    await sendText.sendText(req);
+    expect(h.bots.rows[0]!.sendPausedUntil ?? null).toBeNull();
+  });
+
+  it('never reads the pause: a reply goes out during one', async () => {
+    const { h, sendText } = setup([botRow({ sendPausedUntil: at(9000) })]);
+    const accepted = { outcome: 'accepted', messageId: 5n, at: new Date() } as const;
+    h.telegram.sendResult = accepted;
+    expect(await sendText.sendText(req)).toEqual(accepted);
+    expect(sendCalls(h)).toHaveLength(1);
   });
 });
 

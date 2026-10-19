@@ -28,6 +28,9 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
+import { createPacer } from './modules/bots/app/pacer.js';
+import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
+import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
@@ -169,7 +172,15 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
   const bots = {
     settings: botSettings,
     markNeedsToken,
-    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken }).sendText,
+    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken, clock }).sendText,
+    sendMemberMessage: createSendMemberMessage({
+      bots: botRepo,
+      telegram,
+      markNeedsToken,
+      clock,
+      pacer: createPacer(),
+    }).sendMemberMessage,
+    pingReadiness: createPingReadiness({ bots: botRepo }).pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus: createInboxBotStatus({ bots: botRepo }),
     paste: createPasteToken({ ...botOwnerDeps, conversations }),

@@ -32,6 +32,7 @@ export function botRow(o: Partial<FakeBotRow> = {}): FakeBotRow {
     connectedAt: at(0),
     lastCheckedAt: at(0),
     createdAt: at(0),
+    sendPausedUntil: null,
     token: tokenOf(100001n, 'o'),
     webhookSecret: 'stored-secret',
     ...o,

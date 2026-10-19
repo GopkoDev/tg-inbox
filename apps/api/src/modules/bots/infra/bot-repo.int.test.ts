@@ -64,6 +64,7 @@ describe('bot repository', () => {
       connectedAt: at(0),
       lastCheckedAt: at(0),
       createdAt: at(0),
+      sendPausedUntil: null,
     });
     expect(
       JSON.stringify(found, (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v)),
@@ -102,6 +103,32 @@ describe('bot repository', () => {
     await repo.insert(w, newBot());
     expect(await repo.insert(w, newBot())).toEqual({ ok: false, reason: 'workspace_has_bot' });
     expect(await db.selectFrom('bots').where('workspace_id', '=', w).execute()).toHaveLength(1);
+  });
+
+  it('pauseSends stores the pause, keeps the later of two, and findByWorkspace returns it', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    expect((await repo.findByWorkspace(w))?.sendPausedUntil).toBeNull();
+    expect(await repo.pauseSends(w, bot.id, at(10))).toBe(true);
+    expect((await repo.findByWorkspace(w))?.sendPausedUntil).toEqual(at(10));
+    await repo.pauseSends(w, bot.id, at(5));
+    expect((await repo.findByWorkspace(w))?.sendPausedUntil).toEqual(at(10));
+    await repo.pauseSends(w, bot.id, at(20));
+    expect((await repo.findByWorkspace(w))?.sendPausedUntil).toEqual(at(20));
+  });
+
+  it('pauseSends never touches the other workspace (isolation)', async () => {
+    const { a, b, botA } = await twoWorkspacesWithBots(db);
+    expect(await repo.pauseSends(b.workspaceId, botA.bot.id, at(10))).toBe(false);
+    expect((await repo.findByWorkspace(a.workspaceId))?.sendPausedUntil).toBeNull();
+    expect((await repo.findByWorkspace(b.workspaceId))?.sendPausedUntil).toBeNull();
+  });
+
+  it('concurrent pauses keep the latest', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    await Promise.all([1, 9, 4, 7, 2].map((m) => repo.pauseSends(w, bot.id, at(m))));
+    expect((await repo.findByWorkspace(w))?.sendPausedUntil).toEqual(at(9));
   });
 
   it('isolation: findByWorkspace, update, setState, findForCheck, clearOnDisconnect and delete never touch the other workspace (AC-13)', async () => {

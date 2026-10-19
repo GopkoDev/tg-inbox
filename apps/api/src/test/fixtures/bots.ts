@@ -64,6 +64,7 @@ export async function insertBot(
     connectedAt,
     lastCheckedAt: o.lastCheckedAt ?? (live ? T : null),
     createdAt: T,
+    sendPausedUntil: o.sendPausedUntil ?? null,
   };
   await db
     .insertInto('bots')
@@ -78,7 +79,7 @@ export async function insertBot(
       webhook_secret_hash: webhookSecret ? hashSecret(webhookSecret) : null,
       connected_at: connectedAt,
       last_checked_at: bot.lastCheckedAt,
-      send_paused_until: o.sendPausedUntil ?? null,
+      send_paused_until: bot.sendPausedUntil,
       created_at: T,
     })
     .execute();

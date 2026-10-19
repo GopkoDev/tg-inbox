@@ -251,6 +251,24 @@ describe('Telegram gateway (against the fake Bot API)', () => {
       expect(fake.calls(TOKEN).filter((c) => c.method === 'sendMessage')).toHaveLength(1);
     });
 
+    it('turns the link preview off only when asked', async () => {
+      script(sendAnswers.ok(1), sendAnswers.ok(2));
+      await gateway.sendText(TOKEN, CHAT, 'See https://x.test', SEND_TIMEOUT);
+      await gateway.sendText(TOKEN, CHAT, 'See https://x.test', SEND_TIMEOUT, {
+        disableLinkPreview: true,
+      });
+      const [plain, quiet] = fake.calls(TOKEN).filter((c) => c.method === 'sendMessage');
+      expect(plain!.params).not.toHaveProperty('link_preview_options');
+      expect(quiet!.params.link_preview_options).toEqual({ is_disabled: true });
+      expect(quiet!.params).not.toHaveProperty('parse_mode');
+    });
+
+    it('a 429 carries retry_after, a 403 blocked is refused', async () => {
+      script(sendAnswers.tooMany(9), sendAnswers.blocked());
+      expect(await send()).toEqual({ outcome: 'not_accepted', retryAfterMs: 9000 });
+      expect(await send()).toEqual({ outcome: 'refused', reason: 'blocked' });
+    });
+
     it('a connection refused before the request was written is not_accepted', async () => {
       const dead = createTelegramGateway({ apiRoot: 'http://127.0.0.1:1', maxConnections: 7 });
       expect(await dead.sendText(TOKEN, CHAT, 'Hi', SEND_TIMEOUT)).toEqual({
