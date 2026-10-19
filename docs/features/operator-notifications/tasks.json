@@ -1,0 +1,702 @@
+{
+  "slug": "operator-notifications",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Promote migrations 04–08 (the bot send pause and the five notifications tables), regenerate DB types and add the test fixtures",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-06",
+        "AC-08",
+        "AC-12"
+      ],
+      "dod": "Migrations 04–08 are promoted to live apps/api/migrations/, apply and revert cleanly on a fresh Postgres 16, the regenerated db.types.gen.ts is committed, the migrations integration test rejects every constraint violation the audit lists for the five tables, and the new fixtures plus twoWorkspacesWithLinks exist.",
+      "files_hint": [
+        "docs/features/operator-notifications/migrations/04_add_bots_send_paused_until.up.sql",
+        "docs/features/operator-notifications/migrations/05_create_telegram_links.up.sql",
+        "docs/features/operator-notifications/migrations/06_create_connect_links.up.sql",
+        "docs/features/operator-notifications/migrations/07_create_tab_presences.up.sql",
+        "docs/features/operator-notifications/migrations/08_create_pings.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/bots.ts",
+        "apps/api/src/test/fixtures/notifications.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t01-promote-bot-pause-and-notifications-tables.md"
+    },
+    {
+      "id": "T2",
+      "title": "Add the notifications zod contracts, the three error codes, the presence client frame and the telegram_link.changed frame and signal",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-06",
+        "AC-13"
+      ],
+      "dod": "packages/shared and platform unit tests pass for every new schema and the contract examples, the three codes map to their AppError subclasses and statuses with Retry-After on the limit, and a telegram_link.changed frame and signal and a presence frame parse while malformed ones are rejected.",
+      "files_hint": [
+        "packages/shared/src/notifications.ts",
+        "packages/shared/src/notifications.test.ts",
+        "packages/shared/src/index.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/inbox.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/platform/realtime.test.ts",
+        "apps/web/src/features/inbox/store.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t02-notifications-contracts.md"
+    },
+    {
+      "id": "T3",
+      "title": "Add the notifications domain due rules: the 5 / 30-minute marks, the unpingable assignee, read-holds-back unless reopen, the ledger and 10-minute spacing, and the presence predicate",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Domain unit tests cover every due branch of flow 13 (ledger, read-holds-back with the reopen exception, 5 min for mine and unassigned, 30 min team, 5 min team for an away unread unpingable assignee), the 10-minute spacing with its allowed moment, and the presence predicate for live, hidden-within-10-min, hidden-longer and expired leases.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/domain/constants.ts",
+        "apps/api/src/modules/notifications/domain/presence.ts",
+        "apps/api/src/modules/notifications/domain/presence.test.ts",
+        "apps/api/src/modules/notifications/domain/due.ts",
+        "apps/api/src/modules/notifications/domain/due.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t03-due-rules-and-presence-predicate.md"
+    },
+    {
+      "id": "T4",
+      "title": "Add the ping text builder (TG-03), the bot answer texts (TG-02) and the connect-link rules: token and start payload, usable, 5 per 10 minutes and its retry time",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-05",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-11",
+        "AC-13"
+      ],
+      "dod": "Unit tests pass for every TG-03 set shape (one mine / unassigned / teammate's, all mine, all unassigned, all teammates', mixed) with its lens link and wait format, every TG-02 answer kind, the start-payload parser, the usable rule and the 5-per-10-minutes decision with its retry time, and the ping builder's input type has no text or name field.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/domain/ping-text.ts",
+        "apps/api/src/modules/notifications/domain/ping-text.test.ts",
+        "apps/api/src/modules/notifications/domain/answers.ts",
+        "apps/api/src/modules/notifications/domain/answers.test.ts",
+        "apps/api/src/modules/notifications/domain/connect-link.ts",
+        "apps/api/src/modules/notifications/domain/connect-link.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t04-ping-text-answers-and-connect-link-rules.md"
+    },
+    {
+      "id": "T5",
+      "title": "Record the waiting period in conversations — set by capture, cleared by a sent reply and a close, restarted by a reopen while waiting — and promote migrations 01–03",
+      "layer": "app",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08"
+      ],
+      "dod": "Unit and integration tests prove capture starts a message period only when not waiting, a sent reply and a close clear it, a member reopen or a failed-reply reopen over a waiting customer restarts it as reopen, assignee changes leave it, migrations 01–03 apply, backfill the ten audit shapes and revert cleanly, and the waiting-open CHECK never fires on any existing path.",
+      "files_hint": [
+        "docs/features/operator-notifications/migrations/01_add_conversations_waiting_period.up.sql",
+        "docs/features/operator-notifications/migrations/02_backfill_conversations_waiting_period.up.sql",
+        "docs/features/operator-notifications/migrations/03_add_conversations_waiting_index.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/conversations.ts",
+        "apps/api/src/modules/conversations/domain/waiting.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "apps/api/src/modules/conversations/app/conversations.ts",
+        "apps/api/src/modules/conversations/app/replies.ts",
+        "apps/api/src/modules/conversations/app/state-changes.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t05-conversations-waiting-period.md"
+    },
+    {
+      "id": "T6",
+      "title": "Add the conversations reads waitingForPings (period start, start kind, assignee, per-member read state) and attentionCount",
+      "layer": "infra",
+      "deps": [
+        "T5"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-07",
+        "AC-09"
+      ],
+      "dod": "Integration tests prove waitingForPings returns only open waiting conversations of the workspace with start, start kind, assignee and read state for every given account (linked or not), narrowed by conversationIds, and attentionCount counts exactly the caller's and unassigned open unread conversations, both isolated by workspace.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/infra/notification-queries.ts",
+        "apps/api/src/modules/conversations/infra/notification-queries.int.test.ts",
+        "apps/api/src/modules/conversations/app/notification-reads.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t06-conversations-reads-for-notifications.md"
+    },
+    {
+      "id": "T7",
+      "title": "Give bots sendMemberMessage (paced, behind the send pause, with a blocked outcome) and pingReadiness, and store the send pause on any 429",
+      "layer": "app",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-10"
+      ],
+      "dod": "Unit and integration tests against the fake Bot API prove sendMemberMessage maps accepted, 403 blocked, 429 with the stored pause, 401 bot unavailable and timeouts, refuses while paused, paces at most 10 per second per bot, pingReadiness returns state, bot id, username and pause, and a reply's 429 stores the pause while replies never read it.",
+      "files_hint": [
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/modules/bots/app/send-member-message.ts",
+        "apps/api/src/modules/bots/app/send-member-message.test.ts",
+        "apps/api/src/modules/bots/app/ping-readiness.ts",
+        "apps/api/src/modules/bots/app/send-text.ts",
+        "apps/api/src/modules/bots/infra/bot-repo.ts",
+        "apps/api/src/test/fake-telegram.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t07-bots-send-member-message.md"
+    },
+    {
+      "id": "T8",
+      "title": "Build the telegram-link and connect-link repositories with cross-workspace isolation tests, including the sixth-exception read of workspaces with a live link",
+      "layer": "infra",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-12"
+      ],
+      "dod": "Integration tests prove every telegram-link and connect-link repository method against Postgres, each one refusing to see the other workspace of twoWorkspacesWithLinks, the conditional notice claim gives one winner, removals clear the right columns per reason, and workspacesWithLiveLink returns workspace ids only.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/infra/telegram-link-repo.ts",
+        "apps/api/src/modules/notifications/infra/connect-link-repo.ts",
+        "apps/api/src/modules/notifications/infra/repos.int.test.ts",
+        "apps/api/src/modules/notifications/app/ports.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t08-telegram-link-and-connect-link-repos.md"
+    },
+    {
+      "id": "T9",
+      "title": "Build the presence-lease and ping-ledger repositories with cross-workspace isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10"
+      ],
+      "dod": "Integration tests prove the presence and ping repositories against Postgres — lease open, extend, screen, close and expiry deletes, ledger insert with a unique-conflict loser, last-ping read, outcome write, cascade rollout and opened-at within 15 minutes — each isolated from the other workspace of twoWorkspacesWithLinks.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/infra/presence-repo.ts",
+        "apps/api/src/modules/notifications/infra/ping-repo.ts",
+        "apps/api/src/modules/notifications/infra/ledger.int.test.ts",
+        "apps/api/src/modules/notifications/app/ports.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t09-presence-and-ping-ledger-repos.md"
+    },
+    {
+      "id": "T10",
+      "title": "Add the notifications use cases for my settings, creating a connect link (limit, already linked, bot readiness, replace) and disconnecting",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T4",
+        "T8"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-06",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "Unit tests prove mySettings derives pings and can_connect for every link and bot state, createConnectLink refuses in the contract's order (membership, limit with retry_at, already linked, bot not ready) creating nothing, replaces the previous unused link and stores only the hash, and disconnect removes only the caller's own link with its signal and notifications_off job, idempotently.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/app/settings.ts",
+        "apps/api/src/modules/notifications/app/connect-link.ts",
+        "apps/api/src/modules/notifications/app/disconnect.ts",
+        "apps/api/src/modules/notifications/app/ports.ts",
+        "apps/api/src/modules/notifications/app/fakes.ts",
+        "apps/api/src/modules/notifications/app/settings.test.ts",
+        "apps/api/src/modules/notifications/app/connect-link.test.ts",
+        "apps/api/src/modules/notifications/app/disconnect.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t10-connect-settings-disconnect-use-cases.md"
+    },
+    {
+      "id": "T11",
+      "title": "Redeem a connect-link start: share-lock the membership, lock and re-check the link, enforce both uniqueness rules, link, signal and enqueue the answer",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T4",
+        "T8"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-12"
+      ],
+      "dod": "Unit and integration tests prove every redeem outcome (missing, expired, used, replaced, membership not active, teammate's account, member linked elsewhere, already connected from this account, free) uses the link up as specified, links only the issued membership with the bot id, signals only on a new link, enqueues the matching answer, and never deadlocks against a deactivation.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/app/redeem.ts",
+        "apps/api/src/modules/notifications/app/redeem.test.ts",
+        "apps/api/src/modules/notifications/app/redeem.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t11-redeem-connect-link.md"
+    },
+    {
+      "id": "T12",
+      "title": "Intercept every private update in bots before capture through a port: redeem connect-link starts, consume linked members' messages with the hourly notice, pass everyone else",
+      "layer": "app",
+      "deps": [
+        "T11"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-11"
+      ],
+      "dod": "Webhook integration tests prove a connect-link start is redeemed and never captured, every update from a linked sender with this bot (text, media, edit, any start) is consumed with at most one notice per hour, and unlinked or disconnected senders and campaign starts without a link are captured exactly as before, with contacts and conversations unchanged for every consumed case.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts",
+        "apps/api/src/modules/notifications/app/intercept.ts",
+        "apps/api/src/modules/notifications/app/intercept.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/test/fixtures/telegram.ts",
+        "apps/api/src/modules/bots/http/webhook-route.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t12-inbound-interceptor.md"
+    },
+    {
+      "id": "T13",
+      "title": "Add the presence use cases opened / alive / screen / closed, with the member's expired-lease cleanup and the ping opened-at mark",
+      "layer": "app",
+      "deps": [
+        "T3",
+        "T9"
+      ],
+      "acs": [
+        "AC-07"
+      ],
+      "dod": "Unit tests prove opened registers a 50 s lease and deletes the member's expired rows, alive extends it, screen stamps last-on-screen on leaving, closed deletes it, and opening or returning on screen within 15 minutes of a ping marks that ping opened, every call scoped by the workspace id.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/app/presence.ts",
+        "apps/api/src/modules/notifications/app/presence.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t13-presence-use-cases.md"
+    },
+    {
+      "id": "T14",
+      "title": "Teach the inbox hub to read presence frames and report socket lifecycle to notifications, and deliver telegram_link.changed only to that account's sockets",
+      "layer": "ports",
+      "deps": [
+        "T2",
+        "T13"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-07"
+      ],
+      "dod": "Live-socket integration tests prove a lease is registered on open, extended by pongs and deleted on a clean close, a dead socket counts away within 60 s and a hidden one after 10 minutes, invalid or oversized frames are ignored without closing, writes coalesce per second, and telegram_link.changed reaches only that account's sockets in that workspace.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/infra/hub.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/modules/inbox/http/live.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t14-hub-presence-frames-and-account-frame.md"
+    },
+    {
+      "id": "T15",
+      "title": "Add the notifications.send-bot-message worker: readiness and pause, the answer text from the kind, outcomes, retries and the dead letter, and clearing a removed link's Telegram id",
+      "layer": "app",
+      "deps": [
+        "T4",
+        "T7",
+        "T8"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-11"
+      ],
+      "dod": "Unit and integration tests prove every answer kind is sent with its TG-02 text through sendMemberMessage, a bot that does not work drops it, a pause postpones it, blocked finishes, timeouts retry twice then dead-letter, notifications_off clears the removed link's Telegram id on every finish, and no log line carries text, a name or a Telegram user id.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/infra/jobs.ts",
+        "apps/api/src/modules/notifications/app/deliver-answer.ts",
+        "apps/api/src/modules/notifications/app/deliver-answer.test.ts",
+        "apps/api/src/modules/notifications/infra/jobs.int.test.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t15-send-bot-message-job.md"
+    },
+    {
+      "id": "T16",
+      "title": "Add the send-pings use case: the per-workspace sweep, the per-member send transaction that re-checks and writes the ledger before the call, and the outcome transaction",
+      "layer": "app",
+      "deps": [
+        "T3",
+        "T4",
+        "T6",
+        "T7",
+        "T8",
+        "T9"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "Unit and integration tests prove the sweep skips a bot that does not work and waits out a pause, the per-member transaction re-checks every condition under the membership and link share locks and writes the ledger before the call, each sendMemberMessage outcome updates the ping, the link and its signal as the events table says, and a deactivation or a disconnect that commits before the send transaction leads to no ping.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/app/send-pings.ts",
+        "apps/api/src/modules/notifications/app/send-pings.test.ts",
+        "apps/api/src/modules/notifications/app/send-pings.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t16-sweep-and-send-pings.md"
+    },
+    {
+      "id": "T17",
+      "title": "Wire the ping jobs: the notifications.send-pings chain per workspace, the notifications.schedule-pings cron over the sixth tenancy exception, and the QG-1 scenario tests",
+      "layer": "wiring",
+      "deps": [
+        "T11",
+        "T16"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10"
+      ],
+      "dod": "Integration tests with a controllable clock pass QG-1 scenarios (a)–(f): one ping within a sweep at 5 minutes, combining under the 10-minute spacing with the lens link, a member who becomes away later, reassign and unassign making due at once, nothing sent while the bot needs a token then one combined ping, and two concurrent workers leaving one ledger item per period; the cron restarts a broken chain.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/infra/jobs.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/modules/notifications/app/redeem.ts",
+        "apps/api/src/modules/notifications/infra/ping-jobs.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t17-ping-jobs-and-cron-backstop.md"
+    },
+    {
+      "id": "T18",
+      "title": "Remove links on deactivation through the composed onMembershipDeactivated port and on a different bot through the bot-connected hook, both in the existing transactions",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T8"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-10"
+      ],
+      "dod": "Integration tests prove deactivation removes the member's live link as deactivated with Telegram id and name cleared and marks their unused connect links replaced in the deactivation transaction after the unassign, the other workspace's link stays, reactivation restores nothing, and connecting a different bot removes every live link of another bot id while a rotation keeps them, each with its account-scoped signal and no bot answer.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/app/link-lifecycle.ts",
+        "apps/api/src/modules/notifications/app/link-lifecycle.int.test.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/paste-token.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t18-deactivation-and-bot-connected-hooks.md"
+    },
+    {
+      "id": "T19",
+      "title": "Serve the notifications routes (settings, connect link, disconnect) and GET inbox/attention behind the workspace guard, and register the notifications module",
+      "layer": "ports",
+      "deps": [
+        "T6",
+        "T10",
+        "T12"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "Route integration tests pass for getAttentionCount, getNotificationSettings, createConnectLink and disconnectTelegram with the guard trio (401, 403 ACCESS_REMOVED, 404 with no hint), both roles, every contract refusal including 429 with Retry-After and the 409s with details.settings, and the module is registered by buildApp only.",
+      "files_hint": [
+        "apps/api/src/modules/notifications/http/routes.ts",
+        "apps/api/src/modules/notifications/http/routes.int.test.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/reads.int.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t19-notifications-and-attention-routes.md"
+    },
+    {
+      "id": "T20",
+      "title": "Add telegram_pings to Membership on the Team reads and the deactivate / reactivate answers through a notifications port that team takes",
+      "layer": "ports",
+      "deps": [
+        "T8",
+        "T10",
+        "T18"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-12"
+      ],
+      "dod": "Team route tests prove listMemberships, deactivateMembership and reactivateMembership return telegram_pings per member from live links of this workspace only, false for deactivated and reactivated members, with no Telegram id or name in any body, and workspaces imports nothing from notifications (the port is filled in buildDeps).",
+      "files_hint": [
+        "packages/shared/src/workspaces.ts",
+        "packages/shared/src/workspaces.test.ts",
+        "apps/api/src/modules/workspaces/app/team.ts",
+        "apps/api/src/modules/workspaces/app/ports.ts",
+        "apps/api/src/modules/notifications/app/settings.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/modules/workspaces/http/team-routes.int.test.ts",
+        "apps/web/src/pages/TeamPage.test.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t20-team-telegram-pings-mark.md"
+    },
+    {
+      "id": "T21",
+      "title": "Add the API end-to-end notification stories, the integrity checks, the reply-under-ping-load test, and the secrecy assertions for pings, answers, logs and frames",
+      "layer": "tests",
+      "deps": [
+        "T14",
+        "T15",
+        "T17",
+        "T19",
+        "T20"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-10",
+        "AC-11",
+        "AC-12"
+      ],
+      "dod": "The e2e stories pass against Postgres and the fake Bot API (connect and answers, every redeem refusal, ping to an away member with blocked and recovered reachability, deactivation during a due ping, bot replaced, linked-member interception, cross-workspace refusals), the integrity queries return no row, the load test keeps reply p95 within 2 s with 50 pings due, and the secrecy scan finds no token, hash, ping text, contact name or message text and the Telegram user id only where F-3 allows.",
+      "files_hint": [
+        "apps/api/src/e2e/notification-flows.int.test.ts",
+        "apps/api/src/e2e/notification-load.int.test.ts",
+        "apps/api/src/e2e/helpers.ts",
+        "apps/api/src/modules/bots/http/secrecy.int.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t21-api-e2e-and-secrecy.md"
+    },
+    {
+      "id": "T22",
+      "title": "Move the live socket to the workspace frame as one per-tab connection with subscribers, send presence frames on open and on visibilitychange, and let the inbox store subscribe",
+      "layer": "ui",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-07"
+      ],
+      "dod": "Web tests prove one live connection per tab per workspace owned by the frame, a presence frame on open and on every visibilitychange, subscribers receiving frames and resync, the connection surviving navigation between workspace pages and closing on a workspace switch, and every existing inbox live test passing on the shared connection.",
+      "files_hint": [
+        "apps/web/src/shared/api/realtime.ts",
+        "apps/web/src/shared/api/realtime.test.ts",
+        "apps/web/src/shared/api/live-connection.ts",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell-context.ts",
+        "apps/web/src/features/inbox/store.ts",
+        "apps/web/src/features/inbox/store.test.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t22-web-frame-live-connection.md"
+    },
+    {
+      "id": "T23",
+      "title": "Build the attention store and SCR-15's count: the (N) title prefix, the Inbox SidebarMenuBadge, the phone header badge, the collapsed tooltip and Settings for operators",
+      "layer": "ui",
+      "deps": [
+        "T22"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-12"
+      ],
+      "dod": "Testing Library tests cover every SCR-15 state this feature adds in screens.md (count above 0 and 0, operator Settings item, loading, live change within the debounce, failed read keeps the last count, collapsed tooltip, phone header badge, inherited states without a count), with the title prefix and badge driven by getAttentionCount.",
+      "files_hint": [
+        "apps/web/src/features/attention/store.ts",
+        "apps/web/src/features/attention/api.ts",
+        "apps/web/src/features/attention/store.test.ts",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/shared/ui/app-shell.test.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t23-scr15-attention-count.md"
+    },
+    {
+      "id": "T24",
+      "title": "Build Settings — Notifications (SCR-16) with the TelegramPingsCard, the notifications store, the role-filtered SettingsLayout and the route",
+      "layer": "ui",
+      "deps": [
+        "T22"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-06",
+        "AC-10",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "Testing Library tests cover every Telegram-pings-card state of SCR-16 in screens.md (loading, not connected, connecting, no working bot for operator and owner, connected, pings paused, not reachable, disconnecting, disconnected, link limit with its countdown, both 409 re-renders, action failed, not loaded with Retry, live re-read, phone) and the role-filtered SettingsLayout with its index redirect.",
+      "files_hint": [
+        "apps/web/src/features/notifications/api.ts",
+        "apps/web/src/features/notifications/store.ts",
+        "apps/web/src/features/notifications/TelegramPingsCard.tsx",
+        "apps/web/src/features/notifications/TelegramPingsCard.test.tsx",
+        "apps/web/src/pages/NotificationSettingsPage.tsx",
+        "apps/web/src/features/settings/SettingsLayout.tsx",
+        "apps/web/src/features/settings/SettingsLayout.test.tsx",
+        "apps/web/src/app/routes.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t24-scr16-telegram-pings-card.md"
+    },
+    {
+      "id": "T25",
+      "title": "Build SCR-17, the ConnectTelegramDialog: the link with Copy and Open in Telegram, its expiry, waiting for Start, the live turn to Connected, new-link refusals and the bot-stopped state",
+      "layer": "ui",
+      "deps": [
+        "T24"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-13"
+      ],
+      "dod": "Testing Library tests cover every SCR-17 state in screens.md (waiting for Start with Copy and Open in Telegram, copied and clipboard-unavailable, connected live, expired, getting a new link, new link, link limit, already connected, bot stopped working for both roles, new link failed, closed early, phone layout, guard closes), with no scannable code.",
+      "files_hint": [
+        "apps/web/src/features/notifications/ConnectTelegramDialog.tsx",
+        "apps/web/src/features/notifications/ConnectTelegramDialog.test.tsx",
+        "apps/web/src/features/notifications/TelegramPingsCard.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t25-scr17-connect-dialog.md"
+    },
+    {
+      "id": "T26",
+      "title": "Build the DesktopNotificationsCard on SCR-16: capability and permission checks, the click-only permission request (OS-01), worker registration and the per-browser flag",
+      "layer": "ui",
+      "deps": [
+        "T24"
+      ],
+      "acs": [
+        "AC-03"
+      ],
+      "dod": "Testing Library tests cover every desktop-card state of SCR-16 in screens.md (off, asking, on, blocked incl. revoked, not available for no API, no storage and failed registration, turned off with the worker unregistered only when no workspace keeps the flag), and prove requestPermission is called only from the click.",
+      "files_hint": [
+        "apps/web/src/features/notifications/desktop.ts",
+        "apps/web/src/features/notifications/DesktopNotificationsCard.tsx",
+        "apps/web/src/features/notifications/DesktopNotificationsCard.test.tsx",
+        "apps/web/src/pages/NotificationSettingsPage.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t26-scr16-desktop-notifications-card.md"
+    },
+    {
+      "id": "T27",
+      "title": "Add the desktop notifier and the notifications-only service worker: candidates from the tabs, focus check, tag replace, dedupe and the click to the most recently focused tab (OS-02)",
+      "layer": "ui",
+      "deps": [
+        "T22",
+        "T26"
+      ],
+      "acs": [
+        "AC-02"
+      ],
+      "dod": "Unit tests prove the notifier posts only for new customer messages in open conversations that are the member's or unassigned with the flag and permission on, and the worker shows nothing while a workspace tab is focused, shows one notification per message across tabs with tag replacement and renotify, and a click focuses the most recently focused workspace tab with the conversation or opens its address.",
+      "files_hint": [
+        "apps/web/src/features/notifications/notifier.ts",
+        "apps/web/src/features/notifications/notifier.test.ts",
+        "apps/web/public/notifications-sw.js",
+        "apps/web/src/features/notifications/notifications-sw.test.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t27-desktop-notifier-and-service-worker.md"
+    },
+    {
+      "id": "T28",
+      "title": "Add the «Telegram pings» column to Settings — Team (SCR-13) and the pings sentence to the deactivate confirmation (SCR-14)",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-12"
+      ],
+      "dod": "Testing Library tests prove the Team members table shows «Telegram pings» On / Off per member (and on the phone line), rows switch to Off from the deactivate and reactivate answers, the mark is not live, and the deactivate confirmation adds the pings sentence only for a member shown On.",
+      "files_hint": [
+        "apps/web/src/features/workspaces/team/Team.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t28-scr13-team-mark-and-scr14-copy.md"
+    },
+    {
+      "id": "T29",
+      "title": "Add browser end-to-end notification flows against the real API and the fake Bot API",
+      "layer": "tests",
+      "deps": [
+        "T21",
+        "T23",
+        "T25",
+        "T27",
+        "T28"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-07",
+        "AC-12"
+      ],
+      "dod": "The browser flows pass locally and in CI with pnpm test:e2e: the live attention count across pages, connect via a webhook start turning the dialog Connected and Disconnect, ping links landing on the thread and the mine lens through sign-in, a foreign account getting not found, and the role-filtered Settings with the Team mark.",
+      "files_hint": [
+        "apps/web/e2e/notifications.spec.ts",
+        "apps/web/e2e/support/world.ts"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t29-browser-e2e.md"
+    },
+    {
+      "id": "T30",
+      "title": "Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the notifications module, the sixth tenancy exception, the new queues, the ports and the new components",
+      "layer": "docs",
+      "deps": [
+        "T17",
+        "T18",
+        "T19",
+        "T20",
+        "T23",
+        "T25",
+        "T26",
+        "T27",
+        "T28"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-12"
+      ],
+      "dod": "CLAUDE.md and the architecture map name the notifications module, its ports, the buildDeps order, the sixth controlled tenancy exception and the three new queues exactly as built, the design-system canon registers the three new components and the two extended ones, and CONTEXT.md carries the five new glossary terms.",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md",
+        "CONTEXT.md",
+        "docs/features/operator-notifications/screens.md"
+      ],
+      "file": "docs/features/operator-notifications/tasks/t30-docs-and-canon.md"
+    }
+  ]
+}
