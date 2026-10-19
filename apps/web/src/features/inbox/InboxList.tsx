@@ -61,8 +61,19 @@ export function InboxList() {
   const isOwner = role === 'owner';
   const [searchParams, setSearchParams] = useSearchParams();
   /** The lenses live in the address; the page follows it into the store. */
-  const chooseLens = (next: Partial<InboxLens>) =>
-    setSearchParams(withLens(searchParams, { ...lens, ...next }));
+  const written = useRef<string | null>(null);
+  useEffect(() => {
+    written.current = null;
+  }, [searchParams]);
+  const chooseLens = (next: Partial<InboxLens>) => {
+    const target = withLens(searchParams, { ...lens, ...next });
+    // A tap selects a tab twice (pointer down, then focus) before the address is re-read: it is
+    // written once.
+    const text = target.toString();
+    if (text === searchParams.toString() || text === written.current) return;
+    written.current = text;
+    setSearchParams(target);
+  };
 
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');

@@ -1,6 +1,7 @@
+import { useEffect } from 'react';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import type { Conversation, InboxBotStatus } from '@tg/shared';
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
+import { MemoryRouter, Route, Routes, useLocation, useNavigationType } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { stubRadixDom } from '@/test/radix';
@@ -136,6 +137,34 @@ describe('SCR-01 lens controls (AC-01)', () => {
     fireEvent.mouseDown(tab('Closed'));
     fireEvent.click(tab('Closed'));
     expect(where()).toBe(`/w/${WS}/inbox?status=closed&assignee=mine`);
+  });
+
+  it('one tap on a tab is one history entry, so Back returns to the previous lenses (AC-01)', () => {
+    seed(lens('open', 'mine'));
+    const pushes: string[] = [];
+    const Probe = () => {
+      const type = useNavigationType();
+      const l = useLocation();
+      useEffect(() => {
+        if (type === 'PUSH') pushes.push(l.search);
+      }, [type, l.key, l.search]);
+      return null;
+    };
+    useWorkspaceStore.setState({ current: { id: WS, name: 'Acme Flowers', role: 'operator' } });
+    render(
+      <MemoryRouter initialEntries={[`/w/${WS}/inbox?assignee=mine`]}>
+        <Probe />
+        <Routes>
+          <Route path="/w/:workspaceId/inbox" element={<InboxList />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    // A real tap: pointer down selects it and the focus it brings selects it again before the
+    // address has been re-read.
+    fireEvent.mouseDown(tab('Closed'));
+    fireEvent.focusIn(tab('Closed'));
+    fireEvent.click(tab('Closed'));
+    expect(pushes).toEqual(['?status=closed&assignee=mine']);
   });
 
   it('choosing Open again drops the default from the address', () => {

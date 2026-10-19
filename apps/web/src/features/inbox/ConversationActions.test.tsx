@@ -506,6 +506,34 @@ describe('SCR-12 over the actions bar (AC-06, AC-08)', () => {
     expect(screen.getByText('Closed')).toBeInTheDocument();
   });
 
+  it('a live update while the question is open does not change what Close anyway sends: the server asks again (AC-06)', async () => {
+    show(summary());
+    const snapshot = { customer_message_seq: 7, latest_reply: null };
+    api.closeConversation
+      .mockRejectedValueOnce(
+        ask(['customer_waiting'], { state_version: 6, close_snapshot: snapshot }),
+      )
+      .mockResolvedValueOnce(change({ status: 'closed', state_version: 7 }));
+    renderBar();
+    await openDialog();
+    // A customer message arrives live: the summary on screen moves on, the question does not.
+    act(() =>
+      show(
+        summary({
+          state_version: 6,
+          close_snapshot: { customer_message_seq: 8, latest_reply: null },
+        }),
+      ),
+    );
+    fireEvent.click(within(dialog()).getByRole('button', { name: 'Close anyway' }));
+    await waitFor(() => expect(api.closeConversation).toHaveBeenCalledTimes(2));
+    expect(api.closeConversation.mock.calls[1]?.[2]).toEqual({
+      expected_state_version: 6,
+      expected_close_snapshot: snapshot,
+      confirm_close_reasons: true,
+    });
+  });
+
   it('pending: both buttons disabled and a spinner while the confirmed close is in flight', async () => {
     show(summary());
     let release: (v: unknown) => void = () => undefined;

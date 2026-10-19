@@ -170,7 +170,11 @@ interface InboxState {
   close: (
     workspaceId: string,
     conversationId: string,
-    options?: { confirm?: boolean },
+    options?: {
+      confirm?: boolean;
+      /** The version and snapshot the question was asked about; default: the summary on screen. */
+      expected?: Pick<ConversationSummary, 'state_version' | 'close_snapshot'>;
+    },
   ) => Promise<ChangeResult>;
   reopen: (workspaceId: string, conversationId: string) => Promise<ChangeResult>;
   enter: (workspaceId: string, lens?: InboxLens) => Promise<void>;
@@ -901,8 +905,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           workspaceId,
           conversationId,
           {
-            expected_state_version: summary.state_version,
-            expected_close_snapshot: summary.close_snapshot,
+            expected_state_version: (options.expected ?? summary).state_version,
+            expected_close_snapshot: (options.expected ?? summary).close_snapshot,
             confirm_close_reasons: options.confirm === true,
           },
           {},

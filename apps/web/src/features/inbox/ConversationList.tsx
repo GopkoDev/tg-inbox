@@ -1,6 +1,6 @@
 import type { Conversation, LastItem, MessageKind } from '@tg/shared';
 import { CornerUpLeft, UserRound } from 'lucide-react';
-import { Link } from 'react-router';
+import { Link, useLocation } from 'react-router';
 import { initials } from '@/shared/lib/initials';
 import { cn } from '@/shared/lib/utils';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
@@ -68,6 +68,8 @@ export function ConversationList({
   markClosed?: boolean;
 }) {
   const now = new Date();
+  /** Opening a thread keeps the lenses, which live in the address. */
+  const { search } = useLocation();
   return (
     <ul aria-label="Conversations" className="divide-y">
       {conversations.map((c) => {
@@ -75,7 +77,7 @@ export function ConversationList({
         return (
           <li key={c.id}>
             <Link
-              to={`/w/${workspaceId}/inbox/${c.id}`}
+              to={{ pathname: `/w/${workspaceId}/inbox/${c.id}`, search }}
               aria-current={c.id === selectedId ? 'true' : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-3 hover:bg-accent',

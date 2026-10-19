@@ -51,6 +51,11 @@ export interface World {
   deactivate(ownerEmail: string, workspaceId: string, memberEmail: string): Promise<void>;
   /** The `sendMessage` calls the fake Bot API has received for a token. */
   sentMessages(token: string): Promise<Record<string, unknown>[]>;
+  /** A teammate acts on a conversation (found by its customer's first name) over HTTP, as the member `actor`; `assignee` is a display name. */
+  assign(actor: string, workspaceId: string, customer: string, assignee: string): Promise<void>;
+  unassign(actor: string, workspaceId: string, customer: string): Promise<void>;
+  /** Closes with the confirmation acknowledged (an early close is the point of the seeding, not of the flow). */
+  close(actor: string, workspaceId: string, customer: string): Promise<void>;
   /** One health-check tick through the app layer, as if run once the bots are due (not waited for). */
   healthTick(): Promise<void>;
 }
@@ -99,6 +104,55 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
     let nextUpdate = 1;
     const messageIds = new Map<number, number>();
     const owners = new Map<string, Device>();
+    const members = new Map<string, Device>();
+
+    const deviceOf = async (email: string) => {
+      const known = members.get(email) ?? owners.get(email);
+      if (known) return known;
+      const device = new Device(app);
+      const res = await device.signIn(email);
+      if (res.statusCode >= 300) throw new Error(`sign-in of ${email} failed: ${res.body}`);
+      members.set(email, device);
+      return device;
+    };
+    const stateChange = async (
+      actor: string,
+      workspaceId: string,
+      customer: string,
+      path: 'assign' | 'unassign' | 'close',
+      assignee?: string,
+    ) => {
+      const device = await deviceOf(actor);
+      const base = `/api/workspaces/${workspaceId}/inbox`;
+      let found: { id: string; state_version: number; close_snapshot?: unknown } | undefined;
+      for (const status of ['open', 'closed']) {
+        const page = await device.get(`${base}/conversations?status=${status}&limit=30`);
+        const hit = (page.json().items as { id: string; contact: { first_name: string } }[]).find(
+          (c) => c.contact.first_name === customer,
+        );
+        if (hit) {
+          const summary = await device.get(`${base}/conversations/${hit.id}`);
+          found = summary.json();
+          break;
+        }
+      }
+      if (!found) throw new Error(`no conversation of ${customer}`);
+      const body: Record<string, unknown> = { expected_state_version: found.state_version };
+      if (path === 'assign') {
+        const team = await device.get(`${base}/members`);
+        const who = (team.json().items as { account_id: string; display_name: string }[]).find(
+          (m) => m.display_name === assignee,
+        );
+        if (!who) throw new Error(`no active member ${assignee}`);
+        body.assignee_account_id = who.account_id;
+      }
+      if (path === 'close') {
+        body.expected_close_snapshot = found.close_snapshot;
+        body.confirm_close_reasons = true;
+      }
+      const res = await device.post(`${base}/conversations/${found.id}/${path}`, body);
+      if (res.statusCode !== 200) throw new Error(`${path} failed: ${res.statusCode} ${res.body}`);
+    };
 
     const world: World = {
       async workspaceWithOwner(name, email, displayName = 'Owner') {
@@ -190,6 +244,11 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
         );
         return res.statusCode;
       },
+      assign: (actor, workspaceId, customer, assignee) =>
+        stateChange(actor, workspaceId, customer, 'assign', assignee),
+      unassign: (actor, workspaceId, customer) =>
+        stateChange(actor, workspaceId, customer, 'unassign'),
+      close: (actor, workspaceId, customer) => stateChange(actor, workspaceId, customer, 'close'),
       async healthTick() {
         advance();
         await runHealthTick(ahead);

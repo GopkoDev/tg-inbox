@@ -169,6 +169,15 @@ describe('SCR-01 rows (AC-01)', () => {
     expect(links[1]).toHaveAttribute('href', `/w/${WS}/inbox/${conv(2).id}`);
   });
 
+  it('opening a conversation keeps the lenses in the address (AC-01)', () => {
+    seed({ conversations: [conv(1)] });
+    renderList('operator', `/w/${WS}/inbox?status=closed&assignee=mine`);
+    expect(screen.getByRole('link', { name: /Name1/ })).toHaveAttribute(
+      'href',
+      `/w/${WS}/inbox/${conv(1).id}?status=closed&assignee=mine`,
+    );
+  });
+
   it('reflects a live change of the store (activity, read elsewhere)', () => {
     seed({ conversations: [conv(1, { unread_count: 3 }), conv(2)] });
     renderList();

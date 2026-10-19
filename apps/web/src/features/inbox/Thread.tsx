@@ -1,7 +1,7 @@
 import type { ThreadItem } from '@tg/shared';
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useLocation, useParams } from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { initials } from '@/shared/lib/initials';
@@ -83,6 +83,7 @@ function BubbleSkeletons({ count }: { count: number }) {
 /** SCR-02, reading side: header, paged history, live items, read marking and the phone back control. */
 export function Thread() {
   const { workspaceId = '', conversationId = '' } = useParams();
+  const { search } = useLocation();
   const isMobile = useIsMobile();
   const storeWorkspace = useInboxStore((s) => s.workspaceId);
   const thread = useInboxStore((s) => s.thread);
@@ -191,7 +192,7 @@ export function Thread() {
       <div className="flex items-center gap-3 p-3">
         {isMobile ? (
           <Button asChild variant="ghost" size="sm">
-            <Link to={`/w/${workspaceId}/inbox`}>
+            <Link to={{ pathname: `/w/${workspaceId}/inbox`, search }}>
               <ArrowLeft aria-hidden />
               Back to conversations
             </Link>

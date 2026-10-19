@@ -34,6 +34,8 @@ interface CloseAsk {
   newestUnreadMessage: { id: string; received_at: string } | null;
   again: boolean;
   failed: boolean;
+  /** What the refusal was about: «Close anyway» confirms exactly this, not a later live summary. */
+  expected: Pick<ConversationSummary, 'state_version' | 'close_snapshot'>;
 }
 
 /**
@@ -108,7 +110,11 @@ export function ConversationActions({
     const store = useInboxStore.getState();
     const result =
       action === 'close'
-        ? await store.close(workspaceId, conversationId, fromDialog ? { confirm: true } : {})
+        ? await store.close(
+            workspaceId,
+            conversationId,
+            fromDialog ? { confirm: true, expected: closeAsk?.expected } : {},
+          )
         : action === 'reopen'
           ? await store.reopen(workspaceId, conversationId)
           : action === 'assign' && pick
@@ -120,8 +126,10 @@ export function ConversationActions({
       setSeconds(secondsLeft(result.retryAt));
     } else if (result.kind === 'failed' && !fromDialog) setFailed(true);
     if (action === 'close') {
-      if (result.kind === 'needs_confirmation')
+      const asked = useInboxStore.getState().thread?.summary;
+      if (result.kind === 'needs_confirmation' && asked)
         setCloseAsk({
+          expected: { state_version: asked.state_version, close_snapshot: asked.close_snapshot },
           reasons: result.reasons,
           staleChange: result.staleChange,
           newestUnreadMessage: result.newestUnreadMessage,
