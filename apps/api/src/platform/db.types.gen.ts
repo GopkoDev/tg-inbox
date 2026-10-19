@@ -69,6 +69,28 @@ export interface Contacts {
   workspace_id: string;
 }
 
+export interface ContactTagHistory {
+  actor_account_id: string;
+  contact_id: string;
+  created_at: Timestamp;
+  id: string;
+  kind: string;
+  merged_into_name: string | null;
+  merged_into_tag_id: string | null;
+  source: string;
+  tag_id: string;
+  tag_name: string;
+  workspace_id: string;
+}
+
+export interface ContactTags {
+  added_at: Timestamp;
+  added_by_account_id: string;
+  contact_id: string;
+  tag_id: string;
+  workspace_id: string;
+}
+
 export interface ConversationActivities {
   actor_account_id: string | null;
   cause: string;
@@ -227,6 +249,15 @@ export interface TabPresences {
   workspace_id: string;
 }
 
+export interface Tags {
+  created_at: Timestamp;
+  created_by_account_id: string;
+  id: string;
+  name: string;
+  name_key: string;
+  workspace_id: string;
+}
+
 export interface TelegramLinks {
   account_id: string;
   blocked_at: Timestamp | null;
@@ -251,6 +282,8 @@ export interface DB {
   accounts: Accounts;
   bots: Bots;
   connect_links: ConnectLinks;
+  contact_tag_history: ContactTagHistory;
+  contact_tags: ContactTags;
   contacts: Contacts;
   conversation_activities: ConversationActivities;
   conversations: Conversations;
@@ -266,6 +299,7 @@ export interface DB {
   sessions: Sessions;
   sign_in_failures: SignInFailures;
   tab_presences: TabPresences;
+  tags: Tags;
   telegram_links: TelegramLinks;
   workspaces: Workspaces;
 }

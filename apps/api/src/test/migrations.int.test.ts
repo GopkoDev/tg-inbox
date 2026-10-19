@@ -700,6 +700,9 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'create_contact_tag_history',
+        'create_contact_tags',
+        'create_tags',
         'add_contacts_list_indexes',
         'backfill_contacts_wrote_times',
         'add_contacts_wrote_times',
@@ -1204,7 +1207,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 11; i++) {
+      for (let i = 0; i < 14; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -1664,6 +1667,252 @@ describe('contacts migrations 01-03', () => {
       expect(await state()).toEqual({ columns: 0, indexes: 0, checks: 0 });
       expect((await migrator.migrateToLatest()).error).toBeUndefined();
       expect(await state()).toEqual({ columns: 2, indexes: 2, checks: 2 });
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_TAGS = '1791681110008_add_contacts_list_indexes';
+
+describe('contacts migrations 04-06', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const at = new Date('2026-02-01T10:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  const migratorFor = (handle: Kysely<unknown>) =>
+    new Migrator({
+      db: handle,
+      provider: new TSFileMigrationProvider({
+        migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+      }),
+    });
+
+  /** A workspace with an owner (account + membership) and one contact. */
+  async function workspace(handle: Kysely<unknown> = db) {
+    const ws = newId();
+    const account = newId();
+    const contact = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${at})`.execute(
+      handle,
+    );
+    await sql`INSERT INTO accounts (id, email, display_name, password_hash, created_at)
+      VALUES (${account}, ${`${account}@example.test`}, 'Test User', 'h', ${at})`.execute(handle);
+    await sql`INSERT INTO memberships (id, workspace_id, account_id, role, state, created_at, active_since)
+      VALUES (${newId()}, ${ws}, ${account}, 'owner', 'active', ${at}, ${at})`.execute(handle);
+    await sql`INSERT INTO contacts (id, workspace_id, telegram_user_id, first_name, profile_seen_at, created_at)
+      VALUES (${contact}, ${ws}, ${Math.floor(Math.random() * 1e9)}, 'Test User', ${at}, ${at})`.execute(
+      handle,
+    );
+    return { ws, account, contact };
+  }
+
+  const tag = async (ws: string, account: string, name = 'VIP', key = name.toLowerCase()) => {
+    const id = newId();
+    await sql`INSERT INTO tags (id, workspace_id, name, name_key, created_by_account_id, created_at)
+      VALUES (${id}, ${ws}, ${name}, ${key}, ${account}, ${at})`.execute(db);
+    return id;
+  };
+
+  const link = (ws: string, contact: string, tagId: string, account: string) =>
+    sql`INSERT INTO contact_tags (workspace_id, contact_id, tag_id, added_by_account_id, added_at)
+      VALUES (${ws}, ${contact}, ${tagId}, ${account}, ${at})`.execute(db);
+
+  const entry = (
+    o: { ws: string; contact: string; account: string; tagId?: string } & {
+      kind?: string;
+      source?: string;
+      into?: string | null;
+      intoName?: string | null;
+      tagName?: string;
+    },
+  ) =>
+    sql`INSERT INTO contact_tag_history (id, workspace_id, contact_id, tag_id, tag_name, kind,
+        merged_into_tag_id, merged_into_name, actor_account_id, source, created_at)
+      VALUES (${newId()}, ${o.ws}, ${o.contact}, ${o.tagId ?? newId()}, ${o.tagName ?? 'VIP'}, ${o.kind ?? 'added'},
+        ${o.into ?? null}, ${o.intoName ?? null}, ${o.account}, ${o.source ?? 'profile'}, ${at})`.execute(
+      db,
+    );
+
+  it('creates the three tables', async () => {
+    const { rows } = await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`.execute(db);
+    const names = rows.map((r) => r.table_name);
+    for (const t of ['tags', 'contact_tags', 'contact_tag_history']) expect(names).toContain(t);
+  });
+
+  describe('tags', () => {
+    it('refuses a second tag with the same name key in a workspace, accepts it in another', async () => {
+      const a = await workspace();
+      const b = await workspace();
+      await tag(a.ws, a.account, 'VIP', 'vip');
+      await expect(tag(a.ws, a.account, 'vip', 'vip')).rejects.toThrow(
+        /tags_workspace_id_name_key_key/,
+      );
+      await tag(b.ws, b.account, 'VIP', 'vip');
+    });
+
+    it('refuses an untidy or empty name and an empty key', async () => {
+      const a = await workspace();
+      await expect(tag(a.ws, a.account, ' VIP ', 'vip')).rejects.toThrow(/tags_name_check/);
+      await expect(tag(a.ws, a.account, '', 'x')).rejects.toThrow(/tags_name_check/);
+      await expect(tag(a.ws, a.account, 'VIP', '')).rejects.toThrow(/tags_name_key_check/);
+    });
+
+    it('refuses a creator from another workspace', async () => {
+      const a = await workspace();
+      const b = await workspace();
+      await expect(tag(a.ws, b.account)).rejects.toThrow(/tags_created_by_membership_fkey/);
+    });
+
+    it('accepts a rename that keeps the id', async () => {
+      const a = await workspace();
+      const id = await tag(a.ws, a.account, 'VIP', 'vip');
+      await sql`UPDATE tags SET name = 'Vip', name_key = 'vip' WHERE id = ${id}`.execute(db);
+    });
+  });
+
+  describe('contact_tags', () => {
+    it('refuses the same link twice', async () => {
+      const a = await workspace();
+      const t = await tag(a.ws, a.account);
+      await link(a.ws, a.contact, t, a.account);
+      await expect(link(a.ws, a.contact, t, a.account)).rejects.toThrow(/contact_tags_pkey/);
+    });
+
+    it('refuses another workspace’s tag on a contact, however the row names the workspace', async () => {
+      const a = await workspace();
+      const b = await workspace();
+      const tagOfB = await tag(b.ws, b.account);
+      await expect(link(a.ws, a.contact, tagOfB, a.account)).rejects.toThrow(
+        /contact_tags_tag_fkey/,
+      );
+      await expect(link(b.ws, a.contact, tagOfB, b.account)).rejects.toThrow(
+        /contact_tags_contact_fkey/,
+      );
+      const tagOfA = await tag(a.ws, a.account);
+      await expect(link(b.ws, a.contact, tagOfA, b.account)).rejects.toThrow(
+        /contact_tags_(tag|contact)_fkey/,
+      );
+    });
+
+    it('refuses an adder from another workspace', async () => {
+      const a = await workspace();
+      const b = await workspace();
+      const t = await tag(a.ws, a.account);
+      await expect(link(a.ws, a.contact, t, b.account)).rejects.toThrow(
+        /contact_tags_added_by_membership_fkey/,
+      );
+    });
+
+    it('refuses deleting a tag that still has links, accepts it after the links go', async () => {
+      const a = await workspace();
+      const t = await tag(a.ws, a.account);
+      await link(a.ws, a.contact, t, a.account);
+      await expect(sql`DELETE FROM tags WHERE id = ${t}`.execute(db)).rejects.toThrow(
+        /contact_tags_tag_fkey/,
+      );
+      await sql`DELETE FROM contact_tags WHERE tag_id = ${t}`.execute(db);
+      await sql`DELETE FROM tags WHERE id = ${t}`.execute(db);
+    });
+  });
+
+  describe('contact_tag_history', () => {
+    it('accepts added / removed from inbox or profile and merged / deleted from settings', async () => {
+      const a = await workspace();
+      const base = { ws: a.ws, contact: a.contact, account: a.account };
+      await entry({ ...base, kind: 'added', source: 'inbox' });
+      await entry({ ...base, kind: 'removed', source: 'profile' });
+      await entry({ ...base, kind: 'deleted', source: 'settings' });
+      await entry({ ...base, kind: 'merged', source: 'settings', into: newId(), intoName: 'Gold' });
+    });
+
+    it('accepts entries for a tag that no longer exists (no FK on tag_id)', async () => {
+      const a = await workspace();
+      await entry({ ws: a.ws, contact: a.contact, account: a.account, tagId: newId() });
+    });
+
+    it('refuses an unknown kind and an unknown source', async () => {
+      const a = await workspace();
+      const base = { ws: a.ws, contact: a.contact, account: a.account };
+      await expect(entry({ ...base, kind: 'renamed' })).rejects.toThrow(
+        /contact_tag_history_kind_check/,
+      );
+      // Postgres reports the first violated check, and kind_source_check sorts before source_check.
+      await expect(entry({ ...base, source: 'api' })).rejects.toThrow(
+        /contact_tag_history_(kind_)?source_check/,
+      );
+    });
+
+    it('refuses a member kind from settings and an owner kind from inbox', async () => {
+      const a = await workspace();
+      const base = { ws: a.ws, contact: a.contact, account: a.account };
+      await expect(entry({ ...base, kind: 'added', source: 'settings' })).rejects.toThrow(
+        /contact_tag_history_kind_source_check/,
+      );
+      await expect(entry({ ...base, kind: 'deleted', source: 'inbox' })).rejects.toThrow(
+        /contact_tag_history_kind_source_check/,
+      );
+    });
+
+    it('refuses a merge without a target, an added with a target, a target id without its name', async () => {
+      const a = await workspace();
+      const base = { ws: a.ws, contact: a.contact, account: a.account };
+      await expect(entry({ ...base, kind: 'merged', source: 'settings' })).rejects.toThrow(
+        /contact_tag_history_merged_into_check/,
+      );
+      await expect(entry({ ...base, into: newId(), intoName: 'Gold' })).rejects.toThrow(
+        /contact_tag_history_merged_into_check/,
+      );
+      await expect(
+        entry({ ...base, kind: 'merged', source: 'settings', into: newId() }),
+      ).rejects.toThrow(/contact_tag_history_merged_into_check/);
+    });
+
+    it('refuses a contact and an actor of another workspace', async () => {
+      const a = await workspace();
+      const b = await workspace();
+      await expect(entry({ ws: a.ws, contact: b.contact, account: a.account })).rejects.toThrow(
+        /contact_tag_history_contact_fkey/,
+      );
+      await expect(entry({ ws: a.ws, contact: a.contact, account: b.account })).rejects.toThrow(
+        /contact_tag_history_actor_membership_fkey/,
+      );
+    });
+  });
+
+  it('reverts 06 to 04 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const tables = async () => {
+        const { rows } = await sql<{ table_name: string }>`
+          SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name IN ('tags', 'contact_tags', 'contact_tag_history')
+          ORDER BY table_name`.execute(freshDb);
+        return rows.map((r) => r.table_name);
+      };
+      expect(await tables()).toEqual(['contact_tag_history', 'contact_tags', 'tags']);
+      expect((await migrator.migrateTo(LAST_PRE_TAGS)).error).toBeUndefined();
+      expect(await tables()).toEqual([]);
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await tables()).toEqual(['contact_tag_history', 'contact_tags', 'tags']);
     } finally {
       await freshDb.destroy();
       await fresh.stop();
