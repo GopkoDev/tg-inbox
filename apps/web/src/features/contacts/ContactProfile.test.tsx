@@ -20,12 +20,19 @@ const api = vi.hoisted(() => ({
   getContactConversation: vi.fn(),
   listThreadItems: vi.fn(),
   markConversationRead: vi.fn(),
+  addContactTag: vi.fn(),
+  listTags: vi.fn(),
+}));
+vi.mock('@/features/tags/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/tags/api')>()),
+  listTags: (...a: unknown[]) => api.listTags(...a),
 }));
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   getContact: (...a: unknown[]) => api.getContact(...a),
   listContactTagHistory: (...a: unknown[]) => api.listContactTagHistory(...a),
   getContactConversation: (...a: unknown[]) => api.getContactConversation(...a),
+  addContactTag: (...a: unknown[]) => api.addContactTag(...a),
 }));
 vi.mock('@/features/inbox/api-source', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/inbox/api-source')>()),
@@ -196,6 +203,41 @@ describe('SCR-19 header card', () => {
       'title',
       expect.stringContaining('Added by Lena Leaver'),
     );
+  });
+
+  it('Add tag opens the tag control (source: profile); an added tag shows in the header', async () => {
+    vi.useRealTimers();
+    api.listTags.mockResolvedValue({
+      workspace_id: WS,
+      items: [{ id: id(303), name: 'Wholesale', contact_count: 2 }],
+    });
+    const wholesale = {
+      id: id(303),
+      name: 'Wholesale',
+      added_by: { account_id: id(800), display_name: 'Test User' },
+      added_at: '2026-10-19T11:00:00Z',
+    };
+    api.addContactTag.mockResolvedValue({
+      workspace_id: WS,
+      contact_id: C1,
+      outcome: 'recorded',
+      tag: { id: id(303), name: 'Wholesale' },
+      tag_created: false,
+      tags: [...profile().tags, wholesale],
+    });
+    renderProfile();
+    await screen.findByRole('heading', { level: 1, name: 'Ada Lovelace' });
+    fireEvent.click(screen.getByRole('button', { name: 'Add tag' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Wholesale' }));
+    await waitFor(() =>
+      expect(api.addContactTag).toHaveBeenCalledWith(WS, C1, {
+        tag_id: id(303),
+        source: 'profile',
+      }),
+    );
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull());
+    expect(screen.getByText('Wholesale')).toBeInTheDocument();
   });
 
   it('shows words, not blanks: no username, Unknown, Never, and «No tags»', async () => {

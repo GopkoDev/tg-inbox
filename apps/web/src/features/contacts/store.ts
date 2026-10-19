@@ -102,6 +102,8 @@ interface ContactsState {
   loadOlder: (workspaceId: string, guard: GuardFn) => Promise<void>;
   openHeader: (workspaceId: string, contactId: string, guard: GuardFn) => Promise<void>;
   closeHeader: () => void;
+  /** Re-reads a shown contact (profile and header) in the background, e.g. after `TAG_NOT_FOUND`. */
+  rereadContact: (workspaceId: string, contactId: string, guard: GuardFn) => Promise<void>;
   /** Replaces the shown tags with an answer a tag change already carries (SCR-20). */
   applyTags: (contactId: string, tags: ContactProfile['tags']) => void;
   /**
@@ -614,6 +616,14 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     closeHeader() {
       headerEpoch++;
       set({ header: null });
+    },
+    async rereadContact(workspaceId, contactId, guard) {
+      if (!here(workspaceId)) return;
+      const reads: Promise<void>[] = [];
+      for (const slice of ['profile', 'header'] as const)
+        if (get()[slice]?.contactId === contactId)
+          reads.push(readContact(workspaceId, contactId, guard, slice, true));
+      await Promise.all(reads);
     },
     applyTags(contactId, tags) {
       for (const slice of ['profile', 'header'] as const) {

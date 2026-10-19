@@ -2,6 +2,7 @@ import type { ContactProfile as ContactProfileDto, ConversationSummary } from '@
 import { useEffect } from 'react';
 import { Link } from 'react-router';
 import { formatBotClock, formatBotDay } from '@/features/bot/settings/format';
+import { TagControl } from '@/features/tags/TagControl';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { initials } from '@/shared/lib/initials';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
@@ -26,7 +27,7 @@ function factsLine(c: ContactProfileDto): string {
 const addedTitle = (t: ContactProfileDto['tags'][number]) =>
   `Added by ${t.added_by.display_name}, ${formatBotDay(t.added_at)}, ${formatBotClock(t.added_at)}`;
 
-function HeaderCard({ contact }: { contact: ContactProfileDto }) {
+function HeaderCard({ workspaceId, contact }: { workspaceId: string; contact: ContactProfileDto }) {
   const name = contactFullName(contact);
   return (
     <Card>
@@ -52,6 +53,12 @@ function HeaderCard({ contact }: { contact: ContactProfileDto }) {
                 </Badge>
               ))
             )}
+            <TagControl
+              workspaceId={workspaceId}
+              contactId={contact.id}
+              tags={contact.tags}
+              source="profile"
+            />
           </div>
         </div>
       </CardContent>
@@ -191,7 +198,7 @@ export function ContactProfile({
         </AlertDescription>
       </Alert>
     );
-  else header = <HeaderCard contact={profile.contact} />;
+  else header = <HeaderCard workspaceId={workspaceId} contact={profile.contact} />;
 
   return (
     <div className="flex flex-col gap-4">
