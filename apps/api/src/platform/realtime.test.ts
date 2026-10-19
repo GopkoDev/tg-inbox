@@ -43,6 +43,19 @@ describe('realtime signal schema', () => {
     ).toBe(true);
   });
 
+  it('accepts telegram.link.changed with workspace and account ids only (AC-06)', () => {
+    const signal = { type: 'telegram_link.changed', v: 1, workspace_id: ws, account_id: newId() };
+    expect(realtimeSignalSchema.safeParse(signal).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(signal))).toBeLessThan(MAX_SIGNAL_BYTES);
+    expect(realtimeSignalSchema.safeParse({ ...signal, account_id: undefined }).success).toBe(
+      false,
+    );
+    expect(realtimeSignalSchema.safeParse({ ...signal, workspace_id: undefined }).success).toBe(
+      false,
+    );
+    expect(realtimeSignalSchema.safeParse({ ...signal, v: 2 }).success).toBe(false);
+  });
+
   it('requires account_id for a read change', () => {
     expect(realtimeSignalSchema.safeParse({ ...changed, item: null, change: 'read' }).success).toBe(
       false,

@@ -235,6 +235,43 @@ export class ReplyLimitReachedError extends AppError {
   }
 }
 
+/** 5 connect links per member per workspace per 10 minutes — AC-13. */
+export class ConnectLinkLimitReachedError extends AppError {
+  readonly code = ErrorCode.CONNECT_LINK_LIMIT_REACHED;
+  readonly statusCode = 429;
+  override readonly headers: Record<string, string>;
+
+  constructor(retryAt: Date, retryAfterSeconds: number) {
+    super(
+      `Connect links are limited to 5 per 10 minutes — you can ask for a new one in ${Math.max(1, Math.ceil(retryAfterSeconds / 60))} minutes`,
+      { limit: 5, window_seconds: 600, retry_at: retryAt.toISOString() },
+    );
+    this.headers = { 'Retry-After': String(retryAfterSeconds) };
+  }
+}
+
+/** The member already has a live Telegram link — AC-06. `settings` is their current notification settings. */
+export class TelegramAlreadyLinkedError extends AppError {
+  readonly code = ErrorCode.TELEGRAM_ALREADY_LINKED;
+  readonly statusCode = 409;
+
+  constructor(settings: unknown) {
+    super('You are already connected — disconnect first to connect another Telegram account', {
+      settings,
+    });
+  }
+}
+
+/** The workspace's bot cannot receive the Start — AC-13. */
+export class PingsNeedWorkingBotError extends AppError {
+  readonly code = ErrorCode.PINGS_NEED_WORKING_BOT;
+  readonly statusCode = 409;
+
+  constructor(settings: unknown) {
+    super('Telegram pings need a working bot that receives messages', { settings });
+  }
+}
+
 /** The assignee or status moved since the version the member saw — AC-03. */
 export class ConversationStateChangedError extends AppError {
   readonly code = ErrorCode.CONVERSATION_STATE_CHANGED;

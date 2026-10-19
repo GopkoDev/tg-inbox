@@ -46,10 +46,18 @@ const membershipDeactivated = z.object({
   account_id: id,
 });
 
+const telegramLinkChanged = z.object({
+  type: z.literal('telegram_link.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+  account_id: id,
+});
+
 export const realtimeSignalSchema = z.discriminatedUnion('type', [
   conversationChanged,
   botChanged,
   membershipDeactivated,
+  telegramLinkChanged,
 ]);
 
 export type RealtimeSignal = z.infer<typeof realtimeSignalSchema>;

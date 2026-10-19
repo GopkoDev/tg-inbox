@@ -463,9 +463,24 @@ export const ConversationChangedFrame = z
 export const BotChangedFrame = z.object({ ...frameBase, type: z.literal('bot.changed') });
 export const ResyncFrame = z.object({ ...frameBase, type: z.literal('resync') });
 
+/** Delivered to the sockets of the one account whose Telegram link changed (events.md). */
+export const TelegramLinkChangedFrame = z.object({
+  ...frameBase,
+  type: z.literal('telegram_link.changed'),
+});
+
 export const LiveFrame = z.discriminatedUnion('type', [
   ConversationChangedFrame,
   BotChangedFrame,
   ResyncFrame,
+  TelegramLinkChangedFrame,
 ]);
 export type LiveFrame = z.infer<typeof LiveFrame>;
+
+/** The one client frame: whether this tab is on screen (events.md). Strict: anything else is ignored. */
+export const PresenceFrame = z.strictObject({
+  type: z.literal('presence'),
+  v: z.literal(1),
+  on_screen: z.boolean(),
+});
+export type PresenceFrame = z.infer<typeof PresenceFrame>;

@@ -808,6 +808,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       case 'resync':
         void rereadAll(workspaceId);
         return;
+      case 'telegram_link.changed':
+        return; // the settings screen listens for it; the inbox has nothing to refresh
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
         const open = get().thread?.conversationId === conversationId;

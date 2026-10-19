@@ -2,9 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { ErrorCode, ErrorEnvelope } from './errors.js';
 
 describe('ErrorCode', () => {
-  it('declares the 36 codes', () => {
-    expect(Object.keys(ErrorCode)).toHaveLength(36);
+  it('declares the 39 codes', () => {
+    expect(Object.keys(ErrorCode)).toHaveLength(39);
     for (const c of [
+      'CONNECT_LINK_LIMIT_REACHED',
+      'TELEGRAM_ALREADY_LINKED',
+      'PINGS_NEED_WORKING_BOT',
       'UNSUPPORTED_MEDIA_TYPE',
       'PAYLOAD_TOO_LARGE',
       'UNAUTHENTICATED',
