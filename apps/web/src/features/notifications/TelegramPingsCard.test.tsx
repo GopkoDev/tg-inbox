@@ -128,6 +128,8 @@ describe('TelegramPingsCard (SCR-16)', () => {
   });
 
   it('connecting: a spinner, the button disabled, then SCR-17 opens with the issued link', async () => {
+    // The fixture link expires at 09:22 — pin the clock before it, or the dialog opens expired.
+    vi.useFakeTimers({ shouldAdvanceTime: true, now: new Date('2026-10-19T09:16:00.000Z') });
     renderCard();
     let issue!: (l: IssuedConnectLink) => void;
     api.createConnectLink.mockReturnValue(new Promise((r) => (issue = r)));
