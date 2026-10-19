@@ -127,7 +127,7 @@ describe('TelegramPingsCard (SCR-16)', () => {
     expect(api.getNotificationSettings.mock.calls[0]![0]).toBe(WS);
   });
 
-  it('connecting: a spinner, the button disabled, then the issued link is held for SCR-17', async () => {
+  it('connecting: a spinner, the button disabled, then SCR-17 opens with the issued link', async () => {
     renderCard();
     let issue!: (l: IssuedConnectLink) => void;
     api.createConnectLink.mockReturnValue(new Promise((r) => (issue = r)));
@@ -137,7 +137,7 @@ describe('TelegramPingsCard (SCR-16)', () => {
     expect(busy).toHaveAttribute('aria-busy', 'true');
     expect(api.createConnectLink).toHaveBeenCalledWith(WS);
     await act(async () => issue(link));
-    expect(screen.getByRole('button', { name: 'Connect Telegram' })).toBeEnabled();
+    expect(await screen.findByRole('dialog')).toHaveTextContent(link.url);
   });
 
   it('no working bot for an operator: asks a business owner, no button at all', async () => {

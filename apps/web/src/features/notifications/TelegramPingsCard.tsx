@@ -1,5 +1,6 @@
 import { Loader2 } from 'lucide-react';
-import { useEffect, type ReactNode } from 'react';
+import type { IssuedConnectLink } from '@tg/shared';
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { Link } from 'react-router';
 import { formatBotClock, formatBotDay } from '@/features/bot/settings/format';
 import { NotFoundCard } from '@/pages/NotFoundPage';
@@ -9,6 +10,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { ConnectTelegramDialog } from './ConnectTelegramDialog';
 import { useNotificationsStore } from './store';
 
 const NOT_LOADED = "Couldn't load your Telegram settings";
@@ -43,13 +45,52 @@ function CardShell({ badge, children }: { badge?: ReactNode; children: ReactNode
   );
 }
 
-/** SCR-16's Telegram pings card: the caller's own link in this workspace and what it needs. */
+/**
+ * SCR-16's Telegram pings card: the caller's own link in this workspace and what it needs. A
+ * `201` from Connect Telegram opens SCR-17 over it.
+ */
 export function TelegramPingsCard({
   workspaceId,
   workspaceName,
 }: {
   workspaceId: string;
   workspaceName: string;
+}) {
+  const guard = useShellGuard();
+  const [issued, setIssued] = useState<IssuedConnectLink | null>(null);
+  const connectButton = useRef<HTMLButtonElement>(null);
+  return (
+    <>
+      <PingsCard
+        workspaceId={workspaceId}
+        workspaceName={workspaceName}
+        onIssued={setIssued}
+        connectButton={connectButton}
+      />
+      {issued && (
+        <ConnectTelegramDialog
+          workspaceId={workspaceId}
+          workspaceName={workspaceName}
+          issued={issued}
+          guard={guard}
+          onClose={() => setIssued(null)}
+          returnFocus={() => connectButton.current?.focus()}
+        />
+      )}
+    </>
+  );
+}
+
+function PingsCard({
+  workspaceId,
+  workspaceName,
+  onIssued,
+  connectButton,
+}: {
+  workspaceId: string;
+  workspaceName: string;
+  onIssued: (link: IssuedConnectLink) => void;
+  connectButton: RefObject<HTMLButtonElement | null>;
 }) {
   const guard = useShellGuard();
   const settings = useNotificationsStore((s) => s.settings);
@@ -103,6 +144,10 @@ export function TelegramPingsCard({
     );
   }
 
+  const connect = async () => {
+    const outcome = await useNotificationsStore.getState().connect(workspaceId, guard);
+    if (outcome.kind === 'issued') onIssued(outcome.link);
+  };
   const busy = action !== 'idle';
   const isOwner = settings.caller_role === 'owner';
   const openBotSettings = (
@@ -218,10 +263,11 @@ export function TelegramPingsCard({
       </p>
       {alerts}
       <Button
+        ref={connectButton}
         className="w-full sm:w-auto"
         disabled={busy || limitUntil !== null}
         aria-busy={action === 'connecting'}
-        onClick={() => void useNotificationsStore.getState().connect(workspaceId, guard)}
+        onClick={() => void connect()}
       >
         {action === 'connecting' && <Spinner />}
         Connect Telegram
