@@ -19,6 +19,11 @@ vi.mock('@/features/workspaces/api', () => ({
 
 const live = vi.hoisted(() => ({
   opened: [] as { workspaceId: string; close: () => void }[],
+  subscribers: [] as { workspaceId: string; subscriber: unknown }[],
+}));
+const getAttentionCount = vi.fn();
+vi.mock('@/features/attention/api', () => ({
+  getAttentionCount: (id: string) => getAttentionCount(id),
 }));
 vi.mock('@/shared/api/live-connection', () => ({
   openLiveConnection: (workspaceId: string) => {
@@ -26,7 +31,13 @@ vi.mock('@/shared/api/live-connection', () => ({
     live.opened.push(c);
     return c;
   },
-  subscribeLive: () => () => undefined,
+  subscribeLive: (workspaceId: string, subscriber: unknown) => {
+    const entry = { workspaceId, subscriber };
+    live.subscribers.push(entry);
+    return () => {
+      live.subscribers = live.subscribers.filter((e) => e !== entry);
+    };
+  },
   liveStatus: () => 'idle',
 }));
 
@@ -68,6 +79,9 @@ function renderShell(path = '/w/w1') {
 
 beforeEach(() => {
   live.opened.length = 0;
+  live.subscribers = [];
+  getAttentionCount.mockImplementation(async (id: string) => ({ workspace_id: id, count: 0 }));
+  document.title = 'tg-inbox';
   stubRadixDom();
   vi.resetAllMocks();
   getMe.mockReturnValue(new Promise(() => undefined));
@@ -111,10 +125,13 @@ describe('AppShell', () => {
     );
   });
 
-  it('operator sees no Settings entry (AC-15 UI half)', () => {
+  it('operator sees the Settings entry too: it leads to their notifications (AC-12)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
     renderShell('/w/w2');
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute(
+      'href',
+      '/w/w2/settings',
+    );
     expect(screen.getByRole('button', { name: 'o@x.io' })).toBeInTheDocument();
   });
 
@@ -162,7 +179,7 @@ describe('AppShell', () => {
     expect(within(nav).getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current');
   });
 
-  it('operator sees no Settings entry (AC-03)', () => {
+  it('operator sees Inbox, Contacts and Settings (AC-12, SCR-15 role: operator)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
     renderShell('/w/w2');
     const nav = screen.getByRole('navigation', { name: 'Workspace' });
@@ -170,7 +187,7 @@ describe('AppShell', () => {
       within(nav)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(['Inbox', 'Contacts']);
+    ).toEqual(['Inbox', 'Contacts', 'Settings']);
   });
 
   it('the Settings link is marked current on a settings page', () => {
@@ -252,6 +269,180 @@ describe('AppShell', () => {
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
       await waitFor(() => expect(screen.getByText('sign-in screen')).toBeInTheDocument());
       expect(live.opened[0]!.close).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the attention count (SCR-15, AC-01)', () => {
+    const answerWith = (count: number) =>
+      getAttentionCount.mockImplementation(async (id: string) => ({ workspace_id: id, count }));
+    const frames = () =>
+      live.subscribers.map((e) => e.subscriber) as {
+        onFrame: (f: unknown) => void;
+        onClosed: (code: number) => void;
+      }[];
+    const badge = () => screen.queryByLabelText(/conversations? needs? you/);
+
+    it('count above 0: the title starts with (N) and Inbox shows N with its label', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(3);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      const nav = screen.getByRole('navigation', { name: 'Workspace' });
+      expect(within(nav).getByLabelText('3 conversations need you')).toHaveTextContent('3');
+      expect(getAttentionCount).toHaveBeenCalledWith('w1');
+    });
+
+    it('is not capped and says conversation for one', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(137);
+      const first = renderShell();
+      await waitFor(() => expect(document.title).toBe('(137) tg-inbox'));
+      expect(screen.getAllByText('137').length).toBeGreaterThan(0);
+      first.unmount();
+      answerWith(1);
+      renderShell();
+      expect(await screen.findByLabelText('1 conversation needs you')).toBeInTheDocument();
+    });
+
+    it('count 0: plain title and no badge', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(0);
+      renderShell();
+      await waitFor(() => expect(getAttentionCount).toHaveBeenCalled());
+      expect(document.title).toBe('tg-inbox');
+      expect(badge()).not.toBeInTheDocument();
+    });
+
+    it('loading: no prefix and no badge until the first answer', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      getAttentionCount.mockReturnValue(new Promise(() => undefined));
+      renderShell();
+      await screen.findByText('shell body');
+      expect(document.title).toBe('tg-inbox');
+      expect(badge()).not.toBeInTheDocument();
+    });
+
+    it('follows the member to another workspace page and keeps one read', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(2);
+      renderShell('/w/w1/inbox');
+      await waitFor(() => expect(document.title).toBe('(2) tg-inbox'));
+      fireEvent.click(await screen.findByRole('link', { name: 'go to settings' }));
+      expect(await screen.findByText('bot body')).toBeInTheDocument();
+      expect(document.title).toBe('(2) tg-inbox');
+      expect(getAttentionCount).toHaveBeenCalledTimes(1);
+    });
+
+    it('live: a frame changes the title and the badge within the debounce, without a reload', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(1);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(1) tg-inbox'));
+      answerWith(0);
+      frames().forEach((f) => f.onFrame({ v: 1, workspace_id: 'w1', type: 'resync' }));
+      await waitFor(() => expect(document.title).toBe('tg-inbox'), { timeout: 1000 });
+      expect(badge()).not.toBeInTheDocument();
+    });
+
+    it('a failed read keeps the last count and shows no error', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(2);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(2) tg-inbox'));
+      getAttentionCount.mockRejectedValue(new Error('network'));
+      frames().forEach((f) => f.onFrame({ v: 1, workspace_id: 'w1', type: 'resync' }));
+      await waitFor(() => expect(getAttentionCount).toHaveBeenCalledTimes(2), { timeout: 1000 });
+      expect(document.title).toBe('(2) tg-inbox');
+      expect(screen.queryByText(/something went wrong/i)).not.toBeInTheDocument();
+    });
+
+    it('phone: a header Badge after the trigger shows N, hidden from assistive tech and from md up', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(3);
+      const { container } = renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      const header = container.querySelector('header')!;
+      const mark = within(header).getByText('3');
+      expect(mark).toHaveAttribute('aria-hidden', 'true');
+      expect(mark).toHaveAttribute('data-slot', 'badge');
+      expect(mark.className).toMatch(/md:hidden/);
+    });
+
+    it('phone: no header Badge at 0', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(0);
+      const { container } = renderShell();
+      await waitFor(() => expect(getAttentionCount).toHaveBeenCalled());
+      expect(container.querySelector('header [data-slot="badge"]')).toBeNull();
+    });
+
+    it('collapsed sidebar: the Inbox tooltip reads Inbox (N)', async () => {
+      document.cookie = 'sidebar_state=false; path=/';
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(3);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      fireEvent.focus(screen.getByRole('link', { name: 'Inbox' }));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent('Inbox (3)');
+      document.cookie = 'sidebar_state=; path=/; max-age=0';
+    });
+
+    it('collapsed sidebar at 0: the tooltip is just Inbox', async () => {
+      document.cookie = 'sidebar_state=false; path=/';
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(0);
+      renderShell();
+      await waitFor(() => expect(getAttentionCount).toHaveBeenCalled());
+      fireEvent.focus(screen.getByRole('link', { name: 'Inbox' }));
+      expect(await screen.findByRole('tooltip')).toHaveTextContent(/^Inbox$/);
+      document.cookie = 'sidebar_state=; path=/; max-age=0';
+    });
+
+    it('entering: no count and no prefix', () => {
+      enterWorkspace.mockReturnValue(new Promise(() => undefined));
+      renderShell();
+      expect(getAttentionCount).not.toHaveBeenCalled();
+      expect(document.title).toBe('tg-inbox');
+    });
+
+    it('not found: no read, no prefix', async () => {
+      enterWorkspace.mockRejectedValue(new ApiError(404, 'NOT_FOUND' as never, 'x'));
+      renderShell();
+      await screen.findByText('Page not found');
+      expect(getAttentionCount).not.toHaveBeenCalled();
+      expect(document.title).toBe('tg-inbox');
+    });
+
+    it('access removed: the count and the prefix go', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(3);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      getAttentionCount.mockRejectedValue(new ApiError(403, 'ACCESS_REMOVED' as never, 'x'));
+      frames().forEach((f) => f.onClosed(4403));
+      await waitFor(() => expect(document.title).toBe('tg-inbox'));
+      expect(badge()).not.toBeInTheDocument();
+    });
+
+    it('a workspace switch clears the count until the new workspace answers', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      enterWorkspace.mockImplementation(async (id: string) => (id === 'w1' ? acme : bolt));
+      answerWith(3);
+      renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      getAttentionCount.mockReturnValue(new Promise(() => undefined));
+      fireEvent.click(await screen.findByRole('link', { name: 'go to bolt' }));
+      await waitFor(() => expect(document.title).toBe('tg-inbox'));
+      expect(getAttentionCount).toHaveBeenLastCalledWith('w2');
+    });
+
+    it('leaving the frame restores the plain title', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      answerWith(3);
+      const { unmount } = renderShell();
+      await waitFor(() => expect(document.title).toBe('(3) tg-inbox'));
+      unmount();
+      expect(document.title).toBe('tg-inbox');
     });
   });
 });

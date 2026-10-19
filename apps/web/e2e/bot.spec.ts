@@ -177,7 +177,7 @@ test('an operator sees no Bot entry and the owners-only page at the Bot address 
   await expect(page).toHaveURL(new RegExp(`/w/${workspaceId}/inbox$`));
   await expect(
     page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Settings' }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 
   await page.goto(`/w/${workspaceId}/bot`);
   await expect(page.getByText('Only business owners manage the bot')).toBeVisible();

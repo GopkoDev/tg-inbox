@@ -15,6 +15,15 @@ vi.mock('@/features/workspaces/api', () => ({
   enterWorkspace: (id: string) => enterWorkspace(id),
 }));
 vi.mock('@/features/workspaces/resolve', () => ({ resolveWorkspace: vi.fn() }));
+// The frame's attention read and live connection are not what these tests are about.
+vi.mock('@/features/attention/api', () => ({
+  getAttentionCount: async (id: string) => ({ workspace_id: id, count: 0 }),
+}));
+vi.mock('@/shared/api/live-connection', () => ({
+  openLiveConnection: () => ({ close: () => undefined }),
+  subscribeLive: () => () => undefined,
+  liveStatus: () => 'idle',
+}));
 // The inbox reads and its live socket are other tasks' business here.
 vi.mock('@/features/inbox/store', () => ({
   useInboxStore: Object.assign(() => undefined, {
@@ -95,12 +104,12 @@ describe('workspace frame (T3)', () => {
     expect(within(crumbs).getByText('Inbox')).toBeInTheDocument();
   });
 
-  it('AC-03: an operator sees Inbox and Contacts but no Settings', async () => {
+  it('an operator sees Inbox, Contacts and Settings (AC-12)', async () => {
     renderAt('/w/w2');
     const inbox = await screen.findByRole('link', { name: 'Inbox' });
     expect(inbox).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
   });
 
   it('AC-11: old /team lands on settings/team', async () => {
@@ -284,14 +293,14 @@ describe('shell on the inbox route (moved from the former workspace home page)',
 });
 
 describe('phone drawer for an operator workspace (S1-7)', () => {
-  it('has Inbox and Contacts but no Settings, and the account menu reaches Sign out', async () => {
+  it('has Inbox, Contacts and Settings, and the account menu reaches Sign out', async () => {
     setMobile(true);
     renderAt('/w/w2/inbox');
     fireEvent.click(await screen.findByRole('button', { name: 'Toggle Sidebar' }));
     const drawer = await screen.findByRole('dialog');
     expect(within(drawer).getByRole('link', { name: 'Inbox' })).toBeInTheDocument();
     expect(within(drawer).getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
-    expect(within(drawer).queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(within(drawer).getByRole('link', { name: 'Settings' })).toBeInTheDocument();
 
     openMenu(/o@x\.io/);
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument();
