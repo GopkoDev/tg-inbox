@@ -51,11 +51,26 @@ export function maskLinkTokens(url: string): string {
   return url;
 }
 
-/** Fastify's default `req` serializer (minus `version`: no route versioning), link tokens masked. */
+/**
+ * Masks the value of the `q` query parameter: it is what a member typed into a search box, a
+ * contact's name or username (contacts sad.md §8: ids, kinds and outcome codes only).
+ */
+export function maskSearchText(url: string): string {
+  const queryAt = url.indexOf('?');
+  if (queryAt === -1) return url;
+  const query = url
+    .slice(queryAt + 1)
+    .split('&')
+    .map((pair) => (pair === 'q' || pair.startsWith('q=') ? 'q=[redacted]' : pair))
+    .join('&');
+  return `${url.slice(0, queryAt + 1)}${query}`;
+}
+
+/** Fastify's default `req` serializer (minus `version`: no route versioning), link tokens and search text masked. */
 function serializeRequest(req: FastifyRequest): Record<string, unknown> {
   return {
     method: req.method,
-    url: maskLinkTokens(req.url),
+    url: maskSearchText(maskLinkTokens(req.url)),
     host: req.host,
     remoteAddress: req.ip,
     remotePort: req.socket?.remotePort,

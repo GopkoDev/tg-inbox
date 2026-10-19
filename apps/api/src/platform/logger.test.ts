@@ -109,6 +109,23 @@ describe('loggerOptions req serializer', () => {
     expect(serialize('/api/workspaces/abc').url).toBe('/api/workspaces/abc');
   });
 
+  it('masks the value of a search query (a contact name or username) and keeps the other parameters', () => {
+    expect(serialize('/api/workspaces/w/contacts?q=Zephyrine%20Quill&mode=any&tag=t1').url).toBe(
+      '/api/workspaces/w/contacts?q=[redacted]&mode=any&tag=t1',
+    );
+    expect(serialize('/api/workspaces/w/contacts?mode=any&q=zq_7731').url).toBe(
+      '/api/workspaces/w/contacts?mode=any&q=[redacted]',
+    );
+    expect(serialize('/api/workspaces/w/contacts?q=').url).toBe(
+      '/api/workspaces/w/contacts?q=[redacted]',
+    );
+    expect(serialize('/api/workspaces/w/contacts?mode=none').url).toBe(
+      '/api/workspaces/w/contacts?mode=none',
+    );
+    // Only a parameter named exactly q: `eq`, `q2` and path text stay.
+    expect(serialize('/api/x?eq=1&q2=2&flag').url).toBe('/api/x?eq=1&q2=2&flag');
+  });
+
   it('keeps every existing redact path', () => {
     const options = loggerOptions(config) as { redact: string[] };
     expect(options.redact).toEqual(

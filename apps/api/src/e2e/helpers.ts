@@ -269,6 +269,88 @@ export const notificationIntegrity = {
       .execute(),
 };
 
+/**
+ * Integrity queries of contacts (sad.md §7, run book). Ops queries, not repository reads; each is
+ * scoped to one workspace and returns the offending ids.
+ */
+export const contactIntegrity = {
+  /** 1. Two tags of a workspace with the same name key (the unique index forbids it). */
+  duplicateTagKeys: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('tags')
+      .select('name_key')
+      .where('workspace_id', '=', workspaceId)
+      .groupBy('name_key')
+      .having((eb) => eb.fn.countAll(), '>', 1)
+      .execute(),
+
+  /** 2. A workspace over 100 tags. */
+  tagsOverLimit: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('tags')
+      .select('workspace_id as id')
+      .where('workspace_id', '=', workspaceId)
+      .groupBy('workspace_id')
+      .having((eb) => eb.fn.countAll(), '>', 100)
+      .execute(),
+
+  /** 2b. A contact over 20 tags. */
+  contactsOverTagLimit: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('contact_tags')
+      .select('contact_id as id')
+      .where('workspace_id', '=', workspaceId)
+      .groupBy('contact_id')
+      .having((eb) => eb.fn.countAll(), '>', 20)
+      .execute(),
+
+  /** 3. Links whose tag or contact belongs to another workspace (the composite FKs forbid it). */
+  linksAcrossWorkspaces: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('contact_tags as l')
+      .leftJoin('tags as t', 't.id', 'l.tag_id')
+      .leftJoin('contacts as c', 'c.id', 'l.contact_id')
+      .select('l.tag_id as id')
+      .where('l.workspace_id', '=', workspaceId)
+      .where((eb) =>
+        eb.or([
+          eb('t.workspace_id', 'is distinct from', workspaceId),
+          eb('c.workspace_id', 'is distinct from', workspaceId),
+        ]),
+      )
+      .execute(),
+
+  /**
+   * 4. Links with no history entry on that contact that is `added` with the link's tag id or
+   * `merged` into it (matched on ids, so renames and re-pointed merges never trip it).
+   */
+  linksWithoutHistory: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('contact_tags as l')
+      .select('l.tag_id as id')
+      .where('l.workspace_id', '=', workspaceId)
+      .where(({ not, exists, selectFrom }) =>
+        not(
+          exists(
+            selectFrom('contact_tag_history as h')
+              .select('h.id')
+              .whereRef('h.workspace_id', '=', 'l.workspace_id')
+              .whereRef('h.contact_id', '=', 'l.contact_id')
+              .where((eb) =>
+                eb.or([
+                  eb.and([eb('h.kind', '=', 'added'), eb('h.tag_id', '=', eb.ref('l.tag_id'))]),
+                  eb.and([
+                    eb('h.kind', '=', 'merged'),
+                    eb('h.merged_into_tag_id', '=', eb.ref('l.tag_id')),
+                  ]),
+                ]),
+              ),
+          ),
+        ),
+      )
+      .execute(),
+};
+
 /** Every integrity query for each workspace: every list must be empty. `asOf` is the test clock's now. */
 export async function integrityViolations(
   db: Deps['db'],
@@ -311,6 +393,16 @@ export async function integrityViolations(
       await n.memberRemovedLinksHoldingId(db, workspaceId, asOf),
     );
     note('waiting-without-period', workspaceId, await n.waitingWithoutPeriod(db, workspaceId));
+    const c = contactIntegrity;
+    note(
+      'duplicate-tag-keys',
+      workspaceId,
+      (await c.duplicateTagKeys(db, workspaceId)).map((r) => ({ id: r.name_key })),
+    );
+    note('tags-over-limit', workspaceId, await c.tagsOverLimit(db, workspaceId));
+    note('contacts-over-tag-limit', workspaceId, await c.contactsOverTagLimit(db, workspaceId));
+    note('links-across-workspaces', workspaceId, await c.linksAcrossWorkspaces(db, workspaceId));
+    note('links-without-history', workspaceId, await c.linksWithoutHistory(db, workspaceId));
   }
   return found;
 }
