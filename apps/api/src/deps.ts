@@ -45,6 +45,8 @@ import { createReplies, createReplyDelivery } from './modules/conversations/app/
 import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
 import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
+import { createNotificationReads } from './modules/conversations/app/notification-reads.js';
+import { createNotificationQueries } from './modules/conversations/infra/notification-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
 import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
 import { createStateChanges } from './modules/conversations/app/state-changes.js';
@@ -135,6 +137,9 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     contacts,
     signals: createConversationSignals(),
     clock,
+  });
+  const notificationReads = createNotificationReads({
+    reads: createNotificationQueries(db),
   });
   // Built before `team` so the deactivation transaction can call it (sad.md §5).
   const team = createTeam({
@@ -268,6 +273,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     workspaceAdmin,
     contacts,
     conversations,
+    notificationReads,
     bots,
     inboxReads,
     inboxMedia,

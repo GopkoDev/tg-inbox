@@ -585,3 +585,35 @@ export type ReplySettlement =
   | { state: 'sent'; telegramMessageId: bigint; sentAt: Date }
   | { state: 'not_delivered'; failureReason: string }
   | { state: 'not_confirmed' };
+
+/** One open conversation in a waiting period, as the ping sweep reads it (ADR-0005, ADR-0007). */
+export interface WaitingConversation {
+  conversationId: string;
+  assigneeAccountId: string | null;
+  waitingSince: Date;
+  startedBy: WaitingPeriod['startedBy'];
+  /** Arrival of the customer message that began the wait (of the first waiting one after a reopen). */
+  startingArrival: Date;
+  /**
+   * The accounts, among the requested ones and the conversation's assignee, whose read mark reaches
+   * the starting arrival (a watermark exactly at it counts as read).
+   */
+  readBy: Set<string>;
+}
+
+export interface NotificationReads {
+  /**
+   * The open waiting conversations of the workspace, oldest period first, optionally narrowed to
+   * `conversationIds`. `accountIds` are the members whose read state is wanted; the assignee's is
+   * returned whether or not they are listed (the 5-minute team reach, flow 13).
+   */
+  waitingForPings(
+    workspaceId: string,
+    query: { conversationIds?: string[]; accountIds: string[] },
+  ): Promise<WaitingConversation[]>;
+  /**
+   * Open conversations that are the member's or unassigned and have a customer arrival after the
+   * member's unread floor, `max(read mark, activeSince)` (AC-01, ADR-0008).
+   */
+  attentionCount(workspaceId: string, accountId: string, activeSince: Date): Promise<number>;
+}
