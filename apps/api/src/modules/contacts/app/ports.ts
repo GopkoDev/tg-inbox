@@ -299,3 +299,9 @@ export interface ContactListQuery {
 export interface DisplayNames {
   displayNames(workspaceId: string, accountIds: readonly string[]): Promise<Map<string, string>>;
 }
+
+/** The realtime signals of the tag writes (ADR-0007), published in the writing transaction. */
+export interface TagSignals {
+  contactChanged(tx: Executor, workspaceId: string, contactId: string): Promise<void>;
+  tagsChanged(tx: Executor, workspaceId: string): Promise<void>;
+}

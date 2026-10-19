@@ -2,7 +2,6 @@ import type {
   ContactPage,
   ContactProfile as ContactProfileDto,
   ListContactsQuery,
-  MemberRef,
   TagHistoryPage,
 } from '@tg/shared';
 import type { Clock } from '../../../platform/clock.js';
@@ -27,6 +26,7 @@ import {
   type TagRepo,
   type UpsertResult,
 } from './ports.js';
+import { memberRefs } from './member-refs.js';
 
 export interface ContactsDeps {
   repo: ContactRepo;
@@ -94,17 +94,8 @@ const isoOrNull = (d: Date | null) => (d === null ? null : iso(d));
 export function createContactReads(deps: ContactReadsDeps): ContactReads {
   const { repo, lists, tags, contactTags, tagHistory, workspaces } = deps;
 
-  /** A kept membership always has a name; the fallback only guards a removed account. */
-  async function memberRefs(workspaceId: string, accountIds: readonly string[]) {
-    const unique = [...new Set(accountIds)];
-    const names = unique.length
-      ? await workspaces.displayNames(workspaceId, unique)
-      : new Map<string, string>();
-    return (accountId: string): MemberRef => ({
-      account_id: accountId,
-      display_name: names.get(accountId) ?? '?',
-    });
-  }
+  const refs = (workspaceId: string, accountIds: readonly string[]) =>
+    memberRefs(workspaces, workspaceId, accountIds);
 
   return {
     async listContacts(workspaceId, input) {
@@ -160,7 +151,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
       const contact = await repo.profile(workspaceId, contactId);
       if (contact === null) throw new NotFoundError('Contact not found.');
       const carried = await contactTags.tagsOf(workspaceId, contactId);
-      const ref = await memberRefs(
+      const ref = await refs(
         workspaceId,
         carried.map((t) => t.addedByAccountId),
       );
@@ -191,7 +182,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
         if (after === undefined) throw new ValidationError('The cursor is not valid.');
       }
       const page = await tagHistory.page(workspaceId, contactId, after);
-      const ref = await memberRefs(
+      const ref = await refs(
         workspaceId,
         page.entries.map((e) => e.actorAccountId),
       );

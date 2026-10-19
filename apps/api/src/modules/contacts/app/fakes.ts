@@ -1,6 +1,7 @@
 import { newId } from '../../../platform/ids.js';
 import { shouldRefreshProfile } from '../domain/profile.js';
-import { CONTACTS_PAGE_SIZE, TAG_HISTORY_PAGE_SIZE } from '../domain/tags.js';
+import { tagNameKey } from '../domain/tag-name.js';
+import { CONTACTS_PAGE_SIZE, mergeLink, TAG_HISTORY_PAGE_SIZE } from '../domain/tags.js';
 import {
   normalizeSearchQuery,
   type ContactListFilter,
@@ -9,8 +10,11 @@ import {
   type ContactRepo,
   type ContactTagRepo,
   type TagHistoryRepo,
+  type Executor,
   type TagHistoryRow,
+  type TagRecord,
   type TagRepo,
+  type TagSignals,
 } from './ports.js';
 
 /** In-memory ContactRepo for unit tests; applies the same profile-refresh rule as the SQL. */
@@ -87,6 +91,9 @@ interface FakeTag {
   id: string;
   workspaceId: string;
   name: string;
+  key: string;
+  createdBy: string;
+  createdAt: Date;
 }
 interface FakeLink {
   workspaceId: string;
@@ -113,7 +120,14 @@ export function fakeTagStore() {
     entries,
     addTag(workspaceId: string, name: string): string {
       const id = newId();
-      tags.push({ id, workspaceId, name });
+      tags.push({
+        id,
+        workspaceId,
+        name,
+        key: tagNameKey(name),
+        createdBy: newId(),
+        createdAt: new Date(0),
+      });
       return id;
     },
     renameTag(workspaceId: string, id: string, name: string) {
@@ -251,4 +265,267 @@ export function fakeReadPorts(
   };
 
   return { lists, tags, contactTags, tagHistory };
+}
+
+// ───────── tag writes ─────────
+
+const recordOf = (t: FakeTag): TagRecord => ({
+  id: t.id,
+  workspaceId: t.workspaceId,
+  name: t.name,
+  key: t.key,
+  createdByAccountId: t.createdBy,
+  createdAt: t.createdAt,
+});
+
+/**
+ * The write-side ports of the tag use cases over the same store: a transaction that restores the
+ * store when its function throws (a refusal leaves nothing behind), and the signals as a log.
+ */
+export function fakeTagWritePorts(
+  contactRepo: ReturnType<typeof fakeContactRepo>,
+  store: FakeTagStore,
+) {
+  const tx = {} as Executor;
+  const signalLog: string[] = [];
+  const events: string[] = [];
+  const order = (a: FakeTag, b: FakeTag) =>
+    collator.compare(a.name, b.name) || (a.id < b.id ? -1 : 1);
+  const countOf = (ws: string, tagId: string) =>
+    store.links.filter((l) => l.workspaceId === ws && l.tagId === tagId).length;
+  const tagOf = (ws: string, id: string) =>
+    store.tags.find((t) => t.workspaceId === ws && t.id === id);
+
+  const tags: TagRepo = {
+    async lockWorkspaceTags() {
+      events.push('lock:tags');
+    },
+    async findByKey(ws, key) {
+      const t = store.tags.find((x) => x.workspaceId === ws && x.key === key);
+      return t ? recordOf(t) : null;
+    },
+    async count(ws) {
+      return store.tags.filter((t) => t.workspaceId === ws).length;
+    },
+    async insert(ws, tag) {
+      if (store.tags.some((t) => t.workspaceId === ws && t.key === tag.key)) {
+        throw new Error('duplicate tag key');
+      }
+      const row = {
+        id: tag.id,
+        workspaceId: ws,
+        name: tag.name,
+        key: tag.key,
+        createdBy: tag.createdBy,
+        createdAt: tag.createdAt,
+      };
+      store.tags.push(row);
+      return recordOf(row);
+    },
+    async listWithCounts(ws) {
+      return store.tags
+        .filter((t) => t.workspaceId === ws)
+        .sort(order)
+        .map((t) => ({ id: t.id, name: t.name, contactCount: countOf(ws, t.id) }));
+    },
+    async countFor(ws, id) {
+      return countOf(ws, id);
+    },
+    async resolveIds(ws, ids) {
+      return store.tags.filter((t) => t.workspaceId === ws && ids.includes(t.id)).map((t) => t.id);
+    },
+    async lockForKeyShare(ws, id) {
+      events.push('lock:key-share');
+      const t = tagOf(ws, id);
+      return t ? recordOf(t) : null;
+    },
+    async lockForUpdate(ws, ids) {
+      events.push('lock:for-update');
+      return store.tags
+        .filter((t) => t.workspaceId === ws && ids.includes(t.id))
+        .sort((a, b) => (a.id < b.id ? -1 : 1))
+        .map(recordOf);
+    },
+    async rename(ws, id, name, key) {
+      const t = tagOf(ws, id);
+      if (!t) return false;
+      t.name = name;
+      t.key = key;
+      return true;
+    },
+    async delete(ws, id) {
+      if (countOf(ws, id) > 0) throw new Error('tag still has links');
+      const i = store.tags.findIndex((t) => t.workspaceId === ws && t.id === id);
+      if (i === -1) return false;
+      store.tags.splice(i, 1);
+      return true;
+    },
+  };
+
+  const linksOf = (ws: string, contactId: string) =>
+    store.links
+      .filter((l) => l.workspaceId === ws && l.contactId === contactId)
+      .map((l) => ({ link: l, tag: tagOf(ws, l.tagId)! }))
+      .sort((a, b) => order(a.tag, b.tag));
+
+  const contactTags: ContactTagRepo = {
+    async tagsOf(ws, contactId) {
+      return linksOf(ws, contactId).map(({ link, tag }) => ({
+        tagId: tag.id,
+        name: tag.name,
+        addedByAccountId: link.addedBy,
+        addedAt: link.addedAt,
+      }));
+    },
+    async tagsOfMany(ws, contactIds) {
+      const out = new Map<string, { id: string; name: string }[]>();
+      for (const id of contactIds) {
+        const rows = linksOf(ws, id);
+        if (rows.length)
+          out.set(
+            id,
+            rows.map((r) => ({ id: r.tag.id, name: r.tag.name })),
+          );
+      }
+      return out;
+    },
+    async carries(ws, contactId, tagId) {
+      return store.links.some(
+        (l) => l.workspaceId === ws && l.contactId === contactId && l.tagId === tagId,
+      );
+    },
+    async countFor(ws, contactId) {
+      return store.links.filter((l) => l.workspaceId === ws && l.contactId === contactId).length;
+    },
+    async insert(link) {
+      store.link(link.workspaceId, link.contactId, link.tagId, link.addedByAccountId, link.addedAt);
+    },
+    async delete(ws, contactId, tagId) {
+      const i = store.links.findIndex(
+        (l) => l.workspaceId === ws && l.contactId === contactId && l.tagId === tagId,
+      );
+      if (i === -1) return false;
+      store.links.splice(i, 1);
+      return true;
+    },
+    async mergeInto(ws, fromId, toId) {
+      if (fromId === toId) throw new Error('cannot merge a tag into itself');
+      const carriers = store.links.filter((l) => l.workspaceId === ws && l.tagId === fromId);
+      const contactIds = carriers.map((l) => l.contactId);
+      for (const from of carriers) {
+        const target = store.links.find(
+          (l) => l.workspaceId === ws && l.contactId === from.contactId && l.tagId === toId,
+        );
+        if (target) {
+          const kept = mergeLink(
+            { addedAt: from.addedAt, addedBy: from.addedBy },
+            { addedAt: target.addedAt, addedBy: target.addedBy },
+          );
+          target.addedAt = kept.addedAt;
+          target.addedBy = kept.addedBy;
+          store.links.splice(store.links.indexOf(from), 1);
+        } else {
+          from.tagId = toId;
+        }
+      }
+      return contactIds;
+    },
+    async deleteLinksReturning(ws, tagId) {
+      const gone = store.links.filter((l) => l.workspaceId === ws && l.tagId === tagId);
+      for (const l of gone) store.links.splice(store.links.indexOf(l), 1);
+      return gone.map((l) => l.contactId);
+    },
+  };
+
+  const memberKinds = ['added', 'removed'];
+  const tagHistory: TagHistoryRepo = {
+    ...fakeReadPorts(contactRepo, store).tagHistory,
+    async append(e) {
+      const id = newId();
+      store.entries.push({
+        id,
+        workspaceId: e.workspaceId,
+        contactId: e.contactId,
+        tagId: e.tagId,
+        tagName: e.tagName,
+        kind: e.kind,
+        mergedInto: null,
+        actorAccountId: e.actorAccountId,
+        source: e.source,
+        createdAt: e.createdAt,
+      });
+      return id;
+    },
+    async memberChangesSince(ws, accountId, since) {
+      const mine = store.entries
+        .filter(
+          (e) =>
+            e.workspaceId === ws &&
+            e.actorAccountId === accountId &&
+            memberKinds.includes(e.kind) &&
+            e.createdAt.getTime() > since.getTime(),
+        )
+        .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+      return { count: mine.length, oldestAt: mine[0]?.createdAt ?? null };
+    },
+    async appendMerged(ws, contactIds, from, to, actor, now) {
+      for (const contactId of contactIds) {
+        store.history(ws, contactId, {
+          tagId: from.id,
+          tagName: from.name,
+          kind: 'merged',
+          mergedInto: { tagId: to.id, name: to.name },
+          actorAccountId: actor,
+          source: 'settings',
+          createdAt: now,
+        });
+      }
+    },
+    async appendDeleted(ws, contactIds, tag, actor, now) {
+      for (const contactId of contactIds) {
+        store.history(ws, contactId, {
+          tagId: tag.id,
+          tagName: tag.name,
+          kind: 'deleted',
+          mergedInto: null,
+          actorAccountId: actor,
+          source: 'settings',
+          createdAt: now,
+        });
+      }
+    },
+    async lockMemberChanges() {
+      events.push('lock:member-changes');
+    },
+  };
+
+  const signals: TagSignals = {
+    async contactChanged(_tx, ws, contactId) {
+      signalLog.push(`contact.changed:${ws}:${contactId}`);
+    },
+    async tagsChanged(_tx, ws) {
+      signalLog.push(`tags.changed:${ws}`);
+    },
+  };
+
+  /** Signals of a rolled-back transaction are dropped with the rest. */
+  async function transaction<T>(fn: (t: Executor) => Promise<T>): Promise<T> {
+    const snapshot = {
+      tags: store.tags.map((t) => ({ ...t })),
+      links: store.links.map((l) => ({ ...l })),
+      entries: store.entries.map((e) => ({ ...e })),
+      signals: [...signalLog],
+    };
+    try {
+      return await fn(tx);
+    } catch (e) {
+      store.tags.splice(0, store.tags.length, ...snapshot.tags);
+      store.links.splice(0, store.links.length, ...snapshot.links);
+      store.entries.splice(0, store.entries.length, ...snapshot.entries);
+      signalLog.splice(0, signalLog.length, ...snapshot.signals);
+      throw e;
+    }
+  }
+
+  return { tags, contactTags, tagHistory, signals, transaction, signalLog, events };
 }
