@@ -132,7 +132,10 @@ export function fakeTagStore() {
     },
     renameTag(workspaceId: string, id: string, name: string) {
       const tag = tags.find((t) => t.workspaceId === workspaceId && t.id === id);
-      if (tag) tag.name = name;
+      if (tag) {
+        tag.name = name;
+        tag.key = tagNameKey(name);
+      }
     },
     link(workspaceId: string, contactId: string, tagId: string, addedBy: string, addedAt: Date) {
       links.push({ workspaceId, contactId, tagId, addedBy, addedAt });
