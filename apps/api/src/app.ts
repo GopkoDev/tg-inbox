@@ -73,7 +73,17 @@ export async function buildApp(
   await app.register(cookie);
   if (config.WEB_DIST_DIR) {
     // wildcard:false registers the files that exist; everything else reaches the not-found handler.
-    await app.register(fastifyStatic, { root: config.WEB_DIST_DIR, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: config.WEB_DIST_DIR,
+      wildcard: false,
+      // The notifications worker is checked for updates on every load, so it must never be cached,
+      // and a worker script is only accepted as text/javascript.
+      setHeaders: (reply, path) => {
+        if (!path.endsWith('/notifications-sw.js')) return;
+        reply.header('content-type', 'text/javascript; charset=utf-8');
+        reply.header('cache-control', 'no-cache');
+      },
+    });
   }
 
   const deps = buildDeps(config, { ...overrides, logger: app.log });

@@ -24,6 +24,7 @@ describe('same-origin SPA serving and sign-out (postgres)', () => {
     writeFileSync(join(dist, 'index.html'), INDEX);
     mkdirSync(join(dist, 'assets'));
     writeFileSync(join(dist, 'assets', 'app.js'), 'console.log(1);');
+    writeFileSync(join(dist, 'notifications-sw.js'), 'self.addEventListener("install",()=>{});');
     app = await buildApp({ ...testConfig(database.url), WEB_DIST_DIR: dist });
     db = createDb(database.url);
   });
@@ -48,6 +49,19 @@ describe('same-origin SPA serving and sign-out (postgres)', () => {
     const res = await app.inject({ method: 'GET', url: '/assets/app.js' });
     expect(res.statusCode).toBe(200);
     expect(res.body).toBe('console.log(1);');
+  });
+
+  it('serves the notifications worker from the root as JavaScript that is never cached (AC-02)', async () => {
+    for (const url of ['/notifications-sw.js', '/notifications-sw.js?v=1']) {
+      const res = await app.inject({ method: 'GET', url, headers: { accept: '*/*' } });
+      expect(res.statusCode).toBe(200);
+      expect(res.headers['content-type']).toMatch(/^text\/javascript/);
+      expect(res.headers['cache-control']).toBe('no-cache');
+      expect(res.body).toContain('addEventListener');
+    }
+    // Other assets keep the static handler's defaults.
+    const other = await app.inject({ method: 'GET', url: '/assets/app.js' });
+    expect(other.headers['cache-control']).not.toBe('no-cache');
   });
 
   it('keeps the JSON 404 envelope under /api and /health alive', async () => {

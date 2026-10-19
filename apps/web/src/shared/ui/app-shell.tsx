@@ -9,11 +9,20 @@ import {
   useRef,
   useState,
 } from 'react';
-import { Link, NavLink, Outlet, useLocation, useMatches, useParams } from 'react-router';
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  useMatches,
+  useNavigate,
+  useParams,
+} from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAttentionStore } from '@/features/attention/store';
 import { useAuthStore } from '@/features/auth/store';
+import { startNotifier } from '@/features/notifications/notifier';
 import { useSignOut } from '@/features/auth/useSignOut';
 import { useGuard, type GuardFn } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
@@ -235,6 +244,15 @@ export function AppShell() {
     useAttentionStore.getState().start(workspaceId, (error, id) => guardRef.current(error, id));
     return () => useAttentionStore.getState().stop();
   }, [entered, workspaceId]);
+  // Desktop notifications (OS-02): this tab offers new customer messages to the worker, and opens
+  // a conversation in place when the worker asks after a click.
+  const accountId = useAuthStore((s) => s.account?.id);
+  const workspaceName = useWorkspaceStore((s) => s.current?.name);
+  const navigate = useNavigate();
+  useEffect(() => {
+    if (!entered || !accountId || !workspaceName) return;
+    return startNotifier({ workspaceId, workspaceName, accountId, navigate });
+  }, [entered, workspaceId, accountId, workspaceName, navigate]);
   const attention = useAttentionStore((s) =>
     entered && s.workspaceId === workspaceId ? s.count : null,
   );
