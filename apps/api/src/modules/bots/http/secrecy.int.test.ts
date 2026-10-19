@@ -14,6 +14,8 @@ import {
 import { buildApp } from '../../../app.js';
 import { buildDeps } from '../../../deps.js';
 import { newId } from '../../../platform/ids.js';
+import { hashToken } from '../../notifications/domain/connect-link.js';
+import { insertContact } from '../../../test/fixtures/contacts.js';
 import { fixedClock } from '../../../platform/clock.js';
 import { startFakeTelegram, type FakeTelegram } from '../../../test/fake-telegram.js';
 import { insertAccount, insertSession } from '../../../test/fixtures/auth.js';
@@ -586,6 +588,209 @@ describe('token secrecy across every bot flow (postgres + fake Bot API)', () => 
       expect(log.includes(value), `the log contains ${value}`).toBe(false);
     }
   }, 60_000);
+
+  it('connect links, answers, pings, settings, Team, frames, job payloads and logs carry no token, hash, ping text, name or message text (operator-notifications extension)', async () => {
+    const acme = await owner();
+    const token = newToken();
+    fake.bot(token).script({});
+    expect((await acme.post('/token', { token })).statusCode).toBe(200);
+    const hook = webhookOf(token);
+    const base = `/api/workspaces/${acme.workspaceId}`;
+    const PANEL = 'http://localhost:5173';
+
+    const logged: string[] = [];
+    const sweeping = buildDeps(
+      { ...testConfig(database.url), TELEGRAM_API_ROOT: fake.apiRoot },
+      { clock, logger: { info: (o, msg) => logged.push(JSON.stringify({ ...o, msg })) } },
+    );
+
+    // The operator signs in; the connect link is the one place their token may be seen.
+    const operator = await insertAccount(deps.db, { displayName: 'Oleh Operator' });
+    const session = await insertSession(deps.db, operator.id, { createdAt: START });
+    await insertMembership(deps.db, acme.workspaceId, { accountId: operator.id });
+    const op = { session: session.token };
+
+    const bodies: string[] = [];
+    const own: string[] = []; // bodies only the member reads: they may carry their own Telegram name
+    const call = async (
+      who: { session: string },
+      method: 'GET' | 'POST',
+      url: string,
+      into: string[] = bodies,
+    ) => {
+      const res = await app.inject({ method, url, cookies: who });
+      into.push(res.body, JSON.stringify(res.headers));
+      return res;
+    };
+    await app.ready();
+    const frames: string[] = [];
+    const socket = await app.injectWS(`${base}/inbox/live`, {
+      headers: { cookie: `session=${op.session}`, origin: PANEL },
+    });
+    socket.on('message', (data: Buffer) => frames.push(String(data)));
+
+    const TG_USER = 990_123_456;
+    const TG_NAME = 'Zora Zebrafish';
+    const CONTACT = 'Penelope Phishfarm';
+    const MESSAGE = say('Please wire money to my account 4111');
+
+    expect((await call(op, 'GET', `${base}/notifications`, own)).statusCode).toBe(200);
+    const issuedRes = await call(op, 'POST', `${base}/notifications/telegram/connect-link`, own);
+    expect(issuedRes.statusCode).toBe(201);
+    const connectUrl = JSON.parse(issuedRes.body).url as string;
+    const connectToken = new URL(connectUrl).searchParams.get('start')!.slice('tgi_'.length);
+    const start = `/start tgi_${connectToken}`;
+    const digest = hashToken(`${connectToken}`);
+    const hashForms = [
+      digest.toString('hex'),
+      digest.toString('base64'),
+      digest.toString('base64url'),
+    ];
+
+    const deliverFrom = (text: string) =>
+      deliver(
+        hook,
+        telegramUpdate({
+          updateId: nextUpdate++,
+          messageId: nextUpdate,
+          date: Math.floor(clock.now().getTime() / 1000),
+          fromId: TG_USER,
+          text,
+          from: { first_name: 'Zora', last_name: 'Zebrafish' },
+        }),
+      );
+    const sent = () =>
+      fake
+        .calls(token)
+        .filter((c) => c.method === 'sendMessage')
+        .map((c) => String(c.params.text));
+
+    // Redeem: the connected answer. A second use of the same link: the expired answer (F-3 payload).
+    expect((await deliverFrom(start)).statusCode).toBe(200);
+    await vi.waitFor(
+      () => expect(sent().some((t) => t.startsWith("You're connected"))).toBe(true),
+      {
+        timeout: 15_000,
+      },
+    );
+    expect((await deliverFrom(start)).statusCode).toBe(200);
+    await vi.waitFor(
+      () => expect(sent().some((t) => t.startsWith('This connect link has expired'))).toBe(true),
+      {
+        timeout: 15_000,
+      },
+    );
+    const settings = await call(op, 'GET', `${base}/notifications`, own);
+    expect(JSON.parse(settings.body).telegram).toMatchObject({
+      state: 'connected',
+      display_name: TG_NAME,
+    });
+    // The owner's Team page and the member's attention count.
+    expect((await call(acme.cookies, 'GET', `${base}/memberships`)).statusCode).toBe(200);
+    expect((await call(op, 'GET', `${base}/inbox/attention`)).statusCode).toBe(200);
+
+    // A customer waits; the ping goes out at 5 minutes; a blocked attempt follows.
+    const customer = await insertContact(deps.db, {
+      workspaceId: acme.workspaceId,
+      telegramUserId: 991_000_001n,
+      firstName: CONTACT,
+    });
+    expect(customer).toBeTruthy();
+    clock.advance(MINUTE);
+    await deliver(
+      hook,
+      telegramUpdate({
+        updateId: nextUpdate++,
+        messageId: 1,
+        date: Math.floor(clock.now().getTime() / 1000),
+        fromId: 991_000_001,
+        text: MESSAGE,
+        from: { first_name: CONTACT },
+      }),
+    );
+    clock.advance(6 * MINUTE);
+    await sweeping.sendPings.runSweep(acme.workspaceId);
+    await vi.waitFor(() => expect(sent().some((t) => t.includes('/inbox'))).toBe(true), {
+      timeout: 15_000,
+    });
+    const pingTexts = sent().filter((t) => t.includes('/inbox') && !t.startsWith('This chat only'));
+    expect(pingTexts.length).toBeGreaterThanOrEqual(1);
+    fake.bot(token).script({ sendMessage: [sendAnswers.blocked()] });
+    clock.advance(11 * MINUTE);
+    await sweeping.sendPings.runSweep(acme.workspaceId);
+    expect((await call(op, 'GET', `${base}/notifications`, own)).statusCode).toBe(200);
+    // The member disconnects; the answer follows.
+    expect(
+      (await call(op, 'POST', `${base}/notifications/telegram/disconnect`, own)).statusCode,
+    ).toBe(200);
+    await vi.waitFor(
+      () => expect(sent().some((t) => t.startsWith('Notifications from'))).toBe(true),
+      {
+        timeout: 15_000,
+      },
+    );
+    await new Promise((r) => setTimeout(r, 300));
+    socket.terminate();
+    await sweeping.destroy();
+
+    const log = [...lines, ...logged].join('\n');
+    const jobs = (
+      await sql<{ name: string; data: Record<string, unknown> }>`
+      select name, data from pgboss.job where data->>'workspace_id' = ${acme.workspaceId}`.execute(
+        deps.db,
+      )
+    ).rows;
+    expect(jobs.length).toBeGreaterThan(0);
+    const everywhere = [...bodies, ...own, ...frames, log, JSON.stringify(jobs.map((j) => j.data))];
+
+    // Secrets and private texts appear nowhere: no bot token, webhook secret, connect hash, ping text,
+    // contact name or message text; the connect token only in its own 201 answer.
+    const secrets = [
+      token,
+      token.slice(token.indexOf(':') + 1),
+      hook.secret,
+      ...hashForms,
+      // logs and bodies are JSON: scan each line of a ping text, as a newline is escaped there
+      ...pingTexts.flatMap((t) => t.split('\n')),
+      MESSAGE,
+      CONTACT,
+    ];
+    for (const value of secrets) {
+      for (const chunk of everywhere)
+        expect(chunk.includes(value), `leaked ${value.slice(0, 16)}`).toBe(false);
+    }
+    const withToken = (chunk: string) => chunk.includes(connectToken);
+    expect(own.filter(withToken)).toHaveLength(1);
+    expect(issuedRes.body).toContain(connectToken);
+    for (const chunk of [...bodies, ...frames, log, JSON.stringify(jobs.map((j) => j.data))]) {
+      expect(withToken(chunk)).toBe(false);
+    }
+    // The member's Telegram name is for the member only: not in Team, frames, jobs or logs.
+    for (const chunk of [...bodies, ...frames, log, JSON.stringify(jobs.map((j) => j.data))]) {
+      expect(chunk.includes(TG_NAME)).toBe(false);
+    }
+    // The Telegram user id is in no body, frame or log line, and in a job payload only for the two
+    // answers that cannot look the link up (F-3): never for connected, ping or notifications-off.
+    for (const chunk of [...bodies, ...own, ...frames, log]) {
+      expect(chunk.includes(String(TG_USER))).toBe(false);
+    }
+    const withId = jobs.filter((j) => JSON.stringify(j.data).includes(String(TG_USER)));
+    expect(withId.length).toBeGreaterThanOrEqual(1);
+    for (const job of withId) expect(['link_expired', 'cannot_connect']).toContain(job.data.kind);
+    expect(
+      jobs.some(
+        (j) => j.data.kind === 'connected' && !JSON.stringify(j.data).includes(String(TG_USER)),
+      ),
+    ).toBe(true);
+    // The ping log lines carry ids, the outcome and timings only.
+    const pingLines = [...lines, ...logged].filter((l) => l.includes('"msg":"ping"'));
+    expect(pingLines.length).toBeGreaterThanOrEqual(1);
+    for (const l of pingLines) {
+      expect(Object.keys(JSON.parse(l)).sort()).toEqual(
+        expect.arrayContaining(['accountId', 'outcome', 'pingId', 'workspaceId']),
+      );
+    }
+  }, 90_000);
 
   it('the request log of a webhook delivery carries no secret header; a logged header bag is redacted', () => {
     const webhookRequests = lines.filter(

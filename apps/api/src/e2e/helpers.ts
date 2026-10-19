@@ -149,14 +149,164 @@ export function closedWithLaterArrival(db: Deps['db'], workspaceId: string) {
     .execute();
 }
 
-/** Both integrity queries for each workspace: every list must be empty. */
-export async function integrityViolations(db: Deps['db'], workspaceIds: string[]) {
-  const found: { check: string; workspaceId: string; conversationId: string }[] = [];
+/**
+ * Integrity checks of operator-notifications (test-plan.md §6, SAD §7 run book). Ops queries, not
+ * repository reads; each is scoped to one workspace and returns the offending ids.
+ */
+export const notificationIntegrity = {
+  /** 1. Pings whose recipient's membership was not active at the ping's creation. */
+  pingsToInactiveMembers: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('pings as p')
+      .leftJoin('memberships as m', (j) =>
+        j.onRef('m.account_id', '=', 'p.account_id').onRef('m.workspace_id', '=', 'p.workspace_id'),
+      )
+      .select('p.id')
+      .where('p.workspace_id', '=', workspaceId)
+      .where((eb) =>
+        eb.or([
+          eb('m.id', 'is', null),
+          eb('p.created_at', '<', eb.ref('m.active_since')),
+          eb.and([
+            eb('m.state', '=', 'deactivated'),
+            eb('m.deactivated_at', '<=', eb.ref('p.created_at')),
+          ]),
+        ]),
+      )
+      .execute(),
+
+  /** 2. More than one ledger item per member, conversation and waiting period. */
+  duplicateLedgerItems: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('ping_items')
+      .select(['account_id', 'conversation_id', 'waiting_since'])
+      .where('workspace_id', '=', workspaceId)
+      .groupBy(['account_id', 'conversation_id', 'waiting_since'])
+      .having((eb) => eb.fn.countAll(), '>', 1)
+      .execute(),
+
+  /** 3. Two pings to one member and workspace less than 10 minutes apart. */
+  pingsTooClose: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('pings as a')
+      .innerJoin('pings as b', (j) =>
+        j
+          .onRef('b.workspace_id', '=', 'a.workspace_id')
+          .onRef('b.account_id', '=', 'a.account_id')
+          .on(sql<boolean>`b.created_at > a.created_at`),
+      )
+      .select(['a.id as first', 'b.id as second'])
+      .where('a.workspace_id', '=', workspaceId)
+      .where(sql<boolean>`b.created_at - a.created_at < interval '10 minutes'`)
+      .execute(),
+
+  /** 4. Contacts whose Telegram id equals a live link's Telegram user id in the same workspace. */
+  contactsOfLinkedMembers: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('contacts as c')
+      .innerJoin('telegram_links as l', (j) =>
+        j
+          .onRef('l.workspace_id', '=', 'c.workspace_id')
+          .onRef('l.telegram_user_id', '=', 'c.telegram_user_id'),
+      )
+      .select('c.id')
+      .where('c.workspace_id', '=', workspaceId)
+      .where('l.removed_at', 'is', null)
+      .execute(),
+
+  /** 5. Live links whose Telegram bot id differs from the workspace's current bot. */
+  linksOfAnotherBot: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('telegram_links as l')
+      .leftJoin('bots as b', 'b.workspace_id', 'l.workspace_id')
+      .select('l.id')
+      .where('l.workspace_id', '=', workspaceId)
+      .where('l.removed_at', 'is', null)
+      .where((eb) =>
+        eb.or([eb('b.id', 'is', null), eb('b.telegram_bot_id', '!=', eb.ref('l.telegram_bot_id'))]),
+      )
+      .execute(),
+
+  /** 6. Live links of a member whose membership is not active. */
+  liveLinksOfInactiveMembers: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('telegram_links as l')
+      .leftJoin('memberships as m', (j) =>
+        j.onRef('m.account_id', '=', 'l.account_id').onRef('m.workspace_id', '=', 'l.workspace_id'),
+      )
+      .select('l.id')
+      .where('l.workspace_id', '=', workspaceId)
+      .where('l.removed_at', 'is', null)
+      .where((eb) => eb.or([eb('m.id', 'is', null), eb('m.state', '!=', 'active')]))
+      .execute(),
+
+  /** 7. A link removed by its member that still holds a Telegram user id over an hour after removal. */
+  memberRemovedLinksHoldingId: (db: Deps['db'], workspaceId: string, asOf: Date) =>
+    db
+      .selectFrom('telegram_links')
+      .select('id')
+      .where('workspace_id', '=', workspaceId)
+      .where('removed_reason', '=', 'member')
+      .where('telegram_user_id', 'is not', null)
+      .where('removed_at', '<', new Date(asOf.getTime() - 3_600_000))
+      .execute(),
+
+  /** 8. Open conversations waiting by the shared-inbox marker but with no recorded waiting period. */
+  waitingWithoutPeriod: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('conversations')
+      .select('id')
+      .where('workspace_id', '=', workspaceId)
+      .where('status', '=', 'open')
+      .where(
+        sql<boolean>`(last_reply_sent_at is null or last_message_received_at > last_reply_sent_at)`,
+      )
+      .where('waiting_since', 'is', null)
+      .execute(),
+};
+
+/** Every integrity query for each workspace: every list must be empty. `asOf` is the test clock's now. */
+export async function integrityViolations(
+  db: Deps['db'],
+  workspaceIds: string[],
+  asOf: Date = new Date(),
+) {
+  const found: { check: string; workspaceId: string; id: string }[] = [];
+  const note = (check: string, workspaceId: string, rows: { id: string }[]) => {
+    for (const row of rows) found.push({ check, workspaceId, id: row.id });
+  };
   for (const workspaceId of workspaceIds) {
-    for (const row of await assignedToNonMembers(db, workspaceId))
-      found.push({ check: 'assigned-to-non-member', workspaceId, conversationId: row.id });
-    for (const row of await closedWithLaterArrival(db, workspaceId))
-      found.push({ check: 'closed-with-later-arrival', workspaceId, conversationId: row.id });
+    note('assigned-to-non-member', workspaceId, await assignedToNonMembers(db, workspaceId));
+    note('closed-with-later-arrival', workspaceId, await closedWithLaterArrival(db, workspaceId));
+    const n = notificationIntegrity;
+    note('pings-to-inactive-members', workspaceId, await n.pingsToInactiveMembers(db, workspaceId));
+    note(
+      'duplicate-ledger-items',
+      workspaceId,
+      (await n.duplicateLedgerItems(db, workspaceId)).map((r) => ({ id: r.conversation_id })),
+    );
+    note(
+      'pings-less-than-10-min-apart',
+      workspaceId,
+      (await n.pingsTooClose(db, workspaceId)).map((r) => ({ id: r.second })),
+    );
+    note(
+      'contacts-of-linked-members',
+      workspaceId,
+      await n.contactsOfLinkedMembers(db, workspaceId),
+    );
+    note('links-of-another-bot', workspaceId, await n.linksOfAnotherBot(db, workspaceId));
+    note(
+      'live-links-of-inactive-members',
+      workspaceId,
+      await n.liveLinksOfInactiveMembers(db, workspaceId),
+    );
+    note(
+      'member-removed-links-holding-id',
+      workspaceId,
+      await n.memberRemovedLinksHoldingId(db, workspaceId, asOf),
+    );
+    note('waiting-without-period', workspaceId, await n.waitingWithoutPeriod(db, workspaceId));
   }
   return found;
 }
