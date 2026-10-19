@@ -481,6 +481,7 @@ export function createReplyDelivery(deps: ReplyDeliveryDeps): ReplyDelivery {
 
   /**
    * Each in-flight attempt ends `unknown` and its reply `not_confirmed`; never retried on its own.
+   * Returns only the replies it settled.
    * It takes no conversation lock: the caller reopens once, after its last write.
    */
   async function resolveUnknown(
@@ -500,8 +501,12 @@ export function createReplyDelivery(deps: ReplyDeliveryDeps): ReplyDelivery {
         tx,
       );
       if (!done) continue;
-      await settle(tx, workspaceId, conversationId, done.replyId, { state: 'not_confirmed' });
-      resolved.push(done.replyId);
+      // A reply already final (settled while this attempt lagged) did not change: not reported,
+      // and it reopens nothing.
+      const settled = await settle(tx, workspaceId, conversationId, done.replyId, {
+        state: 'not_confirmed',
+      });
+      if (settled) resolved.push(done.replyId);
     }
     return resolved;
   }

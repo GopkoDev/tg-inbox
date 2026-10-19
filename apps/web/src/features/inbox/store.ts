@@ -354,6 +354,37 @@ function mergeConversations(list: Conversation[], page: readonly Conversation[])
   return appendRows(kept, page);
 }
 
+/**
+ * A background re-search merged into the results shown: inside the page's span the page decides
+ * (a shown row it lacks has left, unless it is newer than the page's first row); rows below the
+ * span came from later pages and stay, so the paging already done (and a page in flight) holds.
+ * An empty page means nothing matches any more.
+ */
+function mergeResults(list: Conversation[], page: readonly Conversation[]): Conversation[] {
+  const sorted = [...page].sort(byActivity);
+  const first = sorted[0];
+  const last = sorted.at(-1);
+  if (!first || !last) return [];
+  const kept = list.filter(
+    (c) => byActivity(c, first) < 0 || byActivity(c, last) > 0 || page.some((p) => p.id === c.id),
+  );
+  return appendRows(kept, page);
+}
+
+/**
+ * Whether the inbox search for `q` may find `row`: the server's match (trimmed text, a leading `@`
+ * dropped, case-folded substring of "first last" or the username), mirrored on the row's contact.
+ */
+function mayMatch(row: Conversation, q: string): boolean {
+  const text = q.trim().replace(/^@/, '').trim().toLowerCase();
+  if (text === '') return true;
+  const { first_name, last_name, username } = row.contact;
+  return (
+    `${first_name} ${last_name ?? ''}`.toLowerCase().includes(text) ||
+    (username ?? '').toLowerCase().includes(text)
+  );
+}
+
 /** A newly placed reply that is the last reply shown becomes the newest one seen. */
 function newestAfter(
   thread: OpenThread,
@@ -467,7 +498,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
     if (incoming.workspace_id !== workspaceId || get().workspaceId !== workspaceId) return;
     const { close_snapshot: snapshot, ...row } = incoming;
     void snapshot;
-    let searchAgain: string | null = null;
+    let searchAgain = false;
     set((s) => {
       const open = s.thread;
       const thread =
@@ -499,23 +530,44 @@ export const useInboxStore = create<InboxState>()((set, get) => {
             : results.page.rows.filter((c) => c.id !== incoming.id);
           results = { ...results, page: { ...results.page, rows } };
         }
-      } else if (results && belongs) searchAgain = results.q;
+      } else if (results && belongs && mayJoin(results, row)) searchAgain = true;
       return { thread, conversations, results };
     });
-    if (searchAgain !== null) {
-      const q = searchAgain;
-      coalesce('search', () => runSearch(workspaceId, q, { background: true }));
-    }
+    if (searchAgain) coalesce('search', () => searchAgainNow(workspaceId));
+  };
+
+  /**
+   * Whether a row the results lack may join them on a re-search: the search may find its contact,
+   * and it sorts within the loaded results (or all of them are loaded) — one sorting below them
+   * while more pages wait is reached by paging on. Other frames never re-search.
+   */
+  const mayJoin = (results: SearchResults, row: Conversation) => {
+    if (!mayMatch(row, results.q)) return false;
+    const lastShown = results.page?.rows.at(-1);
+    return !results.page?.hasNext || !lastShown || byActivity(row, lastShown) <= 0;
+  };
+
+  /** A coalesced re-search runs for the query shown when it runs, not when it was asked. */
+  const searchAgainNow = async (workspaceId: string) => {
+    const shown = get().results;
+    if (get().workspaceId !== workspaceId || !shown) return;
+    await runSearch(workspaceId, shown.q, { background: true });
   };
 
   const runSearch = async (workspaceId: string, q: string, options: { background: boolean }) => {
     const startedAt = epoch;
-    const seq = ++searchSeq;
+    // A background re-search never invalidates a search typed (only a search typed or cleared
+    // does), and leaves one in flight to answer for itself.
+    if (options.background && get().results?.status === 'loading') return;
+    const seq = options.background ? searchSeq : ++searchSeq;
     const assignee = get().lens.assignee;
     if (!options.background)
       set((s) => ({ results: { q, status: 'loading', page: s.results?.page ?? null } }));
     const mine = () =>
-      current(workspaceId, startedAt) && seq === searchSeq && get().results?.q === q;
+      current(workspaceId, startedAt) &&
+      seq === searchSeq &&
+      get().results?.q === q &&
+      (!options.background || get().results?.status !== 'loading');
     try {
       const page = await source.listConversations(
         workspaceId,
@@ -532,24 +584,42 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       )
         return;
       set((s) => {
-        const before = s.results?.q === q ? (s.results.page?.rows ?? []) : [];
-        const rows = page.items.map((row) => {
-          const shown = before.find((c) => c.id === row.id);
-          return shown && !notOlder(row, shown) ? shown : row;
-        });
+        const shown = s.results?.q === q ? s.results.page : null;
+        if (!options.background || !shown)
+          return {
+            results: {
+              q,
+              status: 'ready',
+              page: {
+                rows: appendRows(shown?.rows ?? [], page.items).filter((c) =>
+                  page.items.some((p) => p.id === c.id),
+                ),
+                hasNext: page.has_next,
+                cursor: page.next_cursor,
+              },
+            },
+          };
+        // The paging done (and a page in flight) stays unless the page reaches past every row
+        // shown; ending at the last row shown, the page's cursor and the one shown are the same.
+        const last = [...page.items].sort(byActivity).at(-1);
+        const lastShown = shown.rows.at(-1);
+        const reaches = !last || !lastShown || byActivity(last, lastShown) > 0;
         return {
           results: {
             q,
             status: 'ready',
-            page: { rows, hasNext: page.has_next, cursor: page.next_cursor },
+            page: {
+              rows: mergeResults(shown.rows, page.items),
+              hasNext: reaches ? page.has_next : shown.hasNext,
+              cursor: reaches ? page.next_cursor : shown.cursor,
+            },
           },
         };
       });
     } catch (error) {
       noteGuard(error, workspaceId, startedAt);
       const now = get().results;
-      if (mine() && now && (!options.background || now.status === 'loading'))
-        set({ results: { ...now, status: 'error' } });
+      if (mine() && now && !options.background) set({ results: { ...now, status: 'error' } });
     }
   };
 
@@ -1084,15 +1154,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           results: {
             ...shown,
             page: {
-              rows: page.items.reduce(
-                (all, row) => {
-                  const known = all.find((c) => c.id === row.id);
-                  return known && !notOlder(row, known)
-                    ? all
-                    : [...all.filter((c) => c.id !== row.id), row];
-                },
-                [...rows],
-              ),
+              // a newer shown copy stays, a row that left the lens since the read stays out
+              rows: appendRows(rows, page.items),
               hasNext: page.has_next,
               cursor: page.next_cursor,
             },

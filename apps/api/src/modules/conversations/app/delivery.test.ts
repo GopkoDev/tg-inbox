@@ -268,6 +268,37 @@ describe('a failed reply reopens a closed conversation (AC-08)', () => {
     locks.check();
   });
 
+  it.each(['resolveStaleInFlight', 'resolveDeadLetter'] as const)(
+    '%s: a stale attempt of a reply already final (closed after its failure) reopens nothing (R3)',
+    async (resolve) => {
+      const s = await setup({ status: 'closed', assignee: 'mate' });
+      await s.delivery.startAttempt({ workspaceId: W, conversationId: C, replyId: s.replyId });
+      // The reply failed while the lagging attempt was still in flight; then it was closed again.
+      await s.delivery.skipReply({
+        workspaceId: W,
+        conversationId: C,
+        replyId: s.replyId,
+        failureReason: 'bot_unavailable',
+      });
+      expectReopenedOnce(s);
+      Object.assign(s.row, { status: 'closed', stateVersion: 5 });
+      s.activities.rows.length = 0;
+      s.signals.activities.length = 0;
+      const resolved =
+        resolve === 'resolveStaleInFlight'
+          ? await s.delivery.resolveStaleInFlight(W, C, at(200))
+          : (
+              await s.delivery.resolveDeadLetter(W, C, {
+                staleBefore: at(200),
+                drainQueued: async () => false,
+              })
+            ).notConfirmed;
+      expect(resolved).toEqual([]);
+      expect(s.row).toMatchObject({ status: 'closed', stateVersion: 5 });
+      expect(s.activities.rows).toEqual([]);
+    },
+  );
+
   it('a dead letter with nothing failed never locks the conversation', async () => {
     const s = await setup({ status: 'closed', replies: 1 });
     const locks = recordLocks(s);
