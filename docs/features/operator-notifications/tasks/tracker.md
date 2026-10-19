@@ -32,7 +32,7 @@
 | T25 | [Build SCR-17, the ConnectTelegramDialog: the link with Copy and Open in Telegram, its expiry, waiting for Start, the live turn to Connected, new-link refusals and the bot-stopped state](./t25-scr17-connect-dialog.md) | ui | Dmytro Hopko | M | T24 | done |
 | T26 | [Build the DesktopNotificationsCard on SCR-16: capability and permission checks, the click-only permission request (OS-01), worker registration and the per-browser flag](./t26-scr16-desktop-notifications-card.md) | ui | Dmytro Hopko | M | T24 | done |
 | T27 | [Add the desktop notifier and the notifications-only service worker: candidates from the tabs, focus check, tag replace, dedupe and the click to the most recently focused tab (OS-02)](./t27-desktop-notifier-and-service-worker.md) | ui | Dmytro Hopko | M | T22, T26 | done |
-| T28 | [Add the «Telegram pings» column to Settings — Team (SCR-13) and the pings sentence to the deactivate confirmation (SCR-14)](./t28-scr13-team-mark-and-scr14-copy.md) | ui | Dmytro Hopko | S | T20 | todo |
+| T28 | [Add the «Telegram pings» column to Settings — Team (SCR-13) and the pings sentence to the deactivate confirmation (SCR-14)](./t28-scr13-team-mark-and-scr14-copy.md) | ui | Dmytro Hopko | S | T20 | done |
 | T29 | [Add browser end-to-end notification flows against the real API and the fake Bot API](./t29-browser-e2e.md) | tests | Dmytro Hopko | M | T21, T23, T25, T27, T28 | todo |
 | T30 | [Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the notifications module, the sixth tenancy exception, the new queues, the ports and the new components](./t30-docs-and-canon.md) | docs | Dmytro Hopko | S | T17, T18, T19, T20, T23, T25, T26, T27, T28 | todo |
 

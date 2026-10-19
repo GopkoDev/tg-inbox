@@ -215,6 +215,104 @@ describe('TeamPage (SCR-07)', () => {
     expect(reactivateMembership).toHaveBeenCalledWith('w1', 'm3');
   });
 
+  describe('Telegram pings mark (AC-10, AC-12)', () => {
+    const cellOf = (name: string) => within(rowOf(name)).getByRole('cell', { name: /^(On|Off)$/ });
+
+    it('shows a «Telegram pings» column after State with On / Off per member, and the phone line', async () => {
+      const connected = mem('m4', 'Dana', { telegram_pings: true });
+      listMemberships.mockResolvedValue(page([owner, bob, connected]));
+      renderPage();
+      await screen.findByText('Dana');
+      const headers = screen.getAllByRole('columnheader').map((h) => h.textContent);
+      expect(headers.slice(0, 4)).toEqual(['Name', 'Role', 'State', 'Telegram pings']);
+      expect(cellOf('Dana')).toHaveTextContent('On');
+      expect(cellOf('Bob')).toHaveTextContent('Off');
+      expect(cellOf('Olga')).toHaveTextContent('Off');
+      // below md the mark sits under the name instead
+      expect(within(rowOf('Dana')).getByText('Telegram pings: On')).toBeInTheDocument();
+      expect(within(rowOf('Bob')).getByText('Telegram pings: Off')).toBeInTheDocument();
+    });
+
+    it('is plain muted text, not a badge', async () => {
+      listMemberships.mockResolvedValue(page([owner, mem('m4', 'Dana', { telegram_pings: true })]));
+      renderPage();
+      await screen.findByText('Dana');
+      expect(cellOf('Dana').querySelector('[data-slot="badge"]')).toBeNull();
+      expect(cellOf('Dana').className).toContain('text-muted-foreground');
+    });
+
+    it('deactivate answer switches the row to Off; reactivate does not bring On back', async () => {
+      const dana = mem('m4', 'Dana', { telegram_pings: true });
+      listMemberships.mockResolvedValue(page([owner, dana]));
+      deactivateMembership.mockResolvedValue({
+        ...dana,
+        state: 'deactivated',
+        deactivated_at: '2026-03-01T00:00:00.000Z',
+        telegram_pings: false,
+      });
+      reactivateMembership.mockResolvedValue({
+        ...dana,
+        state: 'active',
+        deactivated_at: null,
+        telegram_pings: false,
+      });
+      renderPage();
+      await screen.findByText('Dana');
+      await act('dana@x.test', 'Deactivate');
+      fireEvent.click(await lastButton('Deactivate'));
+      await waitFor(() =>
+        expect(within(rowOf('Dana')).getByText('Deactivated')).toBeInTheDocument(),
+      );
+      expect(cellOf('Dana')).toHaveTextContent('Off');
+      await act('dana@x.test', 'Reactivate');
+      await waitFor(() => expect(within(rowOf('Dana')).getByText('Active')).toBeInTheDocument());
+      expect(cellOf('Dana')).toHaveTextContent('Off');
+    });
+
+    it('is not live: nothing changes while Team stays open', async () => {
+      const dana = mem('m4', 'Dana', { telegram_pings: true });
+      listMemberships.mockResolvedValue(page([owner, dana]));
+      renderPage();
+      await screen.findByText('Dana');
+      listMemberships.mockResolvedValue(page([owner, { ...dana, telegram_pings: false }]));
+      await rtlAct(async () => {
+        document.dispatchEvent(new Event('visibilitychange'));
+      });
+      expect(cellOf('Dana')).toHaveTextContent('On');
+      expect(listMemberships).toHaveBeenCalledTimes(1);
+    });
+
+    it('the deactivate confirmation adds the pings sentence only for a member shown On', async () => {
+      const dana = mem('m4', 'Dana', { telegram_pings: true });
+      listMemberships.mockResolvedValue(page([owner, bob, dana]));
+      renderPage();
+      await screen.findByText('Dana');
+      await act('dana@x.test', 'Deactivate');
+      expect(
+        await screen.findByText(
+          "Deactivate Dana? Dana loses access to Acme Flowers at once. Conversations assigned to Dana here become unassigned, and reactivating does not give them back. Dana's Telegram pings stop, and reactivating does not turn them back on. You can reactivate them later.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it('a member shown Off gets the inherited text, no extra sentence', async () => {
+      renderPage();
+      await screen.findByText('Bob');
+      await act('bob@x.test', 'Deactivate');
+      const text = await screen.findByText(/^Deactivate Bob\?/);
+      expect(text.textContent).not.toContain('Telegram pings');
+    });
+
+    it('renders a name with markup as text and leaves the invitations table alone', async () => {
+      const odd = mem('m5', '<b>Eve</b>', { telegram_pings: true, email: 'eve@x.test' });
+      listMemberships.mockResolvedValue(page([owner, odd]));
+      renderPage();
+      expect(await screen.findByText('<b>Eve</b>')).toBeInTheDocument();
+      const pending = within(screen.getByTestId('pending-invitations'));
+      expect(pending.queryByText(/Telegram pings/)).not.toBeInTheDocument();
+    });
+  });
+
   it('pending action: other row actions disabled while one is in flight', async () => {
     deactivateMembership.mockReturnValue(new Promise(() => undefined));
     renderPage();
