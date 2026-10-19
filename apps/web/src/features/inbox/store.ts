@@ -299,11 +299,12 @@ const byActivity = (a: Conversation, b: Conversation) =>
 function itemKey(item: ThreadItem): string {
   return item.type === 'message' ? item.sent_at : item.position_at;
 }
-const byPosition = (a: ThreadItem, b: ThreadItem) =>
+/** Thread order: send time for a message, position for a reply or entry, then id. */
+export const byPosition = (a: ThreadItem, b: ThreadItem) =>
   (itemKey(a) ?? '').localeCompare(itemKey(b) ?? '') || a.id.localeCompare(b.id);
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
-function upsertItem(items: ThreadItem[], item: ThreadItem): ThreadItem[] {
+export function upsertItem(items: ThreadItem[], item: ThreadItem): ThreadItem[] {
   return [...items.filter((i) => i.id !== item.id), item].sort(byPosition);
 }
 
