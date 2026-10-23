@@ -119,7 +119,7 @@
         "apps/api/src/modules/broadcasts/domain/audience.test.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t05-draft-and-launch-domain.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T6",

@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/domain/broadcast.ts", "apps/api/sr
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T5 — Add the broadcasts domain for drafts and launches: the status machine, the version rule, who may delete, launch and stop, the tag audience shape with the dropped-tag notice, the 10 000 limit and the audience fingerprint
@@ -152,3 +152,7 @@ Internal — no API surface. (The rules decide `BROADCAST_NOT_A_DRAFT`, `BROADCA
 - [ ] Domain unit tests prove the status machine (draft → sending → sent | stopped, no other move), that only draft fields raise the version, that a draft is deletable by its author or a business owner and by no one else, that only a business owner launches and stops, that a tag audience keeps only existing tags and reports dropped ones by stored name, that 10 000 is allowed and 10 001 is not, and that the fingerprint is the same SHA-256 for the same set in any order and differs for the same count with another contact.
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T5): `checkTagAudience` refuses "no tags" with left-out tags too (field `tag_ids`), matching the contract's `noneWithTags` refusal ("cannot be combined with chosen or left-out tags"), which is stricter than the checklist's "mode none takes no include tags".
