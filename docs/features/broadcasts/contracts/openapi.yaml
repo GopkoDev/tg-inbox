@@ -310,6 +310,7 @@ paths:
                     ended_at: null
                     end_reason: null
                     totals: { waiting: 20, sending: 2, delivered: 12, blocked: 1, failed: 1, not_confirmed: 0, stopped: 0 }
+                    not_reached_count: 0
         "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
         "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
         "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
@@ -1070,6 +1071,7 @@ paths:
                   ended_at: null
                   end_reason: null
                   totals: { waiting: 36, sending: 0, delivered: 0, blocked: 0, failed: 0, not_confirmed: 0, stopped: 0 }
+                  not_reached_count: 0
         "400":
           description: A malformed body (`VALIDATION_ERROR`), or the draft's text is empty (`BROADCAST_TEXT_INVALID`). Nothing is launched
           content:
@@ -1168,6 +1170,7 @@ paths:
                   ended_at: "2026-10-23T09:03:00Z"
                   end_reason: stopped
                   totals: { waiting: 0, sending: 2, delivered: 1190, blocked: 6, failed: 2, not_confirmed: 0, stopped: 1800 }
+                  not_reached_count: 1800
         "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
         "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
         "403": { $ref: "#/components/responses/BroadcastOwnerRouteForbidden" }
@@ -1992,7 +1995,7 @@ components:
       x-delta: added
       type: object
       description: A launched broadcast as the read-only page shows it (SCR-28). Text and audience never change again (AC-09)
-      required: [id, workspace_id, status, name, text, author, last_changed_by, last_changed_at, created_at, audience, launched_by, launched_at, launch_breakdown, stopped_by, stopped_at, ended_at, end_reason, totals]
+      required: [id, workspace_id, status, name, text, author, last_changed_by, last_changed_at, created_at, audience, launched_by, launched_at, launch_breakdown, stopped_by, stopped_at, ended_at, end_reason, totals, not_reached_count]
       additionalProperties: false
       properties:
         id: { type: string, format: uuid }
@@ -2025,6 +2028,10 @@ components:
             - { $ref: "#/components/schemas/EndReason" }
             - { type: "null" }
         totals: { $ref: "#/components/schemas/RecipientTotals" }
+        not_reached_count:
+          type: integer
+          minimum: 0
+          description: "Recipients a \"did not reach\" duplicate copies without the warning: `failed` with reason `bot_stopped`, `text_refused` or `telegram_error`, plus `stopped` (not confirmed ones are `totals.not_confirmed`). SCR-30 shows it (AC-13; amended at `tasks`, flag F-5)"
     Broadcast:
       x-delta: added
       oneOf:
