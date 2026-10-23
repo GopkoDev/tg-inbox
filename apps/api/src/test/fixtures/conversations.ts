@@ -295,3 +295,40 @@ export async function twoWorkspacesWithInbox(db: Kysely<DB>) {
   }
   return { a: await build('A'), b: await build('B'), sharedAccountId };
 }
+
+let nextBroadcastMessageId = 950000n;
+
+/**
+ * A broadcast_items row (default `delivered` with a synthetic Telegram message id, positioned at T);
+ * a `not_confirmed` item has no message id.
+ */
+export async function insertBroadcastItem(
+  db: Kysely<DB>,
+  o: {
+    workspaceId: string;
+    conversationId: string;
+    broadcastId: string;
+    state?: 'delivered' | 'not_confirmed';
+    positionAt?: Date;
+    telegramMessageId?: bigint;
+  },
+): Promise<string> {
+  const id = newId();
+  const state = o.state ?? 'delivered';
+  const positionAt = o.positionAt ?? T;
+  await db
+    .insertInto('broadcast_items')
+    .values({
+      id,
+      workspace_id: o.workspaceId,
+      conversation_id: o.conversationId,
+      broadcast_id: o.broadcastId,
+      state,
+      position_at: positionAt,
+      telegram_message_id:
+        state === 'delivered' ? (o.telegramMessageId ?? nextBroadcastMessageId++) : null,
+      created_at: positionAt,
+    })
+    .execute();
+  return id;
+}

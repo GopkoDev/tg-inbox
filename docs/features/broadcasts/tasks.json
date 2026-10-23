@@ -64,7 +64,7 @@
         "apps/api/src/test/fixtures/conversations.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t03-promote-broadcast-tables-and-fixtures.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T4",

@@ -7,7 +7,15 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { DB } from '../platform/db.types.gen.js';
 import { newId } from '../platform/ids.js';
 import { insertBot } from './fixtures/bots.js';
+import {
+  endBroadcastFixture,
+  insertBroadcast,
+  insertGroupContact,
+  launchBroadcastFixture,
+  twoWorkspacesWithBroadcasts,
+} from './fixtures/broadcasts.js';
 import { insertContact, insertReach } from './fixtures/contacts.js';
+import { insertBroadcastItem } from './fixtures/conversations.js';
 import { startTestDatabase, type TestDatabase } from './postgres.js';
 
 const TABLES = [
@@ -703,6 +711,12 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'create_broadcast_items',
+        'create_broadcast_recipients',
+        'create_broadcast_group_contacts',
+        'create_broadcast_audience_tags',
+        'create_broadcasts',
+        'add_conversations_workspace_id_id_key',
         'backfill_contact_bot_reach',
         'create_contact_bot_reach',
         'create_contact_tag_history',
@@ -1212,7 +1226,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 22; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -2150,6 +2164,258 @@ describe('broadcasts migrations 01-02 (reach)', () => {
       expect(await exists()).toBe(false);
       expect((await migrator.migrateToLatest()).error).toBeUndefined();
       expect(await exists()).toBe(true);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_BROADCASTS = '1791681110013_backfill_contact_bot_reach';
+const BROADCAST_TABLES = [
+  'broadcast_audience_tags',
+  'broadcast_group_contacts',
+  'broadcast_items',
+  'broadcast_recipients',
+  'broadcasts',
+];
+
+describe('broadcasts migrations 03-08 (tables)', () => {
+  let database: TestDatabase;
+  let raw: Kysely<unknown>;
+  let db: Kysely<DB>;
+  let world: Awaited<ReturnType<typeof twoWorkspacesWithBroadcasts>>;
+  const at = new Date('2026-10-11T10:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    raw = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+    db = raw as unknown as Kysely<DB>;
+    world = await twoWorkspacesWithBroadcasts(db);
+  });
+
+  afterAll(async () => {
+    await raw?.destroy();
+    await database?.stop();
+  });
+
+  it('creates the five tables and the unique (workspace_id, id) index on conversations', async () => {
+    const { rows } = await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`.execute(raw);
+    const names = rows.map((r) => r.table_name);
+    for (const t of BROADCAST_TABLES) expect(names).toContain(t);
+    const idx = await sql<{ indexdef: string }>`
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'conversations_workspace_id_id_key'`.execute(
+      raw,
+    );
+    expect(idx.rows[0]?.indexdef).toMatch(/UNIQUE INDEX .*\(workspace_id, id\)/);
+  });
+
+  it('twoWorkspacesWithBroadcasts builds a draft and a launched broadcast with two recipients per workspace', async () => {
+    for (const w of [world.a, world.b]) {
+      const rows = await db
+        .selectFrom('broadcasts')
+        .select(['id', 'status', 'recipient_count', 'audience_size'])
+        .where('workspace_id', '=', w.workspaceId)
+        .orderBy('id')
+        .execute();
+      expect(rows).toEqual([
+        { id: w.draftId, status: 'draft', recipient_count: null, audience_size: null },
+        { id: w.launchedId, status: 'sending', recipient_count: 2, audience_size: 2 },
+      ]);
+      const recipients = await db
+        .selectFrom('broadcast_recipients')
+        .select(['id', 'contact_id', 'position', 'state'])
+        .where('workspace_id', '=', w.workspaceId)
+        .orderBy('position')
+        .execute();
+      expect(recipients.map((r) => r.id)).toEqual(w.recipientIds);
+      expect(recipients.map((r) => r.position)).toEqual([1, 2]);
+      expect(recipients.every((r) => r.state === 'waiting')).toBe(true);
+    }
+  });
+
+  it('refuses a group row, recipient or item naming the other workspace contact, broadcast or conversation', async () => {
+    const { a, b } = world;
+    await expect(
+      insertGroupContact(db, {
+        workspaceId: a.workspaceId,
+        broadcastId: a.draftId,
+        contactId: b.taggedContactId,
+        addedByAccountId: a.ownerAccountId,
+      }),
+    ).rejects.toThrow(/broadcast_group_contacts_contact_fkey/);
+    await expect(
+      insertGroupContact(db, {
+        workspaceId: a.workspaceId,
+        broadcastId: b.draftId,
+        contactId: a.taggedContactId,
+        addedByAccountId: a.ownerAccountId,
+      }),
+    ).rejects.toThrow(/broadcast_group_contacts_broadcast_fkey/);
+    await expect(
+      sql`INSERT INTO broadcast_recipients (id, workspace_id, broadcast_id, contact_id, position, telegram_user_id, state)
+        VALUES (${newId()}, ${a.workspaceId}, ${a.launchedId}, ${b.taggedContactId}, 3, 1, 'waiting')`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcast_recipients_contact_fkey/);
+    await expect(
+      sql`INSERT INTO broadcast_recipients (id, workspace_id, broadcast_id, contact_id, position, telegram_user_id, state)
+        VALUES (${newId()}, ${a.workspaceId}, ${b.launchedId}, ${a.taggedContactId}, 3, 1, 'waiting')`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcast_recipients_broadcast_fkey/);
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: b.conversationId,
+        broadcastId: a.launchedId,
+      }),
+    ).rejects.toThrow(/broadcast_items_conversation_fkey/);
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: a.conversationId,
+        broadcastId: b.launchedId,
+      }),
+    ).rejects.toThrow(/broadcast_items_broadcast_fkey/);
+  });
+
+  it('refuses a frozen breakdown that does not add up, exceeds 10 000 or has no recipient', async () => {
+    const { a } = world;
+    const launched = (set: string) =>
+      sql`UPDATE broadcasts SET ${sql.raw(set)} WHERE id = ${a.launchedId}`.execute(raw);
+    await expect(launched('audience_size = 3')).rejects.toThrow(/broadcasts_breakdown_check/);
+    await expect(launched('audience_size = 10001, never_wrote_count = 9999')).rejects.toThrow(
+      /broadcasts_breakdown_check/,
+    );
+    await expect(launched('recipient_count = 0, never_wrote_count = 2')).rejects.toThrow(
+      /broadcasts_breakdown_check/,
+    );
+    await launched('audience_size = 3, blocked_count = 1');
+    await launched('audience_size = 2, blocked_count = 0');
+  });
+
+  it('refuses a launched row missing its launch columns and a non-draft with an empty text', async () => {
+    const { a } = world;
+    await expect(
+      sql`UPDATE broadcasts SET launched_at = NULL WHERE id = ${a.launchedId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_launch_check/);
+    await expect(
+      sql`UPDATE broadcasts SET launch_telegram_bot_id = NULL WHERE id = ${a.launchedId}`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcasts_launch_check/);
+    await expect(
+      sql`UPDATE broadcasts SET text = '' WHERE id = ${a.launchedId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_text_check/);
+    await expect(
+      sql`UPDATE broadcasts SET text = ' Hello' WHERE id = ${a.draftId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_text_check/);
+    const empty = await insertBroadcast(db, {
+      workspaceId: a.workspaceId,
+      authorAccountId: a.operatorAccountId,
+      text: '',
+    });
+    expect(empty).toBeTruthy();
+  });
+
+  it('refuses a failed recipient without a reason and a second item for one broadcast and conversation', async () => {
+    const { a } = world;
+    const [first] = a.recipientIds;
+    await expect(
+      sql`UPDATE broadcast_recipients SET state = 'failed', outcome_at = ${at}, claimed_at = ${at}
+        WHERE id = ${first}`.execute(raw),
+    ).rejects.toThrow(/broadcast_recipients_failure_reason_state_check/);
+    await insertBroadcastItem(db, {
+      workspaceId: a.workspaceId,
+      conversationId: a.conversationId,
+      broadcastId: a.launchedId,
+    });
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: a.conversationId,
+        broadcastId: a.launchedId,
+        state: 'not_confirmed',
+      }),
+    ).rejects.toThrow(/broadcast_items_broadcast_conversation_key/);
+  });
+
+  it('launchBroadcastFixture positions recipients by contact id and fills per-state columns; endBroadcastFixture ends it', async () => {
+    const { a } = world;
+    const contacts = [...a.contactIds].sort().reverse();
+    const id = await insertBroadcast(db, {
+      workspaceId: a.workspaceId,
+      authorAccountId: a.ownerAccountId,
+      audience: { kind: 'tags', mode: 'none', tags: [{ tagId: a.tagId, kind: 'exclude' }] },
+    });
+    const recipients = await launchBroadcastFixture(db, {
+      broadcast: id,
+      launchedByAccountId: a.ownerAccountId,
+      telegramBotId: a.telegramBotId,
+      recipients: [
+        { contactId: contacts[0]!, state: 'delivered' },
+        { contactId: contacts[1]!, state: 'failed' },
+      ],
+      breakdown: { blocked: 1, neverWrote: 2 },
+    });
+    expect(recipients.map((r) => r.contactId)).toEqual([...contacts].sort());
+    expect(recipients.map((r) => r.position)).toEqual([1, 2]);
+    await endBroadcastFixture(db, {
+      broadcast: id,
+      status: 'stopped',
+      stoppedByAccountId: a.ownerAccountId,
+    });
+    const row = await db
+      .selectFrom('broadcasts')
+      .select(['status', 'end_reason', 'audience_size', 'recipient_count'])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      status: 'stopped',
+      end_reason: 'stopped',
+      audience_size: 5,
+      recipient_count: 2,
+    });
+    const tags = await db
+      .selectFrom('broadcast_audience_tags')
+      .select(['kind', 'tag_name'])
+      .where('broadcast_id', '=', id)
+      .execute();
+    expect(tags).toEqual([{ kind: 'exclude', tag_name: 'VIP' }]);
+  });
+
+  it('reverts 08 down to 03 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const state = async () => {
+        const tables = await sql<{ table_name: string }>`
+          SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name LIKE 'broadcast%'
+          ORDER BY table_name`.execute(freshDb);
+        const idx = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM pg_indexes
+          WHERE indexname = 'conversations_workspace_id_id_key'`.execute(freshDb);
+        return { tables: tables.rows.map((r) => r.table_name), index: idx.rows[0]!.n };
+      };
+      const full = { tables: BROADCAST_TABLES, index: 1 };
+      expect(await state()).toEqual(full);
+      expect((await migrator.migrateTo(LAST_PRE_BROADCASTS)).error).toBeUndefined();
+      expect(await state()).toEqual({ tables: [], index: 0 });
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await state()).toEqual(full);
     } finally {
       await freshDb.destroy();
       await fresh.stop();
