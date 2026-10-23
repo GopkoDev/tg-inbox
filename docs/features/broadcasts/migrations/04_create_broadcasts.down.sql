@@ -1,0 +1,8 @@
+DROP INDEX IF EXISTS broadcasts_workspace_id_stopped_by_account_id_idx;
+DROP INDEX IF EXISTS broadcasts_workspace_id_launched_by_account_id_idx;
+DROP INDEX IF EXISTS broadcasts_workspace_id_last_changed_by_account_id_idx;
+DROP INDEX IF EXISTS broadcasts_workspace_id_author_account_id_idx;
+DROP INDEX IF EXISTS broadcasts_sending_idx;
+DROP INDEX IF EXISTS broadcasts_workspace_id_launched_at_idx;
+DROP INDEX IF EXISTS broadcasts_workspace_id_last_changed_at_idx;
+DROP TABLE IF EXISTS broadcasts;
