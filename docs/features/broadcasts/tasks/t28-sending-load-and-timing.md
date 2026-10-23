@@ -114,6 +114,6 @@ Drives `getBroadcast` (draft count), `getLaunchConfirmation` + `launchBroadcast`
 
 ## Definition of Done
 
-- [ ] Seeded integration tests against the fake Bot API prove no 1 s window holds more than 25 broadcast sends of one bot with two broadcasts sending, 1 000 recipients with a 150 ms answer delay all have an outcome within 90 s, replies sent during a broadcast are accepted with p95 ≤ 2 s, a 429 to a reply stops every broadcast send until retry_after, no send starts more than 2 s after a stop commits, the draft count of a 10 000-contact workspace is ≤ 500 ms and freezing 10 000 recipients ≤ 2 s, and a my_chat_member update marks the contact within 5 s.
+- [ ] Seeded integration tests against the fake Bot API prove no 1 s window holds more than 25 broadcast sends of one bot with two broadcasts sending, 1 000 recipients with a 150 ms answer delay all have an outcome within 90 s, replies sent during a broadcast are accepted with p95 ≤ 2 s, a 429 to a reply stops every broadcast send until retry_after, no send starts more than 2 s after a stop commits, the draft count of a 10 000-contact workspace is ≤ 500 ms and freezing 10 000 recipients ≤ 2 s, and a my_chat_member update marks the contact within 5 s. The single-run checks also assert a report re-read showing an outcome within 3 s of its commit and another workspace's reply and ping p95 within 1 s of its idle baseline (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

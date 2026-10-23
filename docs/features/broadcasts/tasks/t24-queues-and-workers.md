@@ -127,7 +127,7 @@ Internal — no HTTP surface. Job contracts:
 
 ## Definition of Done
 
-- [ ] Integration tests prove a launch's queued link runs and its successors carry the chain to the end, at most one link per workspace is active across two workers, a link that throws three times lands in broadcasts.send-dlq whose handler logs the workspace id and queues a fresh link 60 s later, a restart mid-broadcast resumes with the waiting recipients, and the measure job logs broadcast.blocked_share with delivered_count, blocked_since_count and share and no text, name or chat id.
+- [ ] Integration tests prove a launch's queued link runs and its successors carry the chain to the end, at most one link per workspace is active across two workers, a link that throws three times lands in broadcasts.send-dlq whose handler logs the workspace id and queues a fresh link 60 s later, a restart mid-broadcast resumes with the waiting recipients, and the measure job logs broadcast.blocked_share with delivered_count, blocked_since_count and share and no text, name or chat id. Links of two workspaces run at the same time, so one workspace's broadcast never waits for another's (test plan).
 - [ ] No job payload or log line written by this task carries the text, a contact name, a username or a chat id (asserted on the captured log lines).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

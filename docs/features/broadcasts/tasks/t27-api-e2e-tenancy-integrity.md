@@ -175,6 +175,6 @@ Drives, through `app.inject()` and a live socket: `createBroadcast`, `saveBroadc
 
 ## Definition of Done
 
-- [ ] The API e2e stories pass against Postgres and the fake Bot API: draft → launch → report → sent with one message per recipient and a broadcast item per delivered recipient, a my_chat_member block and a refused send marking the contact, stop mid-send, abort on a revoked token, duplicate "did not reach", the cross-workspace refusals with no hint, no text, name or chat id in logs, frames or job payloads, and every broadcastIntegrity query returns zero rows after each story.
+- [ ] The API e2e stories pass against Postgres and the fake Bot API: draft → launch → report → sent with one message per recipient and a broadcast item per delivered recipient, a my_chat_member block and a refused send marking the contact, stop mid-send, abort on a revoked token, duplicate "did not reach", the cross-workspace refusals with no hint, no text, name or chat id in logs, frames or job payloads, and every broadcastIntegrity query returns zero rows after each story. The stories also assert that a group removal changes nothing on the contact, that retags, new customers and an unblock after launch leave the recipient rows unchanged, that the recorded message carries only the text, and that a linked member's Telegram account is never a recipient (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

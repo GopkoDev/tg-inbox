@@ -148,7 +148,7 @@ No DB changes (reads `contacts`, `contact_tags`, `tags` and `contact_bot_reach` 
 
 ## Definition of Done
 
-- [ ] Integration tests on the AC-01 seed prove the breakdown of "any of VIP, leaving out Staff" is 38 / 2 blocked / 0 never wrote / 36, that all, none and no-tag modes match the Contacts list exactly, that a group's ids give the same partition, that with no bot only the audience size is returned, that the reachable set is sorted by contact id with Telegram user ids and stops at 10 001, that existingTags drops deleted and merged tags, that matchingContactIds equals the Contacts list's matching set, and that every method is scoped by workspace with an isolation test.
+- [ ] Integration tests on the AC-01 seed prove the breakdown of "any of VIP, leaving out Staff" is 38 / 2 blocked / 0 never wrote / 36, that all, none and no-tag modes match the Contacts list exactly, that a group's ids give the same partition, that with no bot only the audience size is returned, that the reachable set is sorted by contact id with Telegram user ids and stops at 10 001, that existingTags drops deleted and merged tags, that matchingContactIds equals the Contacts list's matching set, and that every method is scoped by workspace with an isolation test. A reach row of the current Telegram bot id still applies after the same bot is reconnected, and none of an older bot does (test plan).
 - [ ] Every new query method takes `workspaceId` and is covered by the cross-workspace isolation test.
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)

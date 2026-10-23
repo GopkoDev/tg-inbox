@@ -189,7 +189,7 @@
         "AC-10",
         "AC-14"
       ],
-      "dod": "Integration tests on the AC-01 seed prove the breakdown of \"any of VIP, leaving out Staff\" is 38 / 2 blocked / 0 never wrote / 36, that all, none and no-tag modes match the Contacts list exactly, that a group's ids give the same partition, that with no bot only the audience size is returned, that the reachable set is sorted by contact id with Telegram user ids and stops at 10 001, that existingTags drops deleted and merged tags, that matchingContactIds equals the Contacts list's matching set, and that every method is scoped by workspace with an isolation test.",
+      "dod": "Integration tests on the AC-01 seed prove the breakdown of \"any of VIP, leaving out Staff\" is 38 / 2 blocked / 0 never wrote / 36, that all, none and no-tag modes match the Contacts list exactly, that a group's ids give the same partition, that with no bot only the audience size is returned, that the reachable set is sorted by contact id with Telegram user ids and stops at 10 001, that existingTags drops deleted and merged tags, that matchingContactIds equals the Contacts list's matching set, and that every method is scoped by workspace with an isolation test. A reach row of the current Telegram bot id still applies after the same bot is reconnected, and none of an older bot does (test plan).",
       "files_hint": [
         "apps/api/src/modules/contacts/infra/audience-query.ts",
         "apps/api/src/modules/contacts/infra/audience-query.int.test.ts",
@@ -544,7 +544,7 @@
         "AC-16",
         "AC-17"
       ],
-      "dod": "Unit tests with fakes and integration tests against the fake Bot API prove a link sends each waiting recipient at most once in position order, two sending broadcasts alternate, a recipient blocked at its turn gets blocked with no send, a delivered or not-confirmed outcome writes its broadcast item in the outcome transaction, a rate limit or pause returns the recipient to waiting and delays the successor to the pause end, a refused text or a lost bot aborts through the settling transaction, a recipient left sending by a killed link becomes not confirmed with its item at the claim time and is never resent, report signals are at most one per broadcast per second, and the link stops claiming after 20 s and asks for a successor while anything still sends.",
+      "dod": "Unit tests with fakes and integration tests against the fake Bot API prove a link sends each waiting recipient at most once in position order, two sending broadcasts alternate, a recipient blocked at its turn gets blocked with no send, a delivered or not-confirmed outcome writes its broadcast item in the outcome transaction, a rate limit or pause returns the recipient to waiting and delays the successor to the pause end, a refused text or a lost bot aborts through the settling transaction, a recipient left sending by a killed link becomes not confirmed with its item at the claim time and is never resent, report signals are at most one per broadcast per second, and the link stops claiming after 20 s and asks for a successor while anything still sends. Failed, stopped and blocked recipients get no broadcast item (test plan).",
       "files_hint": [
         "apps/api/src/modules/broadcasts/app/send-link.ts",
         "apps/api/src/modules/broadcasts/app/send-link.test.ts",
@@ -570,7 +570,7 @@
         "AC-13",
         "AC-18"
       ],
-      "dod": "Unit and integration tests on the AC-13 seed prove a draft copy keeps the text and the 14-contact group, \"all recipients\" makes a group of all 36 with the blocked one counted unreachable, \"only recipients it did not reach\" gives the 2 bot_stopped failures (plus stopped recipients and, only with include_not_confirmed, not confirmed ones) and never delivered, blocked or account_gone, the same-tags copy keeps the frozen tags, a not-reached copy of a still-sending broadcast answers BROADCAST_NOT_ENDED, a choice that does not fit the source answers VALIDATION_ERROR, the copy's author is the member and the source is unchanged, and an operator can duplicate.",
+      "dod": "Unit and integration tests on the AC-13 seed prove a draft copy keeps the text and the 14-contact group, \"all recipients\" makes a group of all 36 with the blocked one counted unreachable, \"only recipients it did not reach\" gives the 2 bot_stopped failures (plus stopped recipients and, only with include_not_confirmed, not confirmed ones) and never delivered, blocked or account_gone, the same-tags copy keeps the frozen tags, a not-reached copy of a still-sending broadcast answers BROADCAST_NOT_ENDED, a choice that does not fit the source answers VALIDATION_ERROR, the copy's author is the member and the source is unchanged, and an operator can duplicate. Every duplicate works with no bot row and with a needs-token bot (test plan).",
       "files_hint": [
         "apps/api/src/modules/broadcasts/app/duplicate.ts",
         "apps/api/src/modules/broadcasts/app/duplicate.test.ts",
@@ -592,7 +592,7 @@
         "AC-11",
         "AC-15"
       ],
-      "dod": "Integration tests prove a launch's queued link runs and its successors carry the chain to the end, at most one link per workspace is active across two workers, a link that throws three times lands in broadcasts.send-dlq whose handler logs the workspace id and queues a fresh link 60 s later, a restart mid-broadcast resumes with the waiting recipients, and the measure job logs broadcast.blocked_share with delivered_count, blocked_since_count and share and no text, name or chat id.",
+      "dod": "Integration tests prove a launch's queued link runs and its successors carry the chain to the end, at most one link per workspace is active across two workers, a link that throws three times lands in broadcasts.send-dlq whose handler logs the workspace id and queues a fresh link 60 s later, a restart mid-broadcast resumes with the waiting recipients, and the measure job logs broadcast.blocked_share with delivered_count, blocked_since_count and share and no text, name or chat id. Links of two workspaces run at the same time, so one workspace's broadcast never waits for another's (test plan).",
       "files_hint": [
         "apps/api/src/modules/broadcasts/infra/jobs.ts",
         "apps/api/src/modules/broadcasts/infra/jobs.int.test.ts",
@@ -670,7 +670,7 @@
         "AC-16",
         "AC-18"
       ],
-      "dod": "The API e2e stories pass against Postgres and the fake Bot API: draft → launch → report → sent with one message per recipient and a broadcast item per delivered recipient, a my_chat_member block and a refused send marking the contact, stop mid-send, abort on a revoked token, duplicate \"did not reach\", the cross-workspace refusals with no hint, no text, name or chat id in logs, frames or job payloads, and every broadcastIntegrity query returns zero rows after each story.",
+      "dod": "The API e2e stories pass against Postgres and the fake Bot API: draft → launch → report → sent with one message per recipient and a broadcast item per delivered recipient, a my_chat_member block and a refused send marking the contact, stop mid-send, abort on a revoked token, duplicate \"did not reach\", the cross-workspace refusals with no hint, no text, name or chat id in logs, frames or job payloads, and every broadcastIntegrity query returns zero rows after each story. The stories also assert that a group removal changes nothing on the contact, that retags, new customers and an unblock after launch leave the recipient rows unchanged, that the recorded message carries only the text, and that a linked member's Telegram account is never a recipient (test plan).",
       "files_hint": [
         "apps/api/src/e2e/broadcasts-flows.int.test.ts",
         "apps/api/src/e2e/broadcasts-tenancy.int.test.ts",
@@ -691,7 +691,7 @@
         "AC-15",
         "AC-18"
       ],
-      "dod": "Seeded integration tests against the fake Bot API prove no 1 s window holds more than 25 broadcast sends of one bot with two broadcasts sending, 1 000 recipients with a 150 ms answer delay all have an outcome within 90 s, replies sent during a broadcast are accepted with p95 ≤ 2 s, a 429 to a reply stops every broadcast send until retry_after, no send starts more than 2 s after a stop commits, the draft count of a 10 000-contact workspace is ≤ 500 ms and freezing 10 000 recipients ≤ 2 s, and a my_chat_member update marks the contact within 5 s.",
+      "dod": "Seeded integration tests against the fake Bot API prove no 1 s window holds more than 25 broadcast sends of one bot with two broadcasts sending, 1 000 recipients with a 150 ms answer delay all have an outcome within 90 s, replies sent during a broadcast are accepted with p95 ≤ 2 s, a 429 to a reply stops every broadcast send until retry_after, no send starts more than 2 s after a stop commits, the draft count of a 10 000-contact workspace is ≤ 500 ms and freezing 10 000 recipients ≤ 2 s, and a my_chat_member update marks the contact within 5 s. The single-run checks also assert a report re-read showing an outcome within 3 s of its commit and another workspace's reply and ping p95 within 1 s of its idle baseline (test plan).",
       "files_hint": [
         "apps/api/src/e2e/broadcasts-load.int.test.ts"
       ],
@@ -734,7 +734,7 @@
         "AC-01",
         "AC-08"
       ],
-      "dod": "Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels.",
+      "dod": "Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels. The guard landings (sign-in back to the same address, access removed, not found for an unknown broadcast) are covered too (test plan).",
       "files_hint": [
         "apps/web/src/features/broadcasts/BroadcastsTable.tsx",
         "apps/web/src/features/broadcasts/BroadcastsTable.test.tsx",

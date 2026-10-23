@@ -126,6 +126,6 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels.
+- [ ] Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels. The guard landings (sign-in back to the same address, access removed, not found for an unknown broadcast) are covered too (test plan).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
