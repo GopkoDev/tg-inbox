@@ -9,8 +9,8 @@ files_hint: ["packages/shared/src/broadcast-text.ts", "packages/shared/src/broad
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T1 — Add the shared broadcast text and name rules: trim both ends, 1–4096 UTF-16 code units for the text, 1–80 graphemes for the name, and the "Copy of …" cut

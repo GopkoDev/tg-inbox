@@ -8,7 +8,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status | Step |
 |---|---|---|---|---|---|---|---|
-| T1 | [Add the shared broadcast text and name rules: trim both ends, 1–4096 UTF-16 code units for the text, 1–80 graphemes for the name, and the "Copy of …" cut](./t01-shared-broadcast-text-rules.md) | domain | Dmytro Hopko | S | — | todo | — |
+| T1 | [Add the shared broadcast text and name rules: trim both ends, 1–4096 UTF-16 code units for the text, 1–80 graphemes for the name, and the "Copy of …" cut](./t01-shared-broadcast-text-rules.md) | domain | Dmytro Hopko | S | — | done | COMMIT |
 | T2 | [Promote migrations 01–02 (contact_bot_reach and its backfill for the workspace's current Telegram bot), regenerate DB types and add the reach fixtures](./t02-promote-reach-migrations.md) | migration | Dmytro Hopko | S | — | todo | — |
 | T3 | [Promote migrations 03–08 (the conversations (workspace_id, id) key, broadcasts, broadcast_audience_tags, broadcast_group_contacts, broadcast_recipients, broadcast_items), regenerate DB types and add the broadcast fixtures](./t03-promote-broadcast-tables-and-fixtures.md) | migration | Dmytro Hopko | M | T2 | todo | — |
 | T4 | [Add the broadcasts zod contracts, the eleven BROADCAST_* error codes, the broadcast.changed frame and signal, the widened contact.changed (reach) and conversation.changed (broadcast) frames with their hub mapping, and keep the web stores ignoring what they do not handle yet](./t04-contracts-codes-and-frames.md) | ports | Dmytro Hopko | M | T1 | todo | — |

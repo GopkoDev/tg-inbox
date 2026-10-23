@@ -17,7 +17,7 @@
         "packages/shared/src/index.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t01-shared-broadcast-text-rules.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T2",
