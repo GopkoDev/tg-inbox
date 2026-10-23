@@ -578,6 +578,8 @@ sequenceDiagram
         S->>D: lock the broadcast row of W for no key update, still a draft, count the group rows
         alt not a contact of W
             S-->>UI: not found, no hint
+        else a teammate switched the audience to tags meanwhile
+            S-->>UI: refused, draft changed, with the current draft
         else already in the group
             S-->>UI: unchanged, already there
         else the group holds 10 000
@@ -600,7 +602,9 @@ sequenceDiagram
         S->>D: lock the broadcast row, still a draft, count the group rows
         S->>D: the matching contact ids now, up to the room left plus one, minus the group rows
         Note over S,D: reads the Contacts filter (contacts and contact tags of W) and group rows by (workspace, broadcast, contact)
-        alt the group would pass 10 000
+        alt no longer a group - a teammate switched the audience
+            S-->>UI: refused, draft changed, with the current draft
+        else the group would pass 10 000
             S-->>UI: refused as a whole, audience too large, how many can still be added
         else within the limit
             S->>D: insert the rows on conflict nothing, record last changed
@@ -623,7 +627,7 @@ sequenceDiagram
     Note over U,S: Postcondition: two members' adds and removes both stand, never raise the version, and the group holds at most 10 000 contacts of W
 ```
 
-The group picker is the Contacts list's own read with the same search and tag filter, so matching and counts are the same by construction (AC-04, ADR-0004). It marks the page's contacts that are already in the group. Adding one contact locks the broadcast row, checks that it is still a draft and that the group is under 10 000, and inserts one row keyed by workspace, broadcast and contact. A contact already there changes nothing and says so (AC-05). The composite foreign key makes a contact of another workspace unstorable, and the request answers not found (AC-08). "Add all matching" first counts the matching contacts not in the group, and on confirmation re-reads the matches under the row lock. It refuses the whole add if the group would pass 10 000, saying how many can still be added (AC-05). Otherwise it adds the current matches and says how many, which can differ from the count shown. Removing deletes one row by its key and changes nothing on the contact. Group writes are set operations that never raise the version, so two members' adds and removes both stand and never make a teammate's name or text save stale (AC-03, ADR-0005). The group shows 50 contacts at a time with their tags and block marks for the current bot, its size and how many it would reach (AC-14).
+The group picker is the Contacts list's own read with the same search and tag filter, so matching and counts are the same by construction (AC-04, ADR-0004). It marks the page's contacts that are already in the group. Adding one contact locks the broadcast row, checks that it is still a draft and that the group is under 10 000, and inserts one row keyed by workspace, broadcast and contact. A contact already there changes nothing and says so (AC-05). The composite foreign key makes a contact of another workspace unstorable, and the request answers not found (AC-08). "Add all matching" first counts the matching contacts not in the group, and on confirmation re-reads the matches under the row lock. It refuses the whole add if the group would pass 10 000, saying how many can still be added (AC-05). Otherwise it adds the current matches and says how many, which can differ from the count shown. An add after a teammate switched the draft to a tag audience is refused as a changed draft, with the current draft (amended at `api`). Removing deletes one row by its key and changes nothing on the contact. Group writes are set operations that never raise the version, so two members' adds and removes both stand and never make a teammate's name or text save stale (AC-03, ADR-0005). The group shows 50 contacts at a time with their tags and block marks for the current bot, its size and how many it would reach (AC-14).
 
 ### Flow 9: Delete a draft (US-01 — AC-07, AC-08, AC-09)
 
