@@ -16,6 +16,7 @@ import {
   registerInboxJobs,
 } from './modules/inbox/infra/jobs.js';
 import { createLiveHub } from './modules/inbox/infra/hub.js';
+import { registerNotifications } from './modules/notifications/http/routes.js';
 import { registerInbox } from './modules/inbox/http/routes.js';
 import { registerWorkspaces } from './modules/workspaces/http/routes.js';
 import { registerHealth } from './modules/health/http/routes.js';
@@ -23,12 +24,16 @@ import type { Config } from './platform/config.js';
 import { requireJsonBodies } from './platform/content-type.js';
 import { frameworkErrors, registerErrorHandler } from './platform/errors.js';
 import { startJobs } from './platform/jobs.js';
+import {
+  createNotificationQueues,
+  registerNotificationJobs,
+} from './modules/notifications/infra/jobs.js';
 import { startRealtimeListener } from './platform/realtime.js';
 import { loggerOptions } from './platform/logger.js';
 import { buildDeps } from './deps.js';
 
 /** Largest client frame the live socket accepts; bigger frames close it with 1009. */
-const LIVE_MAX_INBOUND_BYTES = 1024;
+const LIVE_TRANSPORT_MAX_BYTES = 8 * 1024;
 import type { Clock } from './platform/clock.js';
 
 /** Composition root: builds every dependency and registers every module plugin. */
@@ -55,8 +60,9 @@ export async function buildApp(
   // (1005); the hub closes them with 1001 first (events.md).
   let closeLiveSockets = async (): Promise<void> => {};
   await app.register(websocket, {
-    // The live channel is server to client: a client frame is never read, so keep it tiny.
-    options: { maxPayload: LIVE_MAX_INBOUND_BYTES },
+    // The only client frame is the tiny `presence` frame. The hub ignores anything over
+    // LIVE_MAX_INBOUND_BYTES unread without closing; this transport cap is the hard limit above it.
+    options: { maxPayload: LIVE_TRANSPORT_MAX_BYTES },
     preClose: async () => {
       await closeLiveSockets();
       for (const client of app.websocketServer.clients) client.close(1001, 'server going away');
@@ -67,10 +73,20 @@ export async function buildApp(
   await app.register(cookie);
   if (config.WEB_DIST_DIR) {
     // wildcard:false registers the files that exist; everything else reaches the not-found handler.
-    await app.register(fastifyStatic, { root: config.WEB_DIST_DIR, wildcard: false });
+    await app.register(fastifyStatic, {
+      root: config.WEB_DIST_DIR,
+      wildcard: false,
+      // The notifications worker is checked for updates on every load, so it must never be cached,
+      // and a worker script is only accepted as text/javascript.
+      setHeaders: (reply, path) => {
+        if (!path.endsWith('/notifications-sw.js')) return;
+        reply.header('content-type', 'text/javascript; charset=utf-8');
+        reply.header('cache-control', 'no-cache');
+      },
+    });
   }
 
-  const deps = buildDeps(config, overrides);
+  const deps = buildDeps(config, { ...overrides, logger: app.log });
   const {
     db,
     credentialUseCases,
@@ -87,10 +103,21 @@ export async function buildApp(
     replyDelivery,
   } = deps;
   const jobs = await startJobs(config.DATABASE_URL, app.log);
+  deps.bindNotificationJobs(jobs);
+  await createNotificationQueues(jobs);
+  await registerNotificationJobs(jobs, {
+    deliverAnswer: deps.deliverAnswer,
+    sendPings: deps.sendPings,
+    workspacesWithLiveLink: deps.workspacesWithLiveLink,
+    startPings: deps.startPings,
+    logger: app.log,
+    clock: deps.clock,
+  });
   // Live sockets: the hub fans realtime signals out to the open inbox tabs (ADR-0002, ADR-0003).
   const liveHub = createLiveHub({
     sessions: sessionUseCases,
     members: workspaceAccess,
+    presence: deps.presence,
     logger: app.log,
   });
   const realtime = await startRealtimeListener(config.DATABASE_URL, app.log);
@@ -179,7 +206,19 @@ export async function buildApp(
         media: deps.inboxMedia,
         changes: deps.changeState,
         live: liveHub,
+        attention: deps.notificationReads.attentionCount,
         webOrigin: new URL(config.PUBLIC_WEB_URL).origin,
+        access: workspaceAccess,
+        authenticate,
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerNotifications(api, {
+        settings: deps.notificationSettings,
+        connectLinks: deps.connectLinkIssuer,
+        disconnect: deps.disconnectTelegram,
         access: workspaceAccess,
         authenticate,
       }),

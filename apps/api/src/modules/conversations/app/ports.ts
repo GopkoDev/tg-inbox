@@ -4,6 +4,7 @@ import type { CloseSnapshot, ConversationState, LatestReply } from '../domain/st
 import type { MessageKind } from '../domain/message.js';
 import type { MediaFile, MessageProjection } from '../domain/projection.js';
 import type { ListPosition, ThreadPosition } from '../domain/thread.js';
+import type { WaitingPeriod } from '../domain/waiting.js';
 
 /** A Kysely handle or a transaction (the capture transaction). */
 export type Executor = Db;
@@ -27,8 +28,8 @@ export interface ConversationRepo {
   /**
    * A customer message arrived at `receivedAt`: raises the arrival with GREATEST and rewrites activity
    * as GREATEST(arrival, last sent reply) and raises `customer_message_seq` in the same UPDATE. Edits
-   * and duplicates never call this. Returns the status and assignee read under the row lock the
-   * UPDATE takes: the only state capture may decide a reopen on.
+   * and duplicates never call this. Returns the status, assignee and waiting-period start read under
+   * the row lock the UPDATE takes: the only state capture may decide a reopen or a period start on.
    */
   raiseReceived(
     workspaceId: string,
@@ -36,6 +37,17 @@ export interface ConversationRepo {
     receivedAt: Date,
     tx?: Executor,
   ): Promise<RaisedConversation>;
+  /**
+   * Starts the waiting period of an open conversation that has none (capture, after the raise
+   * `UPDATE` took the row lock). Leaves a running period and a closed conversation alone; does not
+   * touch `state_version`. False when nothing was written.
+   */
+  writeWaiting(
+    workspaceId: string,
+    conversationId: string,
+    period: WaitingPeriod,
+    tx?: Executor,
+  ): Promise<boolean>;
   findByChat(workspaceId: string, telegramChatId: bigint, tx?: Executor): Promise<string | null>;
   hasAny(workspaceId: string, tx?: Executor): Promise<boolean>;
   /**
@@ -51,8 +63,8 @@ export interface ConversationRepo {
    */
   lockAssignedTo(workspaceId: string, accountId: string, tx: Executor): Promise<string[]>;
   /**
-   * Writes the given state fields and raises `state_version` by one in the same UPDATE; never touches
-   * `last_activity_at`. Returns the new version, null when the conversation is not in the workspace.
+   * Writes the given state fields (and the waiting period, when given: `null` clears it) and raises
+   * `state_version` by one in the same UPDATE; never touches `last_activity_at`. Returns the new version, null when the conversation is not in the workspace.
    */
   writeState(
     workspaceId: string,
@@ -91,12 +103,16 @@ export interface RaisedConversation {
   status: ConversationState['status'];
   assigneeAccountId: string | null;
   stateVersion: number;
+  /** Null when the conversation was not waiting (a closed one never is). */
+  waitingSince: Date | null;
 }
 
 /** Fields to write; an absent field is left as it is. */
 export interface StateChange {
   status?: ConversationState['status'];
   assigneeAccountId?: string | null;
+  /** The waiting period to store; `null` clears it, absent leaves it as it is. */
+  waiting?: WaitingPeriod | null;
 }
 
 export interface NewActivity {
@@ -525,7 +541,10 @@ export interface ReplyRepo {
     settlement: ReplySettlement,
     tx?: Executor,
   ): Promise<ReplyView | null>;
-  /** A reply was sent at `sentAt`: raises the reply and activity columns in one UPDATE (GREATEST). */
+  /**
+   * A reply was sent at `sentAt`: raises the reply and activity columns in one UPDATE (GREATEST) and,
+   * in the same UPDATE, ends the waiting period unless a customer message is newer than the sent time.
+   */
   raiseReplySent(
     workspaceId: string,
     conversationId: string,
@@ -566,3 +585,37 @@ export type ReplySettlement =
   | { state: 'sent'; telegramMessageId: bigint; sentAt: Date }
   | { state: 'not_delivered'; failureReason: string }
   | { state: 'not_confirmed' };
+
+/** One open conversation in a waiting period, as the ping sweep reads it (ADR-0005, ADR-0007). */
+export interface WaitingConversation {
+  conversationId: string;
+  assigneeAccountId: string | null;
+  waitingSince: Date;
+  startedBy: WaitingPeriod['startedBy'];
+  /** Arrival of the customer message that began the wait (of the first waiting one after a reopen). */
+  startingArrival: Date;
+  /**
+   * The accounts, among the requested ones and the conversation's assignee, whose read mark reaches
+   * the starting arrival (a watermark exactly at it counts as read).
+   */
+  readBy: Set<string>;
+}
+
+export interface NotificationReads {
+  /**
+   * The open waiting conversations of the workspace, oldest period first, optionally narrowed to
+   * `conversationIds`. `accountIds` are the members whose read state is wanted; the assignee's is
+   * returned whether or not they are listed (the 5-minute team reach, flow 13). `tx` joins the
+   * caller's transaction (the ping send's re-check, under its locks).
+   */
+  waitingForPings(
+    workspaceId: string,
+    query: { conversationIds?: string[]; accountIds: string[] },
+    tx?: Executor,
+  ): Promise<WaitingConversation[]>;
+  /**
+   * Open conversations that are the member's or unassigned and have a customer arrival after the
+   * member's unread floor, `max(read mark, activeSince)` (AC-01, ADR-0008).
+   */
+  attentionCount(workspaceId: string, accountId: string, activeSince: Date): Promise<number>;
+}

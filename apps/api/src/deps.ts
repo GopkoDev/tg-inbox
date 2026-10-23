@@ -28,11 +28,30 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
+import { createPacer } from './modules/bots/app/pacer.js';
+import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
+import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
 import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
+import { randomBytes } from 'node:crypto';
+import { createConnectLinkIssuer } from './modules/notifications/app/connect-link.js';
+import { createDisconnectTelegram } from './modules/notifications/app/disconnect.js';
+import { createSettings } from './modules/notifications/app/settings.js';
+import { createDeliverAnswer } from './modules/notifications/app/deliver-answer.js';
+import { createLinkLifecycle } from './modules/notifications/app/link-lifecycle.js';
+import { createIntercept } from './modules/notifications/app/intercept.js';
+import { createPresence } from './modules/notifications/app/presence.js';
+import { createSendPings } from './modules/notifications/app/send-pings.js';
+import { createRedeem } from './modules/notifications/app/redeem.js';
+import { createPingRepo } from './modules/notifications/infra/ping-repo.js';
+import { createPresenceRepo } from './modules/notifications/infra/presence-repo.js';
+import { createConnectLinkRepo } from './modules/notifications/infra/connect-link-repo.js';
+import { createBotMessageSender, createPingStarter } from './modules/notifications/infra/jobs.js';
+import { createNotificationSignals } from './modules/notifications/infra/signals.js';
+import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
@@ -42,6 +61,8 @@ import { createReplies, createReplyDelivery } from './modules/conversations/app/
 import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
 import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
+import { createNotificationReads } from './modules/conversations/app/notification-reads.js';
+import { createNotificationQueries } from './modules/conversations/infra/notification-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
 import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
 import { createStateChanges } from './modules/conversations/app/state-changes.js';
@@ -55,12 +76,16 @@ import { createMessageRepo } from './modules/conversations/infra/message-repo.js
 import { systemClock, type Clock } from './platform/clock.js';
 import type { Config } from './platform/config.js';
 import { createDb } from './platform/db.js';
+import type { Jobs } from './platform/jobs.js';
 
 /**
  * Shared dependency builder: the one place module dependencies are constructed. Used by
  * `buildApp()` (HTTP) and the admin CLI. No Fastify import.
  */
-export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
+export function buildDeps(
+  config: Config,
+  overrides: { clock?: Clock; logger?: { info(obj: object, msg: string): void } } = {},
+) {
   const clock = overrides.clock ?? systemClock;
   const db = createDb(config.DATABASE_URL, {
     max: config.DATABASE_POOL_MAX,
@@ -133,13 +158,31 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     signals: createConversationSignals(),
     clock,
   });
-  // Built before `team` so the deactivation transaction can call it (sad.md §5).
+  const notificationReads = createNotificationReads({
+    reads: createNotificationQueries(db),
+  });
+  // The notifications link repositories and lifecycle are built before `team` and `bots`: both call
+  // them inside their own transactions (sad.md §5 ports).
+  const telegramLinks = createTelegramLinkRepo(db);
+  const connectLinks = createConnectLinkRepo(db);
+  const linkLifecycle = createLinkLifecycle({
+    links: telegramLinks,
+    connectLinks,
+    signals: createNotificationSignals(),
+    clock,
+  });
   const team = createTeam({
     uow: workspaceUow,
     clock,
     accounts: accountUseCases,
     publish,
-    onMembershipDeactivated: conversations.unassignDeactivatedMember,
+    // Read through notifications (account ids only; built below, called later): `workspaces` imports nothing from it.
+    linkedAccounts: (workspaceId) => notificationSettings.linkedAccounts(workspaceId),
+    // Composed port (sad.md §11): unassign the member's conversations, then remove their Telegram link.
+    onMembershipDeactivated: async (tx, event) => {
+      await conversations.unassignDeactivatedMember(tx, event);
+      await linkLifecycle.removeLinkOnDeactivation(tx, event);
+    },
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
   const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
@@ -166,16 +209,114 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     transaction,
     signals: botOwnerDeps.signals,
   });
+  // Order: contacts -> conversations -> bots core -> notifications -> bots ports (the inbound
+  // interceptor) -> team. `notifications` reads `bots` through these two reads only.
+  const { pingReadiness } = createPingReadiness({ bots: botRepo });
+  const inboxStatus = createInboxBotStatus({ bots: botRepo });
+
+  // --- notifications: calls the app layers of workspaces and bots (one-way: bots -> notifications by port) ---
+  const botMessages = createBotMessageSender();
+  const pingStarter = createPingStarter();
+  const membershipLocks = {
+    // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+    lockActiveMembers: (tx: unknown, workspaceId: string, accountIds: string[]) =>
+      workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
+  };
+  const redeem = createRedeem({
+    transaction,
+    membership: membershipLocks,
+    links: telegramLinks,
+    connectLinks,
+    signals: createNotificationSignals(),
+    enqueue: botMessages.enqueue,
+    startPings: async (tx, workspaceId) => {
+      await pingStarter.start(workspaceId, { tx });
+    },
+    clock,
+  });
+  const { intercept } = createIntercept({
+    transaction,
+    links: telegramLinks,
+    redeem,
+    enqueue: botMessages.enqueue,
+    clock,
+  });
+  const interceptor = { intercept };
+  // What the live-socket hub reports: one lease per open tab (ADR-0002).
+  const presenceRepo = createPresenceRepo(db);
+  const pingRepo = createPingRepo(db);
+  const presence = createPresence({ presence: presenceRepo, pings: pingRepo, clock });
+  // --- end notifications dependencies ---
+
+  const sendMemberMessage = createSendMemberMessage({
+    bots: botRepo,
+    telegram,
+    markNeedsToken,
+    clock,
+    pacer: createPacer(),
+  }).sendMemberMessage;
+  const sendPings = createSendPings({
+    transaction,
+    membership: membershipLocks,
+    links: telegramLinks,
+    presence: presenceRepo,
+    pings: pingRepo,
+    reads: notificationReads,
+    bots: { pingReadiness },
+    workspaces: workspaceAccess,
+    send: sendMemberMessage,
+    signals: createNotificationSignals(),
+    clock,
+    panelUrl: config.PUBLIC_WEB_URL,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
+  // The member's own settings, connect link and disconnect (the three notifications routes).
+  const notificationBots = { inboxBotStatus: inboxStatus.inboxBotStatus, pingReadiness };
+  const notificationSettings = createSettings({ links: telegramLinks, bots: notificationBots });
+  const connectLinkIssuer = createConnectLinkIssuer({
+    transaction,
+    membership: membershipLocks,
+    links: telegramLinks,
+    connectLinks,
+    bots: notificationBots,
+    settings: notificationSettings,
+    clock,
+    randomBytes,
+  });
+  const disconnectTelegram = createDisconnectTelegram({
+    transaction,
+    links: telegramLinks,
+    signals: createNotificationSignals(),
+    enqueue: botMessages.enqueue,
+    settings: notificationSettings,
+    clock,
+  });
+  const deliverAnswer = createDeliverAnswer({
+    links: telegramLinks,
+    bots: { pingReadiness },
+    workspaces: workspaceAccess,
+    send: sendMemberMessage,
+    panelUrl: config.PUBLIC_WEB_URL,
+    clock,
+  });
+
   const bots = {
     settings: botSettings,
     markNeedsToken,
-    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken }).sendText,
+    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken, clock }).sendText,
+    sendMemberMessage,
+    pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
-    inboxStatus: createInboxBotStatus({ bots: botRepo }),
-    paste: createPasteToken({ ...botOwnerDeps, conversations }),
+    inboxStatus,
+    paste: createPasteToken({
+      ...botOwnerDeps,
+      conversations,
+      // Removes the links made with another bot, in the connect transaction (flow 16).
+      onBotConnected: (tx, event) => linkLifecycle.onBotConnected(tx, event),
+    }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
-    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations }),
+    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations, interceptor }),
     healthCheck: createHealthCheck({
       bots: botRepo,
       telegram,
@@ -257,7 +398,23 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     workspaceAdmin,
     contacts,
     conversations,
+    notificationReads,
     bots,
+    presence,
+    notificationSettings,
+    connectLinkIssuer,
+    disconnectTelegram,
+    deliverAnswer,
+    sendPings,
+    /** The sixth controlled tenancy exception: workspace ids with a live link, for the cron backstop. */
+    workspacesWithLiveLink: () => telegramLinks.workspacesWithLiveLink(),
+    /** Starts (or keeps) a workspace's ping chain; a live chain absorbs it. */
+    startPings: pingStarter.start,
+    /** Binds the started job queue to the notifications jobs (the queue starts after `buildDeps()`). */
+    bindNotificationJobs: (boss: Jobs) => {
+      botMessages.bind(boss);
+      pingStarter.bind(boss);
+    },
     inboxReads,
     inboxMedia,
     changeState,

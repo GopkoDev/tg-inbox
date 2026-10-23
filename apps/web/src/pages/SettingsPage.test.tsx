@@ -57,10 +57,17 @@ describe('SettingsPage (SCR-11)', () => {
     renderAt('/w/w1/settings');
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
-    expect(screen.getByText("Manage your workspace's bot and team")).toBeInTheDocument();
+    expect(
+      screen.getByText("Manage your workspace's bot and team, and your notifications"),
+    ).toBeInTheDocument();
 
     const menu = screen.getByRole('navigation', { name: 'Settings' });
-    expect(within(menu).getByRole('link', { name: 'Bot' })).toHaveAttribute('aria-current', 'page');
+    await waitFor(() =>
+      expect(within(menu).getByRole('link', { name: 'Bot' })).toHaveAttribute(
+        'aria-current',
+        'page',
+      ),
+    );
     expect(within(menu).getByRole('link', { name: 'Team' })).not.toHaveAttribute('aria-current');
 
     expect(await screen.findByText('Acme Flowers Support')).toBeInTheDocument();

@@ -25,7 +25,7 @@ import {
   TeammateRepliedError,
 } from '@tg/shared';
 import { ApiError } from '@/shared/api/client';
-import { openLiveSocket, type LiveClient } from '@/shared/api/realtime';
+import { liveStatus, subscribeLive } from '@/shared/api/live-connection';
 import * as source from './api-source';
 import { belongsToLens, DEFAULT_LENS, sameLens, type InboxLens } from './lens';
 import { canSendReply } from './reply';
@@ -266,7 +266,8 @@ const EMPTY: Omit<
   guardError: null,
 };
 
-let client: LiveClient | null = null;
+/** Ends this store's subscription to the workspace frame's live connection (SAD §4). */
+let unsubscribe: (() => void) | null = null;
 /** Conversations with a `sendReply` in flight: a second Enter is ignored. */
 const sending = new Set<string>();
 /** Conversations with a state change in flight: one at a time. */
@@ -382,8 +383,8 @@ function newestAfter(
 
 export const useInboxStore = create<InboxState>()((set, get) => {
   const closeSocket = () => {
-    client?.close();
-    client = null;
+    unsubscribe?.();
+    unsubscribe = null;
   };
   const reset = () => {
     epoch++;
@@ -808,6 +809,8 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       case 'resync':
         void rereadAll(workspaceId);
         return;
+      case 'telegram_link.changed':
+        return; // the settings screen listens for it; the inbox has nothing to refresh
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
         const open = get().thread?.conversationId === conversationId;
@@ -1196,9 +1199,12 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       if (get().workspaceId === workspaceId) return;
       reset();
       set({ workspaceId, lens });
-      client = openLiveSocket(workspaceId, {
+      unsubscribe = subscribeLive(workspaceId, {
         onFrame: (frame) => onFrame(workspaceId, frame),
-        onReconnected: () => void rereadAll(workspaceId),
+        onReconnected: () => {
+          if (get().workspaceId === workspaceId) set({ live: 'live' });
+          void rereadAll(workspaceId);
+        },
         onInvalidFrame: () => {
           if (get().workspaceId === workspaceId) coalesce('resync', () => rereadAll(workspaceId));
         },
@@ -1206,7 +1212,7 @@ export const useInboxStore = create<InboxState>()((set, get) => {
           if (get().workspaceId === workspaceId) set({ live: 'stopped' });
         },
       });
-      set({ live: 'live' });
+      set({ live: liveStatus(workspaceId) === 'stopped' ? 'stopped' : 'live' });
       await Promise.all([loadList(workspaceId, { background: false }), loadBot(workspaceId)]);
     },
     leave: reset,

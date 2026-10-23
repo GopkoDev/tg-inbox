@@ -19,11 +19,12 @@ vi.mock('./api-source', () => ({
   sendReply: (...a: unknown[]) => api.sendReply(...a),
 }));
 const sockets: { handlers: { onFrame: (f: unknown) => void } }[] = [];
-vi.mock('@/shared/api/realtime', () => ({
-  openLiveSocket: (_ws: string, handlers: { onFrame: (f: unknown) => void }) => {
+vi.mock('@/shared/api/live-connection', () => ({
+  liveStatus: () => 'idle',
+  subscribeLive: (_ws: string, handlers: { onFrame: (f: unknown) => void }) => {
     const s = { handlers, close: vi.fn() };
     sockets.push(s);
-    return s;
+    return s.close;
   },
 }));
 

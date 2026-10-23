@@ -58,7 +58,7 @@ describe('bot state transitions publish bot.changed once, on commit (AC-13, AC-1
       settings: createBotSettings({ bots, conversations, contacts: fakeContactsApi() }),
       webhookBaseUrl: BASE,
     };
-    paste = createPasteToken({ ...common, conversations });
+    paste = createPasteToken({ ...common, conversations, onBotConnected: async () => {} });
     reconnect = createReconnect(common);
     disconnect = createDisconnect({ ...common, conversations });
     health = createHealthCheck(common);

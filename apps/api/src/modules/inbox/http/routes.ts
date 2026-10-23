@@ -3,6 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   ActiveMemberList,
+  AttentionCount,
   AssignRequest,
   AssigneeLens,
   ConversationPage,
@@ -36,6 +37,8 @@ export interface InboxDeps {
   media: OpenMessageMedia;
   changes: ChangeState;
   live: LiveHub;
+  /** The caller's attention count: a `conversations` read (openapi.yaml, getAttentionCount). */
+  attention: (workspaceId: string, accountId: string, activeSince: Date) => Promise<number>;
   /** The panel's own origin (`PUBLIC_WEB_URL`); the only `Origin` a live socket may be opened from. */
   webOrigin: string;
   /** The workspaces guard dependency (membership check on every request). */
@@ -81,7 +84,7 @@ function logChange(
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, replies, media, changes, live, webOrigin, access, authenticate } = deps;
+  const { reads, replies, media, changes, live, attention, webOrigin, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -110,9 +113,25 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       live.attach(socket, owner);
       socket.on('close', () => live.detach(socket));
       socket.on('error', () => live.detach(socket));
-      // The channel is server → client only: inbound frames are ignored.
-      socket.on('message', () => undefined);
+      // The server pings every 25 s; each pong extends this tab's presence lease (ADR-0002).
+      socket.on('pong', () => live.pong(socket));
+      // The one client frame is `presence`; the hub ignores anything else without closing.
+      socket.on('message', (data: unknown) => live.message(socket, data));
     },
+  );
+
+  // A malformed workspace id is the guard's 404, so the params are not validated here.
+  r.get(
+    `${base}/attention`,
+    { preHandler: pre, schema: { response: { 200: AttentionCount } } },
+    async (request) => ({
+      workspace_id: request.workspace.workspaceId,
+      count: await attention(
+        request.workspace.workspaceId,
+        request.account.id,
+        request.workspace.activeSince,
+      ),
+    }),
   );
 
   r.get(

@@ -18,6 +18,7 @@ import type {
 } from './ports.js';
 import type { ReplyState } from '../domain/state.js';
 import { raise, unreadFloor } from '../domain/read-state.js';
+import type { WaitingPeriod } from '../domain/waiting.js';
 
 export interface FakeConversation {
   id: string;
@@ -32,6 +33,8 @@ export interface FakeConversation {
   assigneeAccountId: string | null;
   stateVersion: number;
   customerMessageSeq: number;
+  /** The running waiting period; absent or null when the conversation is not waiting. */
+  waiting?: WaitingPeriod | null;
 }
 
 /** In-memory ConversationRepo for unit tests. */
@@ -87,7 +90,14 @@ export function fakeConversationRepo(): ConversationRepo & {
         status: row.status,
         assigneeAccountId: row.assigneeAccountId,
         stateVersion: row.stateVersion,
+        waitingSince: row.waiting?.since ?? null,
       };
+    },
+    async writeWaiting(workspaceId, conversationId, period) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row || row.status !== 'open' || row.waiting) return false;
+      row.waiting = period;
+      return true;
     },
     async findByChat(workspaceId, telegramChatId) {
       return find(workspaceId, telegramChatId)?.id ?? null;
@@ -120,6 +130,7 @@ export function fakeConversationRepo(): ConversationRepo & {
       if (!row) return null;
       if (change.status !== undefined) row.status = change.status;
       if (change.assigneeAccountId !== undefined) row.assigneeAccountId = change.assigneeAccountId;
+      if (change.waiting !== undefined) row.waiting = change.waiting;
       row.stateVersion += 1;
       return row.stateVersion;
     },

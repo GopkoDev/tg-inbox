@@ -94,6 +94,9 @@ function RowActions({
   );
 }
 
+/** The Team mark: plain text, read when Team opens and replaced by each deactivate / reactivate answer. */
+const pingsMark = (m: { telegram_pings: boolean }) => (m.telegram_pings ? 'On' : 'Off');
+
 /** SCR-07 body. `onInvite` is the slot T25 fills with the invite dialog. */
 export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?: () => void }) {
   const team = useTeam(workspaceId);
@@ -221,6 +224,7 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                       <TableHead>Name</TableHead>
                       <TableHead>Role</TableHead>
                       <TableHead>State</TableHead>
+                      <TableHead className="hidden md:table-cell">Telegram pings</TableHead>
                       <TableHead className="w-12" />
                     </TableRow>
                   </TableHeader>
@@ -240,6 +244,9 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                                 )}
                               </div>
                               <div className="truncate text-muted-foreground">{m.email}</div>
+                              <div className="text-muted-foreground md:hidden">
+                                {`Telegram pings: ${pingsMark(m)}`}
+                              </div>
                             </div>
                           </div>
                         </TableCell>
@@ -250,6 +257,9 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                           <Badge variant={m.state === 'active' ? 'default' : 'outline'}>
                             {m.state === 'active' ? 'Active' : 'Deactivated'}
                           </Badge>
+                        </TableCell>
+                        <TableCell className="hidden text-muted-foreground md:table-cell">
+                          {pingsMark(m)}
                         </TableCell>
                         <TableCell className="text-right">
                           {m.state === 'active' ? (
@@ -357,7 +367,11 @@ export function Team({ workspaceId, onInvite }: { workspaceId: string; onInvite?
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {confirm.kind === 'deactivate'
-                    ? `Deactivate ${confirm.member.display_name}? ${confirm.member.display_name} loses access to ${workspaceName} at once. Conversations assigned to ${confirm.member.display_name} here become unassigned, and reactivating does not give them back. You can reactivate them later.`
+                    ? `Deactivate ${confirm.member.display_name}? ${confirm.member.display_name} loses access to ${workspaceName} at once. Conversations assigned to ${confirm.member.display_name} here become unassigned, and reactivating does not give them back. ${
+                        confirm.member.telegram_pings
+                          ? `${confirm.member.display_name}'s Telegram pings stop, and reactivating does not turn them back on. `
+                          : ''
+                      }You can reactivate them later.`
                     : `Revoke the invitation for ${confirm.invite.email}? Its link stops working.`}
                 </AlertDialogDescription>
               </AlertDialogHeader>

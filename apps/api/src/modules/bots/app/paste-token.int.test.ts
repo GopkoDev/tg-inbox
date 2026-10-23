@@ -42,6 +42,7 @@ describe('pasteToken (Postgres + fake Bot API)', () => {
         conversations: fakeConversationsApi(),
         contacts: fakeContactsApi(),
       }),
+      onBotConnected: async () => {},
       webhookBaseUrl: 'https://inbox.example.test',
     });
   });

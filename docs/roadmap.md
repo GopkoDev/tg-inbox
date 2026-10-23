@@ -24,7 +24,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 3 | Bot connection & inbound capture — a business pastes its bot token; every incoming message becomes a conversation and auto-creates a contact from the Telegram profile | idea-brief.md §7 Recommendation | M | shipped → [`features/bot-connection`](features/bot-connection/spec.md) |
 | 4 | Shared web inbox — operators see conversations and reply; the customer receives the reply in the bot | idea-brief.md §2 Problem | M | shipped → [`features/shared-inbox`](features/shared-inbox/spec.md) |
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | M | shipped → [`features/assignment-statuses`](features/assignment-statuses/spec.md) |
-| 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | S | idea |
+| 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | M | shipped → [`features/operator-notifications`](features/operator-notifications/spec.md) |
 | 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | S | idea |
 | 8 | Broadcasts by tag — send a message to a tagged segment, throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation | M | idea |
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
@@ -51,7 +51,6 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 
 | # | Question | Type | Owner | Blocks |
 |---|---|:---:|:---:|:---:|
-| D1 | What exactly counts as an operator being "inactive on the web" before the bot pings them? | grilling | human | 6 |
 | D2 | Where do the first 5–10 pilot businesses come from, and do they have 3+ operators? | grilling | human | — |
 | D3 | Is the positioning "Telegram CRM" or "support tool" through v1? | grilling | human | — |
 | D4 | When does pricing start, and what does a pilot get for using an unpaid v1? | grilling | human | — |
@@ -64,6 +63,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 - AI comes as reply drafts for operators, not autonomous answers → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
 - MCP means a platform server for the owner's external AI assistant → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
 - Broadcasts must throttle to ~30 msgs/s per bot; blocked users surface via the my_chat_member update → [Telegram Bot FAQ](https://core.telegram.org/bots/faq)
+- An operator is "inactive on the web" (away from the web) for a workspace when none of their tabs, on any device, has that workspace's panel open with a working live connection and on screen within the last 10 minutes; the bot pings only members who linked their own Telegram from the panel, after a customer has waited 5 minutes (assignee first; unassigned, an assignee who cannot be pinged, or a 30-minute wait → the team), at most once per conversation per waiting period, with no customer text (closes D1) → [`features/operator-notifications/spec.md` §1](features/operator-notifications/spec.md)
 - Channel posting needs the bot as admin with can_post_messages; scheduling is ours to build (no native scheduling) → [Telegram Bot API](https://core.telegram.org/bots/api#chatadministratorrights)
 
 ## Dependency graph
@@ -104,3 +104,4 @@ flowchart LR
 | 12 · UI redesign | 2026-10-18 | [changelog](features/ui-redesign/_ship/changelog.md) · [PR #3](https://github.com/GopkoDev/tg-inbox/pull/3) |
 | 4 · Shared web inbox | 2026-10-18 | [changelog](features/shared-inbox/_ship/changelog.md) · [PR #4](https://github.com/GopkoDev/tg-inbox/pull/4) |
 | 5 · Assignment & statuses | 2026-10-19 | [changelog](features/assignment-statuses/_ship/changelog.md) · PR pending |
+| 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · PR pending |

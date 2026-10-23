@@ -17,6 +17,9 @@ import {
   DuplicateRiskConfirmationRequiredError,
   MediaUnavailableError,
   ReplyLimitReachedError,
+  ConnectLinkLimitReachedError,
+  TelegramAlreadyLinkedError,
+  PingsNeedWorkingBotError,
   ReplyNotResendableError,
   TeammateRepliedError,
   NoBotConnectedError,
@@ -121,6 +124,24 @@ const cases: [string, () => AppError, number, string][] = [
     429,
     'CHANGE_LIMIT_REACHED',
   ],
+  [
+    'connect link limit',
+    () => new ConnectLinkLimitReachedError(new Date('2026-10-19T09:26:30.000Z'), 270),
+    429,
+    'CONNECT_LINK_LIMIT_REACHED',
+  ],
+  [
+    'telegram already linked',
+    () => new TelegramAlreadyLinkedError({ workspace_id: 'w' }),
+    409,
+    'TELEGRAM_ALREADY_LINKED',
+  ],
+  [
+    'pings need working bot',
+    () => new PingsNeedWorkingBotError({ workspace_id: 'w' }),
+    409,
+    'PINGS_NEED_WORKING_BOT',
+  ],
 ];
 
 async function envelopeOf(make: () => AppError) {
@@ -132,6 +153,34 @@ async function envelopeOf(make: () => AppError) {
   const res = await app.inject('/e');
   return res.json() as { error: { code: string; message: string; details?: unknown } };
 }
+
+describe('notifications errors', () => {
+  it('the connect link limit carries Retry-After and the 5 / 600 / retry_at details (AC-13)', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/e', () => {
+      throw new ConnectLinkLimitReachedError(new Date('2026-10-19T09:26:30.000Z'), 270);
+    });
+    const res = await app.inject('/e');
+    expect(res.headers['retry-after']).toBe('270');
+    expect(res.json().error.details).toEqual({
+      limit: 5,
+      window_seconds: 600,
+      retry_at: '2026-10-19T09:26:30.000Z',
+    });
+    expect(res.json().error.message).toContain('5 per 10 minutes');
+  });
+
+  it('the two 409 refusals carry details.settings (AC-06)', async () => {
+    const settings = { workspace_id: 'w' };
+    for (const make of [
+      () => new TelegramAlreadyLinkedError(settings),
+      () => new PingsNeedWorkingBotError(settings),
+    ]) {
+      expect((await envelopeOf(make)).error.details).toEqual({ settings });
+    }
+  });
+});
 
 describe('error handler', () => {
   it.each(cases)('maps %s', async (_name, make, status, code) => {

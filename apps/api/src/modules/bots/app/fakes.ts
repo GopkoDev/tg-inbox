@@ -9,6 +9,8 @@ import type {
   FileFetch,
   ConversationsApi,
   GetMeResult,
+  InboundInterceptor,
+  InterceptInput,
   NewBot,
   SendOutcome,
   TelegramGateway,
@@ -17,7 +19,9 @@ import type {
 } from './ports.js';
 
 /** A stored bot row of the fake repository, with the plain token and secret it would encrypt / hash. */
-export interface FakeBotRow extends BotRecord {
+export interface FakeBotRow extends Omit<BotRecord, 'sendPausedUntil'> {
+  /** Absent = not paused. */
+  sendPausedUntil?: Date | null;
   token: string | null;
   webhookSecret: string | null;
   /** The stored token cannot be decrypted (the encryption key was lost or changed). */
@@ -40,7 +44,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
     delete copy.token;
     delete copy.webhookSecret;
     delete copy.undecryptable;
-    return copy as BotRecord;
+    return { ...copy, sendPausedUntil: r.sendPausedUntil ?? null } as BotRecord;
   };
 
   return {
@@ -108,6 +112,14 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       rows.splice(i, 1);
       return true;
     },
+    async pauseSends(workspaceId, botId, until) {
+      const row = find(workspaceId, botId);
+      if (!row) return false;
+      if (!row.sendPausedUntil || row.sendPausedUntil.getTime() < until.getTime()) {
+        row.sendPausedUntil = until;
+      }
+      return true;
+    },
     async findForCheck(workspaceId, botId) {
       const row = find(workspaceId, botId);
       if (!row || row.state === 'disconnected' || row.token === null) return null;
@@ -139,6 +151,7 @@ export interface GatewayCall {
   ourUrl?: string;
   chatId?: bigint;
   text?: string;
+  options?: { disableLinkPreview?: boolean } | undefined;
   fileReference?: string;
   range?: string | undefined;
 }
@@ -170,8 +183,21 @@ export function fakeGateway(): TelegramGateway & {
       fake.calls.push({ method: 'openFile', token, timeoutMs: 0, fileReference, range });
       return fake.fileResult;
     },
-    async sendText(token: string, chatId: bigint, text: string, timeoutMs: number) {
-      fake.calls.push({ method: 'sendText', token, timeoutMs, chatId, text });
+    async sendText(
+      token: string,
+      chatId: bigint,
+      text: string,
+      timeoutMs: number,
+      options?: { disableLinkPreview?: boolean },
+    ) {
+      fake.calls.push({
+        method: 'sendText',
+        token,
+        timeoutMs,
+        chatId,
+        text,
+        ...(options ? { options } : {}),
+      });
       return fake.sendResult;
     },
     async getMe(token: string, timeoutMs: number) {
@@ -270,4 +296,23 @@ export function fakeConversationsApi(): ConversationsApi & {
 export function fakeContactsApi(): ContactsApi & { counts: Map<string, number> } {
   const counts = new Map<string, number>();
   return { counts, countContacts: async (w) => counts.get(w) ?? 0 };
+}
+
+/** Records what the interceptor was asked; answers `pass` unless told otherwise. */
+export function fakeInterceptor(): InboundInterceptor & {
+  calls: InterceptInput[];
+  answer: 'pass' | 'consumed';
+  fail: boolean;
+} {
+  const fake = {
+    calls: [] as InterceptInput[],
+    answer: 'pass' as 'pass' | 'consumed',
+    fail: false,
+    async intercept(input: InterceptInput) {
+      fake.calls.push(input);
+      if (fake.fail) throw new Error('interceptor down');
+      return fake.answer;
+    },
+  };
+  return fake;
 }

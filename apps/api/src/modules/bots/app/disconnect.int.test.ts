@@ -73,6 +73,7 @@ describe('reconnect and disconnect (Postgres + fake Bot API)', () => {
         conversations,
         transaction,
         signals: common.signals,
+        onBotConnected: async () => {},
       }),
       reconnect: createReconnect(common),
       disconnect: createDisconnect({ ...common, conversations }),

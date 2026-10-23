@@ -19,6 +19,11 @@ export default tseslint.config(
     rules: reactHooks.configs.recommended.rules,
   },
   {
+    // The notifications service worker is a plain script served from the web app's root.
+    files: ['apps/web/public/**/*.js'],
+    languageOptions: { sourceType: 'script', globals: globals.serviceworker },
+  },
+  {
     // Playwright flows run in Node (global setup, seeding) next to the browser specs.
     files: ['apps/web/e2e/**/*.ts', 'apps/web/playwright.config.ts'],
     languageOptions: { globals: globals.node },

@@ -1,4 +1,4 @@
-import type { ExpressionBuilder, Selectable } from 'kysely';
+import { sql, type ExpressionBuilder, type Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import type { Bots, DB } from '../../../platform/db.types.gen.js';
 import type { BotState } from '../domain/connection.js';
@@ -20,6 +20,7 @@ const PUBLIC_COLUMNS = [
   'connected_at',
   'last_checked_at',
   'created_at',
+  'send_paused_until',
 ] as const;
 
 type PublicRow = Pick<Selectable<Bots>, (typeof PUBLIC_COLUMNS)[number]>;
@@ -35,6 +36,7 @@ function toRecord(row: PublicRow): BotRecord {
     connectedAt: row.connected_at,
     lastCheckedAt: row.last_checked_at,
     createdAt: row.created_at,
+    sendPausedUntil: row.send_paused_until,
   };
 }
 
@@ -177,6 +179,16 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         .$if(ifWritten !== undefined, (qb) => qb.where(liveAsWritten(ifWritten!)))
         .executeTakeFirst();
       return result.numDeletedRows > 0n;
+    },
+
+    async pauseSends(workspaceId, botId, until, tx) {
+      const result = await (tx ?? db)
+        .updateTable('bots')
+        .set({ send_paused_until: sql`GREATEST(send_paused_until, ${until}::timestamptz)` })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', botId)
+        .executeTakeFirst();
+      return result.numUpdatedRows > 0n;
     },
 
     async findForCheck(workspaceId, botId, tx) {

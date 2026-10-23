@@ -239,12 +239,12 @@ export function createTelegramGateway({
       return { outcome: 'gone' };
     },
 
-    async sendText(token, chatId, text, timeoutMs) {
+    async sendText(token, chatId, text, timeoutMs, options) {
       try {
         const sent = await api(token).sendMessage(
           Number(chatId),
           text,
-          undefined,
+          options?.disableLinkPreview ? { link_preview_options: { is_disabled: true } } : undefined,
           timeout(timeoutMs),
         );
         return {

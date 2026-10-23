@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS conversations_workspace_id_waiting_since_idx;

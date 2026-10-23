@@ -130,6 +130,12 @@ export interface MembershipDeactivation {
   at: Date;
 }
 
+/**
+ * The accounts of a workspace with a live Telegram link, as account ids only (filled in `buildDeps()`
+ * from `notifications`; `workspaces` imports nothing from it).
+ */
+export type LinkedAccounts = (workspaceId: string) => Promise<ReadonlySet<string>>;
+
 /** Called once per effective deactivation, after the membership `UPDATE`; a throw rolls it back. */
 export type OnMembershipDeactivated = (
   tx: Transaction<DB>,

@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS telegram_links_workspace_id_account_id_idx;
+DROP INDEX IF EXISTS telegram_links_live_workspace_id_telegram_user_id_key;
+DROP INDEX IF EXISTS telegram_links_live_workspace_id_account_id_key;
+DROP TABLE IF EXISTS telegram_links;

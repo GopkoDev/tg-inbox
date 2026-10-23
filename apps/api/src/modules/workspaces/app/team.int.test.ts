@@ -48,6 +48,7 @@ describe('team use cases (Postgres)', () => {
         expect(row.state).toBe('deactivated');
         if (port.fail) throw new Error('port failed');
       },
+      linkedAccounts: async () => new Set<string>(),
       publicWebUrl: 'http://web.test',
       accounts: {
         findAccountIdByEmail: async (email) =>
@@ -215,6 +216,7 @@ describe('team use cases (Postgres)', () => {
         uow: new KyselyUnitOfWork(db),
         clock: systemClock,
         publish,
+        linkedAccounts: async () => new Set<string>(),
         publicWebUrl: 'http://web.test',
         accounts: {
           findAccountIdByEmail: async () => undefined,

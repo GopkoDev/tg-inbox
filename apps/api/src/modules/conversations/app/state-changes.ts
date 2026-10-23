@@ -8,6 +8,7 @@ import {
   type ActivityCause,
   type ActivityKind,
 } from '../domain/activity.js';
+import { endOnClose, restartOnReopen, type WaitingPeriod } from '../domain/waiting.js';
 import {
   decideChange,
   type ChangeRequest,
@@ -40,6 +41,11 @@ export interface RecordChangeInput {
   newAssignee: string | null;
   /** The clock read after the conversation row lock was taken. */
   now: Date;
+  /**
+   * The waiting period a reopen leaves: `null` when the customer is not waiting. Absent for an
+   * assignment (never touches the period); a close always ends it.
+   */
+  waiting?: WaitingPeriod | null;
 }
 
 export interface RecordedChange {
@@ -66,7 +72,14 @@ export async function recordChange(
     conversationId,
     assignment
       ? { assigneeAccountId: input.newAssignee }
-      : { status: kind === 'closed' ? 'closed' : 'open' },
+      : {
+          status: kind === 'closed' ? 'closed' : 'open',
+          ...(kind === 'closed'
+            ? { waiting: endOnClose() }
+            : input.waiting !== undefined
+              ? { waiting: input.waiting }
+              : {}),
+        },
     tx,
   );
   if (stateVersion === null) throw new Error('conversation vanished under its row lock');
@@ -227,6 +240,9 @@ export function createStateChanges(deps: StateChangeDeps & { clock: Clock }): St
           previousAssignee: decision.previousAssignee,
           newAssignee: decision.newAssignee,
           now,
+          ...(decision.kind === 'reopened'
+            ? { waiting: restartOnReopen(state.waitingForReply, now) }
+            : {}),
         });
         return {
           outcome: 'recorded',

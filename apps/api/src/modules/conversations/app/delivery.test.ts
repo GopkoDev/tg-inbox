@@ -154,6 +154,44 @@ describe('a failed reply reopens a closed conversation (AC-08)', () => {
     },
   );
 
+  it.each(['not_delivered', 'not_confirmed'] as const)(
+    'finishAttempt %s over an unanswered customer message restarts the period as reopen',
+    async (replyState) => {
+      const s = await setup({ status: 'closed', assignee: 'mate' });
+      const started = await s.delivery.startAttempt({
+        workspaceId: W,
+        conversationId: C,
+        replyId: s.replyId,
+      });
+      await s.delivery.finishAttempt(failed(started!.attemptId, replyState));
+      expect(s.row.waiting).toEqual({ since: at(100), startedBy: 'reopen' });
+    },
+  );
+
+  it('a failed reply in an already open conversation leaves its period alone', async () => {
+    const s = await setup({ status: 'open' });
+    s.row.waiting = { since: at(7), startedBy: 'message' };
+    const started = await s.delivery.startAttempt({
+      workspaceId: W,
+      conversationId: C,
+      replyId: s.replyId,
+    });
+    await s.delivery.finishAttempt(failed(started!.attemptId, 'not_delivered'));
+    expect(s.row.waiting).toEqual({ since: at(7), startedBy: 'message' });
+  });
+
+  it('a failed reply that closed-and-answered conversation reopens with no period', async () => {
+    const s = await setup({ status: 'closed', assignee: 'mate' });
+    s.row.lastReplySentAt = at(50);
+    const started = await s.delivery.startAttempt({
+      workspaceId: W,
+      conversationId: C,
+      replyId: s.replyId,
+    });
+    await s.delivery.finishAttempt(failed(started!.attemptId, 'not_delivered'));
+    expect(s.row).toMatchObject({ status: 'open', waiting: null });
+  });
+
   it('skipReply reopens', async () => {
     const s = await setup({ status: 'closed', assignee: 'mate' });
     expect(

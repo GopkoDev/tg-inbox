@@ -12,7 +12,8 @@ import {
   telegramEdit,
   telegramUpdate,
 } from '../../../test/fixtures/telegram.js';
-import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
+import { insertConnectLink, insertTelegramLink } from '../../../test/fixtures/notifications.js';
+import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../../../test/postgres.js';
 
 const T = new Date('2026-10-11T10:00:00Z');
@@ -366,5 +367,300 @@ describe('POST /api/telegram/webhook/:botId (postgres)', () => {
     expect(all).not.toContain('forged-secret-value');
     expect(all).not.toContain(SECRET_TEXT);
     expect(all).not.toContain(b.token);
+  });
+
+  describe('inbound interceptor: connect-link starts and linked members (AC-04, AC-05, AC-06, AC-11)', () => {
+    const LINKED_USER = 880001;
+    const botMessageJobs = async () =>
+      (
+        await sql<{ data: Record<string, unknown> }>`
+          select data from pgboss.job where name = 'notifications.send-bot-message' order by created_on
+        `.execute(db)
+      ).rows.map((r) => r.data);
+    const noCustomerRows = async (workspaceId: string) =>
+      expect(await counts(workspaceId)).toEqual({ contacts: 0, conversations: 0, messages: 0 });
+
+    /** A connected bot with an active member who may have a link (made with this bot). */
+    const withMember = async (o: { linked?: boolean } = {}) => {
+      const b = await connectedBot();
+      const m = await insertMembership(db, b.workspaceId);
+      const link = o.linked
+        ? await insertTelegramLink(db, {
+            workspaceId: b.workspaceId,
+            accountId: m.accountId,
+            telegramBotId: b.bot.telegramBotId,
+            telegramUserId: BigInt(LINKED_USER),
+          })
+        : null;
+      return { ...b, member: m, link };
+    };
+    const liveLinks = (workspaceId: string) =>
+      db
+        .selectFrom('telegram_links')
+        .select(['account_id', 'telegram_user_id', 'display_name'])
+        .where('workspace_id', '=', workspaceId)
+        .where('removed_at', 'is', null)
+        .execute();
+    const start = (text: string, fromId: number, n = 1) =>
+      telegramUpdate({ updateId: n, messageId: n, date: T_S + 10 + n, fromId, text });
+
+    it('a connect-link start links the member, answers once and is never captured', async () => {
+      const b = await withMember();
+      const issued = await insertConnectLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: b.member.accountId,
+        createdAt: new Date(T.getTime() + 3_600_000 - 60_000),
+      });
+      const before = (await botMessageJobs()).length;
+      const res = await deliver(b, start(`/start ${issued.startPayload}`, LINKED_USER));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe('');
+      expect(await liveLinks(b.workspaceId)).toEqual([
+        {
+          account_id: b.member.accountId,
+          telegram_user_id: String(LINKED_USER),
+          display_name: 'Test User',
+        },
+      ]);
+      await noCustomerRows(b.workspaceId);
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({ workspace_id: b.workspaceId, kind: 'connected' });
+      // The token (and so its hash) never reaches the logs.
+      expect(lines.join('\n')).not.toContain(issued.token);
+    });
+
+    it('an unknown, used or expired connect link is answered link_expired and never captured', async () => {
+      const b = await withMember();
+      const used = await insertConnectLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: b.member.accountId,
+        createdAt: new Date(T.getTime() + 3_600_000 - 60_000),
+        usedAt: new Date(T.getTime() + 3_600_000 - 30_000),
+      });
+      const old = await insertConnectLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: b.member.accountId,
+        createdAt: new Date(T.getTime() - 3_600_000),
+      });
+      const before = (await botMessageJobs()).length;
+      for (const [n, payload] of [
+        `tgi_${'z'.repeat(43)}`,
+        used.startPayload,
+        old.startPayload,
+      ].entries()) {
+        expect((await deliver(b, start(`/start ${payload}`, 880100 + n, n + 1))).statusCode).toBe(
+          200,
+        );
+      }
+      expect(await liveLinks(b.workspaceId)).toEqual([]);
+      await noCustomerRows(b.workspaceId);
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => j.kind)).toEqual(['link_expired', 'link_expired', 'link_expired']);
+      expect(jobs.map((j) => j.telegram_user_id)).toEqual(['880100', '880101', '880102']);
+    });
+
+    it('a flood of fake starts from one Telegram user queues one refusal answer a minute (B2, AC-05)', async () => {
+      const b = await withMember();
+      // The throttle is a one-minute slot: start the flood well inside one.
+      for (;;) {
+        const { rows } = await sql<{
+          s: number;
+        }>`select extract(second from now())::int as s`.execute(db);
+        if (rows[0]!.s < 45) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      const before = (await botMessageJobs()).length;
+      for (let n = 1; n <= 12; n += 1) {
+        const fake = `tgi_${String(n).padStart(2, '0')}${'q'.repeat(41)}`;
+        expect((await deliver(b, start(`/start ${fake}`, 880200, 100 + n))).statusCode).toBe(200);
+      }
+      // Another user's refusal is not held back by the first one's.
+      expect(
+        (await deliver(b, start(`/start tgi_${'w'.repeat(43)}`, 880201, 200))).statusCode,
+      ).toBe(200);
+      await noCustomerRows(b.workspaceId);
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => [j.kind, j.telegram_user_id])).toEqual([
+        ['link_expired', '880200'],
+        ['link_expired', '880201'],
+      ]);
+    });
+
+    it('one Telegram user gets each refusal reason once a minute: a different explanation is not dropped (R2, AC-06)', async () => {
+      // U (linked to teammate A) starts two links of B (no link: telegram_linked_to_teammate twice) and one
+      // of C (linked from another account: member_linked_elsewhere). The throttle slot is one minute.
+      for (;;) {
+        const { rows } = await sql<{
+          s: number;
+        }>`select extract(second from now())::int as s`.execute(db);
+        if (rows[0]!.s < 45) break;
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      const b = await withMember({ linked: true });
+      const teammate = await insertMembership(db, b.workspaceId);
+      const elsewhere = await insertMembership(db, b.workspaceId);
+      await insertTelegramLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: elsewhere.accountId,
+        telegramBotId: b.bot.telegramBotId,
+        telegramUserId: 880301n,
+      });
+      const fresh = new Date(T.getTime() + 3_600_000 - 60_000);
+      const links = [
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: teammate.accountId,
+          createdAt: fresh,
+        }),
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: teammate.accountId,
+          createdAt: fresh,
+        }),
+        await insertConnectLink(db, {
+          workspaceId: b.workspaceId,
+          accountId: elsewhere.accountId,
+          createdAt: fresh,
+        }),
+      ];
+      const before = (await botMessageJobs()).length;
+      for (const [n, link] of links.entries()) {
+        expect(
+          (await deliver(b, start(`/start ${link.startPayload}`, LINKED_USER, 300 + n))).statusCode,
+        ).toBe(200);
+      }
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => [j.kind, j.telegram_user_id, j.reason])).toEqual([
+        ['cannot_connect', String(LINKED_USER), 'telegram_linked_to_teammate'],
+        ['cannot_connect', String(LINKED_USER), 'member_linked_elsewhere'],
+      ]);
+    });
+
+    it('anything from a linked sender is consumed: text, media, edit, campaign start - at most one notice an hour', async () => {
+      const b = await withMember({ linked: true });
+      const before = (await botMessageJobs()).length;
+      const sent = [
+        start('ok', LINKED_USER, 1),
+        telegramUpdate({
+          updateId: 2,
+          messageId: 2,
+          date: T_S + 20,
+          fromId: LINKED_USER,
+          kind: 'photo',
+          caption: 'x',
+        }),
+        telegramUpdate({
+          updateId: 3,
+          messageId: 3,
+          date: T_S + 21,
+          fromId: LINKED_USER,
+          kind: 'voice',
+        }),
+        telegramEdit({
+          updateId: 4,
+          messageId: 1,
+          date: T_S + 11,
+          editDate: T_S + 30,
+          fromId: LINKED_USER,
+          text: 'ok!',
+        }),
+        start('/start promo', LINKED_USER, 5),
+      ];
+      for (const update of sent) {
+        const res = await deliver(b, update);
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toBe('');
+      }
+      await noCustomerRows(b.workspaceId);
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]).toMatchObject({
+        workspace_id: b.workspaceId,
+        kind: 'chat_only_notifications',
+        telegram_link_id: b.link!.id,
+      });
+      const row = await db
+        .selectFrom('telegram_links')
+        .select('last_notice_at')
+        .where('id', '=', b.link!.id)
+        .executeTakeFirstOrThrow();
+      expect(row.last_notice_at).not.toBeNull();
+    });
+
+    it('a connect-link start by an already linked sender is redeemed, not just consumed', async () => {
+      const b = await withMember({ linked: true });
+      const issued = await insertConnectLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: b.member.accountId,
+        createdAt: new Date(T.getTime() + 3_600_000 - 60_000),
+      });
+      const before = (await botMessageJobs()).length;
+      await deliver(b, start(`/start ${issued.startPayload}`, LINKED_USER));
+      const jobs = (await botMessageJobs()).slice(before);
+      expect(jobs.map((j) => j.kind)).toEqual(['already_connected']);
+      await noCustomerRows(b.workspaceId);
+    });
+
+    it('unlinked senders and a campaign start without a link are captured as before', async () => {
+      const b = await withMember();
+      await deliver(b, start('/start promo', 880200, 1));
+      await deliver(b, start('hello', 880201, 2));
+      expect(await counts(b.workspaceId)).toEqual({ contacts: 2, conversations: 2, messages: 2 });
+      expect(await botMessageJobs()).toEqual(
+        (await botMessageJobs()).filter((j) => j.workspace_id !== b.workspaceId),
+      );
+    });
+
+    it('a disconnected member is captured as an end customer again; earlier messages stay', async () => {
+      const b = await withMember();
+      await deliver(b, start('before linking', LINKED_USER, 1));
+      const link = await insertTelegramLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: b.member.accountId,
+        telegramBotId: b.bot.telegramBotId,
+        telegramUserId: BigInt(LINKED_USER),
+      });
+      await deliver(b, start('while linked', LINKED_USER, 2));
+      expect((await messagesOf(b.workspaceId)).map((r) => r.body)).toEqual(['before linking']);
+      await db
+        .updateTable('telegram_links')
+        .set({ removed_at: T, removed_reason: 'member', display_name: null })
+        .where('id', '=', link.id)
+        .execute();
+      await deliver(b, start('after disconnect', LINKED_USER, 3));
+      expect((await messagesOf(b.workspaceId)).map((r) => r.body)).toEqual([
+        'before linking',
+        'after disconnect',
+      ]);
+    });
+
+    it('a link made with another bot does not consume messages to this bot', async () => {
+      const b = await connectedBot();
+      const m = await insertMembership(db, b.workspaceId);
+      await insertTelegramLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: m.accountId,
+        telegramBotId: b.bot.telegramBotId + 1n,
+        telegramUserId: BigInt(LINKED_USER),
+      });
+      await deliver(b, start('hi', LINKED_USER));
+      expect((await counts(b.workspaceId)).messages).toBe(1);
+    });
+
+    it('a failing lookup answers 500 and writes nothing; the redelivery works', async () => {
+      const b = await withMember({ linked: true });
+      await sql`alter table telegram_links rename to telegram_links_offline`.execute(db);
+      let failed;
+      try {
+        failed = await deliver(b, start('ok', LINKED_USER));
+      } finally {
+        await sql`alter table telegram_links_offline rename to telegram_links`.execute(db);
+      }
+      expect(failed.statusCode).toBe(500);
+      await noCustomerRows(b.workspaceId);
+      expect((await deliver(b, start('ok', LINKED_USER))).statusCode).toBe(200);
+      await noCustomerRows(b.workspaceId);
+    });
   });
 });

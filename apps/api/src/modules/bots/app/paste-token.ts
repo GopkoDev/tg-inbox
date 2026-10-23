@@ -12,6 +12,7 @@ import { decidePaste } from '../domain/connection.js';
 import { parseBotToken } from '../domain/token.js';
 import {
   OWNER_ACTION_TIMEOUT,
+  type BotConnectedHook,
   type BotRecord,
   type BotRepo,
   type BotSignals,
@@ -33,6 +34,8 @@ export interface PasteTokenDeps {
   transaction: Transaction;
   signals: BotSignals;
   settings: BotSettingsReader;
+  /** `notifications.onBotConnected`, run in the connect transaction. */
+  onBotConnected: BotConnectedHook;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
   newId?: () => string;
@@ -61,6 +64,7 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
     transaction,
     signals,
     settings,
+    onBotConnected,
     webhookBaseUrl,
   } = deps;
   const newId = deps.newId ?? defaultNewId;
@@ -173,6 +177,8 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
       if (target === 'foreign' && !confirmTakeover) {
         throw new TakeoverConfirmationRequiredError(identity);
       }
+      // The bot row write comes first, then the links of any other bot go (sad.md §8, flow 16).
+      await onBotConnected(tx, { workspaceId, telegramBotId });
       await signals.botChanged(tx, workspaceId);
     });
 

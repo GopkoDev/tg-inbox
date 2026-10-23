@@ -12,7 +12,7 @@ import { createBotSettings } from './settings.js';
 import { createDisconnect } from './disconnect.js';
 import { createPasteToken } from './paste-token.js';
 import { createReconnect } from './reconnect.js';
-import type { WebhookSecrets } from './ports.js';
+import type { BotConnectedHook, WebhookSecrets } from './ports.js';
 
 /** Test wiring of the bots owner use cases over in-memory fakes. */
 export const T0 = new Date('2026-10-11T10:00:00Z');
@@ -32,6 +32,7 @@ export function botRow(o: Partial<FakeBotRow> = {}): FakeBotRow {
     connectedAt: at(0),
     lastCheckedAt: at(0),
     createdAt: at(0),
+    sendPausedUntil: null,
     token: tokenOf(100001n, 'o'),
     webhookSecret: 'stored-secret',
     ...o,
@@ -51,6 +52,13 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
   };
   const signals = fakeBotSignals();
   const transaction = fakeBotTransaction(bots, signals);
+  /** Every call of the bot-connected hook (`notifications.onBotConnected`), and a failure to script. */
+  const botConnected: { workspaceId: string; telegramBotId: bigint }[] = [];
+  const hook = { fail: false };
+  const onBotConnected: BotConnectedHook = async (_tx, event) => {
+    botConnected.push(event);
+    if (hook.fail) throw new Error('hook failed');
+  };
   const settings = createBotSettings({ bots, conversations, contacts });
   const paste = createPasteToken({
     bots,
@@ -62,6 +70,7 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     signals,
     settings,
     webhookBaseUrl: BASE_URL,
+    onBotConnected,
   });
   const ownerDeps = {
     bots,
@@ -86,6 +95,8 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     signals,
     settings,
     paste,
+    botConnected,
+    hook,
     reconnect,
     disconnect,
   };

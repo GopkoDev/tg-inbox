@@ -5,6 +5,7 @@ import { createDb, type Db } from '../../../platform/db.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
 import {
   insertConversation,
+  insertMessage,
   insertReply,
   insertReplyAttempt,
 } from '../../../test/fixtures/conversations.js';
@@ -45,7 +46,9 @@ describe('reply delivery (Postgres)', () => {
       clock,
     });
 
-  async function setup(conversation: { received?: Date; closed?: boolean } = {}) {
+  async function setup(
+    conversation: { received?: Date; closed?: boolean; waitingSince?: Date } = {},
+  ) {
     const workspaceId = await insertWorkspace(db);
     const { accountId } = await insertMembership(db, workspaceId);
     const contactId = await insertContact(db, { workspaceId });
@@ -57,6 +60,9 @@ describe('reply delivery (Postgres)', () => {
       lastMessageReceivedAt: received,
       ...(conversation.closed
         ? { status: 'closed' as const, assigneeAccountId: accountId, stateVersion: 3 }
+        : {}),
+      ...(conversation.waitingSince
+        ? { waitingSince: conversation.waitingSince, waitingStartedBy: 'message' as const }
         : {}),
     });
     return { workspaceId, accountId, conversationId };
@@ -164,6 +170,181 @@ describe('reply delivery (Postgres)', () => {
       last_message_received_at: at(0),
     });
     expect(stateSignals(replyId)).toHaveLength(1);
+  });
+
+  it('sent: ends the waiting period; a customer message newer than the sent time keeps it (AC-08)', async () => {
+    const s = await setup({ received: at(0), waitingSince: at(0) });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 1n,
+      sentAt: at(500),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+
+    const newer = await setup({ received: at(900), waitingSince: at(900) });
+    const b = await pending(newer);
+    await delivery().startAttempt({ ...ids(newer), replyId: b.replyId });
+    await delivery().finishAttempt({
+      ...ids(newer),
+      attemptId: b.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 2n,
+      sentAt: at(500),
+    });
+    expect(await conversation(newer.conversationId)).toMatchObject({
+      waiting_since: at(900),
+      waiting_started_by: 'message',
+    });
+  });
+
+  it('sent: a customer message newer than the sent time starts a new period at the first such message (B7, AC-08)', async () => {
+    // Waiting since 0; the reply goes out at 500 while the customer writes again at 600 and 700.
+    const s = await setup({ received: at(700), waitingSince: at(0) });
+    for (const [n, t] of [0, 600, 700].entries()) {
+      await insertMessage(db, {
+        workspaceId: s.workspaceId,
+        conversationId: s.conversationId,
+        telegramMessageId: BigInt(n + 1),
+        receivedAt: at(t),
+      });
+    }
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(500),
+    });
+    // The wait the reply answered is over; the new one began with the message at 600.
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: at(600),
+      waiting_started_by: 'message',
+    });
+  });
+
+  it('sent: a reply settled after a close leaves the closed conversation without a period (R1)', async () => {
+    // The reply goes out at 500, the customer writes at 600, the conversation is closed before the settle.
+    const s = await setup({ received: at(600), closed: true });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(600),
+    });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    expect(
+      await delivery().finishAttempt({
+        ...ids(s),
+        attemptId: a.attemptId,
+        attemptOutcome: 'accepted',
+        replyState: 'sent',
+        telegramMessageId: 9n,
+        sentAt: at(500),
+      }),
+    ).toBe(true);
+    expect(await reply(a.replyId)).toMatchObject({ state: 'sent' });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      status: 'closed',
+      last_reply_sent_at: at(500),
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+  });
+
+  it('sent: a reopen-started period that began after the sent time is kept (R1)', async () => {
+    // The reply goes out at 500, the customer writes at 600, a reopen at 800 started the current period.
+    const s = await setup({ received: at(600) });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(600),
+    });
+    await db
+      .updateTable('conversations')
+      .set({ waiting_since: at(800), waiting_started_by: 'reopen' })
+      .where('id', '=', s.conversationId)
+      .execute();
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(500),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: at(800),
+      waiting_started_by: 'reopen',
+    });
+  });
+
+  it('sent: a reopen period after the sent time ends when no customer message came after the reply (RR1)', async () => {
+    // The customer writes at 300, the reply is accepted at 450 but settles later; a close and a reopen
+    // at 480 (the in-flight reply not counted) started a period the reply answers.
+    const s = await setup({ received: at(300) });
+    await insertMessage(db, {
+      workspaceId: s.workspaceId,
+      conversationId: s.conversationId,
+      telegramMessageId: 1n,
+      receivedAt: at(300),
+    });
+    await db
+      .updateTable('conversations')
+      .set({ waiting_since: at(480), waiting_started_by: 'reopen' })
+      .where('id', '=', s.conversationId)
+      .execute();
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 9n,
+      sentAt: at(450),
+    });
+    expect(await conversation(s.conversationId)).toMatchObject({
+      waiting_since: null,
+      waiting_started_by: null,
+    });
+  });
+
+  it('sent: another conversation of the workspace keeps its period', async () => {
+    const s = await setup({ received: at(0), waitingSince: at(0) });
+    const contactId = await insertContact(db, { workspaceId: s.workspaceId });
+    const other = await insertConversation(db, {
+      workspaceId: s.workspaceId,
+      contactId,
+      waitingSince: at(0),
+      waitingStartedBy: 'message',
+    });
+    const a = await pending(s);
+    await delivery().startAttempt({ ...ids(s), replyId: a.replyId });
+    await delivery().finishAttempt({
+      ...ids(s),
+      attemptId: a.attemptId,
+      attemptOutcome: 'accepted',
+      replyState: 'sent',
+      telegramMessageId: 1n,
+      sentAt: at(500),
+    });
+    expect(await conversation(other)).toMatchObject({ waiting_since: at(0) });
   });
 
   it('sent: activity stays at a later customer message; reply time never moves backwards', async () => {
@@ -597,6 +778,42 @@ describe('reply delivery (Postgres)', () => {
         expect(await delivery().finishAttempt(input)).toBe(false);
         await expectReopenedOnce(s, before);
       }
+    });
+
+    it('restarts the waiting period as reopen at the reopen time, only over a waiting customer', async () => {
+      const waitingOne = await setup({ closed: true });
+      const { replyId, attemptId } = await pending(waitingOne);
+      await delivery().startAttempt({ ...ids(waitingOne), replyId });
+      await delivery().finishAttempt({
+        ...ids(waitingOne),
+        attemptId,
+        attemptOutcome: 'refused',
+        replyState: 'not_delivered',
+        failureReason: 'telegram_not_accepted',
+      });
+      expect(await conversation(waitingOne.conversationId)).toMatchObject({
+        status: 'open',
+        waiting_since: at(1000),
+        waiting_started_by: 'reopen',
+      });
+
+      const answered = await setup({ closed: true });
+      await db
+        .updateTable('conversations')
+        .set({ last_reply_sent_at: at(5), last_activity_at: at(5) })
+        .where('id', '=', answered.conversationId)
+        .execute();
+      const p = await pending(answered);
+      await delivery().skipReply({
+        ...ids(answered),
+        replyId: p.replyId,
+        failureReason: 'bot_not_working',
+      });
+      expect(await conversation(answered.conversationId)).toMatchObject({
+        status: 'open',
+        waiting_since: null,
+        waiting_started_by: null,
+      });
     });
 
     it('skipReply, once', async () => {

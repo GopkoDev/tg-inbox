@@ -3,6 +3,7 @@ import type { Clock } from '../../../platform/clock.js';
 import type { Contacts } from '../../contacts/app/contacts.js';
 import type { ContactProfile } from '../../contacts/app/ports.js';
 import type { MessageKind } from '../domain/message.js';
+import { startOnMessage } from '../domain/waiting.js';
 import { recordChange } from './state-changes.js';
 import type {
   ActivityRepo,
@@ -123,7 +124,16 @@ export function createConversations(deps: ConversationsDeps): Conversations {
               previousAssignee: null,
               newAssignee: null,
               now,
+              waiting: startOnMessage(null, now),
             });
+          } else if (raised.waitingSince === null) {
+            // The first message of a period starts it at the arrival; while one runs it stays.
+            await conversations.writeWaiting(
+              workspaceId,
+              conversationId,
+              startOnMessage(null, now),
+              tx,
+            );
           }
         }
         return outcome;

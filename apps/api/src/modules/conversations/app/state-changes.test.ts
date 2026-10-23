@@ -387,6 +387,52 @@ describe('changeStatus', () => {
     expect(s.activities.rows[0]).toMatchObject({ kind: 'reopened', cause: 'member' });
   });
 
+  it('a close ends the waiting period; an assignee change leaves it (AC-08)', async () => {
+    const s = await setup();
+    s.row.lastReplySentAt = null;
+    s.row.waiting = { since: at(3), startedBy: 'message' };
+    expect((await s.assign()).outcome).toBe('recorded');
+    expect(s.row.waiting).toEqual({ since: at(3), startedBy: 'message' });
+    expect(
+      (
+        await s.changes.changeAssignee(s.tx, {
+          workspaceId: W,
+          actorAccountId: ME,
+          conversationId: s.conversationId,
+          assigneeAccountId: null,
+          expectedStateVersion: 1,
+        })
+      ).outcome,
+    ).toBe('recorded');
+    expect(s.row.waiting).toEqual({ since: at(3), startedBy: 'message' });
+    expect(
+      (
+        await s.close({
+          expectedStateVersion: 2,
+          confirm: true,
+          expectedCloseSnapshot: { customerMessageSeq: 0, latestReply: null },
+        })
+      ).outcome,
+    ).toBe('recorded');
+    expect(s.row).toMatchObject({ status: 'closed', waiting: null });
+  });
+
+  it('a member reopen over an unanswered customer message starts a reopen period (AC-07, AC-08)', async () => {
+    const s = await setup();
+    s.row.status = 'closed';
+    s.row.lastReplySentAt = at(2);
+    s.row.lastMessageReceivedAt = at(5);
+    await s.reopen();
+    expect(s.row.waiting).toEqual({ since: at(1000), startedBy: 'reopen' });
+  });
+
+  it('a member reopen of an answered conversation leaves it not waiting', async () => {
+    const s = await setup();
+    s.row.status = 'closed';
+    await s.reopen();
+    expect(s.row).toMatchObject({ status: 'open', waiting: null });
+  });
+
   it('reopening an open conversation is unchanged; with a stale version it is refused', async () => {
     const s = await setup();
     expect((await s.reopen()).outcome).toBe('unchanged');

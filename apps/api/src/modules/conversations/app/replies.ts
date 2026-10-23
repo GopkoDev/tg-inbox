@@ -2,6 +2,7 @@ import type { Clock } from '../../../platform/clock.js';
 import { newId } from '../../../platform/ids.js';
 import { canTransition } from '../domain/reply.js';
 import type { Transaction } from './conversations.js';
+import { restartOnReopen } from '../domain/waiting.js';
 import { recordChange } from './state-changes.js';
 import type {
   ActivityRepo,
@@ -327,6 +328,7 @@ export function createReplyDelivery(deps: ReplyDeliveryDeps): ReplyDelivery {
   async function reopenIfClosed(tx: Tx, workspaceId: string, conversationId: string) {
     const locked = await conversations.lockState(workspaceId, conversationId, tx);
     if (locked?.status !== 'closed') return;
+    const now = clock.now();
     await recordChange({ conversations, activities, signals }, tx, {
       workspaceId,
       conversationId,
@@ -335,7 +337,8 @@ export function createReplyDelivery(deps: ReplyDeliveryDeps): ReplyDelivery {
       actorAccountId: null,
       previousAssignee: null,
       newAssignee: null,
-      now: clock.now(),
+      now,
+      waiting: restartOnReopen(locked.waitingForReply, now),
     });
   }
 

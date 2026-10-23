@@ -25,6 +25,9 @@ export async function insertConversation(
     stateVersion?: number;
     /** Defaults to 0. */
     customerMessageSeq?: number;
+    /** The running waiting period (both or neither; open conversations only); default `null`. */
+    waitingSince?: Date | null;
+    waitingStartedBy?: 'message' | 'reopen' | null;
   },
 ): Promise<string> {
   const id = newId();
@@ -52,6 +55,8 @@ export async function insertConversation(
       assignee_account_id: o.assigneeAccountId ?? null,
       state_version: o.stateVersion ?? 0,
       customer_message_seq: o.customerMessageSeq ?? 0,
+      waiting_since: o.waitingSince ?? null,
+      waiting_started_by: o.waitingStartedBy ?? null,
     })
     .execute();
   return id;

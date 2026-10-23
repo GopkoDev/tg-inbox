@@ -6,20 +6,33 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useRef,
   useState,
 } from 'react';
-import { Link, NavLink, Outlet, useLocation, useMatches, useParams } from 'react-router';
+import {
+  Link,
+  NavLink,
+  Outlet,
+  useLocation,
+  useMatches,
+  useNavigate,
+  useParams,
+} from 'react-router';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
+import { useAttentionStore } from '@/features/attention/store';
 import { useAuthStore } from '@/features/auth/store';
+import { startNotifier } from '@/features/notifications/notifier';
 import { useSignOut } from '@/features/auth/useSignOut';
 import { useGuard, type GuardFn } from '@/features/workspaces/guard';
 import { WorkspaceSwitcher } from '@/features/workspaces/picker/WorkspaceSwitcher';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useWorkspaceFromUrl } from '@/features/workspaces/useWorkspaceFromUrl';
+import { openLiveConnection } from '@/shared/api/live-connection';
 import { initials } from '@/shared/lib/initials';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
   Breadcrumb,
@@ -47,6 +60,7 @@ import {
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
@@ -63,6 +77,9 @@ export interface CrumbHandle {
   /** A label that must follow live state (a store): a component rendering the label text. */
   Crumb?: ComponentType<{ params: Readonly<Record<string, string | undefined>> }>;
 }
+
+/** The tab title without a count (index.html); the attention count prefixes it as `(N) `. */
+const BASE_TITLE = 'tg-inbox';
 
 const ACTIVE = 'aria-[current=page]:bg-sidebar-accent aria-[current=page]:font-medium';
 
@@ -207,9 +224,56 @@ export function AppShell() {
     },
     [guard, markError, workspaceId],
   );
+  // The tab's one live connection for this workspace (SAD §4): opened once the workspace is
+  // entered, kept across the pages inside, closed on a switch or when the frame goes away. The
+  // pages (inbox, attention count, settings) subscribe to it.
+  const entered = entry.status === 'ready';
+  useEffect(() => {
+    if (!entered) return;
+    const connection = openLiveConnection(workspaceId);
+    return () => connection.close();
+  }, [entered, workspaceId]);
+  // The attention count of this workspace (SCR-15): read once entered, kept current from the
+  // live frames; a refusal goes to the same guard the screens use. Cleared on a switch / leave.
+  const guardRef = useRef(shellGuard);
+  useLayoutEffect(() => {
+    guardRef.current = shellGuard;
+  });
+  useEffect(() => {
+    if (!entered) return;
+    useAttentionStore.getState().start(workspaceId, (error, id) => guardRef.current(error, id));
+    return () => useAttentionStore.getState().stop();
+  }, [entered, workspaceId]);
+  // Desktop notifications (OS-02): this tab offers new customer messages to the worker, and opens
+  // a conversation in place when the worker asks after a click.
+  const accountId = useAuthStore((s) => s.account?.id);
+  const workspaceName = useWorkspaceStore((s) => s.current?.name);
+  const navigate = useNavigate();
+  // `navigate` may change identity on every location change: a page change must not restart it.
+  const navigateRef = useRef(navigate);
+  useLayoutEffect(() => {
+    navigateRef.current = navigate;
+  });
+  useEffect(() => {
+    if (!entered || !accountId || !workspaceName) return;
+    return startNotifier({
+      workspaceId,
+      workspaceName,
+      accountId,
+      navigate: (path) => void navigateRef.current(path),
+    });
+  }, [entered, workspaceId, accountId, workspaceName]);
+  const attention = useAttentionStore((s) =>
+    entered && s.workspaceId === workspaceId ? s.count : null,
+  );
+  useEffect(() => {
+    document.title = attention ? `(${attention}) ${BASE_TITLE}` : BASE_TITLE;
+    return () => {
+      document.title = BASE_TITLE;
+    };
+  }, [attention]);
   const current = useWorkspaceStore((s) => s.current);
   const notice = useWorkspaceStore((s) => s.accessRemovedNotice);
-  const isOwner = current?.role === 'owner';
   const base = current ? `/w/${current.id}` : null;
 
   useEffect(() => {
@@ -223,7 +287,7 @@ export function AppShell() {
     ? [
         { to: `${base}/inbox`, label: 'Inbox', icon: Inbox },
         { to: `${base}/contacts`, label: 'Contacts', icon: Contact },
-        ...(isOwner ? [{ to: `${base}/settings`, label: 'Settings', icon: Settings }] : []),
+        { to: `${base}/settings`, label: 'Settings', icon: Settings },
       ]
     : [];
 
@@ -243,12 +307,25 @@ export function AppShell() {
                     <SidebarMenu>
                       {items.map(({ to, label, icon: Icon }) => (
                         <SidebarMenuItem key={label}>
-                          <SidebarMenuButton asChild>
+                          <SidebarMenuButton
+                            asChild
+                            tooltip={
+                              label === 'Inbox' && attention ? `Inbox (${attention})` : label
+                            }
+                          >
                             <NavLink to={to} className={ACTIVE}>
                               <Icon />
                               <span>{label}</span>
                             </NavLink>
                           </SidebarMenuButton>
+                          {label === 'Inbox' && attention ? (
+                            <SidebarMenuBadge
+                              role="img"
+                              aria-label={`${attention} ${attention === 1 ? 'conversation needs' : 'conversations need'} you`}
+                            >
+                              {attention}
+                            </SidebarMenuBadge>
+                          ) : null}
                         </SidebarMenuItem>
                       ))}
                     </SidebarMenu>
@@ -264,6 +341,11 @@ export function AppShell() {
         <SidebarInset>
           <header className="flex h-16 shrink-0 items-center gap-2 px-4">
             <SidebarTrigger className="-ml-1" />
+            {attention ? (
+              <Badge variant="secondary" aria-hidden className="md:hidden">
+                {attention}
+              </Badge>
+            ) : null}
             <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4" />
             {entry.status === 'ready' && <ShellBreadcrumb workspaceId={workspaceId} />}
           </header>

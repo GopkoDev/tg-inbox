@@ -1,7 +1,12 @@
 import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
-import type { NormalisedEdit, NormalisedMessage } from '../domain/inbound.js';
+import type {
+  InboundKind,
+  NormalisedEdit,
+  NormalisedMessage,
+  SenderProfile,
+} from '../domain/inbound.js';
 
 /** A Kysely handle or a transaction. */
 export type Executor = Db;
@@ -21,6 +26,8 @@ export interface BotRecord {
   /** The last Bot API exchange that had an outcome; null only when disconnected. */
   lastCheckedAt: Date | null;
   createdAt: Date;
+  /** Bot sends to members are refused until then (ADR-0006); null or past: not paused. */
+  sendPausedUntil: Date | null;
 }
 
 export interface NewBot {
@@ -108,6 +115,11 @@ export interface BotRepo {
     ifWritten?: LiveRowGuard,
   ): Promise<boolean>;
   /**
+   * Stores `send_paused_until = max(stored, until)` after a Telegram 429 on this bot (a reply or a
+   * member message); false when the bot is not in the workspace.
+   */
+  pauseSends(workspaceId: string, botId: string, until: Date, tx?: Executor): Promise<boolean>;
+  /**
    * A live bot with its decrypted token, for a Bot API call right after. `token` is null when the
    * stored token cannot be decrypted (the key was lost or changed, ADR-0006): the bot then needs
    * a new token.
@@ -170,6 +182,21 @@ export type SendOutcome =
   | { outcome: 'not_accepted'; retryAfterMs?: number }
   | { outcome: 'unknown' };
 
+/**
+ * The answer to a message to a member (a ping or a bot answer). `rate_limited`: the bot is paused
+ * until `retryAfter`; `blocked`: the member cannot receive it (blocked the bot, or the account is
+ * gone); `transient`: Telegram definitely did not take it (an error answer, or the request was never
+ * written), safe to retry; `unknown`: a timeout or a connection lost after the request was written,
+ * so it may have been delivered and must not be retried.
+ */
+export type MemberMessageOutcome =
+  | { outcome: 'accepted' }
+  | { outcome: 'blocked' }
+  | { outcome: 'rate_limited'; retryAfter: Date }
+  | { outcome: 'bot_unavailable' }
+  | { outcome: 'transient' }
+  | { outcome: 'unknown' };
+
 /** `getFile` timeout (sad.md §8). */
 export const GET_FILE_TIMEOUT = 5000;
 /** A media download is aborted after this long without a byte (sad.md §8). */
@@ -205,7 +232,13 @@ export interface TelegramGateway {
    * Plain text (no `parse_mode`). Never throws: every answer, a timeout included, is an outcome.
    * A call that may have been written is never repeated here.
    */
-  sendText(token: string, chatId: bigint, text: string, timeoutMs: number): Promise<SendOutcome>;
+  sendText(
+    token: string,
+    chatId: bigint,
+    text: string,
+    timeoutMs: number,
+    options?: { disableLinkPreview?: boolean },
+  ): Promise<SendOutcome>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
@@ -244,6 +277,38 @@ export interface ConversationsApi {
   lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
   hasConversations(workspaceId: string): Promise<boolean>;
 }
+
+/** One private message or edit from a human sender, as the interceptor sees it. No content beyond the text. */
+export interface InterceptInput {
+  workspaceId: string;
+  /** The Telegram id of the bot the update came to. */
+  telegramBotId: bigint;
+  from: SenderProfile;
+  kind: InboundKind;
+  /** The text, or the caption of any other kind; null when there is neither. */
+  text: string | null;
+  /** The update is an edit of an earlier message. */
+  edited: boolean;
+}
+
+/**
+ * Asked for every private human message or edit before it is captured (ADR-0003). `consumed`: the
+ * update is not a customer message and nothing of it is captured. Implemented by `notifications` and
+ * passed in by the composition root. A failure propagates: nothing is captured and Telegram redelivers.
+ */
+export interface InboundInterceptor {
+  intercept(input: InterceptInput): Promise<'pass' | 'consumed'>;
+}
+
+/**
+ * Called inside the paste-token connect transaction once the bot row is written (and a takeover is
+ * confirmed): `notifications` removes the live links made with another Telegram bot. A rotation
+ * passes the same bot id. A failure rolls the connect back.
+ */
+export type BotConnectedHook = (
+  tx: Executor,
+  event: { workspaceId: string; telegramBotId: bigint },
+) => Promise<void>;
 
 /** What `bots` calls on the contacts app layer. */
 export interface ContactsApi {

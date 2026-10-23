@@ -1,4 +1,4 @@
-import { LiveFrame } from '@tg/shared';
+import { LiveFrame, type PresenceFrame } from '@tg/shared';
 import { API_BASE_URL } from './client';
 
 /** The slice of `WebSocket` this client uses; tests pass a fake. */
@@ -8,6 +8,8 @@ export interface SocketLike {
   onclose: ((event: { code: number }) => void) | null;
   onerror: (() => void) | null;
   close: (code?: number) => void;
+  /** Sends one text frame (the presence frame); only called while the socket is open. */
+  send: (data: string) => void;
 }
 
 export interface LiveHandlers {
@@ -24,6 +26,8 @@ export interface LiveOptions {
   createSocket?: (url: string) => SocketLike;
   /** Delay before reconnect attempt `attempt` (0-based). */
   backoffMs?: (attempt: number) => number;
+  /** Reopened after the server ended an earlier session: the first open reports reconnected. */
+  resumed?: boolean;
 }
 
 export interface LiveClient {
@@ -43,7 +47,8 @@ function liveUrl(workspaceId: string): string {
 }
 
 /**
- * One live socket for one workspace (ADR-0002). Reconnects with backoff after 1001 or any drop,
+ * One live socket for one workspace (ADR-0002). Sends the presence frame after every open and on visibilitychange
+ * (with `hidden_for_ms` while hidden, when the tab was seen leaving the screen). Reconnects with backoff after 1001 or any drop,
  * never after 4401/4403. Frames that fail the shared schema (unknown types) are dropped and reported to `onInvalidFrame`.
  */
 export function openLiveSocket(
@@ -56,8 +61,52 @@ export function openLiveSocket(
   const backoff = options.backoffMs ?? defaultBackoff;
   let stopped = false;
   let attempt = 0;
+  let resumed = options.resumed ?? false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let socket: SocketLike | undefined;
+  let open = false;
+
+  // When this tab left the screen, on the monotonic clock (a wall clock can jump or run ahead), kept
+  // across reconnects so a hidden tab that reconnects keeps its 10 minutes (D1). Unknown (undefined)
+  // for a tab hidden since it opened: no on-screen history.
+  // When the tab left the screen, on both clocks: the monotonic one ignores wall-clock jumps,
+  // the wall one keeps counting while the computer sleeps. The larger elapsed time is sent —
+  // looking away sooner is the safe direction.
+  let hiddenAt: { mono: number; wall: number } | undefined;
+  // Presence (events.md): `on_screen` right after every open and on every visibilitychange.
+  const sendPresence = () => {
+    if (!open || !socket) return;
+    const onScreen = document.visibilityState === 'visible';
+    const frame: PresenceFrame = {
+      type: 'presence',
+      v: 1,
+      on_screen: onScreen,
+      ...(!onScreen && hiddenAt !== undefined
+        ? {
+            hidden_for_ms: Math.max(
+              0,
+              Math.round(Math.max(performance.now() - hiddenAt.mono, Date.now() - hiddenAt.wall)),
+            ),
+          }
+        : {}),
+    };
+    try {
+      socket.send(JSON.stringify(frame));
+    } catch {
+      // a socket closing underneath: the close event drives the reconnect
+    }
+  };
+  const onVisibility = () => {
+    if (document.visibilityState === 'visible') hiddenAt = undefined;
+    else hiddenAt ??= { mono: performance.now(), wall: Date.now() };
+    sendPresence();
+  };
+  document.addEventListener('visibilitychange', onVisibility);
+  const stop = () => {
+    stopped = true;
+    open = false;
+    document.removeEventListener('visibilitychange', onVisibility);
+  };
 
   const connect = () => {
     const current = createSocket(liveUrl(workspaceId));
@@ -66,8 +115,11 @@ export function openLiveSocket(
       if (stopped) return;
       // Any failed attempt before this open (a drop, or a first try that never opened) may have
       // missed signals.
-      const missed = attempt > 0;
+      const missed = attempt > 0 || resumed;
       attempt = 0;
+      resumed = false;
+      open = true;
+      sendPresence();
       if (missed) handlers.onReconnected();
     };
     current.onmessage = (event) => {
@@ -85,8 +137,9 @@ export function openLiveSocket(
     };
     current.onclose = (event) => {
       if (stopped) return;
+      open = false;
       if (NO_RECONNECT.has(event.code)) {
-        stopped = true;
+        stop();
         handlers.onClosed(event.code);
         return;
       }
@@ -98,7 +151,7 @@ export function openLiveSocket(
   connect();
   return {
     close() {
-      stopped = true;
+      stop();
       clearTimeout(timer);
       socket?.close();
     },

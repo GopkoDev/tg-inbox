@@ -1,5 +1,5 @@
 import type { InboxBotStatus } from '@tg/shared';
-import type { BotRepo } from './ports.js';
+import type { BotRepo, Executor } from './ports.js';
 
 export interface InboxBotStatusDeps {
   bots: Pick<BotRepo, 'findByWorkspace'>;
@@ -8,16 +8,17 @@ export interface InboxBotStatusDeps {
 export interface InboxBotStatusReader {
   /**
    * Any member's view of the bot (AC-13, AC-14): a pure database read. Never the bot's name,
-   * the token or the secret. No row and `disconnected` are both `not_connected`.
+   * the token or the secret. No row and `disconnected` are both `not_connected`. `tx` joins a
+   * caller's transaction, so a transaction never waits on a second pool connection.
    */
-  inboxBotStatus(workspaceId: string): Promise<InboxBotStatus>;
+  inboxBotStatus(workspaceId: string, tx?: Executor): Promise<InboxBotStatus>;
   /** The send pre-check: true for `connected` and `taken_over`. */
   canCarryReplies(workspaceId: string): Promise<boolean>;
 }
 
 export function createInboxBotStatus({ bots }: InboxBotStatusDeps): InboxBotStatusReader {
-  const inboxBotStatus: InboxBotStatusReader['inboxBotStatus'] = async (workspaceId) => {
-    const bot = await bots.findByWorkspace(workspaceId);
+  const inboxBotStatus: InboxBotStatusReader['inboxBotStatus'] = async (workspaceId, tx) => {
+    const bot = await bots.findByWorkspace(workspaceId, tx);
     const state = !bot || bot.state === 'disconnected' ? 'not_connected' : bot.state;
     return {
       workspace_id: workspaceId,

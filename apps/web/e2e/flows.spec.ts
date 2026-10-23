@@ -99,13 +99,13 @@ test('switch workspace shows only the picked workspace name (AC-12)', async ({ p
   await expect(page).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(page, 'Bolt Bikes')).toBeVisible();
   await expect(page.getByText('Acme Flowers')).toHaveCount(0);
-  // owner in Acme, operator in Bolt: the Settings entry is gone after the switch
+  // owner in Acme, operator in Bolt: the nav keeps Settings for both roles (it leads to their notifications)
   await expect(
     page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Inbox' }),
   ).toBeVisible();
   await expect(
     page.getByRole('navigation', { name: 'Workspace' }).getByRole('link', { name: 'Settings' }),
-  ).toHaveCount(0);
+  ).toBeVisible();
 });
 
 test('sign in opens the last-used workspace, not the picker (AC-07, AC-12)', async ({
@@ -194,10 +194,8 @@ test('deactivating a member with a second tab open shows the access-removed noti
   await owner.getByRole('alertdialog').getByRole('button', { name: 'Deactivate' }).click();
   await expect(owner.getByRole('row', { name: /Sam/ }).getByText('Deactivated')).toBeVisible();
 
-  // The member's next action in the still-open tab hits the shared guard.
-  await member.getByRole('button', { name: 'Invite', exact: true }).click();
-  await member.getByRole('dialog').getByLabel('Email').fill('hire@example.test');
-  await member.getByRole('button', { name: 'Create invitation' }).click();
+  // The still-open tab hears it on the frame's live connection (membership.deactivated) and
+  // hits the shared guard without any action of the member.
   await expect(member).toHaveURL(new RegExp(`/w/${bolt}/inbox$`));
   await expect(workspaceButton(member, 'Bolt Bikes')).toBeVisible();
   await expect(member.getByText('Your access to Acme Flowers was removed')).toBeVisible();

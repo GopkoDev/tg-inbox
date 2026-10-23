@@ -15,6 +15,15 @@ vi.mock('@/features/workspaces/api', () => ({
   enterWorkspace: (id: string) => enterWorkspace(id),
 }));
 vi.mock('@/features/workspaces/resolve', () => ({ resolveWorkspace: vi.fn() }));
+// The frame's attention read and live connection are not what these tests are about.
+vi.mock('@/features/attention/api', () => ({
+  getAttentionCount: async (id: string) => ({ workspace_id: id, count: 0 }),
+}));
+vi.mock('@/shared/api/live-connection', () => ({
+  openLiveConnection: () => ({ close: () => undefined }),
+  subscribeLive: () => () => undefined,
+  liveStatus: () => 'idle',
+}));
 
 const acme = { id: 'w1', name: 'Acme Flowers', role: 'owner' as const };
 const bolt = { id: 'w2', name: 'Bolt Bikes', role: 'operator' as const };

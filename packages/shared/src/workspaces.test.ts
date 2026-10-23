@@ -90,11 +90,19 @@ describe('team list', () => {
     state: 'active',
     created_at: now,
     deactivated_at: null,
+    telegram_pings: true,
   };
   it('Membership strict', () => {
     expect(Membership.safeParse(m).success).toBe(true);
     expect(Membership.safeParse({ ...m, link: 'x' }).success).toBe(false);
     expect(Membership.safeParse({ ...m, state: 'gone' }).success).toBe(false);
+  });
+  it('Membership carries telegram_pings as a boolean, never a Telegram id', () => {
+    const without: Record<string, unknown> = { ...m };
+    delete without.telegram_pings;
+    expect(Membership.safeParse(without).success).toBe(false);
+    expect(Membership.safeParse({ ...m, telegram_pings: 'yes' }).success).toBe(false);
+    expect(Membership.safeParse({ ...m, telegram_user_id: 5 }).success).toBe(false);
   });
   it('MembershipPage', () => {
     expect(

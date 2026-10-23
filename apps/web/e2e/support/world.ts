@@ -56,6 +56,8 @@ export interface World {
   unassign(actor: string, workspaceId: string, customer: string): Promise<void>;
   /** Closes with the confirmation acknowledged (an early close is the point of the seeding, not of the flow). */
   close(actor: string, workspaceId: string, customer: string): Promise<void>;
+  /** The id of the conversation of a customer (found by first name) as seen by the member `actor`. */
+  conversationId(actor: string, workspaceId: string, customer: string): Promise<string>;
   /** One health-check tick through the app layer, as if run once the bots are due (not waited for). */
   healthTick(): Promise<void>;
 }
@@ -249,6 +251,17 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
       unassign: (actor, workspaceId, customer) =>
         stateChange(actor, workspaceId, customer, 'unassign'),
       close: (actor, workspaceId, customer) => stateChange(actor, workspaceId, customer, 'close'),
+      async conversationId(actor, workspaceId, customer) {
+        const device = await deviceOf(actor);
+        const page = await device.get(
+          `/api/workspaces/${workspaceId}/inbox/conversations?status=open&limit=30`,
+        );
+        const hit = (page.json().items as { id: string; contact: { first_name: string } }[]).find(
+          (c) => c.contact.first_name === customer,
+        );
+        if (!hit) throw new Error(`no open conversation of ${customer}`);
+        return hit.id;
+      },
       async healthTick() {
         advance();
         await runHealthTick(ahead);

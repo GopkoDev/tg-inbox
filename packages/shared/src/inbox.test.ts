@@ -26,6 +26,8 @@ import {
   Cursor,
   InboxBotStatus,
   LiveFrame,
+  PresenceFrame,
+  TelegramLinkChangedFrame,
   MediaUnavailableError,
   MessageKind,
   ReadMarkRequest,
@@ -659,5 +661,67 @@ describe('LiveFrame activity item', () => {
   it('allows only change created for an activity', () => {
     expect(LiveFrame.safeParse({ ...frame, change: 'state' }).success).toBe(false);
     expect(LiveFrame.safeParse({ ...frame, change: 'edited' }).success).toBe(false);
+  });
+});
+
+describe('TelegramLinkChangedFrame (AC-06)', () => {
+  const frame = { type: 'telegram_link.changed', v: 1, workspace_id: W };
+
+  it('parses as a LiveFrame and carries no account id', () => {
+    expect(LiveFrame.safeParse(frame).success).toBe(true);
+    expect(TelegramLinkChangedFrame.safeParse(frame).success).toBe(true);
+  });
+
+  it('needs the workspace id and v 1', () => {
+    expect(LiveFrame.safeParse({ type: 'telegram_link.changed', v: 1 }).success).toBe(false);
+    expect(LiveFrame.safeParse({ ...frame, v: 2 }).success).toBe(false);
+  });
+});
+
+describe('PresenceFrame (AC-07)', () => {
+  it('parses the client frame', () => {
+    expect(PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: true }).success).toBe(true);
+    expect(PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false }).success).toBe(
+      true,
+    );
+  });
+
+  it('takes an optional hidden_for_ms: how long ago the tab left the screen, a whole non-negative ms count (RR2, D1)', () => {
+    expect(
+      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 }),
+    ).toEqual({
+      success: true,
+      data: { type: 'presence', v: 1, on_screen: false, hidden_for_ms: 60_000 },
+    });
+    for (const bad of [-1, 1.5, '60000', Number.MAX_SAFE_INTEGER + 2]) {
+      expect(
+        PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: false, hidden_for_ms: bad })
+          .success,
+        String(bad),
+      ).toBe(false);
+    }
+    // The wall-clock form is gone: a strict frame rejects it.
+    expect(
+      PresenceFrame.safeParse({
+        type: 'presence',
+        v: 1,
+        on_screen: false,
+        hidden_since: '2026-10-19T10:00:00.000Z',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects unknown type, extra fields, a string on_screen, a wrong version and a missing flag', () => {
+    expect(PresenceFrame.safeParse({ type: 'resync', v: 1, on_screen: true }).success).toBe(false);
+    expect(
+      PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: true, extra: 1 }).success,
+    ).toBe(false);
+    expect(PresenceFrame.safeParse({ type: 'presence', v: 1, on_screen: 'true' }).success).toBe(
+      false,
+    );
+    expect(PresenceFrame.safeParse({ type: 'presence', v: 2, on_screen: true }).success).toBe(
+      false,
+    );
+    expect(PresenceFrame.safeParse({ type: 'presence', v: 1 }).success).toBe(false);
   });
 });
