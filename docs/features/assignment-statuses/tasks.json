@@ -1,0 +1,542 @@
+{
+  "slug": "assignment-statuses",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Promote the expand, backfill, activity-table and lens-index migrations 01–04, regenerate DB types and extend the test fixtures",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-09"
+      ],
+      "dod": "Migrations 01–04 are promoted to live apps/api/migrations/, apply and revert cleanly on a fresh Postgres 16, the regenerated db.types.gen.ts is committed, the migrations integration test rejects every listed constraint violation, and insertConversation / insertActivity / twoWorkspacesWithInbox carry the new state.",
+      "files_hint": [
+        "docs/features/assignment-statuses/migrations/01_add_conversations_state_columns.up.sql",
+        "docs/features/assignment-statuses/migrations/02_backfill_conversations_state_columns.up.sql",
+        "docs/features/assignment-statuses/migrations/03_create_conversation_activities.up.sql",
+        "docs/features/assignment-statuses/migrations/04_add_conversations_lens_indexes.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/conversations.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t01-promote-expand-migrations.md"
+    },
+    {
+      "id": "T2",
+      "title": "Add the assignment zod contracts, the four error codes and the activity item type on the live frame and the realtime signal",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-03",
+        "AC-12"
+      ],
+      "dod": "packages/shared and platform unit tests pass for every new schema (incl. the ThreadActivity refines and the contract examples), the four codes map to their AppError subclasses and statuses with Retry-After on the limit, and an activity frame parses in the new LiveFrame and the realtime signal while the old enum rejects it.",
+      "files_hint": [
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/inbox.test.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/errors.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/platform/realtime.test.ts",
+        "apps/web/src/features/inbox/store.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t02-assignment-contracts.md"
+    },
+    {
+      "id": "T3",
+      "title": "Add the conversations domain change rules: no-op, stale and close-reason decision, snapshot equality, activity kinds and causes, position rule and the change-limit window",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-03",
+        "AC-05",
+        "AC-06",
+        "AC-12"
+      ],
+      "dod": "Domain unit tests cover every branch of the change decision (no-op before version, stale, close reasons with and without confirm and snapshot equality, member reopen without reasons, already-closed close with confirm), the activity kind / cause / assignee-pair rules, the position rule and the 60/60 s limit with its retry_at.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/domain/state.ts",
+        "apps/api/src/modules/conversations/domain/state.test.ts",
+        "apps/api/src/modules/conversations/domain/activity.ts",
+        "apps/api/src/modules/conversations/domain/activity.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t03-conversations-change-rules.md"
+    },
+    {
+      "id": "T4",
+      "title": "Extend the thread domain with the activity kind: merge order message < reply < activity and a three-kind cursor that still decodes old cursors",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-09"
+      ],
+      "dod": "Thread domain unit tests prove the three-way merge with ties message < reply < activity, cursor round-trips for the activity kind, and that a cursor encoded with kinds message / reply before the deploy still decodes.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/domain/thread.ts",
+        "apps/api/src/modules/conversations/domain/thread.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t04-thread-activity-kind.md"
+    },
+    {
+      "id": "T5",
+      "title": "Give workspaces lockActiveMembers, activeMembers and the onMembershipDeactivated port called inside the deactivation transaction",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-10",
+        "AC-11"
+      ],
+      "dod": "Unit and integration tests prove lockActiveMembers takes FOR SHARE and returns only active accounts of that workspace, activeMembers lists active members ordered by display name then account id, both isolated by workspace, and deactivateMembership calls the port once inside its transaction (a throwing port rolls the deactivation back).",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/app/access.ts",
+        "apps/api/src/modules/workspaces/app/access.test.ts",
+        "apps/api/src/modules/workspaces/app/access.int.test.ts",
+        "apps/api/src/modules/workspaces/app/team.ts",
+        "apps/api/src/modules/workspaces/app/team.test.ts",
+        "apps/api/src/modules/workspaces/app/team.int.test.ts",
+        "apps/api/src/modules/workspaces/app/ports.ts",
+        "apps/api/src/modules/workspaces/infra/membership-repo.ts",
+        "apps/api/src/modules/workspaces/infra/membership-repo.int.test.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t05-workspaces-locks-and-port.md"
+    },
+    {
+      "id": "T6",
+      "title": "Build the conversations persistence for state and activity: locked row read, versioned state update, activity repository and the close-reason reads",
+      "layer": "infra",
+      "deps": [
+        "T1",
+        "T3"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-09"
+      ],
+      "dod": "Integration tests prove the FOR UPDATE row read with status / assignee / version / counter, the versioned update raising state_version by one, activity insert / latest / by id / count-by-actor over 60 s with the oldest created_at, and the four close-reason reads — every method scoped by workspace with a cross-workspace isolation test.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.int.test.ts",
+        "apps/api/src/modules/conversations/infra/activity-repo.ts",
+        "apps/api/src/modules/conversations/infra/activity-repo.int.test.ts",
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t06-conversations-state-persistence.md"
+    },
+    {
+      "id": "T7",
+      "title": "Add the changeAssignee and changeStatus use cases in conversations: version guard, close reasons against the snapshot, the per-member change limit, the write, the activity entry and its signal",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T6"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-03",
+        "AC-05",
+        "AC-06",
+        "AC-12"
+      ],
+      "dod": "Unit tests cover every outcome of both use cases in check order; integration tests prove QG-1 (a), (b2) and (d), the 61st change refused under 61 concurrent requests with retry_at, refused / unchanged requests not counted, and one activity signal published only on commit.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/state-changes.ts",
+        "apps/api/src/modules/conversations/app/state-changes.test.ts",
+        "apps/api/src/modules/conversations/app/state-changes.int.test.ts",
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/app/fakes.ts",
+        "apps/api/src/modules/conversations/infra/conversation-signals.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t07-conversations-change-use-cases.md"
+    },
+    {
+      "id": "T8",
+      "title": "Reopen a closed conversation on a newly captured customer message, raise the customer message counter under the row lock, and promote contract migration 05",
+      "layer": "app",
+      "deps": [
+        "T1",
+        "T7"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07"
+      ],
+      "dod": "Integration tests prove a new message into a closed conversation reopens it with the same assignee, one reopened/customer_wrote entry at its arrival and its signal; a duplicate and an edit do not; QG-1 (b) and (c) hold with the integrity query returning no row; and migration 05 is promoted, applies and reverts cleanly with every capture insert writing the three columns.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/conversations.ts",
+        "apps/api/src/modules/conversations/app/conversations.test.ts",
+        "apps/api/src/modules/conversations/app/conversations.int.test.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "docs/features/assignment-statuses/migrations/05_contract_conversations_state_columns.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/conversations.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t08-capture-reopen-and-contract.md"
+    },
+    {
+      "id": "T9",
+      "title": "Reopen a closed conversation in settle() when a reply ends not delivered or not confirmed",
+      "layer": "app",
+      "deps": [
+        "T7"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Unit and integration tests prove that finishAttempt, skipReply, resolveStaleInFlight and the dead-letter resolution each reopen a closed conversation once with a reopened/reply_not_delivered entry and its signal, that an accepted reply leaves it closed, and that a reply already final never settles or reopens twice.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/replies.ts",
+        "apps/api/src/modules/conversations/app/replies.test.ts",
+        "apps/api/src/modules/conversations/app/delivery.test.ts",
+        "apps/api/src/modules/conversations/infra/delivery.int.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t09-settle-reopen.md"
+    },
+    {
+      "id": "T10",
+      "title": "Unassign a deactivated member's conversations through the port inside the deactivation transaction, and build conversations before team in buildDeps",
+      "layer": "app",
+      "deps": [
+        "T5",
+        "T7"
+      ],
+      "acs": [
+        "AC-10"
+      ],
+      "dod": "Integration tests prove that deactivating a member unassigns every conversation of that workspace assigned to them (open and closed) with one unassigned/member_deactivated entry and one signal each, in the deactivation's transaction; another workspace's assignments of the same account stay; reactivation gives nothing back; buildDeps wires the port and the admin CLI still builds.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/state-changes.ts",
+        "apps/api/src/modules/conversations/app/state-changes.int.test.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/modules/workspaces/app/team.int.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t10-deactivation-unassign.md"
+    },
+    {
+      "id": "T11",
+      "title": "Teach the conversations read side lenses, per-row state and version, the summary's close snapshot, the thread's activity half and the single activity item",
+      "layer": "infra",
+      "deps": [
+        "T4",
+        "T6"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-09"
+      ],
+      "dod": "Integration tests prove every lens (open/closed × all/mine/unassigned) and search across both statuses within the assignee lens, rows with status / assignee id / version and unchanged last item and time, the summary's close snapshot, the three-way thread page with activity items and old cursors, the activity item by id, workspace isolation, and the seeded 1 000-conversation lens timings under 500 ms.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/infra/list-queries.ts",
+        "apps/api/src/modules/conversations/infra/list-queries.int.test.ts",
+        "apps/api/src/modules/conversations/infra/thread-queries.ts",
+        "apps/api/src/modules/conversations/infra/thread-queries.int.test.ts",
+        "apps/api/src/modules/conversations/app/inbox-reads.ts",
+        "apps/api/src/modules/conversations/app/inbox-reads.test.ts",
+        "apps/api/src/modules/conversations/app/inbox-reads.int.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t11-conversations-read-side.md"
+    },
+    {
+      "id": "T12",
+      "title": "Serve lenses, state and activity through the inbox reads: change the list, summary and thread schemas, add getThreadActivity and listActiveMembers",
+      "layer": "ports",
+      "deps": [
+        "T2",
+        "T5",
+        "T11"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-09",
+        "AC-11"
+      ],
+      "dod": "Route integration tests pass for the changed listConversations (status / assignee / q and the lens echo), getConversation as ConversationSummary, listThreadItems with activity items, getThreadActivity and listActiveMembers (any active member, active only), with the guard trio and foreign ids, and the api and web typecheck stay green with the changed shared schemas.",
+      "files_hint": [
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/inbox.test.ts",
+        "apps/api/src/modules/inbox/app/reads.ts",
+        "apps/api/src/modules/inbox/app/ports.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/reads.int.test.ts",
+        "apps/web/src/features/inbox/api-source.ts",
+        "apps/web/src/features/inbox/"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t12-inbox-reads-for-state.md"
+    },
+    {
+      "id": "T13",
+      "title": "Add the assign and unassign routes: one transaction that share-locks the memberships, then changes the conversation, with every refusal of the contract",
+      "layer": "ports",
+      "deps": [
+        "T7",
+        "T10",
+        "T12"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-03",
+        "AC-04",
+        "AC-10",
+        "AC-11"
+      ],
+      "dod": "Unit tests prove the check order (caller share-lock → pick active → conversation); route tests prove 200 recorded / unchanged, 409 CONVERSATION_STATE_CHANGED, 400 ASSIGNEE_NOT_ACTIVE for a deactivated or foreign pick, 403 when the caller is deactivated under the lock, 404 for a foreign conversation, and the deactivation race in both lock orders leaves no assignment to a deactivated member.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/change-state.ts",
+        "apps/api/src/modules/inbox/app/change-state.test.ts",
+        "apps/api/src/modules/inbox/app/ports.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/changes.int.test.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t13-assign-unassign-routes.md"
+    },
+    {
+      "id": "T14",
+      "title": "Add the close and reopen routes with the close snapshot and confirm, and prove the change limit across all four change routes",
+      "layer": "ports",
+      "deps": [
+        "T13"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-12"
+      ],
+      "dod": "Route tests prove close recorded with no reason, 409 CLOSE_NEEDS_CONFIRMATION with every reason, close anyway with the refusal's snapshot, asks again after a capture or failed reply in between, reopen recorded / unchanged / stale, and the 61st change across assign, unassign, close and reopen refused with 429 and Retry-After while refused and unchanged requests are not counted; a seeded timing test (1 000 conversations) shows each change route p95 ≤ 300 ms server time (test-plan.md).",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/change-state.ts",
+        "apps/api/src/modules/inbox/app/change-state.test.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/changes.int.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t14-close-reopen-routes.md"
+    },
+    {
+      "id": "T15",
+      "title": "Add the API end-to-end assignment stories, the integrity checks, and the secrecy and log assertions for the new responses and frames",
+      "layer": "tests",
+      "deps": [
+        "T8",
+        "T9",
+        "T14"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-10",
+        "AC-11"
+      ],
+      "dod": "The e2e stories pass against Postgres and the fake Bot API (webhook reopen, failed-reply reopen, deactivation unassign, cross-workspace refusals, live activity frame on a teammate's socket), the integrity queries return no row after them, and the extended secrecy suite finds no token in the new responses, frames or logs and no display name or message text in change logs.",
+      "files_hint": [
+        "apps/api/src/e2e/assignment-flows.int.test.ts",
+        "apps/api/src/e2e/helpers.ts",
+        "apps/api/src/modules/bots/http/secrecy.int.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t15-api-e2e-and-secrecy.md"
+    },
+    {
+      "id": "T16",
+      "title": "Teach the web inbox store and API source lenses in the address, the state version and close snapshot, the change actions and activity frames",
+      "layer": "ui",
+      "deps": [
+        "T12"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02"
+      ],
+      "dod": "Store tests prove lenses read from and written to the address (unknown values rewritten to the default), late answers for a left lens dropped, the open conversation's version and close snapshot kept and replaced from every answer and refusal, coalesced activity-frame refetches with lens re-evaluation, dropped unparseable frames with resync in the current lenses, and the reset to open · all on a workspace switch.",
+      "files_hint": [
+        "apps/web/src/features/inbox/store.ts",
+        "apps/web/src/features/inbox/store.test.ts",
+        "apps/web/src/features/inbox/api-source.ts",
+        "apps/web/src/features/inbox/lens.ts",
+        "apps/web/src/features/inbox/lens.test.ts",
+        "apps/web/src/pages/InboxPage.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t16-web-store-lenses-and-state.md"
+    },
+    {
+      "id": "T17",
+      "title": "Build the SCR-01 lenses: status tabs and assignee select, the assignee line and closed mark on rows, per-lens empty states and live join and leave",
+      "layer": "ui",
+      "deps": [
+        "T16"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-07"
+      ],
+      "dod": "Testing Library tests cover every SCR-01 state this feature adds in screens.md (lenses, lens from the address, unknown lens rewritten, lens loading, per-lens empty texts, searching with disabled tabs and Closed badges, live join / leave, selected row left the lens, phone layout).",
+      "files_hint": [
+        "apps/web/src/features/inbox/InboxList.tsx",
+        "apps/web/src/features/inbox/InboxList.test.tsx",
+        "apps/web/src/features/inbox/ConversationList.tsx",
+        "apps/web/src/features/inbox/ConversationList.test.tsx",
+        "apps/web/src/pages/InboxPage.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t17-scr01-lenses.md"
+    },
+    {
+      "id": "T18",
+      "title": "Build the SCR-02 actions bar (ConversationActions) and the activity line in the thread: status badge, assignee button, close and reopen, pending lock, limit countdown and live changes",
+      "layer": "ui",
+      "deps": [
+        "T16"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-05",
+        "AC-09",
+        "AC-12"
+      ],
+      "dod": "Testing Library tests cover every SCR-02 state this feature adds in screens.md (open / closed header, activity lines for every kind and cause, actions loading, pending lock, recorded / unchanged, change-limit countdown, change failed, live teammate / automatic changes, phone header row), with names as plain text.",
+      "files_hint": [
+        "apps/web/src/features/inbox/ConversationActions.tsx",
+        "apps/web/src/features/inbox/ConversationActions.test.tsx",
+        "apps/web/src/features/inbox/ActivityLine.tsx",
+        "apps/web/src/features/inbox/ActivityLine.test.tsx",
+        "apps/web/src/features/inbox/Thread.tsx",
+        "apps/web/src/features/inbox/Thread.test.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t18-scr02-actions-and-activity.md"
+    },
+    {
+      "id": "T19",
+      "title": "Build SCR-10, the assignee chooser: me first, active teammates, unassign, current check, per-row pending and the in-place not-active refusal",
+      "layer": "ui",
+      "deps": [
+        "T18"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-04"
+      ],
+      "dod": "Testing Library tests cover every SCR-10 state in screens.md (loading, default with Me first and the current check, only me, pick the current assignee sends nothing, pending, success, refused not active with re-read, changed since I looked hands off to SCR-11, limit / failed close the chooser, members load error with Retry, keyboard, phone width).",
+      "files_hint": [
+        "apps/web/src/features/inbox/AssigneeChooser.tsx",
+        "apps/web/src/features/inbox/AssigneeChooser.test.tsx",
+        "apps/web/src/features/inbox/ConversationActions.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t19-scr10-assignee-chooser.md"
+    },
+    {
+      "id": "T20",
+      "title": "Build SCR-11, the confirm-over-a-recent-change dialog: current state, who or what changed it and when, go ahead or leave it, asks again",
+      "layer": "ui",
+      "deps": [
+        "T19"
+      ],
+      "acs": [
+        "AC-03"
+      ],
+      "dod": "Testing Library tests cover every SCR-11 state in screens.md (default for assign / unassign / reopen with member and automatic changes, left it, pending, success recorded / unchanged, asks again, refused not active reopening SCR-10, change limit, error), with the go-ahead resending the refusal's version.",
+      "files_hint": [
+        "apps/web/src/features/inbox/StateChangedDialog.tsx",
+        "apps/web/src/features/inbox/StateChangedDialog.test.tsx",
+        "apps/web/src/features/inbox/ConversationActions.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t20-scr11-state-changed-dialog.md"
+    },
+    {
+      "id": "T21",
+      "title": "Build SCR-12, the close confirmation: every close reason, close anyway with the refusal's version and snapshot, asks again",
+      "layer": "ui",
+      "deps": [
+        "T18"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-08"
+      ],
+      "dod": "Testing Library tests cover every SCR-12 state in screens.md (one line per reason with the merged unread / new line, kept open, pending with confirm_close_reasons and the refusal's version and snapshot, success recorded / unchanged, asks again, change limit, error), and Close never pre-evaluates reasons on the client.",
+      "files_hint": [
+        "apps/web/src/features/inbox/CloseConfirmDialog.tsx",
+        "apps/web/src/features/inbox/CloseConfirmDialog.test.tsx",
+        "apps/web/src/features/inbox/ConversationActions.tsx"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t21-scr12-close-confirm-dialog.md"
+    },
+    {
+      "id": "T22",
+      "title": "Add the unassign sentence to the deactivate confirmation (SCR-14) and keep the lenses in the sign-in return address (SCR-09)",
+      "layer": "ui",
+      "deps": [
+        "T16"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-11"
+      ],
+      "dod": "Testing Library tests prove the deactivate confirmation shows the unassign sentence with the member's name as plain text, and that a signed-out visit to an inbox address with lenses returns to the same address and lenses after sign-in.",
+      "files_hint": [
+        "apps/web/src/features/workspaces/team/Team.tsx",
+        "apps/web/src/pages/TeamPage.test.tsx",
+        "apps/web/src/shared/api/guard.ts",
+        "apps/web/src/shared/api/guard.test.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t22-deactivate-copy-and-signin-return.md"
+    },
+    {
+      "id": "T23",
+      "title": "Add browser end-to-end assignment flows against the real API and the fake Bot API",
+      "layer": "tests",
+      "deps": [
+        "T15",
+        "T17",
+        "T20",
+        "T21",
+        "T22"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-06",
+        "AC-07"
+      ],
+      "dod": "The five browser flows pass locally and in CI with pnpm test:e2e.",
+      "files_hint": [
+        "apps/web/e2e/assignment.spec.ts",
+        "apps/web/e2e/support/world.ts"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t23-browser-e2e.md"
+    },
+    {
+      "id": "T24",
+      "title": "Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the conversation state, the activity table, the deactivation port and the new components",
+      "layer": "docs",
+      "deps": [
+        "T10",
+        "T14",
+        "T17",
+        "T20",
+        "T21",
+        "T22"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "CLAUDE.md and the architecture map name the conversation state and activity table, the deactivation port, the buildDeps order and the change routes exactly as built; every new / extended component of screens.md has its canon row (status no longer pending); CONTEXT.md carries the four new glossary terms.",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md",
+        "CONTEXT.md"
+      ],
+      "file": "docs/features/assignment-statuses/tasks/t24-docs-and-canon.md"
+    }
+  ]
+}

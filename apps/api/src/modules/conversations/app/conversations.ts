@@ -3,7 +3,9 @@ import type { Clock } from '../../../platform/clock.js';
 import type { Contacts } from '../../contacts/app/contacts.js';
 import type { ContactProfile } from '../../contacts/app/ports.js';
 import type { MessageKind } from '../domain/message.js';
+import { recordChange } from './state-changes.js';
 import type {
+  ActivityRepo,
   ConversationRepo,
   EditOutcome,
   ConversationSignals,
@@ -45,6 +47,7 @@ export interface ConversationsDeps {
   transaction: Transaction;
   conversations: ConversationRepo;
   messages: MessageRepo;
+  activities: ActivityRepo;
   contacts: Pick<Contacts, 'upsertFromProfile'>;
   signals: ConversationSignals;
   clock: Clock;
@@ -56,10 +59,20 @@ export interface Conversations {
   applyEdit(workspaceId: string, edit: InboundEdit): Promise<EditOutcome>;
   lastMessageReceivedAt(workspaceId: string): Promise<Date | null>;
   hasConversations(workspaceId: string): Promise<boolean>;
+  /**
+   * The `onMembershipDeactivated` port: inside the deactivation's transaction, after the membership
+   * `UPDATE`, returns every conversation of the workspace assigned to the account to the team.
+   * Lock order (sad.md §8): workspace row, membership row, then these conversation rows by id; the
+   * assign path share-locks memberships before its conversation row, so the two never cross.
+   */
+  unassignDeactivatedMember(
+    tx: Executor,
+    event: { workspaceId: string; accountId: string; at: Date },
+  ): Promise<void>;
 }
 
 export function createConversations(deps: ConversationsDeps): Conversations {
-  const { transaction, conversations, messages, contacts, signals, clock } = deps;
+  const { transaction, conversations, messages, activities, contacts, signals, clock } = deps;
   return {
     // One short transaction (ADR-0003): contact, conversation, message — or nothing. Any database
     // error propagates so the webhook answers 5xx and Telegram redelivers.
@@ -90,16 +103,47 @@ export function createConversations(deps: ConversationsDeps): Conversations {
         );
         if (outcome === 'captured') {
           // The arrival moves the row to the top of the list; a duplicate moves nothing (AC-01, AC-11).
-          await conversations.raiseReceived(workspaceId, conversationId, now, tx);
+          const raised = await conversations.raiseReceived(workspaceId, conversationId, now, tx);
           await signals.messageChanged(tx, {
             workspaceId,
             conversationId,
             messageId: id,
             change: 'created',
           });
+          // Decided on the status the raise UPDATE returned under the row lock, never on an earlier
+          // read: a close racing this capture either committed first (reopened here) or sees the
+          // counter grow (ADR-0004). The assignee stays.
+          if (raised.status === 'closed') {
+            await recordChange({ conversations, activities, signals }, tx, {
+              workspaceId,
+              conversationId,
+              kind: 'reopened',
+              cause: 'customer_wrote',
+              actorAccountId: null,
+              previousAssignee: null,
+              newAssignee: null,
+              now,
+            });
+          }
         }
         return outcome;
       });
+    },
+
+    async unassignDeactivatedMember(tx, { workspaceId, accountId, at }) {
+      const ids = await conversations.lockAssignedTo(workspaceId, accountId, tx);
+      for (const conversationId of ids) {
+        await recordChange({ conversations, activities, signals }, tx, {
+          workspaceId,
+          conversationId,
+          kind: 'unassigned',
+          cause: 'member_deactivated',
+          actorAccountId: null,
+          previousAssignee: accountId,
+          newAssignee: null,
+          now: at,
+        });
+      }
     },
 
     // An edit of a message not captured adds nothing and is not kept for later (AC-10).

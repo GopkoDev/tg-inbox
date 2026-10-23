@@ -11,6 +11,7 @@ const api = {
   listThreadItems: vi.fn(),
   getThreadMessage: vi.fn(),
   getThreadReply: vi.fn(),
+  getThreadActivity: vi.fn(),
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
   sendReply: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('./api-source', () => ({
   listThreadItems: (...a: unknown[]) => api.listThreadItems(...a),
   getThreadMessage: (...a: unknown[]) => api.getThreadMessage(...a),
   getThreadReply: (...a: unknown[]) => api.getThreadReply(...a),
+  getThreadActivity: (...a: unknown[]) => api.getThreadActivity(...a),
   markConversationRead: (...a: unknown[]) => api.markConversationRead(...a),
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
   sendReply: (...a: unknown[]) => api.sendReply(...a),
@@ -56,6 +58,10 @@ const summary = (over = {}) => ({
   last_item: { type: 'message', id: id(500), kind: 'text', body: 'hi' },
   unread_count: 0,
   waiting_for_reply: false,
+  status: 'open',
+  assignee: null,
+  state_version: 3,
+  close_snapshot: { customer_message_seq: 1, latest_reply: null },
   ...over,
 });
 const message = (n: number, min: number, over: Partial<ThreadMessage> = {}): ThreadMessage => ({
@@ -268,6 +274,7 @@ describe('SCR-02 loading and errors', () => {
   it('a summary failure while the contact is known from the list row keeps the thread', async () => {
     api.listConversations.mockResolvedValue({
       workspace_id: WS,
+      lens: { status: 'open', assignee: 'all' },
       items: [summary()],
       has_prev: false,
       has_next: false,
@@ -517,5 +524,68 @@ describe('SCR-02 reply composer (AC-06)', () => {
     renderThread();
     expect(screen.getByRole('textbox', { name: 'Reply' })).toBeDisabled();
     expect(screen.getByRole('button', { name: /^Send$/ })).toBeDisabled();
+  });
+});
+
+const ana = { account_id: id(951), display_name: 'Ana Shevchenko' };
+const activity = (n: number, min: number, over: Record<string, unknown> = {}) => ({
+  type: 'activity' as const,
+  id: id(300 + n),
+  workspace_id: WS,
+  conversation_id: CONV,
+  kind: 'closed' as const,
+  cause: 'member' as const,
+  actor: ana,
+  previous_assignee: null,
+  new_assignee: null,
+  position_at: at(min),
+  ...over,
+});
+
+describe('SCR-02 actions bar and activity lines (AC-02, AC-05, AC-09)', () => {
+  it('shows the actions bar from the summary under the contact name', async () => {
+    await openAndRender([message(1, 1)]);
+    expect(screen.getByRole('button', { name: /Unassigned/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeInTheDocument();
+  });
+
+  it('puts the actions bar in a second row on the phone', async () => {
+    Object.defineProperty(window, 'innerWidth', { value: 400, configurable: true });
+    await openAndRender([message(1, 1)]);
+    expect(screen.getByRole('link', { name: 'Back to conversations' })).toBeInTheDocument();
+    expect(screen.getByTestId('conversation-actions')).toHaveClass('w-full');
+  });
+
+  it('renders activity items among messages at their time, with the member named in plain text', async () => {
+    await openAndRender([
+      message(1, 1),
+      activity(1, 2, { kind: 'assigned', new_assignee: { ...ana, display_name: '<i>Bob</i>' } }),
+      reply(1, 3),
+    ]);
+    const lines = screen.getAllByTestId('activity-line');
+    expect(lines).toHaveLength(1);
+    expect(lines[0]!.textContent).toContain('Ana Shevchenko assigned this to <i>Bob</i>');
+    const order = Array.from(
+      document.querySelectorAll('[data-testid="bubble"], [data-testid="activity-line"]'),
+    ).map((e) => e.getAttribute('data-testid'));
+    expect(order).toEqual(['bubble', 'activity-line', 'bubble']);
+  });
+
+  it('never marks an activity line as read-through', async () => {
+    await openAndRender([message(1, 1), activity(1, 9)], { read_through_at: at(1) });
+    expect(api.markConversationRead).toHaveBeenCalledWith(WS, CONV, at(1), expect.anything());
+    expect(api.markConversationRead).not.toHaveBeenCalledWith(WS, CONV, at(9), expect.anything());
+  });
+
+  it('appends a live activity line and follows the header to the closed state', async () => {
+    await openAndRender([message(1, 1)]);
+    api.getThreadActivity.mockResolvedValue(activity(2, 6));
+    api.getConversation.mockResolvedValue(
+      summary({ status: 'closed', state_version: 4, last_activity_at: at(5) }),
+    );
+    act(() => sockets[0]!.handlers.onFrame(changed('created', { type: 'activity', id: id(302) })));
+    await flush();
+    expect(screen.getByTestId('activity-line').textContent).toContain('Ana Shevchenko closed this');
+    expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
   });
 });

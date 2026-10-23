@@ -1,6 +1,5 @@
-import type { Conversation } from '@tg/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router';
+import { Link, useParams, useSearchParams } from 'react-router';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
@@ -9,29 +8,27 @@ import { Card } from '@/shared/ui/card';
 import { EmptyFilterState } from '@/shared/ui/empty-filter-state';
 import { Input } from '@/shared/ui/input';
 import { ScrollArea } from '@/shared/ui/scroll-area';
-import * as source from './api-source';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { ConversationList, ConversationSkeletons } from './ConversationList';
 import { Thread } from './Thread';
+import { AssigneeLens, StatusLens } from '@tg/shared';
+import { withLens, type InboxLens } from './lens';
 import { useInboxStore } from './store';
 
-const PAGE_SIZE = 30;
 const DEBOUNCE_MS = 300;
 
-interface Extra {
-  rows: Conversation[];
-  hasNext: boolean;
-  cursor: string | null;
-}
-
-const merge = (base: Conversation[], more: Conversation[]) => {
-  const seen = new Set(base.map((c) => c.id));
-  return [...base, ...more.filter((c) => !seen.has(c.id))];
-};
-
-/** A later page's copy of a row is the fresh one: it replaces the copy loaded before. */
-const appendPage = (loaded: Conversation[], page: Conversation[]) => {
-  const fresh = new Set(page.map((c) => c.id));
-  return [...loaded.filter((c) => !fresh.has(c.id)), ...page];
+const EMPTY_LENS: Record<InboxLens['status'], Record<InboxLens['assignee'], string>> = {
+  open: {
+    all: 'No open conversations. New ones appear here when customers write to your bot.',
+    mine: 'No open conversations are assigned to you.',
+    unassigned: 'Every open conversation has an assignee.',
+  },
+  closed: {
+    all: 'No closed conversations.',
+    mine: 'No closed conversations are assigned to you.',
+    unassigned: 'No closed conversations without an assignee.',
+  },
 };
 
 /** SCR-01: the list pane (search, notice, rows, states) and the right-pane placeholder. */
@@ -39,26 +36,29 @@ export function InboxList() {
   const { workspaceId = '', conversationId } = useParams();
   const isMobile = useIsMobile();
   const role = useWorkspaceStore((s) => s.current?.role);
-  const { listStatus, conversations, hasNext, nextCursor, listVersion, bot } = useInboxStore();
+  // Later pages and search results live in the store too, so live changes and resyncs reach them.
+  const { listStatus, conversations, hasNext, nextCursor, bot, lens, results } = useInboxStore();
   const isOwner = role === 'owner';
+  const [searchParams, setSearchParams] = useSearchParams();
+  /** The lenses live in the address; the page follows it into the store. */
+  const written = useRef<string | null>(null);
+  useEffect(() => {
+    written.current = null;
+  }, [searchParams]);
+  const chooseLens = (next: Partial<InboxLens>) => {
+    const target = withLens(searchParams, { ...lens, ...next });
+    // A tap selects a tab twice (pointer down, then focus) before the address is re-read: it is
+    // written once.
+    const text = target.toString();
+    if (text === searchParams.toString() || text === written.current) return;
+    written.current = text;
+    setSearchParams(target);
+  };
 
   const [input, setInput] = useState('');
   const [q, setQ] = useState('');
-  const [paged, setMore] = useState<Extra & { version: number }>({
-    rows: [],
-    hasNext: false,
-    cursor: null,
-    version: listVersion,
-  });
-  // Pages loaded beyond an older first page are stale once it is re-read: page again from the
-  // new `nextCursor` (a row that slid off the first page shows up there).
-  const more: Extra =
-    paged.version === listVersion ? paged : { rows: [], hasNext: false, cursor: null };
   const [moreState, setMoreState] = useState<'idle' | 'loading' | 'error'>('idle');
-  const [results, setResults] = useState<Extra | null>(null);
-  const [searchError, setSearchError] = useState<string | null>(null);
-  // Separate counters: a search never strands a page load, and a page load never drops a search.
-  const searchRequest = useRef(0);
+  /** A page load answering after paging restarted (a new query) leaves the paging state alone. */
   const pageRequest = useRef(0);
   const query = useRef('');
   /** A new query starts paging afresh: a page in flight belongs to the old one. */
@@ -73,77 +73,45 @@ export function InboxList() {
       if (text !== query.current) restartPaging();
       query.current = text;
       setQ(text);
-      if (!text) setResults(null);
+      if (!text) useInboxStore.getState().clearSearch();
     }, DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [input]);
 
+  const assignee = lens.assignee;
+  useEffect(() => {
+    useInboxStore.getState().setSearching(q !== '');
+  }, [q]);
+
   const search = useCallback(
-    (text: string) => {
-      const id = ++searchRequest.current;
-      source
-        .listConversations(workspaceId, { q: text, limit: PAGE_SIZE })
-        .then((page) => {
-          if (searchRequest.current !== id || page.workspace_id !== workspaceId) return;
-          setSearchError(null);
-          setResults({ rows: page.items, hasNext: page.has_next, cursor: page.next_cursor });
-        })
-        .catch((error: unknown) => {
-          useInboxStore.getState().reportGuard(error, workspaceId);
-          if (searchRequest.current === id) setSearchError(text);
-        });
-    },
+    (text: string) => void useInboxStore.getState().search(workspaceId, text),
     [workspaceId],
   );
-
+  // A changed assignee lens searches again within it.
   useEffect(() => {
     if (q) search(q);
-  }, [q, search]);
+  }, [q, assignee, search]);
+  // The results belong to this pane: they go with it.
+  useEffect(() => () => useInboxStore.getState().clearSearch(), []);
 
+  const found = q !== '' && results?.page ? results.page : null;
   const loadMore = useCallback(() => {
-    const filtered = q !== '';
-    const cursor = filtered ? results?.cursor : (more.cursor ?? nextCursor);
+    const target = q !== '' ? 'results' : 'list';
+    const cursor = target === 'results' ? found?.cursor : nextCursor;
     if (!cursor || moreState === 'loading') return;
     const id = ++pageRequest.current;
     setMoreState('loading');
-    source
-      .listConversations(workspaceId, {
-        ...(filtered ? { q } : {}),
-        after: cursor,
-        limit: PAGE_SIZE,
-      })
-      .then((page) => {
-        if (pageRequest.current !== id || page.workspace_id !== workspaceId) return;
-        if (!filtered && useInboxStore.getState().listVersion !== listVersion) {
-          setMoreState('idle');
-          return;
-        }
-        const next = (prev: Extra | null): Extra => ({
-          rows: appendPage(prev?.rows ?? [], page.items),
-          hasNext: page.has_next,
-          cursor: page.next_cursor,
-        });
-        if (filtered) setResults(next);
-        else
-          setMore((prev) => ({
-            ...next(prev.version === listVersion ? prev : null),
-            version: listVersion,
-          }));
-        setMoreState('idle');
-      })
-      .catch((error: unknown) => {
-        useInboxStore.getState().reportGuard(error, workspaceId);
-        if (pageRequest.current === id) setMoreState('error');
+    void useInboxStore
+      .getState()
+      .loadMore(workspaceId, target)
+      .then((outcome) => {
+        if (pageRequest.current === id) setMoreState(outcome === 'error' ? 'error' : 'idle');
       });
-  }, [q, results, more.cursor, nextCursor, listVersion, moreState, workspaceId]);
+  }, [q, found, nextCursor, moreState, workspaceId]);
 
-  const filtered = q !== '' && results !== null;
-  const rows = filtered ? results.rows : merge(conversations, more.rows);
-  const canLoadMore = filtered
-    ? results.hasNext
-    : more.rows.length > 0 || more.cursor
-      ? more.hasNext
-      : hasNext;
+  const filtered = found !== null;
+  const rows = found ? found.rows : conversations;
+  const canLoadMore = found ? found.hasNext : hasNext;
 
   const sentinel = useRef<HTMLDivElement>(null);
   const loadMoreRef = useRef(loadMore);
@@ -166,12 +134,10 @@ export function InboxList() {
     if (query.current !== '') restartPaging();
     query.current = '';
     setQ('');
-    setResults(null);
+    useInboxStore.getState().clearSearch();
   };
-  const retryFirstPage = () => {
-    useInboxStore.getState().leave();
-    void useInboxStore.getState().enter(workspaceId);
-  };
+  // Re-reads the first page in place: the socket and an open thread stay as they are.
+  const retryFirstPage = () => void useInboxStore.getState().retryList(workspaceId);
 
   const botSettings = (
     <Button asChild variant="link" size="sm" className="h-auto p-0">
@@ -181,7 +147,8 @@ export function InboxList() {
 
   const noBot = bot?.state === 'not_connected' || bot?.state === 'needs_token';
   const loading = listStatus === 'loading';
-  const failed = listStatus === 'error' || (q !== '' && searchError === q);
+  const failed =
+    listStatus === 'error' || (q !== '' && results?.q === q && results.status === 'error');
 
   let body: React.ReactNode;
   if (loading) body = <ConversationSkeletons count={6} />;
@@ -195,14 +162,7 @@ export function InboxList() {
               type="button"
               size="sm"
               variant="outline"
-              onClick={
-                q !== ''
-                  ? () => {
-                      setSearchError(null);
-                      search(q);
-                    }
-                  : retryFirstPage
-              }
+              onClick={q !== '' ? () => search(q) : retryFirstPage}
             >
               Retry
             </Button>
@@ -221,8 +181,8 @@ export function InboxList() {
   else if (rows.length === 0 && q === '')
     body = (
       <div className="flex flex-col items-center gap-2 px-6 py-10 text-center text-sm text-muted-foreground">
-        <p>No conversations yet. They appear here when customers write to your bot.</p>
-        {noBot ? (
+        <p>{EMPTY_LENS[lens.status][lens.assignee]}</p>
+        {noBot && lens.status === 'open' && lens.assignee === 'all' ? (
           isOwner ? (
             <>
               <p>Connect the bot to start receiving messages.</p>
@@ -241,6 +201,7 @@ export function InboxList() {
           conversations={rows}
           workspaceId={workspaceId}
           selectedId={conversationId}
+          markClosed={q !== ''}
         />
         {moreState === 'loading' ? <ConversationSkeletons count={2} /> : null}
         {moreState === 'error' ? (
@@ -284,6 +245,38 @@ export function InboxList() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
         />
+      </div>
+      <div data-testid="lens-controls" className="flex items-start gap-2 border-b p-3">
+        <Tabs
+          value={lens.status}
+          onValueChange={(v) => chooseLens({ status: StatusLens.parse(v) })}
+          className="flex-1 gap-1"
+        >
+          <TabsList className="w-full">
+            <TabsTrigger value="open" disabled={q !== ''}>
+              Open
+            </TabsTrigger>
+            <TabsTrigger value="closed" disabled={q !== ''}>
+              Closed
+            </TabsTrigger>
+          </TabsList>
+          {q !== '' ? (
+            <p className="text-xs text-muted-foreground">Searching open and closed</p>
+          ) : null}
+        </Tabs>
+        <Select
+          value={lens.assignee}
+          onValueChange={(v) => chooseLens({ assignee: AssigneeLens.parse(v) })}
+        >
+          <SelectTrigger aria-label="Assignee" className="w-36">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="mine">Mine</SelectItem>
+            <SelectItem value="unassigned">Unassigned</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
       <ScrollArea className="min-h-0 flex-1">{body}</ScrollArea>
     </div>

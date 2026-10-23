@@ -2,8 +2,11 @@ import type { Clock } from '../../../platform/clock.js';
 import { newId } from '../../../platform/ids.js';
 import { canTransition } from '../domain/reply.js';
 import type { Transaction } from './conversations.js';
+import { recordChange } from './state-changes.js';
 import type {
+  ActivityRepo,
   AttemptKind,
+  ConversationRepo,
   AttemptOutcomeValue,
   ConversationSignals,
   DrainQueued,
@@ -67,6 +70,19 @@ export interface ReplyRequestsDeps {
   clock: Clock;
 }
 
+/**
+ * Lock order of every reply write (sad.md §8): the `drain:` advisory lock first, then the reply and
+ * attempt rows, then the conversation row (`lockState`, FOR NO KEY UPDATE) — taken once per
+ * transaction, after the last reply or attempt write, never between them. A transaction that held
+ * the conversation row while it went on to lock more reply rows would deadlock with a lagging drain
+ * that holds one of those rows and waits for the conversation row to reopen it.
+ * The row lock is `FOR NO KEY UPDATE`, so the `FOR KEY SHARE` a reply or attempt insert takes on the
+ * conversation through its foreign key never queues behind it; it still conflicts with every other
+ * state lock and with the capture's raise `UPDATE`, which is all the state changes rely on. The
+ * request side still takes the drain lock before it writes anything. The member limit lock comes
+ * after the drain lock.
+ */
+
 /** Reply creation and re-queueing: the request side of at-most-once delivery (ADR-0004). */
 export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
   const { transaction, replies, signals, clock } = deps;
@@ -89,6 +105,7 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
     createReply(input) {
       const { workspaceId, conversationId, authorId, clientKey } = input;
       return transaction(async (tx) => {
+        await replies.lockDrain(workspaceId, conversationId, tx);
         const now = clock.now();
         const existing = await replies.findByClientKey(workspaceId, conversationId, clientKey, tx);
         if (existing) return { status: 'existing', reply: existing };
@@ -141,7 +158,6 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
           },
           tx,
         );
-        await replies.lockDrain(workspaceId, conversationId, tx);
         await input.enqueueDrain(tx, workspaceId, conversationId);
         await signals.replyChanged(tx, {
           workspaceId,
@@ -156,6 +172,7 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
     requeueReply(input) {
       const { workspaceId, conversationId, replyId, memberId } = input;
       return transaction(async (tx): Promise<RequeueReplyResult> => {
+        await replies.lockDrain(workspaceId, conversationId, tx);
         const now = clock.now();
         const current = await replies.findForUpdate(workspaceId, conversationId, replyId, tx);
         if (!current) return { status: 'not_found' };
@@ -185,7 +202,6 @@ export function createReplies(deps: ReplyRequestsDeps): ReplyRequests {
           },
           tx,
         );
-        await replies.lockDrain(workspaceId, conversationId, tx);
         await input.enqueueDrain(tx, workspaceId, conversationId);
         await signals.replyChanged(tx, { workspaceId, conversationId, replyId, change: 'state' });
         return { status: 'requeued', reply };
@@ -268,14 +284,21 @@ export interface ReplyDelivery {
   ): Promise<DeadLetterResult>;
 }
 
+export interface ReplyDeliveryDeps extends ReplyRequestsDeps {
+  conversations: ConversationRepo;
+  activities: ActivityRepo;
+}
+
 /** The storage half of the drain: pending, in flight, and the truthful final state of each reply (ADR-0004). */
-export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
-  const { transaction, replies, signals, clock } = deps;
+export function createReplyDelivery(deps: ReplyDeliveryDeps): ReplyDelivery {
+  const { transaction, replies, conversations, activities, signals, clock } = deps;
   type Tx = Parameters<Parameters<Transaction>[0]>[0];
 
   /**
    * Settles a `sending` reply and publishes its `state` signal; null when it was not `sending`
-   * (or, with `idleOnly`, when an attempt of it is in flight).
+   * (or, with `idleOnly`, when an attempt of it is in flight). It takes no conversation lock: a
+   * caller whose settlement failed calls `reopenIfClosed` once, after its last reply / attempt write.
+   * A reply that was already final returns null, so it never reopens twice.
    */
   async function settle(
     tx: Tx,
@@ -294,6 +317,26 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
     }
     await signals.replyChanged(tx, { workspaceId, conversationId, replyId, change: 'state' });
     return reply;
+  }
+
+  /**
+   * A reply that ended not delivered or not confirmed reopens a closed conversation (AC-08), on the
+   * same transaction, under the conversation row lock — the last lock of the order documented above
+   * `createReplies`, so it is called once, after every reply and attempt write of the transaction.
+   */
+  async function reopenIfClosed(tx: Tx, workspaceId: string, conversationId: string) {
+    const locked = await conversations.lockState(workspaceId, conversationId, tx);
+    if (locked?.status !== 'closed') return;
+    await recordChange({ conversations, activities, signals }, tx, {
+      workspaceId,
+      conversationId,
+      kind: 'reopened',
+      cause: 'reply_not_delivered',
+      actorAccountId: null,
+      previousAssignee: null,
+      newAssignee: null,
+      now: clock.now(),
+    });
   }
 
   return {
@@ -359,7 +402,10 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
             settlement = { state: 'not_confirmed' };
             break;
         }
-        await settle(tx, workspaceId, conversationId, finished.replyId, settlement);
+        const settled = await settle(tx, workspaceId, conversationId, finished.replyId, settlement);
+        if (settled && settlement.state !== 'sent') {
+          await reopenIfClosed(tx, workspaceId, conversationId);
+        }
         return true;
       });
     },
@@ -372,6 +418,7 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
         });
         if (!reply) return false;
         await replies.skipAttempt(workspaceId, conversationId, replyId, newId(), clock.now(), tx);
+        await reopenIfClosed(tx, workspaceId, conversationId);
         return true;
       });
     },
@@ -379,7 +426,9 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
     resolveStaleInFlight(workspaceId, conversationId, olderThan) {
       return transaction(async (tx) => {
         const stale = await replies.inFlightAttempts(workspaceId, conversationId, olderThan, tx);
-        return resolveUnknown(tx, workspaceId, conversationId, stale);
+        const resolved = await resolveUnknown(tx, workspaceId, conversationId, stale);
+        if (resolved.length) await reopenIfClosed(tx, workspaceId, conversationId);
+        return resolved;
       });
     },
 
@@ -392,6 +441,7 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
         const notConfirmed = await resolveUnknown(tx, workspaceId, conversationId, stale);
         const interrupted: string[] = [];
         if (await drainQueued(tx, workspaceId, conversationId)) {
+          if (notConfirmed.length) await reopenIfClosed(tx, workspaceId, conversationId);
           const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
           return { notConfirmed, interrupted, inFlightSince };
         }
@@ -417,6 +467,10 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
           );
           interrupted.push(reply.id);
         }
+        // Once, after the loop: the conversation row is the last lock (see `createReplies`).
+        if (notConfirmed.length || interrupted.length) {
+          await reopenIfClosed(tx, workspaceId, conversationId);
+        }
         // Read after the loop: a reply skipped for an attempt started meanwhile still gets the
         // delayed drain that resolves it once that attempt is stale.
         const inFlightSince = await replies.oldestInFlightStart(workspaceId, conversationId, tx);
@@ -425,7 +479,11 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
     },
   };
 
-  /** Each in-flight attempt ends `unknown` and its reply `not_confirmed`; never retried on its own. */
+  /**
+   * Each in-flight attempt ends `unknown` and its reply `not_confirmed`; never retried on its own.
+   * Returns only the replies it settled.
+   * It takes no conversation lock: the caller reopens once, after its last write.
+   */
   async function resolveUnknown(
     tx: Tx,
     workspaceId: string,
@@ -443,8 +501,12 @@ export function createReplyDelivery(deps: ReplyRequestsDeps): ReplyDelivery {
         tx,
       );
       if (!done) continue;
-      await settle(tx, workspaceId, conversationId, done.replyId, { state: 'not_confirmed' });
-      resolved.push(done.replyId);
+      // A reply already final (settled while this attempt lagged) did not change: not reported,
+      // and it reopens nothing.
+      const settled = await settle(tx, workspaceId, conversationId, done.replyId, {
+        state: 'not_confirmed',
+      });
+      if (settled) resolved.push(done.replyId);
     }
     return resolved;
   }

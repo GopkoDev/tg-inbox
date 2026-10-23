@@ -8,7 +8,12 @@ import {
   type InboundMessage,
   type Transaction,
 } from './conversations.js';
-import { fakeConversationRepo, fakeConversationSignals, fakeMessageRepo } from './fakes.js';
+import {
+  fakeActivityRepo,
+  fakeConversationRepo,
+  fakeConversationSignals,
+  fakeMessageRepo,
+} from './fakes.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
@@ -47,17 +52,29 @@ function setup() {
   const conversations = fakeConversationRepo();
   const messages = fakeMessageRepo();
   const signals = fakeConversationSignals();
+  const activities = fakeActivityRepo();
   const tx = { marker: 'tx' } as never;
   const transaction = vi.fn(<T>(fn: (t: never) => Promise<T>) => fn(tx));
   const useCases = createConversations({
     transaction: transaction as unknown as Transaction,
     conversations,
     messages,
+    activities,
     contacts,
     signals,
     clock,
   });
-  return { clock, contactRepo, conversations, messages, signals, transaction, tx, useCases };
+  return {
+    activities,
+    clock,
+    contactRepo,
+    conversations,
+    messages,
+    signals,
+    transaction,
+    tx,
+    useCases,
+  };
 }
 
 describe('conversations use cases', () => {
@@ -99,6 +116,7 @@ describe('conversations use cases', () => {
       transaction: (fn) => fn(tx),
       conversations,
       messages,
+      activities: fakeActivityRepo(),
       contacts: contacts as never,
       signals: fakeConversationSignals(),
       clock: fixedClock(at(100)),
@@ -290,5 +308,78 @@ describe('conversations use cases', () => {
     expect(await useCases.hasConversations('ws-a')).toBe(true);
     expect(await useCases.hasConversations('ws-b')).toBe(false);
     expect(await useCases.lastMessageReceivedAt('ws-b')).toBeNull();
+  });
+
+  describe('a customer message into a closed conversation (AC-06, AC-07)', () => {
+    async function closedConversation() {
+      const s = setup();
+      await s.useCases.captureInbound('ws-a', message());
+      const row = s.conversations.rows[0]!;
+      row.status = 'closed';
+      row.assigneeAccountId = 'acc-1';
+      row.stateVersion = 4;
+      s.clock.set(at(300));
+      return { ...s, row };
+    }
+
+    it('raises the customer message counter for every newly captured message', async () => {
+      const { conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      await useCases.captureInbound('ws-a', message({ messageId: 2n })); // duplicate
+      expect(conversations.rows[0]!.customerMessageSeq).toBe(2);
+    });
+
+    it('reopens it with the same assignee, one reopened/customer_wrote entry at the arrival and its signal', async () => {
+      const { row, activities, signals, useCases, tx } = await closedConversation();
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      expect(row).toMatchObject({ status: 'open', assigneeAccountId: 'acc-1', stateVersion: 5 });
+      expect(activities.rows).toEqual([
+        expect.objectContaining({
+          workspaceId: 'ws-a',
+          conversationId: row.id,
+          kind: 'reopened',
+          cause: 'customer_wrote',
+          actorAccountId: null,
+          previousAssigneeAccountId: null,
+          newAssigneeAccountId: null,
+          positionAt: at(300),
+        }),
+      ]);
+      expect(signals.activities).toEqual([
+        { tx, workspaceId: 'ws-a', conversationId: row.id, activityId: activities.rows[0]!.id },
+      ]);
+    });
+
+    it('a late redelivery reopens by its arrival: the line sits at the arrival time', async () => {
+      const { row, activities, useCases } = await closedConversation();
+      await useCases.captureInbound('ws-a', message({ messageId: 0n, sentAt: at(-50) }));
+      expect(row.status).toBe('open');
+      expect(activities.rows[0]!.positionAt).toEqual(at(300));
+    });
+
+    it('a duplicate redelivery does not reopen, count or signal', async () => {
+      const { row, activities, signals, useCases } = await closedConversation();
+      row.customerMessageSeq = 1;
+      await useCases.captureInbound('ws-a', message());
+      expect(row).toMatchObject({ status: 'closed', stateVersion: 4, customerMessageSeq: 1 });
+      expect(activities.rows).toHaveLength(0);
+      expect(signals.activities).toHaveLength(0);
+    });
+
+    it('an edit does not reopen', async () => {
+      const { row, activities, useCases } = await closedConversation();
+      await useCases.applyEdit('ws-a', edit());
+      expect(row).toMatchObject({ status: 'closed', stateVersion: 4 });
+      expect(activities.rows).toHaveLength(0);
+    });
+
+    it('a message into an open conversation records no change', async () => {
+      const { activities, conversations, useCases } = setup();
+      await useCases.captureInbound('ws-a', message());
+      await useCases.captureInbound('ws-a', message({ messageId: 2n }));
+      expect(conversations.rows[0]!.stateVersion).toBe(0);
+      expect(activities.rows).toHaveLength(0);
+    });
   });
 });

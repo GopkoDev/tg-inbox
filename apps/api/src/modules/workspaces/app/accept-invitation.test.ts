@@ -79,7 +79,10 @@ async function setup() {
       },
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
+  const uow: UnitOfWork = {
+    run: (fn) => fn(repos, undefined as never),
+    reposOn: () => repos,
+  };
 
   function invite(over: Partial<InvitationRecord> = {}): InvitationRecord {
     const inv: InvitationRecord = {

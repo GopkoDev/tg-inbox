@@ -36,6 +36,13 @@ describe('handleGuardError', () => {
     expect(c.navigate).toHaveBeenCalledWith('/sign-in', { reason: 'session-ended' });
   });
 
+  it('401 on an inbox address with lenses remembers path and lenses (AC-11)', async () => {
+    const address = '/w/w-acme/inbox?status=closed&assignee=mine';
+    const c = { ...ctx(), currentAddress: () => address };
+    await handleGuardError(new ApiError(401, ErrorCode.UNAUTHENTICATED, 'x'), c);
+    expect(useAuthStore.getState().returnTo).toBe(address);
+  });
+
   it('403 ACCESS_REMOVED: clears workspace data BEFORE the resolver runs, keeps the account', async () => {
     let seenAtResolve: unknown;
     const c = ctx({

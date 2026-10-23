@@ -3,7 +3,7 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -55,13 +55,30 @@ export interface Contacts {
   workspace_id: string;
 }
 
+export interface ConversationActivities {
+  actor_account_id: string | null;
+  cause: string;
+  conversation_id: string;
+  created_at: Timestamp;
+  id: string;
+  kind: string;
+  new_assignee_account_id: string | null;
+  position_at: Timestamp;
+  previous_assignee_account_id: string | null;
+  workspace_id: string;
+}
+
 export interface Conversations {
+  assignee_account_id: string | null;
   contact_id: string;
   created_at: Timestamp;
+  customer_message_seq: number;
   id: string;
   last_activity_at: Timestamp;
   last_message_received_at: Timestamp;
   last_reply_sent_at: Timestamp | null;
+  state_version: number;
+  status: string;
   telegram_chat_id: Int8;
   workspace_id: string;
 }
@@ -175,6 +192,7 @@ export interface DB {
   accounts: Accounts;
   bots: Bots;
   contacts: Contacts;
+  conversation_activities: ConversationActivities;
   conversations: Conversations;
   invitations: Invitations;
   memberships: Memberships;

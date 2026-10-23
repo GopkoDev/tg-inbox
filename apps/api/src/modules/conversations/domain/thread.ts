@@ -1,13 +1,16 @@
+import { createHash } from 'node:crypto';
+
 export type ThreadPosition =
   | { positionAt: Date; kind: 'message'; id: bigint }
-  | { positionAt: Date; kind: 'reply'; id: string };
+  | { positionAt: Date; kind: 'reply'; id: string }
+  | { positionAt: Date; kind: 'activity'; id: string };
 
 export interface ListPosition {
   lastActivityAt: Date;
   id: string;
 }
 
-const KIND_ORDER = { message: 0, reply: 1 } as const;
+const KIND_ORDER = { message: 0, reply: 1, activity: 2 } as const;
 
 export function compareThreadPosition(a: ThreadPosition, b: ThreadPosition): number {
   const dt = a.positionAt.getTime() - b.positionAt.getTime();
@@ -50,20 +53,46 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   const positionAt = toDate(o.at);
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
   if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
+  if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };
   }
   return null;
 }
 
-export function encodeListCursor(p: ListPosition): string {
-  return encode({ k: 'l', at: p.lastActivityAt.getTime(), id: p.id });
+export type StatusLens = 'open' | 'closed';
+export type AssigneeLens = 'all' | 'mine' | 'unassigned';
+
+/** What a list cursor is valid for: the lenses and the (trimmed) search text it was issued with. */
+export interface ListLens {
+  status: StatusLens;
+  assignee: AssigneeLens;
+  q: string;
 }
 
-export function decodeListCursor(cursor: string): ListPosition | null {
+const DEFAULT_LENS: ListLens = { status: 'open', assignee: 'all', q: '' };
+
+/** A short digest, so a long search text never grows the cursor. */
+const queryKey = (q: string) => createHash('sha256').update(q).digest('base64url').slice(0, 16);
+
+export function encodeListCursor(p: ListPosition, lens: ListLens = DEFAULT_LENS): string {
+  const bound =
+    lens.status === 'open' && lens.assignee === 'all' && lens.q === ''
+      ? {}
+      : { s: lens.status, a: lens.assignee, q: lens.q === '' ? undefined : queryKey(lens.q) };
+  return encode({ k: 'l', at: p.lastActivityAt.getTime(), id: p.id, ...bound });
+}
+
+/** Null when malformed or issued for other lenses or another search; a lens-less cursor is open · all. */
+export function decodeListCursor(
+  cursor: string,
+  lens: ListLens = DEFAULT_LENS,
+): ListPosition | null {
   const o = decode(cursor);
   if (!o || o.k !== 'l') return null;
   const lastActivityAt = toDate(o.at);
   if (!lastActivityAt || typeof o.id !== 'string' || o.id === '') return null;
+  if ((o.s ?? 'open') !== lens.status || (o.a ?? 'all') !== lens.assignee) return null;
+  if ((o.q ?? '') !== (lens.q === '' ? '' : queryKey(lens.q))) return null;
   return { lastActivityAt, id: o.id };
 }

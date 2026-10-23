@@ -2,6 +2,7 @@ import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { isMessageKind, type MessageKind } from '../domain/message.js';
 import type { ConversationListReads, ConversationRow, LastItemView, Viewer } from '../app/ports.js';
+import type { LatestReply } from '../domain/state.js';
 
 interface RawRow {
   id: string;
@@ -16,6 +17,12 @@ interface RawRow {
   r_id: string | null;
   r_body: string | null;
   r_sent_at: Date | null;
+  status: string;
+  assignee_account_id: string | null;
+  state_version: number;
+  customer_message_seq: number;
+  s_id: string | null;
+  s_state: string | null;
 }
 
 function lastItemOf(r: RawRow): LastItemView | null {
@@ -41,6 +48,9 @@ function toRow(r: RawRow): ConversationRow {
     lastItem: lastItemOf(r),
     unreadCount: r.unread,
     waitingForReply: r.waiting,
+    status: r.status === 'closed' ? 'closed' : 'open',
+    assigneeAccountId: r.assignee_account_id,
+    stateVersion: r.state_version,
   };
 }
 
@@ -51,6 +61,7 @@ export function createListQueries(db: Db): ConversationListReads {
     viewer: Viewer,
     filter: ReturnType<typeof sql>,
     tail: ReturnType<typeof sql>,
+    snapshot = false,
   ) {
     return sql<RawRow>`
       SELECT c.id, c.contact_id, c.last_activity_at,
@@ -59,7 +70,9 @@ export function createListQueries(db: Db): ConversationListReads {
           WHERE um.conversation_id = c.id AND um.workspace_id = ${workspaceId}
             AND um.received_at > GREATEST(rm.read_through_at, ${viewer.activeSince}::timestamptz)) AS unread,
         lm.id AS m_id, lm.kind AS m_kind, lm.body AS m_body, lm.received_at AS m_received_at,
-        lr.id AS r_id, lr.body AS r_body, lr.sent_at AS r_sent_at
+        lr.id AS r_id, lr.body AS r_body, lr.sent_at AS r_sent_at,
+        c.status, c.assignee_account_id, c.state_version, c.customer_message_seq,
+        ${snapshot ? sql`sr.id AS s_id, sr.state AS s_state` : sql`NULL::uuid AS s_id, NULL::text AS s_state`}
       FROM conversations c
       LEFT JOIN read_marks rm
         ON rm.conversation_id = c.id AND rm.account_id = ${viewer.accountId}
@@ -74,6 +87,15 @@ export function createListQueries(db: Db): ConversationListReads {
         WHERE conversation_id = c.id AND workspace_id = ${workspaceId} AND state = 'sent'
         ORDER BY position_at DESC, id DESC LIMIT 1
       ) lr ON true
+      ${
+        snapshot
+          ? sql`LEFT JOIN LATERAL (
+        SELECT id, state FROM replies
+        WHERE conversation_id = c.id AND workspace_id = ${workspaceId}
+        ORDER BY position_at DESC, id DESC LIMIT 1
+      ) sr ON true`
+          : sql``
+      }
       WHERE c.workspace_id = ${workspaceId} ${filter}
       ${tail}`;
   }
@@ -83,12 +105,20 @@ export function createListQueries(db: Db): ConversationListReads {
       const cursor = q.after
         ? sql`AND (c.last_activity_at, c.id) < (${q.after.lastActivityAt}::timestamptz, ${q.after.id}::uuid)`
         : sql``;
-      const contacts =
-        q.contactIds === null ? sql`` : sql`AND c.contact_id = ANY(${q.contactIds}::uuid[])`;
+      const searching = q.contactIds !== null;
+      const contacts = searching ? sql`AND c.contact_id = ANY(${q.contactIds}::uuid[])` : sql``;
+      // A search spans both statuses; the assignee lens stays.
+      const status = searching ? sql`` : sql`AND c.status = ${q.status}`;
+      const assignee =
+        q.assignee === 'mine'
+          ? sql`AND c.assignee_account_id = ${q.accountId}::uuid`
+          : q.assignee === 'unassigned'
+            ? sql`AND c.assignee_account_id IS NULL`
+            : sql``;
       const { rows } = await select(
         workspaceId,
         q,
-        sql`${cursor} ${contacts}`,
+        sql`${status} ${assignee} ${cursor} ${contacts}`,
         sql`ORDER BY c.last_activity_at DESC, c.id DESC LIMIT ${q.limit + 1}`,
       ).execute(db);
       return { rows: rows.slice(0, q.limit).map(toRow), hasNext: rows.length > q.limit };
@@ -100,8 +130,18 @@ export function createListQueries(db: Db): ConversationListReads {
         viewer,
         sql`AND c.id = ${conversationId}::uuid`,
         sql`LIMIT 1`,
+        true,
       ).execute(db);
-      return rows[0] ? toRow(rows[0]) : null;
+      const r = rows[0];
+      if (!r) return null;
+      const latestReply: LatestReply | null =
+        r.s_id !== null && r.s_state !== null
+          ? { id: r.s_id, state: r.s_state as LatestReply['state'] }
+          : null;
+      return {
+        ...toRow(r),
+        closeSnapshot: { customerMessageSeq: r.customer_message_seq, latestReply },
+      };
     },
   };
 }

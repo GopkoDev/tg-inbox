@@ -98,12 +98,21 @@ function setup() {
       },
     },
   } as unknown as WorkspaceRepos;
-  const uow: UnitOfWork = { run: (fn) => fn(repos, undefined as never) };
+  const uow: UnitOfWork = {
+    run: (fn) => fn(repos, undefined as never),
+    reposOn: () => repos,
+  };
   const published: unknown[] = [];
+  const deactivated: unknown[] = [];
+  const port = { fail: false };
   const team = createTeam({
     uow,
     clock: fixedClock(T0),
     publish: async (_tx, signal) => void published.push(signal),
+    onMembershipDeactivated: async (_tx, event) => {
+      deactivated.push(event);
+      if (port.fail) throw new Error('port failed');
+    },
     publicWebUrl: 'http://web.test',
     accounts: {
       findAccountIdByEmail: async (email) =>
@@ -111,7 +120,7 @@ function setup() {
       getAccountsByIds: async (ids) => ids.flatMap((id) => accounts.get(id) ?? []),
     },
   });
-  return { team, members, invitations, published, addMember };
+  return { team, members, invitations, published, deactivated, port, addMember };
 }
 
 describe('inviteMember', () => {
@@ -206,6 +215,41 @@ describe('deactivate / reactivate', () => {
     const m = s.addMember('x', 'operator', 'active', OTHER_WS);
     await expect(s.team.deactivateMembership(WS, m.id)).rejects.toBeInstanceOf(NotFoundError);
     await expect(s.team.reactivateMembership(WS, m.id)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('onMembershipDeactivated port', () => {
+  it('AC-10: is called once with workspace, account and the clock time, before the signal', async () => {
+    const s = setup();
+    s.addMember('ana', 'owner');
+    const op = s.addMember('op', 'operator');
+    await s.team.deactivateMembership(WS, op.id);
+    expect(s.deactivated).toEqual([{ workspaceId: WS, accountId: op.accountId, at: T0 }]);
+  });
+
+  it('is not called on a refusal, an unchanged repeat or a reactivation', async () => {
+    const s = setup();
+    const ana = s.addMember('ana', 'owner');
+    const op = s.addMember('op', 'operator');
+    const gone = s.addMember('gone', 'operator', 'deactivated');
+    await expect(s.team.deactivateMembership(WS, ana.id)).rejects.toBeInstanceOf(
+      LastActiveOwnerError,
+    );
+    await s.team.deactivateMembership(WS, gone.id);
+    await s.team.reactivateMembership(WS, gone.id);
+    expect(s.deactivated).toEqual([]);
+    await s.team.deactivateMembership(WS, op.id);
+    await s.team.deactivateMembership(WS, op.id);
+    expect(s.deactivated).toHaveLength(1);
+  });
+
+  it('a throwing port fails the deactivation and publishes no signal', async () => {
+    const s = setup();
+    s.addMember('ana', 'owner');
+    const op = s.addMember('op', 'operator');
+    s.port.fail = true;
+    await expect(s.team.deactivateMembership(WS, op.id)).rejects.toThrow('port failed');
+    expect(s.published).toEqual([]);
   });
 });
 

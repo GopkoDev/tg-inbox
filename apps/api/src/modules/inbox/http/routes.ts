@@ -2,19 +2,28 @@ import type { FastifyInstance, preHandlerAsyncHookHandler } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
-  Conversation,
+  ActiveMemberList,
+  AssignRequest,
+  AssigneeLens,
   ConversationPage,
+  ConversationStateChange,
+  ConversationSummary,
   Cursor,
   InboxBotStatus,
   ReadMarkRequest,
   ReadState,
   ReplyResend,
   ReplySend,
+  StateChangeRequest,
+  CloseRequest,
+  StatusLens,
+  ThreadActivity,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
 } from '@tg/shared';
 import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/http/guard.js';
+import type { ChangeState } from '../app/change-state.js';
 import type { InboxReadUseCases } from '../app/reads.js';
 import type { OpenMessageMedia } from '../app/open-media.js';
 import type { SendReplyUseCases } from '../app/send-reply.js';
@@ -25,6 +34,7 @@ export interface InboxDeps {
   reads: InboxReadUseCases;
   replies: SendReplyUseCases;
   media: OpenMessageMedia;
+  changes: ChangeState;
   live: LiveHub;
   /** The panel's own origin (`PUBLIC_WEB_URL`); the only `Origin` a live socket may be opened from. */
   webOrigin: string;
@@ -45,12 +55,33 @@ const RangeHeader = z
   .regex(/^bytes=[0-9]*-[0-9]*$/);
 const SendBody = ReplySend.extend({ body: z.string() });
 
+/** Change logs carry ids, kind, cause and outcome only, never names or message text (sad.md §7). */
+function logChange(
+  log: { info(obj: object, msg: string): void },
+  result: ConversationStateChange,
+  conversationId: string,
+  route: string,
+) {
+  log.info(
+    {
+      workspaceId: result.workspace_id,
+      conversationId,
+      activityId: result.activity?.id ?? null,
+      kind: result.activity?.kind ?? null,
+      cause: result.activity?.cause ?? null,
+      outcome: result.outcome,
+      route,
+    },
+    'conversation change',
+  );
+}
+
 /**
  * The inbox routes under `/workspaces/:workspaceId/inbox` (openapi.yaml); the caller supplies the
  * `/api` prefix. Operators and owners have the same rights, so there is no role check.
  */
 export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Promise<void> {
-  const { reads, replies, media, live, webOrigin, access, authenticate } = deps;
+  const { reads, replies, media, changes, live, webOrigin, access, authenticate } = deps;
   const pre = [authenticate, createWorkspaceGuard(access)];
   const r = app.withTypeProvider<ZodTypeProvider>();
   const base = '/workspaces/:workspaceId/inbox';
@@ -91,6 +122,8 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       schema: {
         params: z.object(workspace),
         querystring: z.object({
+          status: StatusLens.default('open'),
+          assignee: AssigneeLens.default('all'),
           q: z.string().max(200).optional(),
           after: Cursor.optional(),
           limit: Limit,
@@ -106,7 +139,7 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
     `${base}/conversations/:conversationId`,
     {
       preHandler: pre,
-      schema: { params: z.object(conversation), response: { 200: Conversation } },
+      schema: { params: z.object(conversation), response: { 200: ConversationSummary } },
     },
     async (request) =>
       reads.getConversation(
@@ -172,6 +205,33 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
       ),
   );
 
+  r.get(
+    `${base}/conversations/:conversationId/activities/:activityId`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...conversation, activityId: z.uuid() }),
+        response: { 200: ThreadActivity },
+      },
+    },
+    async (request) =>
+      reads.getThreadActivity(
+        request.workspace.workspaceId,
+        request.params.conversationId,
+        request.params.activityId,
+      ),
+  );
+
+  // Any active member, either role: the assignee chooser (not the owner-only memberships list).
+  r.get(
+    `${base}/members`,
+    {
+      preHandler: pre,
+      schema: { params: z.object(workspace), response: { 200: ActiveMemberList } },
+    },
+    async (request) => reads.listActiveMembers(request.workspace.workspaceId),
+  );
+
   r.post(
     `${base}/conversations/:conversationId/read`,
     {
@@ -189,6 +249,107 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         request.params.conversationId,
         new Date(request.body.read_through_at),
       ),
+  );
+
+  // Assign, reassign and unassign (flow 5): the refusals are raised by the use case.
+  r.post(
+    `${base}/conversations/:conversationId/assign`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: AssignRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.assign(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        {
+          assigneeAccountId: request.body.assignee_account_id,
+          expectedStateVersion: request.body.expected_state_version,
+        },
+      );
+      logChange(request.log, result, request.params.conversationId, 'assign');
+      return result;
+    },
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/unassign`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: StateChangeRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.unassign(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        { expectedStateVersion: request.body.expected_state_version },
+      );
+      logChange(request.log, result, request.params.conversationId, 'unassign');
+      return result;
+    },
+  );
+
+  // Close (flow 7) and reopen (flow 8): a close that may be early is refused until confirmed.
+  r.post(
+    `${base}/conversations/:conversationId/close`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: CloseRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const snapshot = request.body.expected_close_snapshot;
+      const result = await changes.close(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        {
+          expectedStateVersion: request.body.expected_state_version,
+          expectedCloseSnapshot: {
+            customerMessageSeq: snapshot.customer_message_seq,
+            latestReply: snapshot.latest_reply,
+          },
+          confirm: request.body.confirm_close_reasons,
+        },
+      );
+      logChange(request.log, result, request.params.conversationId, 'close');
+      return result;
+    },
+  );
+
+  r.post(
+    `${base}/conversations/:conversationId/reopen`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object(conversation),
+        body: StateChangeRequest,
+        response: { 200: ConversationStateChange },
+      },
+    },
+    async (request) => {
+      const result = await changes.reopen(
+        request.workspace.workspaceId,
+        member(request),
+        request.params.conversationId,
+        { expectedStateVersion: request.body.expected_state_version },
+      );
+      logChange(request.log, result, request.params.conversationId, 'reopen');
+      return result;
+    },
   );
 
   r.get(

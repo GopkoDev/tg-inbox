@@ -1,6 +1,6 @@
 import type { Conversation, LastItem, MessageKind } from '@tg/shared';
-import { CornerUpLeft } from 'lucide-react';
-import { Link } from 'react-router';
+import { CornerUpLeft, UserRound } from 'lucide-react';
+import { Link, useLocation } from 'react-router';
 import { initials } from '@/shared/lib/initials';
 import { cn } from '@/shared/lib/utils';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
@@ -59,12 +59,17 @@ export function ConversationList({
   conversations,
   workspaceId,
   selectedId,
+  markClosed = false,
 }: {
   conversations: Conversation[];
   workspaceId: string;
   selectedId?: string;
+  /** Search results hold both statuses: a closed row says so. */
+  markClosed?: boolean;
 }) {
   const now = new Date();
+  /** Opening a thread keeps the lenses, which live in the address. */
+  const { search } = useLocation();
   return (
     <ul aria-label="Conversations" className="divide-y">
       {conversations.map((c) => {
@@ -72,7 +77,7 @@ export function ConversationList({
         return (
           <li key={c.id}>
             <Link
-              to={`/w/${workspaceId}/inbox/${c.id}`}
+              to={{ pathname: `/w/${workspaceId}/inbox/${c.id}`, search }}
               aria-current={c.id === selectedId ? 'true' : undefined}
               className={cn(
                 'flex items-center gap-3 px-3 py-3 hover:bg-accent',
@@ -84,7 +89,14 @@ export function ConversationList({
               </Avatar>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
-                  <span className="truncate text-sm font-medium">{name}</span>
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate text-sm font-medium">{name}</span>
+                    {markClosed && c.status === 'closed' ? (
+                      <Badge variant="outline" className="shrink-0">
+                        Closed
+                      </Badge>
+                    ) : null}
+                  </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
                     {relativeTime(c.last_activity_at, now)}
                   </span>
@@ -102,6 +114,10 @@ export function ConversationList({
                     </Badge>
                   ) : null}
                 </div>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <UserRound aria-hidden className="size-3.5 shrink-0" />
+                  <span className="truncate">{c.assignee?.display_name ?? 'Unassigned'}</span>
+                </p>
                 {c.waiting_for_reply ? (
                   <p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
                     <span aria-hidden className="size-1.5 rounded-full bg-primary" />

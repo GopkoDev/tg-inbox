@@ -16,6 +16,7 @@ import { assertKeepsActiveOwner, assertNotAMember } from '../domain/team-rules.j
 import type {
   InvitationRecord,
   MembershipRecord,
+  OnMembershipDeactivated,
   PageQuery,
   UnitOfWork,
   WorkspaceRepos,
@@ -35,6 +36,8 @@ export interface TeamDeps {
   accounts: TeamAccounts;
   /** `platform/realtime` publish: emits in the caller's transaction (injected by the composition root). */
   publish: (tx: Transaction<DB>, signal: RealtimeSignal) => Promise<void>;
+  /** Runs inside the deactivation transaction (wired to `conversations` by the composition root). */
+  onMembershipDeactivated: OnMembershipDeactivated;
   /** PUBLIC_WEB_URL from config, injected by the composition root. */
   publicWebUrl: string;
 }
@@ -238,8 +241,10 @@ export function createTeam(deps: TeamDeps) {
         const m = await lockedMembership(repos, workspaceId, membershipId);
         if (m.state === 'active') {
           if (m.role === 'owner') await assertAnotherActiveOwner(repos, workspaceId, m);
-          const next = deactivate(m, clock.now());
+          const at = clock.now();
+          const next = deactivate(m, at);
           await repos.memberships.setState(workspaceId, m.id, next.state, next.deactivatedAt);
+          await deps.onMembershipDeactivated(tx, { workspaceId, accountId: m.accountId, at });
           await deps.publish(tx, {
             type: 'membership.deactivated',
             v: 1,

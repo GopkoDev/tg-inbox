@@ -523,6 +523,9 @@ async function settingsLoad(env: Env, profile: Profile): Promise<Report> {
     // every load message arrives at `now`, so arrival and activity are `now` too
     last_message_received_at: now,
     last_activity_at: now,
+    status: 'open' as const,
+    state_version: 0,
+    customer_message_seq: 0,
   }));
   for (let i = 0; i < contactRows.length; i += 1000) {
     await env.db

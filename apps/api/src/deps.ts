@@ -36,6 +36,7 @@ import { createWebhookSecrets } from './modules/bots/infra/webhook-secret.js';
 import { createContacts } from './modules/contacts/app/contacts.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
+import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
 import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
 import { createReplyRepo } from './modules/conversations/infra/reply-repo.js';
@@ -43,6 +44,10 @@ import { createInboxReads } from './modules/conversations/app/inbox-reads.js';
 import { createListQueries } from './modules/conversations/infra/list-queries.js';
 import { createReadMarkRepo } from './modules/conversations/infra/read-mark-repo.js';
 import { createThreadQueries } from './modules/conversations/infra/thread-queries.js';
+import { createStateChanges } from './modules/conversations/app/state-changes.js';
+import { createChangeState } from './modules/inbox/app/change-state.js';
+import type { Transaction } from 'kysely';
+import type { DB } from './platform/db.types.gen.js';
 import { createOpenMessageMedia } from './modules/inbox/app/open-media.js';
 import { createInboxReadUseCases } from './modules/inbox/app/reads.js';
 import { createConversationSignals } from './modules/conversations/infra/conversation-signals.js';
@@ -108,13 +113,6 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     sessions: sessionUseCases,
     clock,
   });
-  const team = createTeam({
-    uow: workspaceUow,
-    clock,
-    accounts: accountUseCases,
-    publish,
-    publicWebUrl: config.PUBLIC_WEB_URL,
-  });
   // --- end workspaces dependencies ---
 
   const workspaceAdmin = createWorkspaceAdmin({
@@ -130,9 +128,19 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     transaction,
     conversations: createConversationRepo(db),
     messages: createMessageRepo(db),
+    activities: createActivityRepo(db),
     contacts,
     signals: createConversationSignals(),
     clock,
+  });
+  // Built before `team` so the deactivation transaction can call it (sad.md §5).
+  const team = createTeam({
+    uow: workspaceUow,
+    clock,
+    accounts: accountUseCases,
+    publish,
+    onMembershipDeactivated: conversations.unassignDeactivatedMember,
+    publicWebUrl: config.PUBLIC_WEB_URL,
   });
   const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
   const telegram = createTelegramGateway({
@@ -186,7 +194,11 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     clock,
   };
   const conversationReplies = createReplies(replyDeps);
-  const replyDelivery = createReplyDelivery(replyDeps);
+  const replyDelivery = createReplyDelivery({
+    ...replyDeps,
+    conversations: createConversationRepo(db),
+    activities: createActivityRepo(db),
+  });
 
   // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
   const inboxConversations = createInboxReads({
@@ -202,6 +214,25 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     contacts,
     workspaces: workspaceAccess,
     bots: bots.inboxStatus,
+    clock,
+  });
+  // Assign / unassign: memberships FOR SHARE, then the conversation row (sad.md §8 lock order).
+  const stateChanges = createStateChanges({
+    conversations: createConversationRepo(db),
+    activities: createActivityRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
+  const changeState = createChangeState({
+    transaction,
+    workspaces: {
+      // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+      lockActiveMembers: (tx, workspaceId, accountIds) =>
+        workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, accountIds),
+      displayNames: workspaceAccess.displayNames,
+    },
+    changes: stateChanges,
+    reads: inboxReads,
     clock,
   });
   const inboxMedia = createOpenMessageMedia({
@@ -229,6 +260,7 @@ export function buildDeps(config: Config, overrides: { clock?: Clock } = {}) {
     bots,
     inboxReads,
     inboxMedia,
+    changeState,
     conversationReplies,
     replyDelivery,
     /** Releases the database pool. */

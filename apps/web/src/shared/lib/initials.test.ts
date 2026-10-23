@@ -12,4 +12,8 @@ describe('initials', () => {
     expect(initials('')).toBe('?');
     expect(initials('   ')).toBe('?');
   });
+
+  it('keeps a whole character when a word starts with an emoji', () => {
+    expect(initials('🌸 Flowers')).toBe('🌸F');
+  });
 });

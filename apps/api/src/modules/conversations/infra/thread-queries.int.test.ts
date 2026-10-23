@@ -3,6 +3,7 @@ import { createDb, type Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
 import {
+  insertActivity,
   insertConversation,
   insertMessage,
   insertReply,
@@ -17,7 +18,11 @@ import { createThreadQueries } from './thread-queries.js';
 const T0 = new Date('2026-10-11T10:00:00Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 const label = (e: ThreadEntry) =>
-  e.type === 'message' ? `m${e.message.body}` : `r${e.reply.body}`;
+  e.type === 'message'
+    ? `m${e.message.body}`
+    : e.type === 'reply'
+      ? `r${e.reply.body}`
+      : `a${e.activity.kind}`;
 
 describe('thread queries', () => {
   let database: TestDatabase;
@@ -288,8 +293,132 @@ describe('thread queries', () => {
       limit: 10,
     });
     expect(
-      own!.entries.every((e) => (e.type === 'message' ? e.message.id : e.reply.id) !== a.messageId),
+      own!.entries.every((e) => (e.type === 'message' ? e.message.id : '') !== a.messageId),
     ).toBe(true);
+  });
+
+  describe('activity entries (AC-09)', () => {
+    const act = (
+      s: { workspaceId: string; conversationId: string; accountId: string },
+      kind: 'assigned' | 'closed' | 'reopened',
+      position: number,
+    ) =>
+      insertActivity(db, {
+        workspaceId: s.workspaceId,
+        conversationId: s.conversationId,
+        kind,
+        ...(kind === 'assigned'
+          ? { actorAccountId: s.accountId, newAssigneeAccountId: s.accountId }
+          : kind === 'closed'
+            ? { actorAccountId: s.accountId }
+            : { cause: 'customer_wrote' as const }),
+        positionAt: at(position),
+      });
+    const page = (
+      s: { workspaceId: string; conversationId: string },
+      q: { before?: ThreadPosition; after?: ThreadPosition; limit?: number } = {},
+    ) =>
+      threads.page(s.workspaceId, s.conversationId, {
+        before: q.before ?? null,
+        after: q.after ?? null,
+        limit: q.limit ?? 50,
+      });
+
+    it('merges the three halves; at one instant message, reply, activity', async () => {
+      const s = await setup();
+      await act(s, 'closed', 10);
+      await rep(s, 'a', 10);
+      await msg(s, 1n, 10);
+      await msg(s, 2n, 5);
+      await act(s, 'reopened', 20);
+      await msg(s, 3n, 20);
+      const p = await page(s);
+      expect(p?.entries.map(label)).toEqual(['m2', 'm1', 'ra', 'aclosed', 'm3', 'areopened']);
+      const activity = p!.entries.find((e) => e.type === 'activity')!;
+      expect(activity.type === 'activity' && activity.activity).toMatchObject({
+        conversationId: s.conversationId,
+        kind: 'closed',
+        cause: 'member',
+        actorAccountId: s.accountId,
+        positionAt: at(10),
+      });
+    });
+
+    it('pages up and down across every cursor kind without gaps or repeats', async () => {
+      const s = await setup();
+      for (let i = 0; i < 20; i++) {
+        await msg(s, BigInt(i + 1), i);
+        await rep(s, `${i}`, i);
+        await act(s, i % 2 ? 'closed' : 'reopened', i);
+      }
+      const expected = (await page(s, { limit: 100 }))!.entries.map(label);
+      expect(expected).toHaveLength(60);
+      for (const size of [1, 2, 3, 7]) {
+        const up: string[] = [];
+        let latest = await page(s, { limit: size });
+        up.unshift(...latest!.entries.map(label));
+        let before = latest!.hasPrev ? latest!.entries[0]!.position : null;
+        while (before) {
+          latest = await page(s, { before, limit: size });
+          up.unshift(...latest!.entries.map(label));
+          before = latest!.hasPrev ? latest!.entries[0]!.position : null;
+        }
+        expect(up).toEqual(expected);
+
+        const down: string[] = [];
+        // walk down from the oldest entry
+        const oldest = (await page(s, { limit: 100 }))!.entries[0]!;
+        down.push(label(oldest));
+        let after = oldest.position;
+        for (;;) {
+          const next = await page(s, { after, limit: size });
+          down.push(...next!.entries.map(label));
+          if (!next!.hasNext) break;
+          after = next!.entries.at(-1)!.position;
+        }
+        expect(down).toEqual(expected);
+      }
+    });
+
+    it('an old cursor (message, reply) still pages into the activity half', async () => {
+      const s = await setup();
+      await msg(s, 1n, 10);
+      await act(s, 'assigned', 10);
+      await rep(s, 'a', 10);
+      await act(s, 'closed', 12);
+      const old = (await page(s))!.entries;
+      const m = old.find((e) => e.type === 'message')!.position;
+      const r = old.find((e) => e.type === 'reply')!.position;
+      expect((await page(s, { after: m }))!.entries.map(label)).toEqual([
+        'ra',
+        'aassigned',
+        'aclosed',
+      ]);
+      expect((await page(s, { after: r }))!.entries.map(label)).toEqual(['aassigned', 'aclosed']);
+      expect((await page(s, { before: r }))!.entries.map(label)).toEqual(['m1']);
+    });
+
+    it('reads one activity by id, and nothing of another conversation or workspace', async () => {
+      const { a, b } = await twoWorkspacesWithInbox(db);
+      const found = await threads.activity(a.workspaceId, a.assignedConversationId, a.activityId);
+      expect(found).toMatchObject({ id: a.activityId, kind: 'assigned' });
+      expect(await threads.activity(a.workspaceId, a.conversationId, a.activityId)).toBeNull();
+      expect(
+        await threads.activity(b.workspaceId, a.assignedConversationId, a.activityId),
+      ).toBeNull();
+      expect(
+        await threads.activity(b.workspaceId, b.assignedConversationId, a.activityId),
+      ).toBeNull();
+      // activity of another workspace never shows in a page
+      const p = await threads.page(b.workspaceId, b.assignedConversationId, {
+        before: null,
+        after: null,
+        limit: 50,
+      });
+      expect(p!.entries.map((e) => (e.type === 'activity' ? e.activity.id : ''))).toEqual([
+        b.activityId,
+      ]);
+    });
   });
 
   it('opens the latest page of a 5 000-message conversation within 500 ms of server time (NFR)', async () => {

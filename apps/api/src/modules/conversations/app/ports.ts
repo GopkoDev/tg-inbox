@@ -1,4 +1,6 @@
 import type { Db } from '../../../platform/db.js';
+import type { ActivityCause, ActivityKind } from '../domain/activity.js';
+import type { CloseSnapshot, ConversationState, LatestReply } from '../domain/state.js';
 import type { MessageKind } from '../domain/message.js';
 import type { MediaFile, MessageProjection } from '../domain/projection.js';
 import type { ListPosition, ThreadPosition } from '../domain/thread.js';
@@ -24,16 +26,112 @@ export interface ConversationRepo {
   ): Promise<UpsertedConversation>;
   /**
    * A customer message arrived at `receivedAt`: raises the arrival with GREATEST and rewrites activity
-   * as GREATEST(arrival, last sent reply) in the same UPDATE. Edits never call this.
+   * as GREATEST(arrival, last sent reply) and raises `customer_message_seq` in the same UPDATE. Edits
+   * and duplicates never call this. Returns the status and assignee read under the row lock the
+   * UPDATE takes: the only state capture may decide a reopen on.
    */
   raiseReceived(
     workspaceId: string,
     conversationId: string,
     receivedAt: Date,
     tx?: Executor,
-  ): Promise<void>;
+  ): Promise<RaisedConversation>;
   findByChat(workspaceId: string, telegramChatId: bigint, tx?: Executor): Promise<string | null>;
   hasAny(workspaceId: string, tx?: Executor): Promise<boolean>;
+  /**
+   * Reads the state columns and takes the row lock (`FOR NO KEY UPDATE`) for the rest of the
+   * transaction: it serialises with every other state lock and with the capture's raise `UPDATE`,
+   * but not with the `FOR KEY SHARE` of a foreign-key insert (reply, attempt, message, activity).
+   * Null when the conversation is not in the workspace (nothing is locked).
+   */
+  lockState(workspaceId: string, conversationId: string, tx: Executor): Promise<LockedState | null>;
+  /**
+   * Locks (`FOR NO KEY UPDATE`, by id) every conversation of the workspace assigned to the account, open and
+   * closed, and returns their ids. The deactivation's step 3: it runs after the membership `UPDATE`.
+   */
+  lockAssignedTo(workspaceId: string, accountId: string, tx: Executor): Promise<string[]>;
+  /**
+   * Writes the given state fields and raises `state_version` by one in the same UPDATE; never touches
+   * `last_activity_at`. Returns the new version, null when the conversation is not in the workspace.
+   */
+  writeState(
+    workspaceId: string,
+    conversationId: string,
+    change: StateChange,
+    tx?: Executor,
+  ): Promise<number | null>;
+  /**
+   * The newest customer message that arrived after `max(the member's arrival watermark, activeSince)`;
+   * null when there is none.
+   */
+  newestUnreadCustomerMessage(
+    workspaceId: string,
+    conversationId: string,
+    accountId: string,
+    activeSince: Date,
+    tx?: Executor,
+  ): Promise<{ id: string; receivedAt: Date } | null>;
+  /** The newest reply in thread order (position, then id); null when there is none. */
+  latestReply(
+    workspaceId: string,
+    conversationId: string,
+    tx?: Executor,
+  ): Promise<LatestReply | null>;
+}
+
+/** The state columns read under the row lock, plus what the close reasons need from the row itself. */
+export interface LockedState extends ConversationState {
+  lastActivityAt: Date;
+  /** No reply yet, or the last customer message is newer than the last sent reply. */
+  waitingForReply: boolean;
+}
+
+/** The conversation's state as the arrival-raise UPDATE left it, under its row lock. */
+export interface RaisedConversation {
+  status: ConversationState['status'];
+  assigneeAccountId: string | null;
+  stateVersion: number;
+}
+
+/** Fields to write; an absent field is left as it is. */
+export interface StateChange {
+  status?: ConversationState['status'];
+  assigneeAccountId?: string | null;
+}
+
+export interface NewActivity {
+  id: string;
+  conversationId: string;
+  kind: ActivityKind;
+  cause: ActivityCause;
+  actorAccountId: string | null;
+  previousAssigneeAccountId: string | null;
+  newAssigneeAccountId: string | null;
+  positionAt: Date;
+  createdAt: Date;
+}
+
+export type ActivityView = NewActivity;
+
+export interface ActivityRepo {
+  insert(workspaceId: string, activity: NewActivity, tx?: Executor): Promise<void>;
+  /** The conversation's newest entry by position, ties broken by id. */
+  latestFor(
+    workspaceId: string,
+    conversationId: string,
+    tx?: Executor,
+  ): Promise<ActivityView | null>;
+  byId(workspaceId: string, activityId: string, tx?: Executor): Promise<ActivityView | null>;
+  /**
+   * Takes the transaction-level advisory lock `changes:<workspace>:<account>` and counts the member's
+   * entries created strictly after `since`; `oldestCreatedAt` is the earliest of them.
+   */
+  countByActorSince(
+    workspaceId: string,
+    accountId: string,
+    since: Date,
+    tx: Executor,
+  ): Promise<{ count: number; oldestCreatedAt: Date | null }>;
 }
 
 export interface NewMessage {
@@ -102,6 +200,12 @@ export interface ReplySignal {
   change: 'created' | 'state';
 }
 
+export interface ActivitySignal {
+  workspaceId: string;
+  conversationId: string;
+  activityId: string;
+}
+
 /** Live signals, published in the caller's transaction so they are delivered only on commit (ADR-0003). */
 export interface ConversationSignals {
   messageChanged(tx: Executor, signal: MessageSignal): Promise<void>;
@@ -109,6 +213,8 @@ export interface ConversationSignals {
   replyChanged(tx: Executor, signal: ReplySignal): Promise<void>;
   /** `conversation.changed { change: read, account_id }` after a member's watermark was written. */
   conversationRead(tx: Executor, signal: ReadSignal): Promise<void>;
+  /** `conversation.changed` with item type activity (created): one per recorded state change. */
+  activityChanged(tx: Executor, signal: ActivitySignal): Promise<void>;
 }
 
 // ───────── read side (inbox) ─────────
@@ -132,9 +238,24 @@ export interface ConversationRow {
   lastItem: LastItemView | null;
   unreadCount: number;
   waitingForReply: boolean;
+  status: ConversationStatus;
+  /** Null: unassigned. Names are joined by `inbox` through `workspaces`. */
+  assigneeAccountId: string | null;
+  stateVersion: number;
+}
+
+export type ConversationStatus = 'open' | 'closed';
+
+/** The row plus what a close confirmation is checked against (decideChange's snapshot). */
+export interface ConversationSummaryRow extends ConversationRow {
+  closeSnapshot: CloseSnapshot;
 }
 
 export interface ListPageQuery extends Viewer {
+  /** Ignored while `contactIds` is set: a search spans both statuses. */
+  status: ConversationStatus;
+  /** `mine` is the viewer's account. */
+  assignee: 'all' | 'mine' | 'unassigned';
   /** Null: no filter. An empty list matches nothing. */
   contactIds: string[] | null;
   after: ListPosition | null;
@@ -151,7 +272,7 @@ export interface ConversationListReads {
     workspaceId: string,
     conversationId: string,
     viewer: Viewer,
-  ): Promise<ConversationRow | null>;
+  ): Promise<ConversationSummaryRow | null>;
 }
 
 export interface MessageView extends MessageProjection {
@@ -182,7 +303,8 @@ export interface ReplyView {
 
 export type ThreadEntry =
   | { type: 'message'; position: ThreadPosition; message: MessageView }
-  | { type: 'reply'; position: ThreadPosition; reply: ReplyView };
+  | { type: 'reply'; position: ThreadPosition; reply: ReplyView }
+  | { type: 'activity'; position: ThreadPosition; activity: ActivityView };
 
 export interface ThreadPageQuery {
   /** Items strictly before this position (older page). */
@@ -220,6 +342,12 @@ export interface ThreadReads {
     messageId: string,
   ): Promise<MessageView | null>;
   reply(workspaceId: string, conversationId: string, replyId: string): Promise<ReplyView | null>;
+  /** Null for an unknown entry and for one of another conversation or workspace. */
+  activity(
+    workspaceId: string,
+    conversationId: string,
+    activityId: string,
+  ): Promise<ActivityView | null>;
   /** Null for an unknown message and for a kind with no file. */
   mediaReference(
     workspaceId: string,

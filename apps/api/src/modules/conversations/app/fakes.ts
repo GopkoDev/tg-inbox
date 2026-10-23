@@ -2,6 +2,9 @@ import { newId } from '../../../platform/ids.js';
 import { isLaterEdit } from '../domain/edit.js';
 import type { MessageKind } from '../domain/message.js';
 import type {
+  ActivityRepo,
+  ActivitySignal,
+  ActivityView,
   ConversationRepo,
   ConversationSignals,
   Executor,
@@ -13,6 +16,7 @@ import type {
   ReplySignal,
   ReplyView,
 } from './ports.js';
+import type { ReplyState } from '../domain/state.js';
 import { raise, unreadFloor } from '../domain/read-state.js';
 
 export interface FakeConversation {
@@ -24,15 +28,31 @@ export interface FakeConversation {
   lastActivityAt: Date;
   lastMessageReceivedAt: Date;
   lastReplySentAt: Date | null;
+  status: 'open' | 'closed';
+  assigneeAccountId: string | null;
+  stateVersion: number;
+  customerMessageSeq: number;
 }
 
 /** In-memory ConversationRepo for unit tests. */
-export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversation[] } {
+export function fakeConversationRepo(): ConversationRepo & {
+  rows: FakeConversation[];
+  /** What the close-reason reads answer; the fake has no message or reply rows. */
+  reads: {
+    unread: { id: string; receivedAt: Date } | null;
+    latestReply: { id: string; state: ReplyState } | null;
+  };
+} {
   const rows: FakeConversation[] = [];
+  const reads: {
+    unread: { id: string; receivedAt: Date } | null;
+    latestReply: { id: string; state: ReplyState } | null;
+  } = { unread: null, latestReply: null };
   const find = (w: string, chat: bigint) =>
     rows.find((r) => r.workspaceId === w && r.telegramChatId === chat);
   return {
     rows,
+    reads,
     async upsert(workspaceId, { contactId, telegramChatId }, now) {
       const existing = find(workspaceId, telegramChatId);
       if (existing) return { conversationId: existing.id, created: false };
@@ -46,24 +66,112 @@ export function fakeConversationRepo(): ConversationRepo & { rows: FakeConversat
         lastActivityAt: now,
         lastMessageReceivedAt: now,
         lastReplySentAt: null,
+        status: 'open',
+        assigneeAccountId: null,
+        stateVersion: 0,
+        customerMessageSeq: 0,
       });
       return { conversationId: id, created: true };
     },
     async raiseReceived(workspaceId, conversationId, receivedAt) {
       const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
-      if (!row) return;
+      if (!row) throw new Error('conversation vanished before its arrival was recorded');
+      row.customerMessageSeq += 1;
       row.lastMessageReceivedAt = new Date(
         Math.max(row.lastMessageReceivedAt.getTime(), receivedAt.getTime()),
       );
       row.lastActivityAt = new Date(
         Math.max(row.lastMessageReceivedAt.getTime(), row.lastReplySentAt?.getTime() ?? 0),
       );
+      return {
+        status: row.status,
+        assigneeAccountId: row.assigneeAccountId,
+        stateVersion: row.stateVersion,
+      };
     },
     async findByChat(workspaceId, telegramChatId) {
       return find(workspaceId, telegramChatId)?.id ?? null;
     },
     async hasAny(workspaceId) {
       return rows.some((r) => r.workspaceId === workspaceId);
+    },
+    async lockState(workspaceId, conversationId) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row) return null;
+      return {
+        status: row.status,
+        assigneeAccountId: row.assigneeAccountId,
+        stateVersion: row.stateVersion,
+        customerMessageSeq: row.customerMessageSeq,
+        lastActivityAt: row.lastActivityAt,
+        waitingForReply:
+          row.lastReplySentAt === null ||
+          row.lastMessageReceivedAt.getTime() > row.lastReplySentAt.getTime(),
+      };
+    },
+    async lockAssignedTo(workspaceId, accountId) {
+      return rows
+        .filter((r) => r.workspaceId === workspaceId && r.assigneeAccountId === accountId)
+        .map((r) => r.id)
+        .sort();
+    },
+    async writeState(workspaceId, conversationId, change) {
+      const row = rows.find((r) => r.workspaceId === workspaceId && r.id === conversationId);
+      if (!row) return null;
+      if (change.status !== undefined) row.status = change.status;
+      if (change.assigneeAccountId !== undefined) row.assigneeAccountId = change.assigneeAccountId;
+      row.stateVersion += 1;
+      return row.stateVersion;
+    },
+    async newestUnreadCustomerMessage() {
+      return reads.unread;
+    },
+    async latestReply() {
+      return reads.latestReply;
+    },
+  };
+}
+
+/** In-memory ActivityRepo for unit tests. */
+export function fakeActivityRepo(): ActivityRepo & {
+  rows: Array<ActivityView & { workspaceId: string }>;
+} {
+  const rows: Array<ActivityView & { workspaceId: string }> = [];
+  const scoped = (w: string) => rows.filter((r) => r.workspaceId === w);
+  const strip = (row: ActivityView & { workspaceId: string }): ActivityView => {
+    const { workspaceId, ...view } = row;
+    void workspaceId;
+    return view;
+  };
+  return {
+    rows,
+    async insert(workspaceId, activity) {
+      rows.push({ ...activity, workspaceId });
+    },
+    async latestFor(workspaceId, conversationId) {
+      const mine = scoped(workspaceId)
+        .filter((r) => r.conversationId === conversationId)
+        .sort(
+          (x, y) =>
+            y.positionAt.getTime() - x.positionAt.getTime() ||
+            (x.id < y.id ? 1 : x.id > y.id ? -1 : 0),
+        );
+      return mine[0] ? strip(mine[0]) : null;
+    },
+    async byId(workspaceId, activityId) {
+      const row = scoped(workspaceId).find((r) => r.id === activityId);
+      return row ? strip(row) : null;
+    },
+    async countByActorSince(workspaceId, accountId, since) {
+      const mine = scoped(workspaceId).filter(
+        (r) => r.actorAccountId === accountId && r.createdAt.getTime() > since.getTime(),
+      );
+      return {
+        count: mine.length,
+        oldestCreatedAt: mine.length
+          ? new Date(Math.min(...mine.map((r) => r.createdAt.getTime())))
+          : null,
+      };
     },
   };
 }
@@ -129,7 +237,9 @@ export function fakeConversationSignals(): ConversationSignals & {
   sent: Array<MessageSignal & { tx: Executor }>;
   read: Array<ReadSignal & { tx: Executor }>;
   replies: Array<ReplySignal & { tx: Executor }>;
+  activities: Array<ActivitySignal & { tx: Executor }>;
 } {
+  const activities: Array<ActivitySignal & { tx: Executor }> = [];
   const replies: Array<ReplySignal & { tx: Executor }> = [];
   const sent: Array<MessageSignal & { tx: Executor }> = [];
   const read: Array<ReadSignal & { tx: Executor }> = [];
@@ -137,6 +247,10 @@ export function fakeConversationSignals(): ConversationSignals & {
     sent,
     read,
     replies,
+    activities,
+    async activityChanged(tx, signal) {
+      activities.push({ ...signal, tx });
+    },
     async replyChanged(tx, signal) {
       replies.push({ ...signal, tx });
     },

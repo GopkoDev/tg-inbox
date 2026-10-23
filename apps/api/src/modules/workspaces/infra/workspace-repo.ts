@@ -21,12 +21,18 @@ export class KyselyWorkspaceRepo implements WorkspaceRepo {
     return row ? { id: row.id, name: row.name, createdAt: row.created_at } : null;
   }
 
+  /**
+   * Serialises the writers that lock the workspace first. `FOR NO KEY UPDATE`, not `FOR UPDATE`: the
+   * foreign-key check of any insert that names the workspace (an activity entry, a message) takes
+   * `FOR KEY SHARE`, which `FOR UPDATE` would block — and a member change that holds its membership
+   * `FOR SHARE` while it inserts would then deadlock with a deactivation (sad.md §8).
+   */
   async lockForUpdate(workspaceId: string): Promise<boolean> {
     const row = await this.db
       .selectFrom('workspaces')
       .select('id')
       .where('id', '=', workspaceId)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     return row !== undefined;
   }

@@ -5,6 +5,10 @@ import { describe, expect, it } from 'vitest';
 import {
   AccessRemovedError,
   AlreadyAMemberError,
+  AssigneeNotActiveError,
+  ChangeLimitReachedError,
+  CloseNeedsConfirmationError,
+  ConversationStateChangedError,
   type AppError,
   BotBelongsToAnotherWorkspaceError,
   BotNeedsNewTokenError,
@@ -97,6 +101,25 @@ const cases: [string, () => AppError, number, string][] = [
     () => new ReplyLimitReachedError(new Date('2026-10-18T10:21:12.000Z'), 12),
     429,
     'REPLY_LIMIT_REACHED',
+  ],
+  [
+    'state changed',
+    () => new ConversationStateChangedError({}, null),
+    409,
+    'CONVERSATION_STATE_CHANGED',
+  ],
+  [
+    'close needs confirmation',
+    () => new CloseNeedsConfirmationError({ reasons: ['customer_waiting'] }),
+    409,
+    'CLOSE_NEEDS_CONFIRMATION',
+  ],
+  ['assignee not active', () => new AssigneeNotActiveError(), 400, 'ASSIGNEE_NOT_ACTIVE'],
+  [
+    'change limit',
+    () => new ChangeLimitReachedError(new Date('2026-10-18T10:21:14.200Z'), 15),
+    429,
+    'CHANGE_LIMIT_REACHED',
   ],
 ];
 
@@ -331,6 +354,43 @@ describe('shared-inbox error details (T2)', () => {
       limit: 30,
       window_seconds: 60,
       retry_at: '2026-10-18T10:21:12.000Z',
+    });
+  });
+
+  it('CONVERSATION_STATE_CHANGED carries the summary and the latest change', async () => {
+    const env = await envelopeOf(() => new ConversationStateChangedError({ id: 'c' }, { id: 'a' }));
+    expect(env.error.details).toEqual({ conversation: { id: 'c' }, latest_change: { id: 'a' } });
+  });
+
+  it('CLOSE_NEEDS_CONFIRMATION carries the details as given', async () => {
+    const details = {
+      reasons: ['customer_waiting'],
+      stale_change: null,
+      newest_unread_message: null,
+      conversation: { id: 'c' },
+    };
+    const env = await envelopeOf(() => new CloseNeedsConfirmationError(details));
+    expect(env.error.details).toEqual(details);
+  });
+
+  it('ASSIGNEE_NOT_ACTIVE names the field', async () => {
+    const env = await envelopeOf(() => new AssigneeNotActiveError());
+    expect(env.error.details).toEqual({ field: 'assignee_account_id' });
+  });
+
+  it('CHANGE_LIMIT_REACHED has 60/60 details, exact retry_at and a rounded-up Retry-After', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/e', () => {
+      throw new ChangeLimitReachedError(new Date('2026-10-18T10:21:14.200Z'), 15);
+    });
+    const res = await app.inject('/e');
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('15');
+    expect(res.json().error.details).toEqual({
+      limit: 60,
+      window_seconds: 60,
+      retry_at: '2026-10-18T10:21:14.200Z',
     });
   });
 });

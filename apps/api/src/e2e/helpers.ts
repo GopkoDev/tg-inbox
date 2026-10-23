@@ -109,3 +109,54 @@ export async function runHealthTick(deps: Deps): Promise<number> {
   }
   return due.length;
 }
+
+/**
+ * Integrity check (sad.md §7): conversations of the workspace assigned to an account that is not
+ * an active member of it. An ops query, not a repository read; scoped to one workspace.
+ */
+export function assignedToNonMembers(db: Deps['db'], workspaceId: string) {
+  return db
+    .selectFrom('conversations as c')
+    .leftJoin('memberships as m', (j) =>
+      j
+        .onRef('m.account_id', '=', 'c.assignee_account_id')
+        .onRef('m.workspace_id', '=', 'c.workspace_id'),
+    )
+    .select('c.id')
+    .where('c.workspace_id', '=', workspaceId)
+    .where('c.assignee_account_id', 'is not', null)
+    .where((eb) => eb.or([eb('m.id', 'is', null), eb('m.state', '!=', 'active')]))
+    .execute();
+}
+
+/**
+ * Integrity check (spec §6, lost customers): closed conversations of the workspace whose newest
+ * customer arrival is later than their latest `closed` entry. Scoped to one workspace.
+ */
+export function closedWithLaterArrival(db: Deps['db'], workspaceId: string) {
+  return db
+    .selectFrom('conversations as c')
+    .select('c.id')
+    .where('c.workspace_id', '=', workspaceId)
+    .where('c.status', '=', 'closed')
+    .where(
+      sql<boolean>`(select max(m.received_at) from messages m
+          where m.conversation_id = c.id and m.workspace_id = c.workspace_id)
+        > coalesce((select max(a.position_at) from conversation_activities a
+          where a.conversation_id = c.id and a.workspace_id = c.workspace_id and a.kind = 'closed'),
+          '-infinity'::timestamptz)`,
+    )
+    .execute();
+}
+
+/** Both integrity queries for each workspace: every list must be empty. */
+export async function integrityViolations(db: Deps['db'], workspaceIds: string[]) {
+  const found: { check: string; workspaceId: string; conversationId: string }[] = [];
+  for (const workspaceId of workspaceIds) {
+    for (const row of await assignedToNonMembers(db, workspaceId))
+      found.push({ check: 'assigned-to-non-member', workspaceId, conversationId: row.id });
+    for (const row of await closedWithLaterArrival(db, workspaceId))
+      found.push({ check: 'closed-with-later-arrival', workspaceId, conversationId: row.id });
+  }
+  return found;
+}

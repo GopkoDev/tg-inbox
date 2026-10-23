@@ -58,6 +58,18 @@ describe('realtime signal schema', () => {
     expect(realtimeSignalSchema.safeParse({ type: 'bot.changed', v: 1 }).success).toBe(false);
   });
 
+  it('accepts an activity item only with change created', () => {
+    const activity = { ...changed, item: { type: 'activity', id: newId() } };
+    expect(realtimeSignalSchema.safeParse(activity).success).toBe(true);
+    expect(realtimeSignalSchema.safeParse({ ...activity, change: 'state' }).success).toBe(false);
+    expect(realtimeSignalSchema.safeParse({ ...activity, change: 'edited' }).success).toBe(false);
+  });
+
+  it('an activity signal stays under MAX_SIGNAL_BYTES', () => {
+    const activity = { ...changed, item: { type: 'activity', id: newId() } };
+    expect(Buffer.byteLength(JSON.stringify(activity))).toBeLessThan(MAX_SIGNAL_BYTES);
+  });
+
   it('ignores unknown fields (additive policy)', () => {
     expect(realtimeSignalSchema.safeParse({ ...changed, extra: 1 }).success).toBe(true);
   });

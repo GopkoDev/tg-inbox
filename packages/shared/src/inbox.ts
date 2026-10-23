@@ -129,7 +129,97 @@ export const ThreadMessage = z.strictObject({
 });
 export type ThreadMessage = z.infer<typeof ThreadMessage>;
 
-export const ThreadItem = z.discriminatedUnion('type', [ThreadMessage, ThreadReply]);
+// ───────── assignment and status (assignment-statuses) ─────────
+
+export const StatusLens = z.enum(['open', 'closed']);
+export type StatusLens = z.infer<typeof StatusLens>;
+
+export const AssigneeLens = z.enum(['all', 'mine', 'unassigned']);
+export type AssigneeLens = z.infer<typeof AssigneeLens>;
+
+export const ConversationStatus = z.enum(['open', 'closed']);
+export type ConversationStatus = z.infer<typeof ConversationStatus>;
+
+/** `conversations.state_version`: raised by one with every assignee or status change. */
+export const StateVersion = z.number().int().min(0).max(2147483647);
+export type StateVersion = z.infer<typeof StateVersion>;
+
+export const CloseSnapshot = z.strictObject({
+  customer_message_seq: z.number().int().min(0).max(2147483647),
+  latest_reply: z.strictObject({ id: Id, state: ReplyState }).nullable(),
+});
+export type CloseSnapshot = z.infer<typeof CloseSnapshot>;
+
+export const ActivityKind = z.enum(['assigned', 'reassigned', 'unassigned', 'closed', 'reopened']);
+export type ActivityKind = z.infer<typeof ActivityKind>;
+
+export const ActivityCause = z.enum([
+  'member',
+  'customer_wrote',
+  'reply_not_delivered',
+  'member_deactivated',
+]);
+export type ActivityCause = z.infer<typeof ActivityCause>;
+
+export const CloseReason = z.enum([
+  'state_changed',
+  'customer_waiting',
+  'unread_customer_message',
+  'new_customer_message',
+  'reply_not_delivered',
+  'reply_not_confirmed',
+]);
+export type CloseReason = z.infer<typeof CloseReason>;
+
+/** The (previous, new) assignee pair each kind allows — mirrors the data-model CHECKs. */
+const pairFits = (a: {
+  kind: ActivityKind;
+  previous_assignee: MemberRef | null;
+  new_assignee: MemberRef | null;
+}): boolean => {
+  const prev = a.previous_assignee;
+  const next = a.new_assignee;
+  switch (a.kind) {
+    case 'assigned':
+      return prev === null && next !== null;
+    case 'reassigned':
+      return prev !== null && next !== null && prev.account_id !== next.account_id;
+    case 'unassigned':
+      return prev !== null && next === null;
+    case 'closed':
+    case 'reopened':
+      return prev === null && next === null;
+  }
+};
+
+export const ThreadActivity = z
+  .strictObject({
+    type: z.literal('activity'),
+    id: Id,
+    workspace_id: Id,
+    conversation_id: Id,
+    kind: ActivityKind,
+    cause: ActivityCause,
+    actor: MemberRef.nullable(),
+    previous_assignee: MemberRef.nullable(),
+    new_assignee: MemberRef.nullable(),
+    position_at: DateTime,
+  })
+  .refine((a) => (a.cause === 'member') === (a.actor !== null), {
+    message: 'actor is set exactly when cause is member',
+    path: ['actor'],
+  })
+  .refine(pairFits, {
+    message: 'previous_assignee and new_assignee do not fit the kind',
+    path: ['new_assignee'],
+  });
+export type ThreadActivity = z.infer<typeof ThreadActivity>;
+
+export const ThreadItem = z.discriminatedUnion('type', [
+  ThreadMessage,
+  ThreadReply,
+  ThreadActivity,
+]);
 export type ThreadItem = z.infer<typeof ThreadItem>;
 
 // ───────── list ─────────
@@ -166,11 +256,22 @@ export const Conversation = z.strictObject({
   last_item: LastItem,
   unread_count: z.number().int().min(0),
   waiting_for_reply: z.boolean(),
+  status: ConversationStatus,
+  assignee: MemberRef.nullable(),
+  state_version: StateVersion,
 });
 export type Conversation = z.infer<typeof Conversation>;
 
+export const ConversationSummary = z.strictObject({
+  ...Conversation.shape,
+  close_snapshot: CloseSnapshot,
+});
+export type ConversationSummary = z.infer<typeof ConversationSummary>;
+
 export const ConversationPage = z.strictObject({
   workspace_id: Id,
+  /** The lenses this page answers; `status` is null while searching (the status lens is set aside). */
+  lens: z.strictObject({ status: StatusLens.nullable(), assignee: AssigneeLens }),
   items: z.array(Conversation),
   has_prev: z.boolean(),
   has_next: z.boolean(),
@@ -214,7 +315,34 @@ export type ReplyResend = z.infer<typeof ReplyResend>;
 export const ReadMarkRequest = z.strictObject({ read_through_at: DateTime });
 export type ReadMarkRequest = z.infer<typeof ReadMarkRequest>;
 
+export const AssignRequest = z.strictObject({
+  assignee_account_id: Id,
+  expected_state_version: StateVersion,
+});
+export type AssignRequest = z.infer<typeof AssignRequest>;
+
+export const StateChangeRequest = z.strictObject({ expected_state_version: StateVersion });
+export type StateChangeRequest = z.infer<typeof StateChangeRequest>;
+
+export const CloseRequest = z.strictObject({
+  expected_state_version: StateVersion,
+  expected_close_snapshot: CloseSnapshot,
+  confirm_close_reasons: z.boolean().default(false),
+});
+export type CloseRequest = z.infer<typeof CloseRequest>;
+
 // ───────── other answers ─────────
+
+export const ActiveMemberList = z.strictObject({ workspace_id: Id, items: z.array(MemberRef) });
+export type ActiveMemberList = z.infer<typeof ActiveMemberList>;
+
+export const ConversationStateChange = z.strictObject({
+  workspace_id: Id,
+  outcome: z.enum(['recorded', 'unchanged']),
+  conversation: ConversationSummary,
+  activity: ThreadActivity.nullable(),
+});
+export type ConversationStateChange = z.infer<typeof ConversationStateChange>;
 
 export const ReadState = z.strictObject({
   workspace_id: Id,
@@ -265,6 +393,38 @@ export const ReplyLimitReachedError = refusal(
   }),
 );
 
+export const ConversationStateChangedError = refusal(
+  'CONVERSATION_STATE_CHANGED',
+  z.strictObject({ conversation: ConversationSummary, latest_change: ThreadActivity.nullable() }),
+);
+
+export const CloseNeedsConfirmationError = refusal(
+  'CLOSE_NEEDS_CONFIRMATION',
+  z.strictObject({
+    reasons: z
+      .array(CloseReason)
+      .min(1)
+      .refine((r) => new Set(r).size === r.length, { message: 'reasons are unique' }),
+    stale_change: ThreadActivity.nullable(),
+    newest_unread_message: z.strictObject({ id: Id, received_at: DateTime }).nullable(),
+    conversation: ConversationSummary,
+  }),
+);
+
+export const AssigneeNotActiveError = refusal(
+  'ASSIGNEE_NOT_ACTIVE',
+  z.strictObject({ field: z.literal('assignee_account_id') }),
+);
+
+export const ChangeLimitReachedError = refusal(
+  'CHANGE_LIMIT_REACHED',
+  z.strictObject({
+    limit: z.literal(60),
+    window_seconds: z.literal(60),
+    retry_at: DateTime,
+  }),
+);
+
 export const MediaUnavailableReason = z.enum([
   'bot_not_connected',
   'bot_not_working',
@@ -288,12 +448,16 @@ export const ConversationChangedFrame = z
     ...frameBase,
     type: z.literal('conversation.changed'),
     conversation_id: Id,
-    item: z.object({ type: z.enum(['message', 'reply']), id: Id }).nullable(),
+    item: z.object({ type: z.enum(['message', 'reply', 'activity']), id: Id }).nullable(),
     change: z.enum(['created', 'edited', 'state', 'read']),
   })
   .refine((f) => f.item !== null || f.change === 'read', {
     message: 'item may be null only for a read change',
     path: ['item'],
+  })
+  .refine((f) => f.item?.type !== 'activity' || f.change === 'created', {
+    message: 'an activity entry is immutable: only created',
+    path: ['change'],
   });
 
 export const BotChangedFrame = z.object({ ...frameBase, type: z.literal('bot.changed') });

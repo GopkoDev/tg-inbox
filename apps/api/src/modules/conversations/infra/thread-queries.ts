@@ -1,10 +1,11 @@
 import { sql, type Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
-import type { Messages, Replies } from '../../../platform/db.types.gen.js';
+import type { ConversationActivities, Messages, Replies } from '../../../platform/db.types.gen.js';
 import { isMessageKind, type MessageKind } from '../domain/message.js';
 import { mediaFileOf, projectMessage } from '../domain/projection.js';
 import { compareThreadPosition, type ThreadPosition } from '../domain/thread.js';
 import type {
+  ActivityView,
   MessageView,
   ReplyStateValue,
   ReplyView,
@@ -14,6 +15,7 @@ import type {
 
 type MessageRow = Selectable<Messages>;
 type ReplyRow = Selectable<Replies>;
+type ActivityRow = Selectable<ConversationActivities>;
 
 const kindOf = (row: MessageRow): MessageKind => (isMessageKind(row.kind) ? row.kind : 'other');
 const rawOf = (row: MessageRow): Record<string, unknown> =>
@@ -50,6 +52,20 @@ function toReply(row: ReplyRow): ReplyView {
   };
 }
 
+function toActivity(row: ActivityRow): ActivityView {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    kind: row.kind as ActivityView['kind'],
+    cause: row.cause as ActivityView['cause'],
+    actorAccountId: row.actor_account_id,
+    previousAssigneeAccountId: row.previous_assignee_account_id,
+    newAssigneeAccountId: row.new_assignee_account_id,
+    positionAt: row.position_at,
+    createdAt: row.created_at,
+  };
+}
+
 const messageEntry = (row: MessageRow): ThreadEntry => ({
   type: 'message',
   position: { positionAt: row.sent_at, kind: 'message', id: BigInt(row.telegram_message_id) },
@@ -62,9 +78,16 @@ const replyEntry = (row: ReplyRow): ThreadEntry => ({
   reply: toReply(row),
 });
 
+const activityEntry = (row: ActivityRow): ThreadEntry => ({
+  type: 'activity',
+  position: { positionAt: row.position_at, kind: 'activity', id: row.id },
+  activity: toActivity(row),
+});
+
 /**
  * Keyset conditions of "strictly before / after the cursor" on each half of the union. Within the same
- * instant a message precedes a reply (compareThreadPosition), so the halves differ at that instant.
+ * instant a message precedes a reply and a reply precedes an activity entry (compareThreadPosition),
+ * so the halves differ at that instant.
  */
 function messageCondition(c: ThreadPosition, dir: 'before' | 'after') {
   if (c.kind === 'message') {
@@ -81,6 +104,23 @@ function replyCondition(c: ThreadPosition, dir: 'before' | 'after') {
     const op = dir === 'before' ? sql`<` : sql`>`;
     return sql<boolean>`(position_at, id) ${op} (${c.positionAt}::timestamptz, ${c.id}::uuid)`;
   }
+  if (c.kind === 'activity') {
+    // a reply precedes an activity entry of the same instant
+    return dir === 'before'
+      ? sql<boolean>`position_at <= ${c.positionAt}::timestamptz`
+      : sql<boolean>`position_at > ${c.positionAt}::timestamptz`;
+  }
+  return dir === 'before'
+    ? sql<boolean>`position_at < ${c.positionAt}::timestamptz`
+    : sql<boolean>`position_at >= ${c.positionAt}::timestamptz`;
+}
+
+function activityCondition(c: ThreadPosition, dir: 'before' | 'after') {
+  if (c.kind === 'activity') {
+    const op = dir === 'before' ? sql`<` : sql`>`;
+    return sql<boolean>`(position_at, id) ${op} (${c.positionAt}::timestamptz, ${c.id}::uuid)`;
+  }
+  // an activity entry follows a message and a reply of the same instant
   return dir === 'before'
     ? sql<boolean>`position_at < ${c.positionAt}::timestamptz`
     : sql<boolean>`position_at >= ${c.positionAt}::timestamptz`;
@@ -126,10 +166,16 @@ export function createThreadQueries(db: Db): ThreadReads {
             .selectAll()
             .where('workspace_id', '=', workspaceId)
             .where('conversation_id', '=', conversationId);
+          let activities = trx
+            .selectFrom('conversation_activities')
+            .selectAll()
+            .where('workspace_id', '=', workspaceId)
+            .where('conversation_id', '=', conversationId);
           if (cursor) {
             const dir = newer ? 'after' : 'before';
             messages = messages.where(messageCondition(cursor, dir));
             replies = replies.where(replyCondition(cursor, dir));
+            activities = activities.where(activityCondition(cursor, dir));
           }
           const order = newer ? 'asc' : 'desc';
           const newestReply = trx
@@ -141,21 +187,25 @@ export function createThreadQueries(db: Db): ThreadReads {
             .orderBy('id', 'desc')
             .limit(1)
             .executeTakeFirst();
-          const [messageRows, replyRows, newest] = await Promise.all([
+          const [messageRows, replyRows, activityRows, newest] = await Promise.all([
             messages
               .orderBy('sent_at', order)
               .orderBy('telegram_message_id', order)
               .limit(take)
               .execute(),
             replies.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
+            activities.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
             newestReply,
           ]);
 
-          const merged = [...messageRows.map(messageEntry), ...replyRows.map(replyEntry)].sort(
-            (a, b) =>
-              newer
-                ? compareThreadPosition(a.position, b.position)
-                : compareThreadPosition(b.position, a.position),
+          const merged = [
+            ...messageRows.map(messageEntry),
+            ...replyRows.map(replyEntry),
+            ...activityRows.map(activityEntry),
+          ].sort((a, b) =>
+            newer
+              ? compareThreadPosition(a.position, b.position)
+              : compareThreadPosition(b.position, a.position),
           );
           const more = merged.length > q.limit;
           const entries = merged.slice(0, q.limit);
@@ -186,6 +236,17 @@ export function createThreadQueries(db: Db): ThreadReads {
         .where('id', '=', replyId)
         .executeTakeFirst();
       return row ? toReply(row) : null;
+    },
+
+    async activity(workspaceId, conversationId, activityId) {
+      const row = await db
+        .selectFrom('conversation_activities')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('id', '=', activityId)
+        .executeTakeFirst();
+      return row ? toActivity(row) : null;
     },
 
     async mediaReference(workspaceId, conversationId, messageId) {

@@ -441,6 +441,152 @@ describe('token secrecy across every bot flow (postgres + fake Bot API)', () => 
     }
   }, 60_000);
 
+  it('assignment and status responses, activity frames and change logs carry no bot token, display name or message text (assignment-statuses extension)', async () => {
+    const acme = await owner();
+    const botId = nextBot++;
+    const token = newToken(botId);
+    fake.bot(token).script({});
+    expect((await acme.post('/token', { token })).statusCode).toBe(200);
+    const hook = webhookOf(token);
+    const inbox = `/api/workspaces/${acme.workspaceId}/inbox`;
+    const { cookies } = acme;
+    const NAME = 'Zelda Zebrapatch';
+    const mate = await insertAccount(deps.db, { displayName: NAME });
+    await insertMembership(deps.db, acme.workspaceId, { accountId: mate.id });
+    const mateMembership = await deps.db
+      .selectFrom('memberships')
+      .select('id')
+      .where('workspace_id', '=', acme.workspaceId)
+      .where('account_id', '=', mate.id)
+      .executeTakeFirstOrThrow();
+
+    const seen: string[] = [];
+    const call = async (method: 'GET' | 'POST', url: string, payload?: object) => {
+      const res = await app.inject({ method, url, cookies, ...(payload && { payload }) });
+      expect(res.statusCode, url).toBe(200);
+      seen.push(res.body, JSON.stringify(res.headers));
+      return JSON.parse(res.body);
+    };
+    await app.ready();
+    const frames: string[] = [];
+    const socket = await app.injectWS(`${inbox}/live`, {
+      headers: { cookie: `session=${cookies.session}`, origin: 'http://localhost:5173' },
+    });
+    socket.on('message', (data: Buffer) => frames.push(String(data)));
+
+    clock.advance(MINUTE);
+    const t = Math.floor(clock.now().getTime() / 1000);
+    const customerText = say('Assignment probe text');
+    await deliver(
+      hook,
+      telegramUpdate({
+        fromId: 940888,
+        updateId: nextUpdate++,
+        messageId: 1,
+        date: t,
+        text: customerText,
+      }),
+    );
+    const conv = (await call('GET', `${inbox}/conversations`)).items[0].id as string;
+    const url = `${inbox}/conversations/${conv}`;
+    const state = async () => call('GET', url);
+    await call('GET', `${inbox}/members`);
+
+    await call('POST', `${url}/assign`, {
+      assignee_account_id: mate.id,
+      expected_state_version: (await state()).state_version,
+    });
+    await call('POST', `${url}/unassign`, {
+      expected_state_version: (await state()).state_version,
+    });
+    await call('POST', `${url}/assign`, {
+      assignee_account_id: mate.id,
+      expected_state_version: (await state()).state_version,
+    });
+    const closeOnce = async () => {
+      const s = await state();
+      return call('POST', `${url}/close`, {
+        expected_state_version: s.state_version,
+        expected_close_snapshot: s.close_snapshot,
+        confirm_close_reasons: true,
+      });
+    };
+    await closeOnce();
+    // The customer writes again: an automatic reopen with its own activity entry and frame.
+    await deliver(
+      hook,
+      telegramUpdate({
+        fromId: 940888,
+        updateId: nextUpdate++,
+        messageId: 2,
+        date: t + 1,
+        text: say('Assignment probe again'),
+      }),
+    );
+    await closeOnce();
+    await call('POST', `${url}/reopen`, {
+      expected_state_version: (await state()).state_version,
+    });
+    const thread = await call('GET', `${url}/items`);
+    const activities = thread.items.filter((i: { type: string }) => i.type === 'activity');
+    expect(activities.length).toBeGreaterThanOrEqual(6);
+    for (const a of activities) await call('GET', `${url}/activities/${a.id}`);
+    // Deactivation unassigns by itself: one more activity entry and frame.
+    await call(
+      'POST',
+      `/api/workspaces/${acme.workspaceId}/memberships/${mateMembership.id}/deactivate`,
+    );
+    await call('GET', `${inbox}/conversations?assignee=unassigned`);
+    await vi.waitFor(
+      () => expect(frames.filter((f) => f.includes('"activity"')).length).toBeGreaterThanOrEqual(8),
+      { timeout: 5000 },
+    );
+    socket.terminate();
+
+    // No token, token secret part, webhook secret or file URL in any body, header or frame.
+    const forbidden = [
+      token,
+      token.slice(token.indexOf(':') + 1),
+      `/bot${token}`,
+      hook.secret,
+      new URL(fake.apiRoot).host,
+    ];
+    const everything = [...seen, ...frames];
+    expect(seen.length).toBeGreaterThan(20);
+    const log = lines.join('\n');
+    for (const value of forbidden) {
+      for (const chunk of everything) {
+        expect(chunk.includes(value), `a response/frame contains ${value.slice(0, 12)}…`).toBe(
+          false,
+        );
+      }
+      expect(log.includes(value), `the log contains ${value.slice(0, 12)}…`).toBe(false);
+    }
+    // Frames carry ids only: no display name, no message text.
+    for (const frame of frames) {
+      expect(frame).not.toContain(NAME);
+      expect(frame).not.toContain(customerText);
+    }
+    // Change logs carry ids, kind, cause and outcome: no display name and no message text.
+    const changeLogs = lines.filter((l) => l.includes('"conversation change"'));
+    expect(changeLogs.length).toBeGreaterThanOrEqual(6);
+    for (const line of changeLogs) {
+      const entry = JSON.parse(line);
+      expect(entry).toMatchObject({
+        workspaceId: acme.workspaceId,
+        conversationId: conv,
+        outcome: expect.stringMatching(/^(recorded|unchanged)$/),
+      });
+      expect(entry).toHaveProperty('activityId');
+      expect(entry).toHaveProperty('kind');
+      expect(entry).toHaveProperty('cause');
+    }
+    for (const value of [NAME, 'Test User', ...texts.slice(-2)]) {
+      for (const line of changeLogs) expect(line).not.toContain(value);
+      expect(log.includes(value), `the log contains ${value}`).toBe(false);
+    }
+  }, 60_000);
+
   it('the request log of a webhook delivery carries no secret header; a logged header bag is redacted', () => {
     const webhookRequests = lines.filter(
       (l) => l.includes('incoming request') && l.includes('/api/telegram/webhook/'),

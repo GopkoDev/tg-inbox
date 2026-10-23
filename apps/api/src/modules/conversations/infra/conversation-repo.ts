@@ -1,6 +1,8 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
+import { unreadFloor } from '../domain/read-state.js';
+import type { LatestReply } from '../domain/state.js';
 import type { ConversationRepo } from '../app/ports.js';
 
 export function createConversationRepo(db: Db): ConversationRepo {
@@ -26,6 +28,9 @@ export function createConversationRepo(db: Db): ConversationRepo {
           created_at: now,
           last_message_received_at: now,
           last_activity_at: now,
+          status: 'open',
+          state_version: 0,
+          customer_message_seq: 0,
         })
         .onConflict((oc) => oc.columns(['workspace_id', 'telegram_chat_id']).doNothing())
         .returning('id')
@@ -38,10 +43,25 @@ export function createConversationRepo(db: Db): ConversationRepo {
 
     async raiseReceived(workspaceId, conversationId, receivedAt, tx) {
       // One UPDATE keeps conversations_last_activity_at_check true; GREATEST ignores a null reply time.
-      await sql`UPDATE conversations
+      // It takes the row lock and returns the state under it: capture decides the reopen on this result,
+      // never on an earlier read (ADR-0004).
+      const { rows } = await sql<{
+        status: 'open' | 'closed';
+        assignee_account_id: string | null;
+        state_version: number;
+      }>`UPDATE conversations
         SET last_message_received_at = GREATEST(last_message_received_at, ${receivedAt}::timestamptz),
-            last_activity_at = GREATEST(last_message_received_at, ${receivedAt}::timestamptz, last_reply_sent_at)
-        WHERE id = ${conversationId} AND workspace_id = ${workspaceId}`.execute(tx ?? db);
+            last_activity_at = GREATEST(last_message_received_at, ${receivedAt}::timestamptz, last_reply_sent_at),
+            customer_message_seq = customer_message_seq + 1
+        WHERE id = ${conversationId} AND workspace_id = ${workspaceId}
+        RETURNING status, assignee_account_id, state_version`.execute(tx ?? db);
+      const row = rows[0];
+      if (!row) throw new Error('conversation vanished before its arrival was recorded');
+      return {
+        status: row.status,
+        assigneeAccountId: row.assignee_account_id,
+        stateVersion: row.state_version,
+      };
     },
 
     findByChat,
@@ -54,6 +74,100 @@ export function createConversationRepo(db: Db): ConversationRepo {
         .limit(1)
         .executeTakeFirst();
       return row !== undefined;
+    },
+
+    async lockState(workspaceId, conversationId, tx) {
+      const row = await tx
+        .selectFrom('conversations')
+        .select([
+          'status',
+          'assignee_account_id',
+          'state_version',
+          'customer_message_seq',
+          'last_activity_at',
+          'last_message_received_at',
+          'last_reply_sent_at',
+        ])
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .forNoKeyUpdate()
+        .executeTakeFirst();
+      if (!row) return null;
+      return {
+        status: row.status as 'open' | 'closed',
+        assigneeAccountId: row.assignee_account_id,
+        stateVersion: row.state_version as number,
+        customerMessageSeq: row.customer_message_seq as number,
+        lastActivityAt: row.last_activity_at,
+        waitingForReply:
+          row.last_reply_sent_at === null ||
+          row.last_message_received_at.getTime() > row.last_reply_sent_at.getTime(),
+      };
+    },
+
+    async lockAssignedTo(workspaceId, accountId, tx) {
+      const rows = await tx
+        .selectFrom('conversations')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('assignee_account_id', '=', accountId)
+        .orderBy('id')
+        .forNoKeyUpdate()
+        .execute();
+      return rows.map((r) => r.id);
+    },
+
+    async writeState(workspaceId, conversationId, change, tx) {
+      const row = await (tx ?? db)
+        .updateTable('conversations')
+        .set({
+          ...(change.status !== undefined ? { status: change.status } : {}),
+          ...(change.assigneeAccountId !== undefined
+            ? { assignee_account_id: change.assigneeAccountId }
+            : {}),
+          state_version: sql<number>`state_version + 1`,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', conversationId)
+        .returning('state_version')
+        .executeTakeFirst();
+      return row ? (row.state_version as number) : null;
+    },
+
+    async newestUnreadCustomerMessage(workspaceId, conversationId, accountId, activeSince, tx) {
+      const exec = tx ?? db;
+      const mark = await exec
+        .selectFrom('read_marks')
+        .select('read_through_at')
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('account_id', '=', accountId)
+        .executeTakeFirst();
+      const floor = unreadFloor(mark?.read_through_at ?? null, activeSince);
+      const row = await exec
+        .selectFrom('messages')
+        .select(['id', 'received_at'])
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .where('received_at', '>', floor)
+        .orderBy('received_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? { id: row.id, receivedAt: row.received_at } : null;
+    },
+
+    async latestReply(workspaceId, conversationId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('replies')
+        .select(['id', 'state'])
+        .where('workspace_id', '=', workspaceId)
+        .where('conversation_id', '=', conversationId)
+        .orderBy('position_at', 'desc')
+        .orderBy('id', 'desc')
+        .limit(1)
+        .executeTakeFirst();
+      return row ? { id: row.id, state: row.state as LatestReply['state'] } : null;
     },
   };
 }

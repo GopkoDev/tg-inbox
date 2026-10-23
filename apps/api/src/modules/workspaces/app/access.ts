@@ -1,3 +1,5 @@
+import type { Transaction } from 'kysely';
+import type { DB } from '../../../platform/db.types.gen.js';
 import type { Clock } from '../../../platform/clock.js';
 import {
   AccessRemovedError,
@@ -69,6 +71,34 @@ export function createWorkspaceAccess(deps: WorkspaceAccessDeps) {
     /** Of `accountIds`, those with an active membership in the workspace (socket re-validation, delivery pre-check). */
     activeMembersAmong(workspaceId: string, accountIds: readonly string[]): Promise<string[]> {
       return uow.run((repos) => repos.memberships.activeAccountIdsAmong(workspaceId, accountIds));
+    },
+
+    /**
+     * Joins `tx`: `FOR SHARE` on the memberships of `accountIds` in this workspace, so a concurrent
+     * deactivation waits (and an assignment waits for it); returns the active accounts among them.
+     */
+    lockActiveMembers(
+      tx: Transaction<DB>,
+      workspaceId: string,
+      accountIds: readonly string[],
+    ): Promise<string[]> {
+      return uow.reposOn(tx).memberships.lockActiveAccountIds(workspaceId, accountIds);
+    },
+
+    /** Active members of the workspace for the assignee chooser, by display name then account id. */
+    async activeMembers(
+      workspaceId: string,
+    ): Promise<{ accountId: string; displayName: string }[]> {
+      const ids = await uow.run((repos) => repos.memberships.listActiveAccountIds(workspaceId));
+      if (ids.length === 0) return [];
+      const accounts = await auth.getAccountsByIds(ids);
+      return accounts
+        .map((a) => ({ accountId: a.id, displayName: a.displayName }))
+        .sort(
+          (x, y) =>
+            (x.displayName < y.displayName ? -1 : x.displayName > y.displayName ? 1 : 0) ||
+            (x.accountId < y.accountId ? -1 : x.accountId > y.accountId ? 1 : 0),
+        );
     },
 
     /** Display names of `accountIds` that belong to the workspace; kept after a deactivation. */

@@ -1,8 +1,16 @@
 import {
-  Conversation,
+  ActiveMemberList,
+  type AssignRequest,
+  type AssigneeLens,
+  type CloseRequest,
   ConversationPage,
+  ConversationStateChange,
+  ConversationSummary,
   InboxBotStatus,
   ReadState,
+  type StateChangeRequest,
+  type StatusLens,
+  ThreadActivity,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
@@ -29,7 +37,13 @@ function query(params: Record<string, string | number | undefined>): string {
 
 export const listConversations = (
   workspaceId: string,
-  params: { q?: string; after?: string; limit?: number } = {},
+  params: {
+    q?: string;
+    after?: string;
+    limit?: number;
+    status?: StatusLens;
+    assignee?: AssigneeLens;
+  } = {},
   options: ReadOptions = {},
 ) =>
   apiRequest(`${inbox(workspaceId)}/conversations${query(params)}`, ConversationPage, bg(options));
@@ -38,7 +52,7 @@ export const getConversation = (
   workspaceId: string,
   conversationId: string,
   options: ReadOptions = {},
-) => apiRequest(conversationPath(workspaceId, conversationId), Conversation, bg(options));
+) => apiRequest(conversationPath(workspaceId, conversationId), ConversationSummary, bg(options));
 
 export const listThreadItems = (
   workspaceId: string,
@@ -126,3 +140,63 @@ export const resendReply = (
     ThreadReply,
     { method: 'POST', body: JSON.stringify(body), ...bg(options) },
   );
+
+export const getThreadActivity = (
+  workspaceId: string,
+  conversationId: string,
+  activityId: string,
+  options: ReadOptions = {},
+) =>
+  apiRequest(
+    `${conversationPath(workspaceId, conversationId)}/activities/${encodeURIComponent(activityId)}`,
+    ThreadActivity,
+    bg(options),
+  );
+
+export const listActiveMembers = (workspaceId: string, options: ReadOptions = {}) =>
+  apiRequest(`${inbox(workspaceId)}/members`, ActiveMemberList, bg(options));
+
+const change = (
+  workspaceId: string,
+  conversationId: string,
+  action: 'assign' | 'unassign' | 'close' | 'reopen',
+  body: unknown,
+  options: ReadOptions,
+) =>
+  apiRequest(
+    `${conversationPath(workspaceId, conversationId)}/${action}`,
+    ConversationStateChange,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+      ...bg(options),
+    },
+  );
+
+export const assignConversation = (
+  workspaceId: string,
+  conversationId: string,
+  body: AssignRequest,
+  options: ReadOptions = {},
+) => change(workspaceId, conversationId, 'assign', body, options);
+
+export const unassignConversation = (
+  workspaceId: string,
+  conversationId: string,
+  body: StateChangeRequest,
+  options: ReadOptions = {},
+) => change(workspaceId, conversationId, 'unassign', body, options);
+
+export const closeConversation = (
+  workspaceId: string,
+  conversationId: string,
+  body: CloseRequest,
+  options: ReadOptions = {},
+) => change(workspaceId, conversationId, 'close', body, options);
+
+export const reopenConversation = (
+  workspaceId: string,
+  conversationId: string,
+  body: StateChangeRequest,
+  options: ReadOptions = {},
+) => change(workspaceId, conversationId, 'reopen', body, options);

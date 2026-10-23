@@ -144,6 +144,31 @@ export class KyselyMembershipRepo implements MembershipRepo {
     return rows.map((r) => r.account_id);
   }
 
+  async lockActiveAccountIds(
+    workspaceId: string,
+    accountIds: readonly string[],
+  ): Promise<string[]> {
+    if (accountIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('memberships')
+      .select(['account_id', 'state'])
+      .where('workspace_id', '=', workspaceId)
+      .where('account_id', 'in', [...accountIds])
+      .forShare()
+      .execute();
+    return rows.filter((r) => r.state === 'active').map((r) => r.account_id);
+  }
+
+  async listActiveAccountIds(workspaceId: string): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom('memberships')
+      .select('account_id')
+      .where('workspace_id', '=', workspaceId)
+      .where('state', '=', 'active')
+      .execute();
+    return rows.map((r) => r.account_id);
+  }
+
   async touchLastUsed(workspaceId: string, accountId: string, at: Date): Promise<boolean> {
     const res = await this.db
       .updateTable('memberships')
