@@ -9,8 +9,8 @@ files_hint: ["docs/features/broadcasts/migrations/01_create_contact_bot_reach.up
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T2 — Promote migrations 01–02 (contact_bot_reach and its backfill for the workspace's current Telegram bot), regenerate DB types and add the reach fixtures

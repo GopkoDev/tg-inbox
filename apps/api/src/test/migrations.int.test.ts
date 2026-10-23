@@ -4,7 +4,10 @@ import { Migrator } from 'kysely/migration';
 import { TSFileMigrationProvider } from 'kysely-ctl';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { DB } from '../platform/db.types.gen.js';
 import { newId } from '../platform/ids.js';
+import { insertBot } from './fixtures/bots.js';
+import { insertContact, insertReach } from './fixtures/contacts.js';
 import { startTestDatabase, type TestDatabase } from './postgres.js';
 
 const TABLES = [
@@ -700,6 +703,8 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'backfill_contact_bot_reach',
+        'create_contact_bot_reach',
         'create_contact_tag_history',
         'create_contact_tags',
         'create_tags',
@@ -1207,7 +1212,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 16; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -1913,6 +1918,238 @@ describe('contacts migrations 04-06', () => {
       expect(await tables()).toEqual([]);
       expect((await migrator.migrateToLatest()).error).toBeUndefined();
       expect(await tables()).toEqual(['contact_tag_history', 'contact_tags', 'tags']);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_REACH = '1791681110011_create_contact_tag_history';
+
+describe('broadcasts migrations 01-02 (reach)', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const day = (d: number, h = 10) => new Date(Date.UTC(2026, 1, d, h));
+  const typed = (handle: Kysely<unknown>) => handle as unknown as Kysely<DB>;
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  const migratorFor = (handle: Kysely<unknown>) =>
+    new Migrator({
+      db: handle,
+      provider: new TSFileMigrationProvider({
+        migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+      }),
+    });
+
+  async function workspace(handle: Kysely<unknown>) {
+    const ws = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${day(1)})`.execute(
+      handle,
+    );
+    return ws;
+  }
+
+  type ReachRow = {
+    contact_id: string;
+    telegram_bot_id: string;
+    wrote_at: Date | null;
+    blocked_at: Date | null;
+    changed_at: Date;
+  };
+  async function reachRows(handle: Kysely<unknown>, ws?: string) {
+    const { rows } = await sql<ReachRow>`
+      SELECT contact_id, telegram_bot_id, wrote_at, blocked_at, changed_at FROM contact_bot_reach
+      WHERE ${ws ?? null}::uuid IS NULL OR workspace_id = ${ws ?? null}::uuid
+      ORDER BY contact_id`.execute(handle);
+    return rows;
+  }
+
+  it('backfills one "wrote" row per contact that wrote, for its workspace bot row in any state', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      expect((await migrator.migrateTo(LAST_PRE_REACH)).error).toBeUndefined();
+      const t = typed(freshDb);
+      const connected = await workspace(freshDb);
+      const needsToken = await workspace(freshDb);
+      const disconnected = await workspace(freshDb);
+      const noBot = await workspace(freshDb);
+      await insertBot(t, { workspaceId: connected, telegramBotId: 5001n });
+      await insertBot(t, { workspaceId: needsToken, telegramBotId: 5002n, state: 'needs_token' });
+      await insertBot(t, {
+        workspaceId: disconnected,
+        telegramBotId: 5003n,
+        state: 'disconnected',
+      });
+      const wrote = { firstWroteAt: day(2), lastWroteAt: day(5) };
+      const c1 = await insertContact(t, { workspaceId: connected, ...wrote });
+      const silent = await insertContact(t, { workspaceId: connected });
+      const c2 = await insertContact(t, { workspaceId: needsToken, ...wrote });
+      const c3 = await insertContact(t, { workspaceId: disconnected, ...wrote });
+      await insertContact(t, { workspaceId: noBot, ...wrote });
+
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+
+      const row = (contact: string, bot: string) => ({
+        contact_id: contact,
+        telegram_bot_id: bot,
+        wrote_at: day(2),
+        blocked_at: null,
+        changed_at: day(5),
+      });
+      expect(await reachRows(freshDb, connected)).toEqual([row(c1, '5001')]);
+      expect((await reachRows(freshDb, connected)).map((r) => r.contact_id)).not.toContain(silent);
+      expect(await reachRows(freshDb, needsToken)).toEqual([row(c2, '5002')]);
+      expect(await reachRows(freshDb, disconnected)).toEqual([row(c3, '5003')]);
+      expect(await reachRows(freshDb, noBot)).toEqual([]);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('a re-run of the backfill adds nothing and keeps a row capture wrote', async () => {
+    const t = typed(db);
+    const ws = await workspace(db);
+    await insertBot(t, { workspaceId: ws, telegramBotId: 6001n });
+    const c = await insertContact(t, {
+      workspaceId: ws,
+      firstWroteAt: day(2),
+      lastWroteAt: day(3),
+    });
+    await insertReach(t, {
+      workspaceId: ws,
+      contactId: c,
+      telegramBotId: 6001n,
+      wroteAt: day(1),
+      blockedAt: day(4),
+      changedAt: day(4),
+    });
+    const before = await reachRows(db);
+    const backfill = await import('../../migrations/1791681110013_backfill_contact_bot_reach.js');
+    await backfill.up(db);
+    await backfill.up(db);
+    expect(await reachRows(db)).toEqual(before);
+    expect(await reachRows(db, ws)).toEqual([
+      {
+        contact_id: c,
+        telegram_bot_id: '6001',
+        wrote_at: day(1),
+        blocked_at: day(4),
+        changed_at: day(4),
+      },
+    ]);
+  });
+
+  it('refuses a row naming another workspace contact and facts after changed_at, on the named constraints', async () => {
+    const t = typed(db);
+    const a = await workspace(db);
+    const b = await workspace(db);
+    const contactOfB = await insertContact(t, { workspaceId: b });
+    const contactOfA = await insertContact(t, { workspaceId: a });
+    const insert = (o: {
+      ws: string;
+      contact: string;
+      wrote?: Date | null;
+      blocked?: Date | null;
+      changed: Date;
+    }) =>
+      sql`INSERT INTO contact_bot_reach (workspace_id, contact_id, telegram_bot_id, wrote_at, blocked_at, changed_at)
+        VALUES (${o.ws}, ${o.contact}, ${9001}, ${o.wrote ?? null}, ${o.blocked ?? null}, ${o.changed})`.execute(
+        db,
+      );
+    await expect(insert({ ws: a, contact: contactOfB, changed: day(1) })).rejects.toThrow(
+      /contact_bot_reach_contact_fkey/,
+    );
+    await expect(
+      insert({ ws: a, contact: contactOfA, blocked: day(3), changed: day(2) }),
+    ).rejects.toThrow(/contact_bot_reach_blocked_at_check/);
+    await expect(
+      insert({ ws: a, contact: contactOfA, wrote: day(3), changed: day(2) }),
+    ).rejects.toThrow(/contact_bot_reach_wrote_at_check/);
+    await insert({ ws: a, contact: contactOfA, wrote: day(1), blocked: day(2), changed: day(2) });
+  });
+
+  it('insertReach defaults changedAt to the latest fact and insertContact({ reachForBot }) writes a "wrote" row', async () => {
+    const t = typed(db);
+    const ws = await workspace(db);
+    const c = await insertContact(t, { workspaceId: ws });
+    await insertReach(t, {
+      workspaceId: ws,
+      contactId: c,
+      telegramBotId: 7001n,
+      wroteAt: day(1),
+      blockedAt: day(6),
+    });
+    const before = Date.now();
+    await insertReach(t, { workspaceId: ws, contactId: c, telegramBotId: 7002n });
+    const rows = await reachRows(db, ws);
+    expect(rows.find((r) => r.telegram_bot_id === '7001')).toMatchObject({
+      wrote_at: day(1),
+      blocked_at: day(6),
+      changed_at: day(6),
+    });
+    const bare = rows.find((r) => r.telegram_bot_id === '7002')!;
+    expect(bare).toMatchObject({ wrote_at: null, blocked_at: null });
+    expect(bare.changed_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+    const reached = await insertContact(t, {
+      workspaceId: ws,
+      reachForBot: 7003n,
+      firstWroteAt: day(2),
+      lastWroteAt: day(4),
+    });
+    expect(await reachRows(db, ws)).toContainEqual({
+      contact_id: reached,
+      telegram_bot_id: '7003',
+      wrote_at: day(2),
+      blocked_at: null,
+      changed_at: day(4),
+    });
+    const plain = await insertContact(t, { workspaceId: ws, reachForBot: 7003n });
+    const { rows: contactRows } = await sql<{ first_wrote_at: Date | null }>`
+      SELECT first_wrote_at FROM contacts WHERE id = ${plain}`.execute(db);
+    expect(contactRows[0]!.first_wrote_at).not.toBeNull();
+    expect((await reachRows(db, ws)).map((r) => r.contact_id)).toContain(plain);
+  });
+
+  it('reverts 02 then 01 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const exists = async () => {
+        const { rows } = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'contact_bot_reach'`.execute(freshDb);
+        return rows[0]!.n === 1;
+      };
+      expect(await exists()).toBe(true);
+      expect(
+        (await migrator.migrateTo('1791681110012_create_contact_bot_reach')).error,
+      ).toBeUndefined();
+      expect(await exists()).toBe(true);
+      expect((await migrator.migrateTo(LAST_PRE_REACH)).error).toBeUndefined();
+      expect(await exists()).toBe(false);
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await exists()).toBe(true);
     } finally {
       await freshDb.destroy();
       await fresh.stop();

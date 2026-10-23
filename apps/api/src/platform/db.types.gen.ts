@@ -3,7 +3,7 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -53,6 +53,15 @@ export interface ConnectLinks {
   token_hash: Buffer;
   used_at: Timestamp | null;
   workspace_id: string;
+}
+
+export interface ContactBotReach {
+  blocked_at: Timestamp | null;
+  changed_at: Timestamp;
+  contact_id: string;
+  telegram_bot_id: Int8;
+  workspace_id: string;
+  wrote_at: Timestamp | null;
 }
 
 export interface Contacts {
@@ -282,6 +291,7 @@ export interface DB {
   accounts: Accounts;
   bots: Bots;
   connect_links: ConnectLinks;
+  contact_bot_reach: ContactBotReach;
   contact_tag_history: ContactTagHistory;
   contact_tags: ContactTags;
   contacts: Contacts;

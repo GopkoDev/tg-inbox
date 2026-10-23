@@ -38,7 +38,7 @@
         "apps/api/src/test/fixtures/contacts.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t02-promote-reach-migrations.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T3",
