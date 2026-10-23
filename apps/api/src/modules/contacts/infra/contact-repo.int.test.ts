@@ -54,8 +54,57 @@ describe('contact repository', () => {
         language_code: 'uk',
         profile_seen_at: at(1),
         created_at: at(100),
+        first_wrote_at: at(1),
+        last_wrote_at: at(1),
       },
     ]);
+  });
+
+  describe('first and last wrote (ADR-0005, AC-01)', () => {
+    const wrote = async (w: string) => {
+      const [row] = await rowsOf(w);
+      return { first: row!.first_wrote_at, last: row!.last_wrote_at, name: row!.first_name };
+    };
+
+    it('widens last wrote on a newer message and keeps first wrote', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(10), at(100));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Newer' }, at(20), at(101));
+      expect(await wrote(w)).toEqual({ first: at(10), last: at(20), name: 'Newer' });
+    });
+
+    it('lowers first wrote for an older message delivered after a newer one, leaving the profile', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(20), at(100));
+      const older = await repo.upsertFromProfile(w, { ...p, firstName: 'Older' }, at(5), at(101));
+      expect(older.created).toBe(false);
+      expect(await wrote(w)).toEqual({ first: at(5), last: at(20), name: 'Test User' });
+      const [row] = await rowsOf(w);
+      expect(row!.profile_seen_at).toEqual(at(20));
+    });
+
+    it('a message between the two times changes nothing; a redelivered duplicate changes nothing', async () => {
+      const w = await insertWorkspace(db);
+      const p = profile();
+      await repo.upsertFromProfile(w, p, at(10), at(100));
+      await repo.upsertFromProfile(w, p, at(30), at(101));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Mid' }, at(20), at(102));
+      await repo.upsertFromProfile(w, { ...p, firstName: 'Dup' }, at(30), at(103));
+      await repo.upsertFromProfile(w, p, at(10), at(104));
+      expect(await wrote(w)).toEqual({ first: at(10), last: at(30), name: 'Test User' });
+    });
+
+    it('isolation: the same Telegram user in another workspace keeps its own times', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const p = profile();
+      await repo.upsertFromProfile(a, p, at(10), at(100));
+      await repo.upsertFromProfile(b, p, at(50), at(100));
+      await repo.upsertFromProfile(a, p, at(5), at(101));
+      expect(await wrote(a)).toMatchObject({ first: at(5), last: at(10) });
+      expect(await wrote(b)).toMatchObject({ first: at(50), last: at(50) });
+    });
   });
 
   it('refreshes only from a newer message and returns the existing id otherwise (AC-08)', async () => {
@@ -207,6 +256,70 @@ describe('contact repository', () => {
       expect(await repo.contactsByIds(w, [id, '0199ffff-ffff-7fff-8fff-ffffffffffff'])).toEqual([
         { id, firstName: 'Ivan', lastName: null, username: null },
       ]);
+    });
+  });
+
+  describe('lockContact (ADR-0004 step 2, AC-12)', () => {
+    it('finds a contact of the workspace and not one of another', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const inA = await insertContact(db, { workspaceId: a });
+      await db.transaction().execute(async (tx) => {
+        expect(await repo.lockContact(a, inA, tx)).toBe(true);
+        expect(await repo.lockContact(b, inA, tx)).toBe(false);
+        expect(await repo.lockContact(a, '0199ffff-ffff-7fff-8fff-ffffffffffff', tx)).toBe(false);
+      });
+    });
+
+    it('holds FOR NO KEY UPDATE: a second lock waits, a different contact does not', async () => {
+      const w = await insertWorkspace(db);
+      const one = await insertContact(db, { workspaceId: w });
+      const two = await insertContact(db, { workspaceId: w });
+      let release!: () => void;
+      const held = new Promise<void>((r) => (release = r));
+      let locked!: () => void;
+      const taken = new Promise<void>((r) => (locked = r));
+      const first = db.transaction().execute(async (tx) => {
+        await repo.lockContact(w, one, tx);
+        locked();
+        await held;
+      });
+      await taken;
+      let waiting = true;
+      const same = db
+        .transaction()
+        .execute((tx) => repo.lockContact(w, one, tx))
+        .then(() => (waiting = false));
+      await db.transaction().execute((tx) => repo.lockContact(w, two, tx));
+      await new Promise((r) => setTimeout(r, 300));
+      expect(waiting).toBe(true);
+      release();
+      await first;
+      await same;
+      expect(waiting).toBe(false);
+    });
+  });
+
+  describe('profile (AC-04, AC-12)', () => {
+    it('reads the contact with its first and last wrote, and nothing of another workspace', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const p = profile({ lastName: 'Tester', languageCode: null, username: null });
+      const { contactId } = await repo.upsertFromProfile(a, p, at(5), at(100));
+      await repo.upsertFromProfile(a, p, at(9), at(101));
+      expect(await repo.profile(a, contactId)).toEqual({
+        id: contactId,
+        workspaceId: a,
+        telegramUserId: p.telegramUserId,
+        firstName: 'Test User',
+        lastName: 'Tester',
+        username: null,
+        languageCode: null,
+        profileSeenAt: at(9),
+        createdAt: at(100),
+        firstWroteAt: at(5),
+        lastWroteAt: at(9),
+      });
+      expect(await repo.profile(b, contactId)).toBeNull();
+      expect(await repo.profile(a, '0199ffff-ffff-7fff-8fff-ffffffffffff')).toBeNull();
     });
   });
 });

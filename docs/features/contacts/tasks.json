@@ -1,0 +1,629 @@
+{
+  "slug": "contacts",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add the shared tag-name rules: tidy, name key, 1–32 grapheme length and tag-list order",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-07",
+        "AC-08"
+      ],
+      "dod": "Unit tests prove the tidy rule (NFC, zero-width removed, every white-space run collapsed to one space, ends trimmed), the 1–32 grapheme check with an emoji counted as one, the case-folded key (\"vip\", \" VIP \" and \"VIP  \" share the key of \"VIP\"; \"V  I P\" tidies to \"V I P\" with another key; ß / SS fold together) and the tag-list order comparator, in packages/shared and through the contacts domain re-export.",
+      "files_hint": [
+        "packages/shared/src/tag-name.ts",
+        "packages/shared/src/tag-name.test.ts",
+        "packages/shared/src/index.ts",
+        "apps/api/src/modules/contacts/domain/tag-name.ts",
+        "apps/api/src/modules/contacts/domain/tag-name.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t01-shared-tag-name-rules.md"
+    },
+    {
+      "id": "T2",
+      "title": "Promote migrations 01–03 (first and last wrote, their backfill, the list indexes) and make capture widen first and last wrote unconditionally",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-13"
+      ],
+      "dod": "Migrations 01–03 are promoted, apply, backfill the four audit shapes and revert cleanly, the regenerated db.types.gen.ts is committed, and contact-repo integration tests prove capture sets first and last wrote on insert and widens them with LEAST / GREATEST on every new message — including an older message delivered after a newer one — while the profile fields still change only for a newer profile.",
+      "files_hint": [
+        "docs/features/contacts/migrations/01_add_contacts_wrote_times.up.sql",
+        "docs/features/contacts/migrations/02_backfill_contacts_wrote_times.up.sql",
+        "docs/features/contacts/migrations/03_add_contacts_list_indexes.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/contacts.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.int.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t02-promote-wrote-times-and-capture-widening.md"
+    },
+    {
+      "id": "T3",
+      "title": "Promote migrations 04–06 (tags, contact_tags, contact_tag_history), regenerate DB types and add the tag fixtures",
+      "layer": "migration",
+      "deps": [
+        "T1",
+        "T2"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-12"
+      ],
+      "dod": "Migrations 04–06 are promoted and apply and revert cleanly, db.types.gen.ts is regenerated, the migrations integration test rejects every refused case of the audit for tags, contact_tags and contact_tag_history on its named constraint and accepts the accepted ones, and insertTag / insertContactTag / insertTagHistory / twoWorkspacesWithTags exist with insertTag computing name_key through the shared function.",
+      "files_hint": [
+        "docs/features/contacts/migrations/04_create_tags.up.sql",
+        "docs/features/contacts/migrations/05_create_contact_tags.up.sql",
+        "docs/features/contacts/migrations/06_create_contact_tag_history.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/tags.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t03-promote-tag-tables-and-fixtures.md"
+    },
+    {
+      "id": "T4",
+      "title": "Add the contacts zod contracts, the eight tag error codes, and the contact.changed / tags.changed frames and signals with their hub mapping",
+      "layer": "ports",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07",
+        "AC-15"
+      ],
+      "dod": "packages/shared and platform unit tests pass for every new schema and every contract example, each of the eight codes maps to its AppError subclass and status (Retry-After on TAG_CHANGE_LIMIT_REACHED), contact.changed and tags.changed parse as signals and frames while malformed ones are rejected, and the hub test proves both reach every socket of their workspace and no other.",
+      "files_hint": [
+        "packages/shared/src/contacts.ts",
+        "packages/shared/src/contacts.test.ts",
+        "packages/shared/src/index.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/errors.test.ts",
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/inbox.test.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/errors.test.ts",
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/platform/realtime.test.ts",
+        "apps/api/src/modules/inbox/infra/hub.ts",
+        "apps/api/src/modules/inbox/infra/hub.test.ts",
+        "apps/web/src/features/inbox/store.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t04-contacts-contracts-codes-and-frames.md"
+    },
+    {
+      "id": "T5",
+      "title": "Add the tags domain: the limits (100 per workspace, 20 per contact, 60 per 60 s, 50 per page), the history kinds and sources, the merge link rule and the rate-limit retry time",
+      "layer": "domain",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-09",
+        "AC-15"
+      ],
+      "dod": "Domain unit tests prove both tag limits at their boundary, the 60-per-60-s decision with its retry time, the kind ↔ source rule, and the merge rule that keeps the original adder and time or the earlier of two links.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/domain/tags.ts",
+        "apps/api/src/modules/contacts/domain/tags.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t05-tags-domain-limits-and-merge-rules.md"
+    },
+    {
+      "id": "T6",
+      "title": "Build the tag repository: the workspace tag lock, find by name key, insert, the workspace count, the tag list with counts in tag-list order, id resolution, the row locks and the rename, with cross-workspace isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10",
+        "AC-12",
+        "AC-14"
+      ],
+      "dod": "Integration tests prove find by key, insert, count, the tag list with counts in ICU tag-list order (zero counts included), id resolution, both row locks and the rename, each with a cross-workspace isolation case over twoWorkspacesWithTags.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/tag-repo.ts",
+        "apps/api/src/modules/contacts/infra/tag-repo.int.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t06-tag-repo.md"
+    },
+    {
+      "id": "T7",
+      "title": "Build the contact-tag and tag-history repositories for member changes: the contact row lock, a contact's tags in tag-list order, link insert and delete, history entries, the history keyset page and the member-kind rate count, with isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-06",
+        "AC-12",
+        "AC-15"
+      ],
+      "dod": "Integration tests prove the contact row lock, a contact's tags in tag-list order, link insert and delete, history append, the 50-per-page newest-first keyset with no repeat or skip, and the member-kind count that ignores merged and deleted entries, each with a cross-workspace isolation case.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/contact-tag-repo.ts",
+        "apps/api/src/modules/contacts/infra/contact-tag-repo.int.test.ts",
+        "apps/api/src/modules/contacts/infra/tag-history-repo.ts",
+        "apps/api/src/modules/contacts/infra/tag-history-repo.int.test.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t07-contact-tag-and-history-repos.md"
+    },
+    {
+      "id": "T8",
+      "title": "Add the owner set-based statements: merge (merged entries, keep the earlier link, re-point the rest) and delete (links with RETURNING, deleted entries)",
+      "layer": "infra",
+      "deps": [
+        "T6",
+        "T7"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-12"
+      ],
+      "dod": "Integration tests on the AC-09 seed prove the merge leaves 14 contacts on \"VIP\", keeps each contact's original or earlier adder and time, writes exactly one merged entry on each of the 3 contacts that carried the merged tag and none on target-only contacts, and that delete-with-RETURNING plus the deleted entries cover exactly the 40 carriers, with nothing touched in another workspace.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/contact-tag-repo.ts",
+        "apps/api/src/modules/contacts/infra/contact-tag-repo.int.test.ts",
+        "apps/api/src/modules/contacts/infra/tag-history-repo.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t08-owner-merge-and-delete-statements.md"
+    },
+    {
+      "id": "T9",
+      "title": "Build the contacts list query (search, any / all / none with the all-of grouped semi-join, keyset with the NULL tail, tags per row, matching and total counts) and the profile read",
+      "layer": "infra",
+      "deps": [
+        "T2",
+        "T3"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-12"
+      ],
+      "dod": "Integration tests prove ordering by last wrote with id ties and the NULL tail, strict keyset continuation, the search rule, any / all / none and their matching and total counts, cross-workspace isolation, and an EXPLAIN check that the list uses its keyset index and that all-of runs as the grouped semi-join.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/contact-list-query.ts",
+        "apps/api/src/modules/contacts/infra/contact-list-query.int.test.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t09-contacts-list-query-and-profile-read.md"
+    },
+    {
+      "id": "T10",
+      "title": "Add the contacts read use cases: the list page (normalised search, resolved and missing tag ids, the none-with-tags refusal), the profile with adders' names and the tag-history page with actors' names, through a contacts → workspaces display-name port",
+      "layer": "app",
+      "deps": [
+        "T4",
+        "T5",
+        "T7",
+        "T9"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-04",
+        "AC-13"
+      ],
+      "dod": "Unit tests prove the list use case normalises the search, refuses none-with-tags, reports missing tag ids and echoes the filter, and that the profile and the tag-history page name adders and actors through the workspaces port, deactivated members included, with not-found for foreign ids; buildDeps wires the contacts → workspaces edge. Unit tests also prove any of / all of with no tag chosen filter nothing (matching_count equals total_count) and a tag renamed since the link was saved still resolves and filters (test plan AC-02).",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/contacts.ts",
+        "apps/api/src/modules/contacts/app/contacts.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/app/fakes.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t10-contacts-read-use-cases.md"
+    },
+    {
+      "id": "T11",
+      "title": "Add addContactTag: by id or by name with find-or-create under the workspace tag lock, the contact lock, the no-op, the 20 and 100 limits, the member rate limit, the tag row key-share, the link, one added entry and the signals",
+      "layer": "app",
+      "deps": [
+        "T4",
+        "T5",
+        "T6",
+        "T7"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07",
+        "AC-08",
+        "AC-12",
+        "AC-13",
+        "AC-14",
+        "AC-15"
+      ],
+      "dod": "Unit and integration tests prove every branch of the add path in the ADR-0004 lock order — name rules, find-or-create by key with one tag under concurrent creation, exact 100 and 20 limits under concurrency with the new tag rolled back on refusal, the no-op that records and counts nothing, the 61st change refused with its retry time, TAG_NOT_FOUND for a deleted or foreign tag — and that a recorded add writes one added entry and publishes contact.changed (plus tags.changed when the tag was created). Integration tests also prove a tag renamed between the pick and the add is added under its new name with no tag of the old name created (AC-14), create + add counts as one change, and changes in another workspace of the same account do not count toward this workspace's limit (AC-15) (test plan).",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/tags.ts",
+        "apps/api/src/modules/contacts/app/tags.test.ts",
+        "apps/api/src/modules/contacts/app/tags.int.test.ts",
+        "apps/api/src/modules/contacts/infra/tag-signals.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/app/fakes.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t11-add-contact-tag.md"
+    },
+    {
+      "id": "T12",
+      "title": "Add removeContactTag: the contact lock, the no-op for a tag no longer carried (foreign ids included), the member rate limit, the link delete, one removed entry and contact.changed",
+      "layer": "app",
+      "deps": [
+        "T11"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-12",
+        "AC-15"
+      ],
+      "dod": "Unit and integration tests prove a recorded remove deletes the link, writes one removed entry with the tag's current name and publishes contact.changed, that a tag no longer carried — or foreign — answers unchanged without recording or counting, and that removals share the 60-per-minute budget with adds.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/tags.ts",
+        "apps/api/src/modules/contacts/app/tags.test.ts",
+        "apps/api/src/modules/contacts/app/tags.int.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t12-remove-contact-tag.md"
+    },
+    {
+      "id": "T13",
+      "title": "Add the owner tag use cases listTags and renameTag: rename, case-only rename, same-text no-op, TAG_NAME_TAKEN with the holder's count, and the confirmed merge with TAG_MERGE_TARGET_CHANGED, tags.changed and the tag.merged log event",
+      "layer": "app",
+      "deps": [
+        "T4",
+        "T5",
+        "T6",
+        "T8"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-09",
+        "AC-10",
+        "AC-14",
+        "AC-15"
+      ],
+      "dod": "Unit and integration tests prove listTags in tag-list order with zero counts, rename keeping the id and writing no history, the case-only rename, the same-text no-op, TAG_NAME_TAKEN with the holder and its count, the confirmed merge on the AC-09 seed (14 on VIP, adders kept, one merged entry per carrier of the merged tag) with TAG_MERGE_TARGET_CHANGED when the target moved, no deadlock against a racing member add, one tags.changed per change and the tag.merged log line with ids only. Tests also prove a rename follows the AC-07 name rules (TAG_NAME_INVALID, nothing changed), a history entry written before a rename still reads under the old name (AC-04), and an owner's merged entries never count toward the member limit while rename never answers TAG_CHANGE_LIMIT_REACHED (AC-15) (test plan).",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/tag-admin.ts",
+        "apps/api/src/modules/contacts/app/tag-admin.test.ts",
+        "apps/api/src/modules/contacts/app/tag-admin.int.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t13-list-and-rename-tags.md"
+    },
+    {
+      "id": "T14",
+      "title": "Add deleteTag against the confirmed count: TAG_COUNT_CHANGED with the current count, deleted entries on every contact that lost the tag, tags.changed",
+      "layer": "app",
+      "deps": [
+        "T11",
+        "T13"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-14",
+        "AC-15"
+      ],
+      "dod": "Unit and integration tests prove a delete against the matching count removes the tag from the workspace and every contact with one deleted entry each and one tags.changed, that a changed count rolls back with TAG_COUNT_CHANGED and the current count, and that a racing member add ends either refused as TAG_NOT_FOUND or inside the count the owner is asked to confirm again.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/tag-admin.ts",
+        "apps/api/src/modules/contacts/app/tag-admin.test.ts",
+        "apps/api/src/modules/contacts/app/tag-admin.int.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t14-delete-tag-against-confirmed-count.md"
+    },
+    {
+      "id": "T15",
+      "title": "Add conversations.findByContact and the inbox read getContactConversation, and pin with integration tests that the profile's reads never change read state",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-12"
+      ],
+      "dod": "Integration tests prove getContactConversation returns the contact's ConversationSummary for either role and 404 for a foreign contact, and that reading it plus the thread pages — including while a new customer message is captured — leaves read_marks, the unread count and the attention count exactly unchanged.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/inbox-reads.ts",
+        "apps/api/src/modules/conversations/app/inbox-reads.int.test.ts",
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/conversations/infra/conversation-repo.ts",
+        "apps/api/src/modules/inbox/app/reads.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/reads.int.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t15-conversation-of-a-contact-read-only.md"
+    },
+    {
+      "id": "T16",
+      "title": "Register the contacts routes (registerContacts): the eight operations with their zod schemas, the ownerOnly guard on rename and delete, and the wiring in buildDeps and buildApp",
+      "layer": "ports",
+      "deps": [
+        "T10",
+        "T12",
+        "T14"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-15"
+      ],
+      "dod": "Route integration tests prove every contacts operation answers its contract shape and every listed error code, rename and delete refuse an operator with OWNER_ONLY and change nothing while the member routes accept both roles, the guard answers 401 / 403 ACCESS_REMOVED / 404 with no hint, and TAG_CHANGE_LIMIT_REACHED carries Retry-After.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/http/routes.ts",
+        "apps/api/src/modules/contacts/http/routes.int.test.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/deps.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t16-register-contacts-routes.md"
+    },
+    {
+      "id": "T17",
+      "title": "Add the API end-to-end contacts stories, the integrity queries, the cross-workspace and secrecy suite, the live-push assertions and the seeded 10 000-contact timing checks",
+      "layer": "tests",
+      "deps": [
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-09",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "The API e2e stories pass against Postgres and the fake Bot API, the cross-workspace suite refuses every foreign contact or tag on every contacts and tags route with no hint, the four integrity queries return no row, no frame, signal or log line carries a tag or contact name, and on a 10 000-contact, 100-tag seed the list (every filter mode including all-of, with counts) and the profile stay within 500 ms, a tag change within 300 ms, owner merge and delete within 2 s and change-to-push within 3 s. The AC-05 story asserts the unread count, the attention count and the ping sweep's due set are unchanged after the profile reads while a customer message arrives; the AC-06 story asserts the list filter finds the contact by its new tags and the fake Bot API records no send for any tag change; the AC-09 story asserts tags.changed from rename, merge and delete reaches every socket of the workspace; the AC-10 check asserts listTags contact_count equals listContacts mode=any matching_count for every seeded tag; the AC-13 story proves a renamed customer keeps the tags, a deactivated adder stays named, tagging works with the bot disconnected and the same Telegram user in another workspace is a separate contact with none of the tags (test plan).",
+      "files_hint": [
+        "apps/api/src/e2e/contacts-flows.int.test.ts",
+        "apps/api/src/e2e/contacts-tenancy.int.test.ts",
+        "apps/api/src/e2e/contacts-load.int.test.ts",
+        "apps/api/src/e2e/helpers.ts",
+        "apps/api/src/test/fixtures/tags.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t17-api-e2e-tenancy-secrecy-and-load.md"
+    },
+    {
+      "id": "T18",
+      "title": "Add the web contacts and tags API sources and stores, with the live subscriptions to contact.changed, tags.changed, conversation.changed (never mark read) and resync",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06"
+      ],
+      "dod": "Store unit tests prove each live frame triggers exactly the re-reads screens.md lists (contact.changed for the shown contact, tags.changed, conversation.changed for the profile's conversation, resync), frames of another workspace or contact are ignored, a failed re-read keeps the shown state, and no contacts or tags code path issues the mark-read request.",
+      "files_hint": [
+        "apps/web/src/features/contacts/api.ts",
+        "apps/web/src/features/contacts/store.ts",
+        "apps/web/src/features/contacts/store.test.ts",
+        "apps/web/src/features/tags/api.ts",
+        "apps/web/src/features/tags/store.ts",
+        "apps/web/src/features/tags/store.test.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t18-web-contacts-and-tags-stores.md"
+    },
+    {
+      "id": "T19",
+      "title": "Build SCR-18, the Contacts list: ContactsTable and TagFilter with the address state, Show more, the counts, the missing-tag notice and the empty and error states, replacing ContactsPreview",
+      "layer": "ui",
+      "deps": [
+        "T18"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-10"
+      ],
+      "dod": "Testing Library tests cover every SCR-18 state in screens.md (loading, default with «Never» / «Unknown» / «no username», show more without repeats, more failed, filtered with «N of M contacts match», filter open with the three modes and the no-tags rule, missing-tag notice, both empty states, error, phone), the address round-trips search, mode and tag ids through reload and back, and ContactsPreview is gone. Component tests also prove a row's contact name opens the profile at its address (AC-04), a workspace switch starts with no search and no filter (AC-02), and that a 401 on listContacts returns to the same address (search and filter included) after sign-in while 403 ACCESS_REMOVED shows the access-removed landing (AC-12) (test plan).",
+      "files_hint": [
+        "apps/web/src/features/contacts/ContactsTable.tsx",
+        "apps/web/src/features/contacts/ContactsTable.test.tsx",
+        "apps/web/src/features/contacts/TagFilter.tsx",
+        "apps/web/src/features/contacts/TagFilter.test.tsx",
+        "apps/web/src/features/contacts/address.ts",
+        "apps/web/src/features/contacts/address.test.ts",
+        "apps/web/src/pages/ContactsPage.tsx",
+        "apps/web/src/features/contacts/ContactsPreview.tsx",
+        "apps/web/src/features/contacts/ContactsPreview.test.tsx",
+        "apps/web/src/app/routes.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t19-scr18-contacts-list.md"
+    },
+    {
+      "id": "T20",
+      "title": "Build SCR-19, the contact profile: the header card with facts and tags, the conversation card, the Conversation / Tag history tabs with TagHistoryList and ContactCrumb, and remove the contacts sample source and SampleDataBadge",
+      "layer": "ui",
+      "deps": [
+        "T18",
+        "T19"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-09",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "Testing Library tests cover every SCR-19 state in screens.md except the Conversation-tab history (T21): loading, default with the facts line, missing facts, deactivated adder, the conversation card with status, assignee or «Unassigned», the waiting marker and Open in inbox, «No conversation to show», tag history with all four line kinds and paging, empty and error, live tag re-reads, not found and phone; and no file of the contacts sample source or SampleDataBadge remains.",
+      "files_hint": [
+        "apps/web/src/features/contacts/ContactProfile.tsx",
+        "apps/web/src/features/contacts/ContactProfile.test.tsx",
+        "apps/web/src/features/contacts/TagHistoryList.tsx",
+        "apps/web/src/features/contacts/TagHistoryList.test.tsx",
+        "apps/web/src/features/contacts/ContactCrumb.tsx",
+        "apps/web/src/pages/ContactProfilePage.tsx",
+        "apps/web/src/features/contacts/ContactProfilePreview.tsx",
+        "apps/web/src/features/contacts/sample-data.ts",
+        "apps/web/src/features/contacts/sample-source.ts",
+        "apps/web/src/features/contacts/sample-source.test.ts",
+        "apps/web/src/shared/ui/sample-data-badge.tsx",
+        "apps/web/src/shared/ui/sample-data-badge.test.tsx",
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/app/routes.test.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t20-scr19-contact-profile.md"
+    },
+    {
+      "id": "T21",
+      "title": "Build ContactConversationHistory, the profile's read-only thread: inbox-order items, older pages, media, live items, no read marking and no composer, with ReplyDeliveryState readOnly",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05"
+      ],
+      "dod": "Testing Library tests cover every Conversation-tab state of SCR-19 in screens.md (history in inbox order, loading older, older failed, media, empty, error, live conversation changed) and prove the component issues no mark-read request and renders no composer, while ReplyDeliveryState readOnly hides Try again / Send again.",
+      "files_hint": [
+        "apps/web/src/features/contacts/ContactConversationHistory.tsx",
+        "apps/web/src/features/contacts/ContactConversationHistory.test.tsx",
+        "apps/web/src/features/inbox/ReplyDeliveryState.tsx",
+        "apps/web/src/features/inbox/ReplyDeliveryState.test.tsx",
+        "apps/web/src/features/contacts/ContactProfile.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t21-profile-read-only-history.md"
+    },
+    {
+      "id": "T22",
+      "title": "Build SCR-20, the TagControl, and mount it on the profile and on the inbox conversation header (SCR-02) with the contact's tags and the name linking to the profile",
+      "layer": "ui",
+      "deps": [
+        "T18",
+        "T20"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07",
+        "AC-08",
+        "AC-14",
+        "AC-15"
+      ],
+      "dod": "Testing Library and unit tests cover every SCR-20 state in screens.md (suggestion order, exact match without create, the create row, name rules in place, pending, recorded / unchanged, both limits, tag gone, rate limit with its countdown, error, empty, loading, live, keyboard and focus return) and the SCR-02 header's tags row, profile link, loading, error and live states, with the guidance line always visible.",
+      "files_hint": [
+        "apps/web/src/features/tags/TagControl.tsx",
+        "apps/web/src/features/tags/TagControl.test.tsx",
+        "apps/web/src/features/tags/match.ts",
+        "apps/web/src/features/tags/match.test.ts",
+        "apps/web/src/features/inbox/Thread.tsx",
+        "apps/web/src/features/inbox/Thread.test.tsx",
+        "apps/web/src/features/contacts/ContactProfile.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t22-scr20-tag-control-and-header.md"
+    },
+    {
+      "id": "T23",
+      "title": "Build Settings — Tags (SCR-21) with the counts as links and the DeleteTagDialog (SCR-23), the owner-only Tags section in SettingsLayout and its route",
+      "layer": "ui",
+      "deps": [
+        "T18"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-10",
+        "AC-11"
+      ],
+      "dod": "Testing Library tests cover every SCR-21 and SCR-23 state in screens.md (loading, default in tag-list order with counts as links and zero counts, success notice, tag gone, empty, error, owners only and lost meanwhile, phone row menu; delete default, pending, success, asks again with the new number, refusals, error) and prove an operator's Settings menu shows no Tags section.",
+      "files_hint": [
+        "apps/web/src/features/tags/TagsSettings.tsx",
+        "apps/web/src/features/tags/TagsSettings.test.tsx",
+        "apps/web/src/features/tags/DeleteTagDialog.tsx",
+        "apps/web/src/features/tags/DeleteTagDialog.test.tsx",
+        "apps/web/src/pages/TagSettingsPage.tsx",
+        "apps/web/src/features/settings/SettingsLayout.tsx",
+        "apps/web/src/features/settings/SettingsLayout.test.tsx",
+        "apps/web/src/app/routes.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t23-scr21-settings-tags-and-scr23-delete.md"
+    },
+    {
+      "id": "T24",
+      "title": "Build SCR-22, the RenameTagDialog with its merge step: name rules in place, TAG_NAME_TAKEN turned into the merge offer, TAG_MERGE_TARGET_CHANGED re-ask",
+      "layer": "ui",
+      "deps": [
+        "T23"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-09",
+        "AC-14"
+      ],
+      "dod": "Testing Library tests cover every SCR-22 state in screens.md (default, name rules in place, pending, renamed, unchanged, the merge offer with both counts, merged, merge target changed with and without a holder, tag gone, owners only, error) and that the merge confirm sends merge_into_tag_id from TAG_NAME_TAKEN.",
+      "files_hint": [
+        "apps/web/src/features/tags/RenameTagDialog.tsx",
+        "apps/web/src/features/tags/RenameTagDialog.test.tsx",
+        "apps/web/src/features/tags/TagsSettings.tsx"
+      ],
+      "file": "docs/features/contacts/tasks/t24-scr22-rename-and-merge-dialog.md"
+    },
+    {
+      "id": "T25",
+      "title": "Add browser end-to-end contacts flows against the real API: list and filter, profile reading without marking read, tagging live between two members, owner rename / merge / delete, the operator refusal",
+      "layer": "tests",
+      "deps": [
+        "T17",
+        "T19",
+        "T21",
+        "T22",
+        "T24"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-05",
+        "AC-06",
+        "AC-09",
+        "AC-11"
+      ],
+      "dod": "The browser flows pass locally and in CI with pnpm test:e2e: the list with search, all three filter modes, show more and a saved link; the profile read leaving the inbox unread badge unchanged until Open in inbox; a teammate's tag change showing live on an open profile; the owner's rename, merge and delete with their history entries; and the operator refusal.",
+      "files_hint": [
+        "apps/web/e2e/contacts.spec.ts",
+        "apps/web/e2e/support/world.ts"
+      ],
+      "file": "docs/features/contacts/tasks/t25-browser-e2e.md"
+    },
+    {
+      "id": "T26",
+      "title": "Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the contacts routes and tables, the contacts → workspaces edge, the new signals and the new components",
+      "layer": "docs",
+      "deps": [
+        "T16",
+        "T19",
+        "T21",
+        "T22",
+        "T24"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12"
+      ],
+      "dod": "CLAUDE.md and the architecture map name the contacts routes, the three tag tables, the contacts → workspaces edge and the contact.changed / tags.changed signals with the tenancy exceptions unchanged, the design-system canon registers every new and extended component from screens.md and retires SampleDataBadge, and CONTEXT.md defines tag history, name key, tidied name, first / last wrote and tag-list order.",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md",
+        "CONTEXT.md"
+      ],
+      "file": "docs/features/contacts/tasks/t26-docs-and-canon.md"
+    }
+  ]
+}

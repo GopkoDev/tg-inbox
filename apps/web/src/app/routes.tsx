@@ -6,7 +6,7 @@ import {
   type RouteObject,
 } from 'react-router';
 import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
-import { getSampleContact } from '@/features/contacts/sample-source';
+import { ContactCrumb } from '@/features/contacts/ContactCrumb';
 import { SettingsIndexRedirect } from '@/features/settings/SettingsIndexRedirect';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
 import { AcceptInvitationPage } from '@/pages/AcceptInvitationPage';
@@ -67,10 +67,7 @@ const workspaceRoute: RouteObject = {
         { index: true, element: lazyPage(() => import('@/pages/ContactsPage'), 'ContactsPage') },
         {
           path: ':contactId',
-          handle: {
-            crumb: (p: Record<string, string | undefined>) =>
-              getSampleContact(p.contactId ?? '')?.name ?? 'Contact',
-          },
+          handle: { crumb: 'Contact', Crumb: ContactCrumb },
           element: lazyPage(() => import('@/pages/ContactProfilePage'), 'ContactProfilePage'),
         },
       ],
@@ -90,6 +87,11 @@ const workspaceRoute: RouteObject = {
           path: 'team',
           handle: { crumb: 'Team' },
           element: lazyPage(() => import('@/pages/TeamPage'), 'TeamPage'),
+        },
+        {
+          path: 'tags',
+          handle: { crumb: 'Tags' },
+          element: lazyPage(() => import('@/pages/TagSettingsPage'), 'TagSettingsPage'),
         },
         {
           path: 'notifications',

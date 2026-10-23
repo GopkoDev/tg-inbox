@@ -53,11 +53,27 @@ const telegramLinkChanged = z.object({
   account_id: id,
 });
 
+const contactChanged = z.object({
+  type: z.literal('contact.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+  contact_id: id,
+  change: z.enum(['tags']),
+});
+
+const tagsChanged = z.object({
+  type: z.literal('tags.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+});
+
 export const realtimeSignalSchema = z.discriminatedUnion('type', [
   conversationChanged,
   botChanged,
   membershipDeactivated,
   telegramLinkChanged,
+  contactChanged,
+  tagsChanged,
 ]);
 
 export type RealtimeSignal = z.infer<typeof realtimeSignalSchema>;

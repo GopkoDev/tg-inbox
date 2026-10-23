@@ -1,7 +1,13 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { isMessageKind, type MessageKind } from '../domain/message.js';
-import type { ConversationListReads, ConversationRow, LastItemView, Viewer } from '../app/ports.js';
+import type {
+  ConversationListReads,
+  ConversationRow,
+  ConversationSummaryRow,
+  LastItemView,
+  Viewer,
+} from '../app/ports.js';
 import type { LatestReply } from '../domain/state.js';
 
 interface RawRow {
@@ -100,6 +106,24 @@ export function createListQueries(db: Db): ConversationListReads {
       ${tail}`;
   }
 
+  async function summaryWhere(
+    workspaceId: string,
+    viewer: Viewer,
+    where: ReturnType<typeof sql>,
+  ): Promise<ConversationSummaryRow | null> {
+    const { rows } = await select(workspaceId, viewer, where, sql`LIMIT 1`, true).execute(db);
+    const r = rows[0];
+    if (!r) return null;
+    const latestReply: LatestReply | null =
+      r.s_id !== null && r.s_state !== null
+        ? { id: r.s_id, state: r.s_state as LatestReply['state'] }
+        : null;
+    return {
+      ...toRow(r),
+      closeSnapshot: { customerMessageSeq: r.customer_message_seq, latestReply },
+    };
+  }
+
   return {
     async listPage(workspaceId, q) {
       const cursor = q.after
@@ -124,24 +148,11 @@ export function createListQueries(db: Db): ConversationListReads {
       return { rows: rows.slice(0, q.limit).map(toRow), hasNext: rows.length > q.limit };
     },
 
-    async summary(workspaceId, conversationId, viewer) {
-      const { rows } = await select(
-        workspaceId,
-        viewer,
-        sql`AND c.id = ${conversationId}::uuid`,
-        sql`LIMIT 1`,
-        true,
-      ).execute(db);
-      const r = rows[0];
-      if (!r) return null;
-      const latestReply: LatestReply | null =
-        r.s_id !== null && r.s_state !== null
-          ? { id: r.s_id, state: r.s_state as LatestReply['state'] }
-          : null;
-      return {
-        ...toRow(r),
-        closeSnapshot: { customerMessageSeq: r.customer_message_seq, latestReply },
-      };
-    },
+    summary: (workspaceId, conversationId, viewer) =>
+      summaryWhere(workspaceId, viewer, sql`AND c.id = ${conversationId}::uuid`),
+
+    // A contact has at most one conversation (`conversations_contact_id_key`); same projection.
+    summaryByContact: (workspaceId, contactId, viewer) =>
+      summaryWhere(workspaceId, viewer, sql`AND c.contact_id = ${contactId}::uuid`),
   };
 }

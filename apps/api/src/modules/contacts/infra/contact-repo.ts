@@ -1,13 +1,16 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import { newId } from '../../../platform/ids.js';
-import { normalizeSearchQuery, type ContactRepo } from '../app/ports.js';
+import type { ContactRepo } from '../app/ports.js';
+import { contactSearchPredicate } from './contact-search.js';
 
 export function createContactRepo(db: Db): ContactRepo {
   return {
     async upsertFromProfile(workspaceId, profile, seenAt, now, tx) {
       const ex = tx ?? db;
-      // The guarded DO UPDATE is the SQL form of shouldRefreshProfile (contacts/domain/profile.ts).
+      // The profile fields follow shouldRefreshProfile (contacts/domain/profile.ts): only a strictly
+      // newer message refreshes them. First and last wrote widen on every message (ADR-0005), so an
+      // older message delivered late still lowers first_wrote_at; `seenAt` is the message's send time.
       const row = await ex
         .insertInto('contacts')
         .values({
@@ -20,25 +23,40 @@ export function createContactRepo(db: Db): ContactRepo {
           language_code: profile.languageCode,
           profile_seen_at: seenAt,
           created_at: now,
+          first_wrote_at: seenAt,
+          last_wrote_at: seenAt,
         })
         .onConflict((oc) =>
           oc
             .columns(['workspace_id', 'telegram_user_id'])
-            .doUpdateSet((eb) => ({
-              first_name: eb.ref('excluded.first_name'),
-              last_name: eb.ref('excluded.last_name'),
-              username: eb.ref('excluded.username'),
-              language_code: eb.ref('excluded.language_code'),
-              profile_seen_at: eb.ref('excluded.profile_seen_at'),
-            }))
-            .where('contacts.profile_seen_at', '<', (eb) => eb.ref('excluded.profile_seen_at')),
+            .doUpdateSet(() => {
+              const newer = sql<boolean>`contacts.profile_seen_at < excluded.profile_seen_at`;
+              const pick = <T>(column: 'first_name' | 'last_name' | 'username' | 'language_code') =>
+                sql<T>`CASE WHEN ${newer} THEN excluded.${sql.ref(column)} ELSE contacts.${sql.ref(column)} END`;
+              return {
+                first_name: pick<string>('first_name'),
+                last_name: pick<string | null>('last_name'),
+                username: pick<string | null>('username'),
+                language_code: pick<string | null>('language_code'),
+                profile_seen_at: sql<Date>`GREATEST(contacts.profile_seen_at, excluded.profile_seen_at)`,
+                first_wrote_at: sql<Date>`LEAST(contacts.first_wrote_at, excluded.first_wrote_at)`,
+                last_wrote_at: sql<Date>`GREATEST(contacts.last_wrote_at, excluded.last_wrote_at)`,
+              };
+            })
+            .where((eb) =>
+              eb.or([
+                eb('contacts.profile_seen_at', '<', eb.ref('excluded.profile_seen_at')),
+                sql<boolean>`contacts.first_wrote_at IS DISTINCT FROM LEAST(contacts.first_wrote_at, excluded.first_wrote_at)`,
+                sql<boolean>`contacts.last_wrote_at IS DISTINCT FROM GREATEST(contacts.last_wrote_at, excluded.last_wrote_at)`,
+              ]),
+            ),
         )
         // xmax = 0 only on a freshly inserted row version.
         .returning(['id', sql<boolean>`(xmax = 0)`.as('created')])
         .executeTakeFirst();
       if (row) return { contactId: row.id, created: row.created };
 
-      // The stored profile is as new or newer: nothing changed, read the id.
+      // Nothing changed (profile as new or newer, range already covers the message): read the id.
       const existing = await ex
         .selectFrom('contacts')
         .select('id')
@@ -58,19 +76,13 @@ export function createContactRepo(db: Db): ContactRepo {
     },
 
     async searchContactIds(workspaceId, query) {
-      const q = normalizeSearchQuery(query);
-      if (q === null) return null;
-      // Escape the LIKE metacharacters so the text is matched literally; Postgres lower() folds
-      // case for Cyrillic and Latin alike.
-      const pattern = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
+      const predicate = contactSearchPredicate(query);
+      if (predicate === null) return null;
       const rows = await db
         .selectFrom('contacts')
         .select('id')
         .where('workspace_id', '=', workspaceId)
-        .where(
-          sql<boolean>`(lower(first_name || ' ' || coalesce(last_name, '')) like lower(${pattern})
-            or lower(username) like lower(${pattern}))`,
-        )
+        .where(predicate)
         .orderBy('id')
         .execute();
       return rows.map((r) => r.id);
@@ -90,6 +102,40 @@ export function createContactRepo(db: Db): ContactRepo {
         lastName: r.last_name,
         username: r.username,
       }));
+    },
+
+    async lockContact(workspaceId, contactId, tx) {
+      const row = await tx
+        .selectFrom('contacts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', contactId)
+        .forNoKeyUpdate()
+        .executeTakeFirst();
+      return row !== undefined;
+    },
+
+    async profile(workspaceId, contactId) {
+      const r = await db
+        .selectFrom('contacts')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', contactId)
+        .executeTakeFirst();
+      if (!r) return null;
+      return {
+        id: r.id,
+        workspaceId: r.workspace_id,
+        telegramUserId: BigInt(r.telegram_user_id),
+        firstName: r.first_name,
+        lastName: r.last_name,
+        username: r.username,
+        languageCode: r.language_code,
+        profileSeenAt: r.profile_seen_at,
+        createdAt: r.created_at,
+        firstWroteAt: r.first_wrote_at,
+        lastWroteAt: r.last_wrote_at,
+      };
     },
   };
 }

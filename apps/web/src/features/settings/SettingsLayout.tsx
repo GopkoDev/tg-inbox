@@ -6,12 +6,13 @@ import { cn } from '@/shared/lib/utils';
 const sections = [
   { to: 'bot', label: 'Bot', ownerOnly: true },
   { to: 'team', label: 'Team', ownerOnly: true },
+  { to: 'tags', label: 'Tags', ownerOnly: true },
   { to: 'notifications', label: 'Notifications', ownerOnly: false },
 ];
 
 /**
  * SCR-11 Settings: title, description, the section menu and the active section's outlet. The menu
- * follows the role: an owner sees Bot, Team and Notifications, an operator Notifications only.
+ * follows the role: an owner sees Bot, Team, Tags and Notifications, an operator Notifications only.
  */
 export function SettingsLayout() {
   const isOwner = useWorkspaceStore((s) => s.current?.role === 'owner');
@@ -22,7 +23,7 @@ export function SettingsLayout() {
         <h1 className="text-2xl font-semibold">Settings</h1>
         <p className="text-muted-foreground text-sm">
           {isOwner
-            ? "Manage your workspace's bot and team, and your notifications"
+            ? "Manage your workspace's bot, team and tags, and your notifications"
             : 'Manage your notifications'}
         </p>
       </div>

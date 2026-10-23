@@ -289,6 +289,12 @@ export interface ConversationListReads {
     conversationId: string,
     viewer: Viewer,
   ): Promise<ConversationSummaryRow | null>;
+  /** The summary of the contact's one conversation, or null (foreign or unknown contact, or none). */
+  summaryByContact(
+    workspaceId: string,
+    contactId: string,
+    viewer: Viewer,
+  ): Promise<ConversationSummaryRow | null>;
 }
 
 export interface MessageView extends MessageProjection {

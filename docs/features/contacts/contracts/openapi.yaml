@@ -1,0 +1,1571 @@
+# Derived contract for contacts. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (tags, contact_tags, contact_tag_history, contacts.first_wrote_at /
+#                           last_wrote_at) + the existing schema (contacts: first_name, last_name, username,
+#                           language_code; memberships for display names; conversations for the profile)
+#   error responses       ← sad.md §6 seeded flows 1–3 and flows 4–13 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The two new live frames
+# (contact.changed, tags.changed) and their realtime signals are in events.md.
+#
+# THIS IS A DELTA over the shipped contracts:
+#   - shared-inbox (../../shared-inbox/contracts/openapi.yaml): the guard responses, ErrorEnvelope, Cursor,
+#     MemberRef, the thread and media routes the profile reuses unchanged, the live socket;
+#   - assignment-statuses (../../assignment-statuses/contracts/openapi.yaml): ConversationSummary,
+#     CallerAccessRemoved, the current listThreadItems / getConversation shapes (unchanged here);
+#   - operator-notifications (../../operator-notifications/contracts/openapi.yaml): the current live socket
+#     (presence frame, telegram_link.changed), unchanged except for the two frames this feature adds.
+#   - workspace-operators (../../workspace-operators/contracts/openapi.yaml): Role, the owner-only guard.
+#   Every operation and schema here carries `x-delta: added` or `x-delta: changed`. An operation or schema
+#   that is not listed here is unchanged and stays defined in its original contract. Unchanged pieces are
+#   external $refs, never copies.
+#
+# Deviations from the api-skill defaults are the repo's, recorded in api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - methods: GET reads and action POSTs only (the repo's style: /memberships/{id}/deactivate,
+#     /bot/disconnect); sad.md §5's indicative PATCH / DELETE routes are fixed here as POST …/rename,
+#     POST …/delete and POST …/tags/{tagId}/remove
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - no Idempotency-Key header: every change is idempotent by state (an add of a carried tag, a remove of a
+#     tag no longer carried and a same-text rename answer 200 `unchanged`; a delete names the count it expects)
+openapi: 3.1.0
+
+info:
+  title: contacts API (delta over shared-inbox, assignment-statuses, operator-notifications)
+  version: 0.1.0
+  description: |
+    Gives a workspace's team its customer base (spec §1). Every customer who writes to the business bot
+    is already a contact, but the team could see them only as the name on an inbox conversation, and had
+    no way to group them. The Contacts list and the contact profile turn into real data, and contacts
+    get **workspace tags**: the pilot pitch is tagging as "your broadcast base in the making", and the
+    next step, broadcasts, selects its recipients by tag.
+
+    - **Contacts list** (US-01, US-05): `GET …/contacts`, the workspace's contacts newest "last wrote"
+      first, 50 per page, with search, a tag filter (`any`, `all`, `none`) and the number of contacts
+      that match — the size of a future segment.
+    - **Contact profile** (US-02): `GET …/contacts/{contactId}` (facts and tags with adder),
+      `GET …/contacts/{contactId}/tag-history` (newest first), and the contact's conversation through
+      `GET …/inbox/contacts/{contactId}/conversation` plus the **unchanged** inbox thread and media
+      routes. None of them marks anything read (ADR-0006); the profile never calls
+      `POST …/inbox/conversations/{conversationId}/read`.
+    - **Tagging** (US-03): any member adds an existing tag, creates and adds a new one, or removes one,
+      from the inbox conversation header or the profile. 20 tags per contact, 100 per workspace, 60
+      recorded changes per member per minute.
+    - **Tag list** (US-04, US-05): `GET …/tags` with the contact count per tag, readable by every member
+      (the picker and the filter use it). Rename (and merge by renaming into an existing name) and
+      delete against the confirmed count are owner-only.
+
+    Every route sits behind the workspace-access guard. A caller who was never a member gets
+    `404 NOT_FOUND` with no hint, a deactivated member `403 ACCESS_REMOVED`, a signed-out caller
+    `401 UNAUTHENTICATED` (AC-12). A contact or tag id is always looked up together with the workspace
+    id, so a foreign id is not found, and the composite foreign keys make a cross-workspace link
+    impossible. Tag names, contact names and usernames are data, shown as plain text only (spec §6.1).
+    Nothing here calls Telegram, and nothing about tags is ever sent to the customer.
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+security:
+  - SessionCookie: []
+
+tags:
+  - name: contacts
+    description: Module `contacts` (ADR-0001). Owns contacts, tags, contact tags and tag history; its first `http/routes.ts` (`registerContacts`). Reaches `workspaces` through its app layer for display names
+  - name: inbox
+    description: Module `inbox`. Serves the conversation of a contact (a `conversations.findByContact` read) and the live socket
+
+paths:
+  # ───────────────────────── added operations: contacts ─────────────────────────
+  /api/workspaces/{workspaceId}/contacts:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [contacts]
+      summary: List the workspace's contacts with search, tag filter and counts (US-01, US-05)
+      description: |
+        Flows 4 and 5 (AC-01, AC-02, AC-03, AC-10, AC-12). Both roles get the same answer.
+
+        **Order and paging.** Newest `last_wrote_at` first, then `id` descending; contacts with no send
+        time come last (`NULLS LAST`). 50 rows per page (a domain constant, no `limit` parameter). `after`
+        continues strictly after the last row shown, so no row is shown twice or skipped. A contact who
+        writes while the list is open moves to the top only on the next first page (the list is not live).
+        Served by `contacts_workspace_id_last_wrote_at_id_idx`; no read of `conversations` (ADR-0005).
+
+        **Search** (`q`). The inbox search rules (`normalizeSearchQuery` + the `searchContactIds` match):
+        anywhere in the full name or username, ignoring letter case in any alphabet, surrounding spaces and
+        a leading `@`. A `q` that is empty after normalising searches nothing.
+
+        **Tag filter** (`mode`, `tag`).
+        - `mode=any` (default) keeps contacts carrying at least one chosen tag; `mode=all` keeps contacts
+          carrying every chosen tag (a grouped semi-join, data-model assumption 10); with no `tag`, both
+          filter nothing.
+        - `mode=none` keeps contacts carrying no tag at all and takes no `tag`: `none` together with a
+          `tag` is `400 VALIDATION_ERROR` (the panel never sends it, because choosing "no tags" clears the
+          chosen tags).
+        - Each `tag` id is first resolved among this workspace's tags (`tags_workspace_id_id_key`). An id
+          that does not resolve — deleted, merged away, or a tag of another workspace — is left out of the
+          filter and returned in `missing_tag_ids`; the panel drops it from the address and says one of
+          the chosen tags no longer exists (AC-02). A renamed tag keeps its id, so a saved link still
+          filters by it under its new name.
+
+        **Counts.** `total_count` is every contact of the workspace; `matching_count` is the contacts that
+        match `q` and the filter (equal to `total_count` when neither is given). Choosing a count in
+        Settings — Tags opens this list with `mode=any&tag=<id>` and shows the same number (AC-10).
+
+        **Empty answers** (AC-03, the panel decides the wording): `total_count: 0` → "a contact appears
+        when a customer writes to the business bot", and for a business owner whose bot is not connected
+        the way to Settings — Bot (the panel's existing `getInboxBotStatus` read); `matching_count: 0`
+        with `total_count > 0` → one sentence that no contact matches, with a button that clears the
+        search and filter.
+      operationId: listContacts
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: q
+          required: false
+          description: Search text for the contact's full name or username. Same bound as the inbox search (shared-inbox `listConversations`)
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: mode
+          required: false
+          schema: { $ref: "#/components/schemas/TagFilterMode" }
+        - in: query
+          name: tag
+          required: false
+          description: "Chosen tag ids, repeated (`tag=<id>&tag=<id>`). At most 100 (the workspace's tag limit). Duplicates count once. Not allowed with `mode=none`"
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 100
+            items: { type: string, format: uuid }
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page, issued for the same `q`, `mode` and `tag`. It encodes (`last_wrote_at` or none, `id`)
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+      responses:
+        "200":
+          description: One page of contacts with the counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactPage" }
+              examples:
+                firstPage:
+                  summary: First page, no search and no filter (AC-01)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    filter: { q: null, mode: any, tag_ids: [] }
+                    items:
+                      - id: "01920000-0000-7000-8000-0000000000a1"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        first_name: "Test"
+                        last_name: "User"
+                        username: "test_user_1"
+                        language_code: "uk"
+                        first_wrote_at: "2026-09-02T08:14:00Z"
+                        last_wrote_at: "2026-10-19T09:58:11Z"
+                        tags:
+                          - { id: "01920000-0000-7000-8000-000000000301", name: "Kyiv" }
+                          - { id: "01920000-0000-7000-8000-000000000302", name: "VIP" }
+                      - id: "01920000-0000-7000-8000-0000000000a2"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        first_name: "Test User 2"
+                        last_name: null
+                        username: null
+                        language_code: null
+                        first_wrote_at: "2026-10-18T17:40:03Z"
+                        last_wrote_at: "2026-10-18T17:40:03Z"
+                        tags: []
+                    has_prev: false
+                    has_next: true
+                    next_cursor: "MjAyNi0xMC0xOFQxNzo0MDowM1p8MDE5Mg"
+                    matching_count: 120
+                    total_count: 120
+                    missing_tag_ids: []
+                filtered:
+                  summary: Any of VIP and a deleted tag — the deleted id is reported (AC-02)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    filter: { q: null, mode: any, tag_ids: ["01920000-0000-7000-8000-000000000302"] }
+                    items:
+                      - id: "01920000-0000-7000-8000-0000000000a1"
+                        workspace_id: "01920000-0000-7000-8000-000000000001"
+                        first_name: "Test"
+                        last_name: "User"
+                        username: "test_user_1"
+                        language_code: "uk"
+                        first_wrote_at: "2026-09-02T08:14:00Z"
+                        last_wrote_at: "2026-10-19T09:58:11Z"
+                        tags:
+                          - { id: "01920000-0000-7000-8000-000000000301", name: "Kyiv" }
+                          - { id: "01920000-0000-7000-8000-000000000302", name: "VIP" }
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+                    matching_count: 1
+                    total_count: 120
+                    missing_tag_ids: ["01920000-0000-7000-8000-000000000399"]
+                noContacts:
+                  summary: The workspace has no contacts yet (AC-03)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    filter: { q: null, mode: any, tag_ids: [] }
+                    items: []
+                    has_prev: false
+                    has_next: false
+                    next_cursor: null
+                    matching_count: 0
+                    total_count: 0
+                    missing_tag_ids: []
+        "400":
+          description: The query does not match the schema — a malformed `tag` id or cursor, more than 100 `tag`, an unknown `mode`, or `mode=none` together with a `tag` (flow 5)
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                noneWithTags:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "\"No tags\" cannot be combined with chosen tags", details: { field: tag } }
+                badTag:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "Invalid UUID", details: { field: tag } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/contacts/{contactId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      x-delta: added
+      tags: [contacts]
+      summary: Read a contact's profile — Telegram facts, first and last wrote, tags with who added each (US-02)
+      description: |
+        Flow 6, seeded flow 3 (AC-04, AC-12, AC-13). Read by `contacts_workspace_id_id_key`; the tags by
+        `contact_tags_pkey` joined to `tags`, in tag-list order (ICU dictionary order ignoring case, then
+        `name_key`). Adders are resolved to display names through the `workspaces` app layer, deactivated
+        members included (AC-13). Writes nothing.
+
+        Also the read behind the tag control on the inbox conversation header (SCR-02, SCR-20): the
+        header knows the contact id from `ConversationSummary.contact`. The profile and the header re-read
+        it after a `contact.changed` frame for this contact, after every `tags.changed` frame, and (the
+        profile) after a `conversation.changed` frame for the contact's conversation, so a new Telegram
+        name shows (events.md, sad.md §6 flow 7).
+
+        An unknown id, or the id of another workspace's contact, is `404` with no hint (the not-found card
+        inside the frame, SCR-06).
+      operationId: getContact
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The contact's profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactProfile" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000a1"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                first_name: "Test"
+                last_name: "User"
+                username: "test_user_1"
+                language_code: "uk"
+                first_wrote_at: "2026-09-02T08:14:00Z"
+                last_wrote_at: "2026-10-19T09:58:11Z"
+                tags:
+                  - id: "01920000-0000-7000-8000-000000000301"
+                    name: "Kyiv"
+                    added_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    added_at: "2026-10-19T10:02:40Z"
+                  - id: "01920000-0000-7000-8000-000000000302"
+                    name: "VIP"
+                    added_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    added_at: "2026-10-01T12:00:00Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/ContactNotFound" }
+
+  /api/workspaces/{workspaceId}/contacts/{contactId}/tag-history:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      x-delta: added
+      tags: [contacts]
+      summary: Read a page of the contact's tag history, newest first (US-02)
+      description: |
+        Flow 6 (AC-04, AC-06, AC-09, AC-13). Newest first, keyset by (`created_at`, `id`) on
+        `contact_tag_history_workspace_id_contact_id_created_at_idx`, 50 entries per page (no `limit`
+        parameter); `after` loads older entries as the member scrolls. Entries are append-only and keep the
+        tag's name at that moment, so older entries of a renamed or deleted tag read under the old name.
+        A rename writes no entry. Actors are resolved to display names, deactivated members included.
+
+        The panel composes each line from `kind`, the name snapshots and the actor (sad.md §8
+        Internationalisation):
+        - `added` — "<actor> added «<tag_name>»";
+        - `removed` — "<actor> removed «<tag_name>»";
+        - `merged` — "<actor> merged «<tag_name>» into «<merged_into_name>»" (one entry on every contact
+          that carried the merged tag, AC-09);
+        - `deleted` — "«<tag_name>» removed by <actor>'s delete" (AC-09).
+
+        Re-read from the top after a `contact.changed` frame for this contact and after every
+        `tags.changed` frame (events.md). Writes nothing.
+      operationId: listContactTagHistory
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page. It encodes (`created_at`, `id`)
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+      responses:
+        "200":
+          description: One page of tag history, newest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagHistoryPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                contact_id: "01920000-0000-7000-8000-0000000000a1"
+                items:
+                  - id: "01920000-0000-7000-8000-000000000404"
+                    kind: removed
+                    tag_id: "01920000-0000-7000-8000-000000000303"
+                    tag_name: "Wholesale"
+                    merged_into_tag_id: null
+                    merged_into_name: null
+                    actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    source: inbox
+                    created_at: "2026-10-19T10:02:55Z"
+                  - id: "01920000-0000-7000-8000-000000000403"
+                    kind: added
+                    tag_id: "01920000-0000-7000-8000-000000000301"
+                    tag_name: "Kyiv"
+                    merged_into_tag_id: null
+                    merged_into_name: null
+                    actor: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    source: inbox
+                    created_at: "2026-10-19T10:02:40Z"
+                  - id: "01920000-0000-7000-8000-000000000402"
+                    kind: merged
+                    tag_id: "01920000-0000-7000-8000-000000000305"
+                    tag_name: "Loyal"
+                    merged_into_tag_id: "01920000-0000-7000-8000-000000000302"
+                    merged_into_name: "VIP"
+                    actor: { account_id: "01920000-0000-7000-8000-0000000000b9", display_name: "Test Owner" }
+                    source: settings
+                    created_at: "2026-10-12T16:20:00Z"
+                has_prev: false
+                has_next: true
+                next_cursor: "MjAyNi0xMC0xMlQxNjoyMDowMFp8MDE5Mg"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/ContactNotFound" }
+
+  /api/workspaces/{workspaceId}/contacts/{contactId}/tags:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContactId"
+    post:
+      x-delta: added
+      tags: [contacts]
+      summary: Add a tag to a contact — an existing tag by id, or a name that is found or created (US-03)
+      description: |
+        Flows 8 and 9, seeded flow 1 (AC-06, AC-07, AC-08, AC-12, AC-13, AC-14, AC-15). Either role. The
+        body names the tag **by id** (the member picked a suggestion) or **by name** (the member chose
+        "Create tag "…""). `source` says where the member acted (`inbox` = the conversation header,
+        `profile` = the profile); it feeds the "tags added from the inbox" KPI only and never decides
+        whether the change is limited.
+
+        One transaction, in the ADR-0004 lock order. The first outcome wins, and a refusal changes
+        nothing — a tag created by name earlier in the same request is rolled back with it:
+        1. **By name only:** tidy (NFC, zero-width spaces U+200B / U+2060 / U+FEFF removed, every white-space run with any
+           adjacent joiners → one space, ends trimmed of spaces and joiners, joiners U+200C / U+200D inside kept),
+           count graphemes, compute the name key (the shared functions the picker uses). Not 1–32
+           graphemes → `400 TAG_NAME_INVALID` (AC-07). Then the `tags:<ws>` advisory lock: a tag with
+           that key is used as it is (another case or spacing, or created by a teammate a moment ago —
+           AC-08); otherwise, with 100 tags already → `409 TAG_LIMIT_REACHED`; otherwise the tag is
+           inserted with the tidied name (`tag_created: true`).
+        2. The contact row of this workspace is locked `FOR NO KEY UPDATE`. Not a contact of this
+           workspace → `404 NOT_FOUND`, no hint (AC-12).
+        3. The contact already carries the tag → `200` with `outcome: unchanged`: nothing recorded and
+           not counted (AC-06, AC-15).
+        4. The contact carries 20 tags → `409 CONTACT_TAG_LIMIT_REACHED` (AC-08).
+        5. The `tag-changes:<ws>:<account>` advisory lock and the count of this member's `added` /
+           `removed` entries of the last 60 s. 60 → `429 TAG_CHANGE_LIMIT_REACHED` with the retry time
+           (AC-15).
+        6. The tag row of this workspace `FOR KEY SHARE`. No row — deleted or merged away meanwhile, or an
+           id of another workspace → `404 TAG_NOT_FOUND`; the panel refetches the tag list and the
+           contact's tags and says the tag no longer exists (AC-14). A tag renamed meanwhile is added
+           under its new name.
+        7. The `contact_tags` row (adder = caller, `added_at` = now) and one `added` history entry with the
+           tag's current name, the caller and `source`. Create + add is one entry and counts as one change.
+        8. `contact.changed { change: tags }` for this contact, and `tags.changed` when a tag was created,
+           published with the write (events.md). `200` with `outcome: recorded`.
+
+        Nothing is sent to Telegram, so tagging works in every state of the bot (AC-13).
+      operationId: addContactTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactTagAdd" }
+            examples:
+              byId:
+                summary: Picked the suggestion "VIP"
+                value: { tag_id: "01920000-0000-7000-8000-000000000302", source: inbox }
+              byName:
+                summary: Chose "Create tag "Kyiv"" on the profile
+                value: { name: "Kyiv", source: profile }
+      responses:
+        "200":
+          description: The tag is on the contact — added now (`recorded`) or already (`unchanged`). The contact's current tags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactTagAdded" }
+              examples:
+                created:
+                  summary: Created "Kyiv" and added it (AC-06)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    contact_id: "01920000-0000-7000-8000-0000000000a1"
+                    outcome: recorded
+                    tag: { id: "01920000-0000-7000-8000-000000000301", name: "Kyiv" }
+                    tag_created: true
+                    tags:
+                      - id: "01920000-0000-7000-8000-000000000301"
+                        name: "Kyiv"
+                        added_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                        added_at: "2026-10-19T10:02:40Z"
+                      - id: "01920000-0000-7000-8000-000000000302"
+                        name: "VIP"
+                        added_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                        added_at: "2026-10-19T10:02:31Z"
+                alreadyCarried:
+                  summary: '"vip" typed for a contact that carries "VIP" — nothing recorded (AC-06, AC-08)'
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    contact_id: "01920000-0000-7000-8000-0000000000a1"
+                    outcome: unchanged
+                    tag: { id: "01920000-0000-7000-8000-000000000302", name: "VIP" }
+                    tag_created: false
+                    tags:
+                      - id: "01920000-0000-7000-8000-000000000302"
+                        name: "VIP"
+                        added_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                        added_at: "2026-10-01T12:00:00Z"
+        "400":
+          description: |
+            One of two refusals. Nothing changes.
+            - `TAG_NAME_INVALID`: the name, once tidied, is empty or longer than 32 graphemes (AC-07). The
+              tag control says "a tag name must be 1 to 32 characters".
+            - `VALIDATION_ERROR`: the body does not match `ContactTagAdd` (both or neither of `tag_id` and
+              `name`, a `source` other than `inbox` / `profile`, a malformed id).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TagNameInvalidError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                nameInvalid:
+                  value:
+                    error: { code: TAG_NAME_INVALID, message: "A tag name must be 1 to 32 characters", details: { field: name, min_length: 1, max_length: 32 } }
+                badSource:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "Invalid option: expected one of \"inbox\"|\"profile\"", details: { field: source } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404":
+          description: |
+            One of two refusals, told apart by `code`. Nothing changes.
+            - `NOT_FOUND`: the workspace is unknown to the caller, or the contact is not a contact of this
+              workspace — no hint that either exists (AC-12).
+            - `TAG_NOT_FOUND`: the tag id is not a tag of this workspace — deleted or merged away since the
+              control was opened, or never one of its tags (AC-12, AC-14). The panel refetches the tag list
+              and the contact's tags and says "this tag no longer exists".
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TagNotFoundError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                contactNotFound:
+                  value:
+                    error: { code: NOT_FOUND, message: "Not found" }
+                tagGone:
+                  value:
+                    error: { code: TAG_NOT_FOUND, message: "This tag no longer exists", details: { tag_id: "01920000-0000-7000-8000-000000000306" } }
+        "409":
+          description: |
+            One of two limits. Nothing changes, and a name sent for creation is not created either (AC-08).
+            Both hold when members act at the same moment (the `tags:<ws>` lock and the contact row lock).
+            - `TAG_LIMIT_REACHED`: the workspace already has 100 tags and the name is new. The control says
+              a workspace can have at most 100 tags and a business owner can merge or delete some in
+              Settings.
+            - `CONTACT_TAG_LIMIT_REACHED`: the contact already carries 20 tags. The control says a contact
+              can carry at most 20 tags.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TagLimitReachedError" }
+                  - { $ref: "#/components/schemas/ContactTagLimitReachedError" }
+              examples:
+                workspaceLimit:
+                  value:
+                    error: { code: TAG_LIMIT_REACHED, message: "A workspace can have at most 100 tags — a business owner can merge or delete some in Settings", details: { limit: 100 } }
+                contactLimit:
+                  value:
+                    error: { code: CONTACT_TAG_LIMIT_REACHED, message: "A contact can carry at most 20 tags", details: { limit: 20 } }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TagChangeLimitReached" }
+
+  /api/workspaces/{workspaceId}/contacts/{contactId}/tags/{tagId}/remove:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContactId"
+      - $ref: "#/components/parameters/TagId"
+    post:
+      x-delta: added
+      tags: [contacts]
+      summary: Remove a tag from a contact (US-03)
+      description: |
+        Flow 10 (AC-06, AC-12, AC-15). Either role. One transaction:
+        1. The contact row of this workspace `FOR NO KEY UPDATE`. Not a contact of this workspace →
+           `404 NOT_FOUND`, no hint (AC-12).
+        2. The contact does not carry the tag — a teammate or an owner removed it meanwhile, the tag was
+           deleted or merged away, or the id is not one of this workspace's tags → `200` with
+           `outcome: unchanged`: nothing recorded and not counted (AC-06). No `TAG_NOT_FOUND` here, so a
+           remove never tells a foreign tag id from an absent one.
+        3. The member's rate limit, as for an add → `429 TAG_CHANGE_LIMIT_REACHED` (AC-15).
+        4. The `contact_tags` row is deleted and one `removed` history entry is written with the tag's
+           current name, the caller and `source`. `contact.changed { change: tags }` is published with the
+           write. `200` with `outcome: recorded`.
+
+        A removal touches no tag row, so it never waits on an owner's rename, merge or delete (sad.md §8).
+      operationId: removeContactTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ContactTagRemove" }
+            example: { source: inbox }
+      responses:
+        "200":
+          description: The tag is off the contact — removed now (`recorded`) or already (`unchanged`). The contact's current tags
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactTagRemoved" }
+              examples:
+                removed:
+                  summary: Removed "Wholesale" (AC-06)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    contact_id: "01920000-0000-7000-8000-0000000000a1"
+                    outcome: recorded
+                    tags:
+                      - id: "01920000-0000-7000-8000-000000000302"
+                        name: "VIP"
+                        added_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                        added_at: "2026-10-19T10:02:31Z"
+                alreadyRemoved:
+                  summary: A teammate removed it a moment earlier — nothing recorded
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    contact_id: "01920000-0000-7000-8000-0000000000a1"
+                    outcome: unchanged
+                    tags: []
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/ContactNotFound" }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+        "429": { $ref: "#/components/responses/TagChangeLimitReached" }
+
+  # ───────────────────────── added operations: tags ─────────────────────────
+  /api/workspaces/{workspaceId}/tags:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [contacts]
+      summary: List the workspace's tags in tag-list order, with the number of contacts carrying each (US-04, US-05)
+      description: |
+        Flow 12 (AC-06, AC-10, AC-11, AC-12). Readable by every active member of either role: the tag
+        control's suggestions, the Contacts filter and Settings — Tags all use it. The owner-only part is
+        the Settings section and its actions, not this read (AC-11).
+
+        Every tag of the workspace, tags no contact carries included, in tag-list order: ICU dictionary
+        order ignoring case (`name COLLATE "und-x-icu"`), then `name_key`. At most 100, so no paging.
+        `contact_count` counts `contact_tags` by (`workspace_id`, `tag_id`) and is the same number the
+        Contacts list shows for `mode=any&tag=<id>` (AC-10).
+
+        The picker matches over this list in the browser with the shared tidy and fold functions: tags that
+        start with the typed text first, then tags that contain it, each group in this order; an exact
+        match ignoring case and spacing hides "Create tag" (AC-06, AC-08). Re-read after every
+        `tags.changed` frame (events.md) while a picker, a filter or a header is open; Settings — Tags
+        reads it when opened (not live).
+      operationId: listTags
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The workspace's tags with counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagList" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                items:
+                  - { id: "01920000-0000-7000-8000-000000000301", name: "Kyiv", contact_count: 30 }
+                  - { id: "01920000-0000-7000-8000-000000000302", name: "VIP", contact_count: 14 }
+                  - { id: "01920000-0000-7000-8000-000000000303", name: "Wholesale", contact_count: 0 }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/tags/{tagId}/rename:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/TagId"
+    post:
+      x-delta: added
+      tags: [contacts]
+      summary: Rename a tag, or merge it into the tag that holds the new name (US-04, owner only)
+      description: |
+        Flow 13, seeded flow 2 (AC-07, AC-09, AC-11, AC-12, AC-14, AC-15). Behind the `ownerOnly`
+        preHandler: an operator — through a saved link or a crafted request — gets `403 OWNER_ONLY` and
+        nothing changes (AC-11). Owner actions are never counted toward or refused by the member rate limit
+        (AC-15).
+
+        **Rename** (no `merge_into_tag_id`). The name is tidied and checked like a created one → not 1–32
+        graphemes → `400 TAG_NAME_INVALID` (AC-07). Then, under the `tags:<ws>` lock and the tag's row
+        lock (`FOR UPDATE`):
+        - the tag is not a tag of this workspace, or was deleted or merged meanwhile → `404 TAG_NOT_FOUND`;
+          the panel refreshes Settings — Tags without it;
+        - the same tidied text → `200` `outcome: unchanged`, nothing written;
+        - the new key is the tag's own (a case- or spacing-only change, "vip" → "VIP") or held by no tag →
+          `name` and `name_key` are updated, the id stays, no history entry, `tags.changed` → `200`
+          `outcome: renamed` (AC-09, AC-14);
+        - the new key is held by another tag V → `409 TAG_NAME_TAKEN` with V and its count. The dialog
+          says "VIP already exists" and offers the merge (SCR-22).
+
+        **Merge** (`merge_into_tag_id` = V, the id from `TAG_NAME_TAKEN`). Under the `tags:<ws>` lock both
+        tag rows are locked `FOR UPDATE` in id order. V gone, or V no longer holds the key of `name` →
+        `409 TAG_MERGE_TARGET_CHANGED` with whichever tag holds that name now (or none); the dialog asks
+        again. Otherwise, set-based in one transaction: one `merged` history entry on every contact that
+        carried the tag (with both names, the owner and `source: settings`); on a contact that carried both
+        the earlier link is kept, the others are re-pointed to V with their adder and time kept; the tag is
+        deleted. `tags.changed` and the `tag.merged` log event go out → `200` `outcome: merged` with V and
+        its new count. Contacts that carried only V get no entry (AC-09).
+      operationId: renameTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TagRename" }
+            examples:
+              rename:
+                summary: Rename "vip-clients" to "Loyal"
+                value: { name: "Loyal" }
+              merge:
+                summary: Confirm the merge of "Loyal" into "VIP"
+                value: { name: "vip", merge_into_tag_id: "01920000-0000-7000-8000-000000000302" }
+      responses:
+        "200":
+          description: Renamed, merged, or unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagRenameResult" }
+              examples:
+                renamed:
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    outcome: renamed
+                    tag: { id: "01920000-0000-7000-8000-000000000305", name: "Loyal", contact_count: 3 }
+                    merged_tag_id: null
+                merged:
+                  summary: '"Loyal" (3 contacts, one also carrying "VIP") merged into "VIP" (12) — now 14 (AC-09)'
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    outcome: merged
+                    tag: { id: "01920000-0000-7000-8000-000000000302", name: "VIP", contact_count: 14 }
+                    merged_tag_id: "01920000-0000-7000-8000-000000000305"
+                unchanged:
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    outcome: unchanged
+                    tag: { id: "01920000-0000-7000-8000-000000000302", name: "VIP", contact_count: 14 }
+                    merged_tag_id: null
+        "400":
+          description: |
+            One of two refusals. Nothing changes.
+            - `TAG_NAME_INVALID`: the new name, once tidied, is empty or longer than 32 graphemes (AC-07).
+            - `VALIDATION_ERROR`: the body does not match `TagRename` (including `merge_into_tag_id` equal
+              to the tag itself).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TagNameInvalidError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                nameInvalid:
+                  value:
+                    error: { code: TAG_NAME_INVALID, message: "A tag name must be 1 to 32 characters", details: { field: name, min_length: 1, max_length: 32 } }
+                mergeIntoSelf:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "A tag cannot be merged into itself", details: { field: merge_into_tag_id } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/TagsOwnerRouteForbidden" }
+        "404": { $ref: "#/components/responses/TagNotFound" }
+        "409":
+          description: |
+            One of two refusals. Nothing changes.
+            - `TAG_NAME_TAKEN`: another tag of this workspace holds the new name, ignoring case and spacing.
+              `details.tag` is that tag with its count; the dialog offers to merge into it and, on
+              confirmation, sends the same request with `merge_into_tag_id: details.tag.id` (AC-09).
+            - `TAG_MERGE_TARGET_CHANGED`: the merge target was deleted, merged away or renamed since the
+              offer. `details.name_holder` is the tag that holds the name now, or null when none does (a
+              plain rename would then succeed); the dialog asks again.
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/TagNameTakenError" }
+                  - { $ref: "#/components/schemas/TagMergeTargetChangedError" }
+              examples:
+                nameTaken:
+                  value:
+                    error:
+                      code: TAG_NAME_TAKEN
+                      message: "«VIP» already exists — merge into it?"
+                      details: { tag: { id: "01920000-0000-7000-8000-000000000302", name: "VIP", contact_count: 12 } }
+                targetChanged:
+                  value:
+                    error:
+                      code: TAG_MERGE_TARGET_CHANGED
+                      message: "The tag to merge into changed — check the name again"
+                      details: { name_holder: null }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+
+  /api/workspaces/{workspaceId}/tags/{tagId}/delete:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/TagId"
+    post:
+      x-delta: added
+      tags: [contacts]
+      summary: Delete a tag from the workspace and every contact, against the count the owner confirmed (US-04, owner only)
+      description: |
+        Seeded flow 2 (AC-09, AC-11, AC-12, AC-14, AC-15; ADR-0004). Behind the `ownerOnly` preHandler
+        (`403 OWNER_ONLY` for an operator, AC-11). The dialog (SCR-23) shows "«Old promo» will be removed
+        from 40 contacts and cannot be undone" from `listTags`, and sends that number as
+        `expected_count`.
+
+        Under the `tags:<ws>` lock and the tag's row lock (`FOR UPDATE`): not a tag of this workspace, or
+        deleted or merged meanwhile → `404 TAG_NOT_FOUND`. The tag's `contact_tags` rows are deleted with
+        `RETURNING`. When the returned number differs from `expected_count`, the transaction rolls back and
+        the answer is `409 TAG_COUNT_CHANGED` with the current count; the dialog asks again with it.
+        Otherwise one `deleted` history entry is written on each of those contacts (`source: settings`),
+        the tag is deleted, `tags.changed` is published, and the answer is `200`. Not counted toward the
+        member rate limit (AC-15).
+      operationId: deleteTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TagDelete" }
+            example: { expected_count: 40 }
+      responses:
+        "200":
+          description: The tag is gone from the workspace and from every contact
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagDeleted" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                tag_id: "01920000-0000-7000-8000-000000000304"
+                removed_from_count: 40
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/TagsOwnerRouteForbidden" }
+        "404": { $ref: "#/components/responses/TagNotFound" }
+        "409":
+          description: |
+            `TAG_COUNT_CHANGED` — the tag is on a different number of contacts than the confirmation said (a
+            member added or removed it after the dialog opened). Nothing is deleted. `details.tag` is the tag
+            with its current count; the dialog asks again with that number (AC-09).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TagCountChangedError" }
+              example:
+                error:
+                  code: TAG_COUNT_CHANGED
+                  message: "«Old promo» is now on 41 contacts — confirm again"
+                  details: { tag: { id: "01920000-0000-7000-8000-000000000304", name: "Old promo", contact_count: 41 } }
+        "413": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/PayloadTooLarge" }
+        "415": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/UnsupportedMediaType" }
+
+  # ───────────────────────── added operation: inbox ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/contacts/{contactId}/conversation:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      x-delta: added
+      tags: [inbox]
+      summary: Read the conversation of a contact — status, assignee, waiting marker — for the profile (US-02)
+      description: |
+        Seeded flow 3, flow 7 (AC-04, AC-05, AC-12; ADR-0001, ADR-0006). Served by `inbox` through the new
+        `conversations.findByContact(workspaceId, contactId)` (the existing `conversations_contact_id_key`),
+        answering the same `ConversationSummary` as `getConversation`. Every contact has exactly one
+        conversation, created with it by capture.
+
+        **Read-only.** It writes nothing: no read mark, no unread or attention change, no effect on pings
+        (AC-05, QG-2). `unread_count` is the caller's own, as in the inbox, and stays as it was. The profile
+        then pages the history through the **unchanged** `listThreadItems`
+        (`…/inbox/conversations/{conversationId}/items`, which never marks read) and opens media through the
+        unchanged media route; it never calls `markConversationRead` and has no composer. "Open in inbox"
+        goes to the thread, which marks read as before.
+
+        Re-read after a `conversation.changed` frame for this conversation and after `resync`, exactly as
+        the inbox re-reads `getConversation`, minus the mark-read (events.md).
+
+        A contact that is not a contact of this workspace — or, defensively, a contact with no conversation
+        — is `404` with no hint; the profile then shows the not-found card (SCR-06).
+      operationId: getContactConversation
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The contact's conversation summary
+          content:
+            application/json:
+              schema: { $ref: "../../assignment-statuses/contracts/openapi.yaml#/components/schemas/ConversationSummary" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000c1"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                last_activity_at: "2026-10-19T09:58:12Z"
+                last_item: { type: message, id: "01920000-0000-7000-8000-0000000000e1", kind: text, body: "Do you deliver on Sunday?" }
+                unread_count: 2
+                waiting_for_reply: true
+                status: open
+                assignee: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                state_version: 3
+                close_snapshot:
+                  customer_message_seq: 7
+                  latest_reply: { id: "01920000-0000-7000-8000-0000000000f1", state: sent }
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/ContactNotFound" }
+
+  # ───────────────────────── changed operation ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/live:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["server → client frame contact.changed", "server → client frame tags.changed"]
+      tags: [inbox]
+      summary: Open this tab's live socket for one workspace — now also carrying contact.changed and tags.changed (US-03, US-04)
+      description: |
+        Flow 11, seeded flows 1 and 2 (AC-06, AC-09, AC-14; ADR-0007). The upgrade, the guard, the `Origin`
+        check, the heartbeat, the re-check, the close codes, the `presence` client frame and every existing
+        frame are unchanged (shared-inbox, operator-notifications `openLiveSocket`).
+
+        **Changed:** two new server → client frames, delivered to every socket of the workspace (events.md):
+        - `contact.changed { contact_id, change: tags }` — a member added or removed a tag on that contact;
+          an open profile or conversation header of that contact re-reads `getContact` (and, on a profile,
+          `listContactTagHistory`);
+        - `tags.changed` — a tag was created, renamed, merged or deleted; every open picker, filter, header
+          and profile re-reads `listTags` and its contact's tags (and tag history).
+        Frames carry ids only, never a tag or contact name. The Contacts list and Settings — Tags ignore them
+        (not live by design, spec §1).
+      operationId: openLiveSocket
+      parameters:
+        - in: header
+          name: Upgrade
+          required: true
+          schema: { type: string, const: websocket }
+        - in: header
+          name: Origin
+          required: true
+          description: Unchanged. Must equal the panel's origin
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        "101":
+          description: Switching protocols. The socket carries the frames in events.md (shared-inbox, assignment-statuses, operator-notifications and this feature)
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          description: Unchanged — the membership is deactivated, or `Origin` is not the panel's origin
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                accessRemoved:
+                  value:
+                    error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+                foreignOrigin:
+                  value:
+                    error: { code: FORBIDDEN, message: "Forbidden" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Restated only because a security requirement names a local scheme. Identical to the shared-inbox / workspace-operators scheme (workspace-operators ADR-0002)
+
+  parameters:
+    ContactId:
+      in: path
+      name: contactId
+      required: true
+      description: "`contacts.id` (UUIDv7), always looked up together with the workspace id. A malformed id answers 400; an unknown or foreign id answers 404 with no hint"
+      schema: { type: string, format: uuid }
+    TagId:
+      in: path
+      name: tagId
+      required: true
+      description: "`tags.id` (UUIDv7), the tag's identity across renames (ADR-0002), always looked up together with the workspace id. A malformed id answers 400"
+      schema: { type: string, format: uuid }
+
+  responses:
+    ContactNotFound:
+      description: The workspace is unknown to the caller, or there is no such contact in it — or the id is a contact of another workspace. The cases cannot be told apart, so there is no hint that either exists (AC-04, AC-12, SCR-06)
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    TagNotFound:
+      description: |
+        `TAG_NOT_FOUND` — not a tag of this workspace: deleted or merged away meanwhile, or never one of its
+        tags (no hint either way). `NOT_FOUND` when the workspace itself is unknown to the caller. Nothing
+        changes; Settings — Tags refreshes without the tag
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/TagNotFoundError" }
+              - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          examples:
+            tagGone:
+              value:
+                error: { code: TAG_NOT_FOUND, message: "This tag no longer exists", details: { tag_id: "01920000-0000-7000-8000-000000000304" } }
+            workspaceNotFound:
+              value:
+                error: { code: NOT_FOUND, message: "Not found" }
+    TagsOwnerRouteForbidden:
+      description: The membership is deactivated, or the caller is an operator on an owner-only tag route (AC-11). Nothing changes. Same envelope as workspace-operators `OwnerRouteForbidden`
+      content:
+        application/json:
+          schema: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          examples:
+            accessRemoved:
+              value:
+                error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+            ownerOnly:
+              value:
+                error: { code: OWNER_ONLY, message: "Only a business owner manages the workspace's tags" }
+    TagChangeLimitReached:
+      description: |
+        `TAG_CHANGE_LIMIT_REACHED` — the caller recorded 60 tag changes on contacts in this workspace within
+        the last 60 s (AC-15, spec §6 "≤ 60 per rolling 60 s per member per workspace"). Only recorded
+        changes count: each addition and each removal is one, create + add is one, an `unchanged` answer is
+        none; an owner's rename, merge and delete are never counted. Counted from this member's `added` /
+        `removed` history entries (`contact_tag_history_workspace_id_actor_kind_created_at_idx`) under the
+        `tag-changes:<ws>:<account>` lock, a budget separate from the conversation `CHANGE_LIMIT_REACHED`.
+        Nothing changes. `details.retry_at` is when the oldest counted entry leaves the window;
+        `Retry-After` gives the same time in whole seconds. The control says tag changes are limited to 60
+        per minute and when the member can continue. Mirrors assignment-statuses `ChangeLimitReached`
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1, maximum: 60 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TagChangeLimitReachedError" }
+          example:
+            error:
+              code: TAG_CHANGE_LIMIT_REACHED
+              message: "Tag changes are limited to 60 per minute — you can continue in 14 seconds"
+              details: { limit: 60, window_seconds: 60, retry_at: "2026-10-19T10:21:14Z" }
+
+  schemas:
+    # ───────── tags ─────────
+    TagName:
+      x-delta: added
+      type: string
+      minLength: 1
+      description: |
+        `tags.name` — the tidied name (NFC, zero-width spaces U+200B / U+2060 / U+FEFF removed, every run of white
+        space with any adjacent joiners collapsed to one space, ends trimmed of spaces and joiners, the joiners
+        U+200C / U+200D inside the name kept), letter case as typed. 1–32 graphemes (an emoji is one),
+        counted in the domain with `Intl.Segmenter`; JSON Schema counts code points, so no `maxLength` is
+        stated here. Shown as plain text only
+    TagRef:
+      x-delta: added
+      type: object
+      description: A tag as a contact carries it — on a list row and as the tag an add applied
+      required: [id, name]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`tags.id`" }
+        name: { $ref: "#/components/schemas/TagName" }
+    ContactTag:
+      x-delta: added
+      type: object
+      description: A tag on a contact with who added it and when (profile, conversation header, AC-04)
+      required: [id, name, added_by, added_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`contact_tags.tag_id`" }
+        name: { $ref: "#/components/schemas/TagName" }
+        added_by:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: "`contact_tags.added_by_account_id`, named through `workspaces` (a deactivated member keeps their name, AC-13). A merge keeps the original adder, or the earlier one on a contact that carried both (AC-09)"
+        added_at:
+          type: string
+          format: date-time
+          description: "`contact_tags.added_at`, kept across a merge"
+    TagWithCount:
+      x-delta: added
+      type: object
+      description: A tag of the workspace with the number of contacts carrying it (Settings — Tags, the picker, the filter, and the tag named by the owner refusals)
+      required: [id, name, contact_count]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/TagName" }
+        contact_count:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: "`count(contact_tags)` by (`workspace_id`, `tag_id`)"
+    TagList:
+      x-delta: added
+      type: object
+      required: [workspace_id, items]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 100
+          description: Every tag of the workspace in tag-list order, zero-count tags included
+          items: { $ref: "#/components/schemas/TagWithCount" }
+
+    # ───────── contacts ─────────
+    TagFilterMode:
+      x-delta: added
+      type: string
+      enum: [any, all, none]
+      default: any
+      description: "`any` — at least one chosen tag; `all` — every chosen tag; `none` — no tag at all, with no chosen tags. `any` / `all` with no chosen tag filter nothing (AC-02)"
+    ContactRow:
+      x-delta: added
+      type: object
+      description: One row of the Contacts list (AC-01). A missing username or language is shown as none
+      required: [id, workspace_id, first_name, last_name, username, language_code, first_wrote_at, last_wrote_at, tags]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        first_name: { type: string, description: "`contacts.first_name` (Telegram, plain text)" }
+        last_name: { type: [string, "null"], description: "`contacts.last_name`" }
+        username: { type: [string, "null"], description: "`contacts.username`, without the leading `@`" }
+        language_code: { type: [string, "null"], description: "`contacts.language_code` — the IETF tag Telegram reported, e.g. `uk`" }
+        first_wrote_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`contacts.first_wrote_at` — the Telegram send time of the contact's oldest own message; team replies and edits never count. Null only for a contact whose messages are all gone (data-model assumption 7)"
+        last_wrote_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`contacts.last_wrote_at` — the newest own message's send time; the list's sort key. Null exactly when `first_wrote_at` is null"
+        tags:
+          type: array
+          maxItems: 20
+          description: The contact's tags in tag-list order
+          items: { $ref: "#/components/schemas/TagRef" }
+    ContactPage:
+      x-delta: added
+      type: object
+      required: [workspace_id, filter, items, has_prev, has_next, next_cursor, matching_count, total_count, missing_tag_ids]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        filter:
+          type: object
+          description: What this page answers — the normalised search, the mode and the chosen tag ids that resolved
+          required: [q, mode, tag_ids]
+          additionalProperties: false
+          properties:
+            q: { type: [string, "null"], description: "The normalised search, or null when there is none" }
+            mode: { $ref: "#/components/schemas/TagFilterMode" }
+            tag_ids:
+              type: array
+              maxItems: 100
+              items: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/ContactRow" }
+        has_prev: { type: boolean, description: True when `after` was given }
+        has_next: { type: boolean }
+        next_cursor:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+            - { type: "null" }
+        matching_count:
+          type: integer
+          minimum: 0
+          description: Contacts of the workspace that match the search and the filter — the segment size (AC-02, US-05)
+        total_count:
+          type: integer
+          minimum: 0
+          description: Every contact of the workspace (AC-01)
+        missing_tag_ids:
+          type: array
+          maxItems: 100
+          description: Requested `tag` ids that are not tags of this workspace (deleted, merged away or foreign); left out of the filter (AC-02)
+          items: { type: string, format: uuid }
+    ContactProfile:
+      x-delta: added
+      type: object
+      description: The contact part of the profile (SCR-19) and the tags of the conversation header (SCR-02)
+      required: [id, workspace_id, first_name, last_name, username, language_code, first_wrote_at, last_wrote_at, tags]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username: { type: [string, "null"], description: Without the leading `@` }
+        language_code: { type: [string, "null"] }
+        first_wrote_at: { type: [string, "null"], format: date-time, description: As `ContactRow.first_wrote_at` }
+        last_wrote_at: { type: [string, "null"], format: date-time, description: As `ContactRow.last_wrote_at` }
+        tags:
+          type: array
+          maxItems: 20
+          description: The contact's tags in tag-list order, with adder and time
+          items: { $ref: "#/components/schemas/ContactTag" }
+
+    # ───────── tag history ─────────
+    TagHistoryKind:
+      x-delta: added
+      type: string
+      enum: [added, removed, merged, deleted]
+      description: "`contact_tag_history.kind`. `added` / `removed` by a member, `merged` by an owner's merge, `deleted` by an owner's delete"
+    TagHistorySource:
+      x-delta: added
+      type: string
+      enum: [inbox, profile, settings]
+      description: "`contact_tag_history.source`. `inbox` / `profile` for member kinds (as the member route reported it), `settings` for owner kinds"
+    TagHistoryEntry:
+      x-delta: added
+      type: object
+      required: [id, kind, tag_id, tag_name, merged_into_tag_id, merged_into_name, actor, source, created_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`contact_tag_history.id` (UUIDv7)" }
+        kind: { $ref: "#/components/schemas/TagHistoryKind" }
+        tag_id: { type: string, format: uuid, description: "`contact_tag_history.tag_id` — kept after the tag is deleted or merged away" }
+        tag_name:
+          type: string
+          minLength: 1
+          description: "`contact_tag_history.tag_name` — the tag's name at that moment, not its current one"
+        merged_into_tag_id:
+          type: [string, "null"]
+          format: uuid
+          description: "`contact_tag_history.merged_into_tag_id` — set exactly when `kind` is `merged`"
+        merged_into_name:
+          type: [string, "null"]
+          minLength: 1
+          description: "`contact_tag_history.merged_into_name` — the target's name at that moment; set exactly when `kind` is `merged`"
+        actor:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: "`contact_tag_history.actor_account_id`, named through `workspaces`, deactivated members included (AC-13)"
+        source: { $ref: "#/components/schemas/TagHistorySource" }
+        created_at: { type: string, format: date-time }
+    TagHistoryPage:
+      x-delta: added
+      type: object
+      required: [workspace_id, contact_id, items, has_prev, has_next, next_cursor]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 50
+          description: Newest first
+          items: { $ref: "#/components/schemas/TagHistoryEntry" }
+        has_prev: { type: boolean, description: True when `after` was given }
+        has_next: { type: boolean, description: True when older entries exist }
+        next_cursor:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+            - { type: "null" }
+
+    # ───────── requests ─────────
+    MemberTagSource:
+      x-delta: added
+      type: string
+      enum: [inbox, profile]
+      description: Where the member acted — the inbox conversation header or the contact's profile. Member routes accept only these two; `settings` is written by the server on owner paths only (sad.md §4)
+    RawTagName:
+      x-delta: added
+      type: string
+      minLength: 1
+      maxLength: 1000
+      description: The name as typed. The server tidies it and checks 1–32 graphemes (`TAG_NAME_INVALID`); the 1000-character bound only caps the request (a longer body is `VALIDATION_ERROR`)
+    ContactTagAdd:
+      x-delta: added
+      description: Exactly one of `tag_id` (a picked suggestion) and `name` (Create tag "…")
+      oneOf:
+        - type: object
+          title: ByTagId
+          required: [tag_id, source]
+          additionalProperties: false
+          properties:
+            tag_id: { type: string, format: uuid }
+            source: { $ref: "#/components/schemas/MemberTagSource" }
+        - type: object
+          title: ByName
+          required: [name, source]
+          additionalProperties: false
+          properties:
+            name: { $ref: "#/components/schemas/RawTagName" }
+            source: { $ref: "#/components/schemas/MemberTagSource" }
+    ContactTagRemove:
+      x-delta: added
+      type: object
+      required: [source]
+      additionalProperties: false
+      properties:
+        source: { $ref: "#/components/schemas/MemberTagSource" }
+    TagRename:
+      x-delta: added
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { $ref: "#/components/schemas/RawTagName" }
+        merge_into_tag_id:
+          type: string
+          format: uuid
+          description: The tag named by `TAG_NAME_TAKEN`, sent after the owner confirms the merge. Absent for a plain rename. Must differ from the path's tag
+    TagDelete:
+      x-delta: added
+      type: object
+      required: [expected_count]
+      additionalProperties: false
+      properties:
+        expected_count:
+          type: integer
+          minimum: 0
+          maximum: 2147483647
+          description: The `contact_count` the confirmation dialog showed (SCR-23). A different current number → `TAG_COUNT_CHANGED`
+
+    # ───────── answers ─────────
+    ChangeOutcome:
+      x-delta: added
+      type: string
+      enum: [recorded, unchanged]
+      description: "`recorded` — the change was written with a history entry and counts toward the member limit; `unchanged` — nothing to do (already carried / no longer carried), nothing recorded or counted (AC-06, AC-15). As `ConversationStateChange.outcome`"
+    ContactTagAdded:
+      x-delta: added
+      type: object
+      required: [workspace_id, contact_id, outcome, tag, tag_created, tags]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        outcome: { $ref: "#/components/schemas/ChangeOutcome" }
+        tag:
+          $ref: "#/components/schemas/TagRef"
+          description: The tag now on the contact, under its current name (a name typed in another case or spacing resolves to the existing tag)
+        tag_created:
+          type: boolean
+          description: True when this request created the tag (then `tags.changed` was published too)
+        tags:
+          type: array
+          maxItems: 20
+          description: The contact's current tags in tag-list order
+          items: { $ref: "#/components/schemas/ContactTag" }
+    ContactTagRemoved:
+      x-delta: added
+      type: object
+      required: [workspace_id, contact_id, outcome, tags]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        contact_id: { type: string, format: uuid }
+        outcome: { $ref: "#/components/schemas/ChangeOutcome" }
+        tags:
+          type: array
+          maxItems: 20
+          items: { $ref: "#/components/schemas/ContactTag" }
+    TagRenameResult:
+      x-delta: added
+      type: object
+      required: [workspace_id, outcome, tag, merged_tag_id]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        outcome:
+          type: string
+          enum: [renamed, merged, unchanged]
+        tag:
+          $ref: "#/components/schemas/TagWithCount"
+          description: The renamed (or unchanged) tag; after a merge, the target with its new count
+        merged_tag_id:
+          type: [string, "null"]
+          format: uuid
+          description: The id of the tag that was merged away (the path's tag); null unless `outcome` is `merged`
+    TagDeleted:
+      x-delta: added
+      type: object
+      required: [workspace_id, tag_id, removed_from_count]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        tag_id: { type: string, format: uuid }
+        removed_from_count:
+          type: integer
+          minimum: 0
+          description: The number of contacts that lost the tag — equal to `expected_count`
+
+    # ───────── errors (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      x-delta: changed
+      x-delta-fields: [TAG_NAME_INVALID, TAG_LIMIT_REACHED, CONTACT_TAG_LIMIT_REACHED, TAG_NOT_FOUND, TAG_NAME_TAKEN, TAG_MERGE_TARGET_CHANGED, TAG_COUNT_CHANGED, TAG_CHANGE_LIMIT_REACHED]
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts — the codes this delta uses.
+
+        Existing: UNAUTHENTICATED 401, ACCESS_REMOVED 403, OWNER_ONLY 403, FORBIDDEN 403 (socket origin),
+        NOT_FOUND 404, VALIDATION_ERROR 400, UNSUPPORTED_MEDIA_TYPE 415, PAYLOAD_TOO_LARGE 413,
+        INTERNAL_ERROR 500.
+
+        Added by this feature (sad.md §8 Error handling; names fixed here):
+        - TAG_NAME_INVALID 400 — a `ValidationError`-class refusal with its own code (AC-07);
+        - TAG_LIMIT_REACHED 409, CONTACT_TAG_LIMIT_REACHED 409 — `ConflictError`-class (AC-08);
+        - TAG_NOT_FOUND 404 — a `NotFoundError`-class refusal with its own code, so the panel can tell a gone
+          tag from a gone contact (AC-14);
+        - TAG_NAME_TAKEN 409, TAG_MERGE_TARGET_CHANGED 409 — `ConflictError`-class (AC-09);
+        - TAG_COUNT_CHANGED 409 — `ConflictError`-class (AC-09, ADR-0004);
+        - TAG_CHANGE_LIMIT_REACHED 429 — a `TooManyRequestsError`-class refusal with its own code,
+          `retry_at` and `Retry-After`, as `CHANGE_LIMIT_REACHED` (AC-15).
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - FORBIDDEN
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - OWNER_ONLY
+        - TAG_NAME_INVALID
+        - TAG_LIMIT_REACHED
+        - CONTACT_TAG_LIMIT_REACHED
+        - TAG_NOT_FOUND
+        - TAG_NAME_TAKEN
+        - TAG_MERGE_TARGET_CHANGED
+        - TAG_COUNT_CHANGED
+        - TAG_CHANGE_LIMIT_REACHED
+
+    TagNameInvalidError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_NAME_INVALID }
+            message: { type: string }
+            details:
+              type: object
+              required: [field, min_length, max_length]
+              additionalProperties: false
+              properties:
+                field: { const: name }
+                min_length: { const: 1 }
+                max_length: { const: 32, description: "Graphemes, after tidying" }
+
+    TagLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 100 }
+
+    ContactTagLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: CONTACT_TAG_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 20 }
+
+    TagNotFoundError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_NOT_FOUND }
+            message: { type: string }
+            details:
+              type: object
+              required: [tag_id]
+              additionalProperties: false
+              properties:
+                tag_id: { type: string, format: uuid, description: "The id the request named, echoed — never a hint about another workspace" }
+
+    TagNameTakenError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_NAME_TAKEN }
+            message: { type: string }
+            details:
+              type: object
+              required: [tag]
+              additionalProperties: false
+              properties:
+                tag:
+                  $ref: "#/components/schemas/TagWithCount"
+                  description: The tag that holds the name (ignoring case and spacing) — the merge target offered
+
+    TagMergeTargetChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_MERGE_TARGET_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [name_holder]
+              additionalProperties: false
+              properties:
+                name_holder:
+                  description: The tag that holds the requested name now, or null when no tag does
+                  anyOf:
+                    - { $ref: "#/components/schemas/TagWithCount" }
+                    - { type: "null" }
+
+    TagCountChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_COUNT_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [tag]
+              additionalProperties: false
+              properties:
+                tag:
+                  $ref: "#/components/schemas/TagWithCount"
+                  description: The tag with its current count
+
+    TagChangeLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: TAG_CHANGE_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, window_seconds, retry_at]
+              additionalProperties: false
+              properties:
+                limit: { type: integer, const: 60 }
+                window_seconds: { type: integer, const: 60 }
+                retry_at:
+                  type: string
+                  format: date-time
+                  description: When the oldest of the 60 counted entries (`contact_tag_history.created_at`) leaves the 60-second window

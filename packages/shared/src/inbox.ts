@@ -469,11 +469,24 @@ export const TelegramLinkChangedFrame = z.object({
   type: z.literal('telegram_link.changed'),
 });
 
+/** One contact's tags changed; ids and a change kind only, to every socket of the workspace (events.md). */
+export const ContactChangedFrame = z.object({
+  ...frameBase,
+  type: z.literal('contact.changed'),
+  contact_id: Id,
+  change: z.enum(['tags']),
+});
+
+/** The workspace's tag list changed (a tag was created, renamed, merged or deleted). */
+export const TagsChangedFrame = z.object({ ...frameBase, type: z.literal('tags.changed') });
+
 export const LiveFrame = z.discriminatedUnion('type', [
   ConversationChangedFrame,
   BotChangedFrame,
   ResyncFrame,
   TelegramLinkChangedFrame,
+  ContactChangedFrame,
+  TagsChangedFrame,
 ]);
 export type LiveFrame = z.infer<typeof LiveFrame>;
 

@@ -28,6 +28,16 @@ vi.mock('./api-source', () => ({
   sendReply: (...a: unknown[]) => api.sendReply(...a),
 }));
 
+const contactsApi = vi.hoisted(() => ({ getContact: vi.fn(), listTags: vi.fn() }));
+vi.mock('@/features/contacts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/contacts/api')>()),
+  getContact: (...a: unknown[]) => contactsApi.getContact(...a),
+}));
+vi.mock('@/features/tags/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/tags/api')>()),
+  listTags: (...a: unknown[]) => contactsApi.listTags(...a),
+}));
+
 interface Handlers {
   onFrame: (f: unknown) => void;
 }
@@ -41,6 +51,7 @@ vi.mock('@/shared/api/live-connection', () => ({
   },
 }));
 
+import { useContactsStore } from '@/features/contacts/store';
 import { ConversationCrumb } from './ConversationCrumb';
 import { InboxList } from './InboxList';
 import { useInboxStore } from './store';
@@ -115,6 +126,24 @@ const changed = (change: string, item: unknown) => ({
   item,
   change,
 });
+const CONTACT = id(900);
+const contactTag = (n: number, name: string) => ({
+  id: id(300 + n),
+  name,
+  added_by: { account_id: id(950), display_name: 'Olena Operator' },
+  added_at: at(1),
+});
+const contactProfile = (tags: ReturnType<typeof contactTag>[] = []) => ({
+  id: CONTACT,
+  workspace_id: WS,
+  first_name: 'Ada',
+  last_name: 'Lovelace',
+  username: 'ada',
+  language_code: null,
+  first_wrote_at: null,
+  last_wrote_at: null,
+  tags,
+});
 const flush = async () => {
   for (let i = 0; i < 12; i++) await act(async () => Promise.resolve());
 };
@@ -127,6 +156,7 @@ function renderThread(path = `/w/${WS}/inbox/${CONV}`) {
       <Routes>
         <Route path="/w/:workspaceId/inbox/:conversationId" element={<Thread />} />
         <Route path="/w/:workspaceId/inbox" element={<p>list route</p>} />
+        <Route path="/w/:workspaceId/contacts/:contactId" element={<p>profile route</p>} />
       </Routes>
     </MemoryRouter>,
   );
@@ -149,6 +179,9 @@ beforeEach(async () => {
   Object.defineProperty(window, 'innerWidth', { value: 1024, configurable: true });
   useWorkspaceStore.getState().clear();
   useInboxStore.getState().leave();
+  useContactsStore.getState().clear();
+  contactsApi.getContact.mockResolvedValue(contactProfile());
+  contactsApi.listTags.mockResolvedValue({ workspace_id: WS, items: [] });
   api.listConversations.mockResolvedValue({
     workspace_id: WS,
     items: [],
@@ -588,5 +621,98 @@ describe('SCR-02 actions bar and activity lines (AC-02, AC-05, AC-09)', () => {
     await flush();
     expect(screen.getByTestId('activity-line').textContent).toContain('Ana Shevchenko closed this');
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+  });
+});
+
+describe("SCR-02 header: the contact's tags (AC-06)", () => {
+  const tagsRow = () => screen.getByTestId('header-tags');
+
+  it('shows the tags in the answer order and Add tag; reads the contact of the conversation', async () => {
+    contactsApi.getContact.mockResolvedValue(
+      contactProfile([contactTag(1, 'Kyiv'), contactTag(2, 'VIP')]),
+    );
+    await openAndRender([message(1, 1)]);
+    expect(contactsApi.getContact).toHaveBeenCalledWith(WS, CONTACT, {});
+    const badges = within(tagsRow())
+      .getAllByText(/Kyiv|VIP/)
+      .map((b) => b.textContent);
+    expect(badges).toEqual(['Kyiv', 'VIP']);
+    expect(within(tagsRow()).getByRole('button', { name: 'Add tag' })).toBeInTheDocument();
+  });
+
+  it('a contact with no tags shows only Add tag', async () => {
+    await openAndRender([message(1, 1)]);
+    expect(within(tagsRow()).getByRole('button', { name: 'Add tag' })).toBeInTheDocument();
+    expect(tagsRow().querySelectorAll('[data-slot="badge"]')).toHaveLength(0);
+  });
+
+  it('the name and the avatar link to the contact profile', async () => {
+    await openAndRender([message(1, 1)]);
+    const links = screen.getAllByRole('link', { name: /Ada Lovelace/ });
+    expect(links.length).toBeGreaterThanOrEqual(1);
+    for (const link of links) expect(link).toHaveAttribute('href', `/w/${WS}/contacts/${CONTACT}`);
+    fireEvent.click(links[0]!);
+    expect(await screen.findByText('profile route')).toBeInTheDocument();
+  });
+
+  it('loading: a short skeleton in the tags row while getContact is in flight', async () => {
+    contactsApi.getContact.mockReturnValue(new Promise(() => undefined));
+    await openAndRender([message(1, 1)]);
+    expect(within(tagsRow()).getByTestId('header-tags-loading')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ada Lovelace' })).toBeInTheDocument();
+  });
+
+  it("error: «Couldn't load tags» + Retry; replying is unaffected", async () => {
+    contactsApi.getContact.mockRejectedValueOnce(new Error('offline'));
+    await openAndRender([message(1, 1)]);
+    expect(within(tagsRow()).getByText("Couldn't load tags")).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: 'Reply' })).toBeEnabled();
+    contactsApi.getContact.mockResolvedValue(contactProfile([contactTag(1, 'Kyiv')]));
+    fireEvent.click(within(tagsRow()).getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(within(tagsRow()).getByText('Kyiv')).toBeInTheDocument();
+  });
+
+  it('live: contact.changed for this contact re-reads the tags in place; others are ignored', async () => {
+    await openAndRender([message(1, 1)]);
+    contactsApi.getContact.mockResolvedValue(contactProfile([contactTag(2, 'VIP')]));
+    const frame = (contactId: string) => ({
+      v: 1,
+      workspace_id: WS,
+      type: 'contact.changed',
+      contact_id: contactId,
+      change: 'tags',
+    });
+    act(() => sockets.forEach((s) => s.handlers.onFrame(frame(id(999)))));
+    await flush();
+    expect(contactsApi.getContact).toHaveBeenCalledTimes(1);
+    act(() => sockets.forEach((s) => s.handlers.onFrame(frame(CONTACT))));
+    await flush();
+    expect(contactsApi.getContact).toHaveBeenLastCalledWith(WS, CONTACT, { background: true });
+    expect(within(tagsRow()).getByText('VIP')).toBeInTheDocument();
+  });
+
+  it('live: tags.changed re-reads the tags row too', async () => {
+    await openAndRender([message(1, 1)]);
+    contactsApi.getContact.mockResolvedValue(contactProfile([contactTag(3, 'Renamed')]));
+    act(() =>
+      sockets.forEach((s) => s.handlers.onFrame({ v: 1, workspace_id: WS, type: 'tags.changed' })),
+    );
+    await flush();
+    expect(within(tagsRow()).getByText('Renamed')).toBeInTheDocument();
+  });
+
+  it('tagging: Add tag opens the tag control over the thread; the composer keeps its draft', async () => {
+    await openAndRender([message(1, 1)]);
+    fireEvent.change(screen.getByRole('textbox', { name: 'Reply' }), {
+      target: { value: 'half a reply' },
+    });
+    fireEvent.click(within(tagsRow()).getByRole('button', { name: 'Add tag' }));
+    await flush();
+    expect(screen.getByRole('combobox')).toHaveFocus();
+    fireEvent.keyDown(screen.getByRole('combobox'), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('combobox')).toBeNull());
+    expect(screen.getByRole('textbox', { name: 'Reply' })).toHaveValue('half a reply');
+    expect(api.markConversationRead).toHaveBeenCalled();
   });
 });

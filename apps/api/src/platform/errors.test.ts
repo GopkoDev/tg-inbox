@@ -8,6 +8,14 @@ import {
   AssigneeNotActiveError,
   ChangeLimitReachedError,
   CloseNeedsConfirmationError,
+  ContactTagLimitReachedError,
+  TagChangeLimitReachedError,
+  TagCountChangedError,
+  TagLimitReachedError,
+  TagMergeTargetChangedError,
+  TagNameInvalidError,
+  TagNameTakenError,
+  TagNotFoundError,
   ConversationStateChangedError,
   type AppError,
   BotBelongsToAnotherWorkspaceError,
@@ -141,6 +149,24 @@ const cases: [string, () => AppError, number, string][] = [
     () => new PingsNeedWorkingBotError({ workspace_id: 'w' }),
     409,
     'PINGS_NEED_WORKING_BOT',
+  ],
+  ['tag name invalid', () => new TagNameInvalidError(), 400, 'TAG_NAME_INVALID'],
+  ['tag limit', () => new TagLimitReachedError(), 409, 'TAG_LIMIT_REACHED'],
+  ['contact tag limit', () => new ContactTagLimitReachedError(), 409, 'CONTACT_TAG_LIMIT_REACHED'],
+  ['tag not found', () => new TagNotFoundError('t'), 404, 'TAG_NOT_FOUND'],
+  ['tag name taken', () => new TagNameTakenError({ id: 't' }), 409, 'TAG_NAME_TAKEN'],
+  [
+    'tag merge target changed',
+    () => new TagMergeTargetChangedError(null),
+    409,
+    'TAG_MERGE_TARGET_CHANGED',
+  ],
+  ['tag count changed', () => new TagCountChangedError({ id: 't' }), 409, 'TAG_COUNT_CHANGED'],
+  [
+    'tag change limit',
+    () => new TagChangeLimitReachedError(new Date('2026-10-19T10:21:14.000Z'), 14),
+    429,
+    'TAG_CHANGE_LIMIT_REACHED',
   ],
 ];
 
@@ -372,6 +398,32 @@ describe('error handler', () => {
       },
     });
   });
+
+  it('names the array, not its index, and the closest branch of a failed union', async () => {
+    const app = Fastify();
+    app.setValidatorCompiler(validatorCompiler);
+    app.setSerializerCompiler(serializerCompiler);
+    registerErrorHandler(app);
+    const source = z.enum(['inbox', 'profile']);
+    app.post(
+      '/v',
+      {
+        schema: {
+          body: z.union([
+            z.strictObject({ tag_id: z.uuid(), source }),
+            z.strictObject({ name: z.string(), source }),
+          ]),
+          querystring: z.object({ tag: z.array(z.uuid()).optional() }),
+        },
+      },
+      () => ({ ok: true }),
+    );
+    const send = async (payload: object, url = '/v') =>
+      (await app.inject({ method: 'POST', url, payload })).json().error.details;
+    expect(await send({ name: 'x', source: 'settings' })).toEqual({ field: 'source' });
+    expect(await send({ name: 'x', tag_id: 'y', source: 'inbox' })).toBeUndefined();
+    expect(await send({ name: 'x', source: 'inbox' }, '/v?tag=nope')).toEqual({ field: 'tag' });
+  });
 });
 
 describe('shared-inbox error details (T2)', () => {
@@ -441,5 +493,58 @@ describe('shared-inbox error details (T2)', () => {
       window_seconds: 60,
       retry_at: '2026-10-18T10:21:14.200Z',
     });
+  });
+});
+
+describe('contacts tag errors (sad.md §8)', () => {
+  const tag = { id: 't', name: 'VIP', contact_count: 3 };
+
+  it('TAG_NAME_INVALID names the field and the 1-32 bounds', async () => {
+    const env = await envelopeOf(() => new TagNameInvalidError());
+    expect(env.error.details).toEqual({ field: 'name', min_length: 1, max_length: 32 });
+  });
+
+  it('the two limits carry their numbers', async () => {
+    expect((await envelopeOf(() => new TagLimitReachedError())).error.details).toEqual({
+      limit: 100,
+    });
+    expect((await envelopeOf(() => new ContactTagLimitReachedError())).error.details).toEqual({
+      limit: 20,
+    });
+  });
+
+  it('TAG_NOT_FOUND echoes the tag id', async () => {
+    expect((await envelopeOf(() => new TagNotFoundError('abc'))).error.details).toEqual({
+      tag_id: 'abc',
+    });
+  });
+
+  it('TAG_NAME_TAKEN, TAG_COUNT_CHANGED and TAG_MERGE_TARGET_CHANGED carry the tag', async () => {
+    expect((await envelopeOf(() => new TagNameTakenError(tag))).error.details).toEqual({ tag });
+    expect((await envelopeOf(() => new TagCountChangedError(tag))).error.details).toEqual({ tag });
+    expect((await envelopeOf(() => new TagMergeTargetChangedError(tag))).error.details).toEqual({
+      name_holder: tag,
+    });
+    expect((await envelopeOf(() => new TagMergeTargetChangedError(null))).error.details).toEqual({
+      name_holder: null,
+    });
+  });
+
+  it('TAG_CHANGE_LIMIT_REACHED has 60/60 details, exact retry_at and Retry-After', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/e', () => {
+      throw new TagChangeLimitReachedError(new Date('2026-10-19T10:21:14.200Z'), 15);
+    });
+    const res = await app.inject('/e');
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('15');
+    expect(res.json().error.code).toBe('TAG_CHANGE_LIMIT_REACHED');
+    expect(res.json().error.details).toEqual({
+      limit: 60,
+      window_seconds: 60,
+      retry_at: '2026-10-19T10:21:14.200Z',
+    });
+    expect(res.json().error.message).toContain('60 per minute');
   });
 });

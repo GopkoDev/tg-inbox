@@ -58,7 +58,7 @@ describe('SettingsPage (SCR-11)', () => {
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
     expect(
-      screen.getByText("Manage your workspace's bot and team, and your notifications"),
+      screen.getByText("Manage your workspace's bot, team and tags, and your notifications"),
     ).toBeInTheDocument();
 
     const menu = screen.getByRole('navigation', { name: 'Settings' });

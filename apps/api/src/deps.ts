@@ -52,8 +52,15 @@ import { createConnectLinkRepo } from './modules/notifications/infra/connect-lin
 import { createBotMessageSender, createPingStarter } from './modules/notifications/infra/jobs.js';
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
-import { createContacts } from './modules/contacts/app/contacts.js';
+import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
+import { createTagAdmin } from './modules/contacts/app/tag-admin.js';
+import { createTagWrites } from './modules/contacts/app/tags.js';
+import { createTagSignals } from './modules/contacts/infra/tag-signals.js';
+import { createContactListQuery } from './modules/contacts/infra/contact-list-query.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
+import { createContactTagRepo } from './modules/contacts/infra/contact-tag-repo.js';
+import { createTagHistoryRepo } from './modules/contacts/infra/tag-history-repo.js';
+import { createTagRepo } from './modules/contacts/infra/tag-repo.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
 import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
@@ -382,6 +389,44 @@ export function buildDeps(
   });
   // --- end inbox dependencies ---
 
+  // --- contacts: reads (the list, the profile and its tag history), the member tag writes and the
+  // owner tag management; the contacts -> workspaces edge (display names of adders and actors,
+  // deactivated members included) is wired here. ---
+  const contactRepo = createContactRepo(db);
+  const tagRepo = createTagRepo(db);
+  const contactTagRepo = createContactTagRepo(db);
+  const tagHistoryRepo = createTagHistoryRepo(db);
+  const contactReads = createContactReads({
+    repo: contactRepo,
+    lists: createContactListQuery(db),
+    tags: tagRepo,
+    contactTags: contactTagRepo,
+    tagHistory: tagHistoryRepo,
+    workspaces: workspaceAccess,
+  });
+  const tagSignals = createTagSignals();
+  const tagWrites = createTagWrites({
+    transaction,
+    contacts: contactRepo,
+    tags: tagRepo,
+    contactTags: contactTagRepo,
+    tagHistory: tagHistoryRepo,
+    signals: tagSignals,
+    workspaces: workspaceAccess,
+    clock,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
+  const tagAdmin = createTagAdmin({
+    transaction,
+    tags: tagRepo,
+    contactTags: contactTagRepo,
+    tagHistory: tagHistoryRepo,
+    signals: tagSignals,
+    clock,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
+  // --- end contacts reads ---
+
   return {
     config,
     clock,
@@ -397,6 +442,9 @@ export function buildDeps(
     team,
     workspaceAdmin,
     contacts,
+    contactReads,
+    tagWrites,
+    tagAdmin,
     conversations,
     notificationReads,
     bots,

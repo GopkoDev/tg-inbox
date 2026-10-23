@@ -327,6 +327,95 @@ export class ChangeLimitReachedError extends AppError {
   }
 }
 
+/** A tag name that is empty or longer than 32 characters once tidied (AC-07). */
+export class TagNameInvalidError extends AppError {
+  readonly code = ErrorCode.TAG_NAME_INVALID;
+  readonly statusCode = 400;
+
+  constructor() {
+    super('A tag name must be 1 to 32 characters', {
+      field: 'name',
+      min_length: 1,
+      max_length: 32,
+    });
+  }
+}
+
+/** The workspace already has 100 tags (AC-08). */
+export class TagLimitReachedError extends AppError {
+  readonly code = ErrorCode.TAG_LIMIT_REACHED;
+  readonly statusCode = 409;
+
+  constructor() {
+    super('A workspace can have at most 100 tags', { limit: 100 });
+  }
+}
+
+/** The contact already carries 20 tags (AC-08). */
+export class ContactTagLimitReachedError extends AppError {
+  readonly code = ErrorCode.CONTACT_TAG_LIMIT_REACHED;
+  readonly statusCode = 409;
+
+  constructor() {
+    super('A contact can carry at most 20 tags', { limit: 20 });
+  }
+}
+
+/** Not a tag of this workspace (deleted, merged away, or foreign): never a hint which. */
+export class TagNotFoundError extends AppError {
+  readonly code = ErrorCode.TAG_NOT_FOUND;
+  readonly statusCode = 404;
+
+  constructor(tagId: string) {
+    super('This tag no longer exists', { tag_id: tagId });
+  }
+}
+
+/** A rename to a name another tag holds: details.tag is the merge target offered (AC-09). */
+export class TagNameTakenError extends AppError {
+  readonly code = ErrorCode.TAG_NAME_TAKEN;
+  readonly statusCode = 409;
+
+  constructor(tag: unknown) {
+    super('Another tag already has this name', { tag });
+  }
+}
+
+/** The confirmed merge target is gone or no longer holds the name (AC-09). */
+export class TagMergeTargetChangedError extends AppError {
+  readonly code = ErrorCode.TAG_MERGE_TARGET_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(nameHolder: unknown) {
+    super('The tag to merge into has changed', { name_holder: nameHolder });
+  }
+}
+
+/** The tag's contact count differs from the one the owner confirmed (AC-09). */
+export class TagCountChangedError extends AppError {
+  readonly code = ErrorCode.TAG_COUNT_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(tag: unknown) {
+    super('The number of contacts with this tag has changed', { tag });
+  }
+}
+
+/** 60 recorded tag changes per member per workspace per 60 s — AC-15. */
+export class TagChangeLimitReachedError extends AppError {
+  readonly code = ErrorCode.TAG_CHANGE_LIMIT_REACHED;
+  readonly statusCode = 429;
+  override readonly headers: Record<string, string>;
+
+  constructor(retryAt: Date, retryAfterSeconds: number) {
+    super(
+      `Tag changes are limited to 60 per minute — you can continue in ${retryAfterSeconds} seconds`,
+      { limit: 60, window_seconds: 60, retry_at: retryAt.toISOString() },
+    );
+    this.headers = { 'Retry-After': String(retryAfterSeconds) };
+  }
+}
+
 /**
  * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
  * AppError. Its message never carries Telegram's error text or URL.
@@ -347,6 +436,28 @@ function envelope(code: ErrorCode, message: string, details?: unknown): ErrorEnv
 /** Router-level errors whose Fastify message embeds the request path. */
 const URL_ERROR_CODES = new Set(['FST_ERR_BAD_URL', 'FST_ERR_MAX_PARAM_LENGTH']);
 
+/**
+ * The request field a validation issue is about: the last named segment of its path (an array
+ * index names the array). A failed union has no path of its own, so it names the field of the
+ * branch that came closest (the fewest issues).
+ */
+function fieldOf(issue: {
+  keyword: string;
+  instancePath: string;
+  params?: unknown;
+}): string | undefined {
+  const segments = issue.instancePath.split('/').filter(Boolean);
+  if (issue.keyword === 'invalid_union') {
+    const branches = (issue.params as { errors?: { path: (string | number)[] }[][] } | undefined)
+      ?.errors;
+    const closest = branches
+      ?.filter((issues) => issues.length > 0)
+      .sort((a, b) => a.length - b.length)[0];
+    if (closest?.[0]) segments.push(...closest[0].path.map(String));
+  }
+  return segments.filter((segment) => !/^\d+$/.test(segment)).at(-1);
+}
+
 /** The one mapping from any thrown error to the envelope + status. */
 function sendError(
   error: FastifyError,
@@ -363,7 +474,7 @@ function sendError(
   }
   if (error.validation) {
     const first = error.validation[0];
-    const field = first?.instancePath.split('/').filter(Boolean).at(-1);
+    const field = first && fieldOf(first);
     return reply
       .status(400)
       .send(

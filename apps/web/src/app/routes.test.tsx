@@ -35,11 +35,15 @@ vi.mock('@/features/inbox/store', () => ({
   }),
 }));
 vi.mock('@/features/inbox/InboxList', () => ({ InboxList: () => null }));
+// The contacts screens have their own tests; here only the route tree and the crumb are under test.
+vi.mock('@/features/contacts/ContactsTable', () => ({ ContactsTable: () => null }));
+vi.mock('@/features/contacts/ContactProfile', () => ({ ContactProfile: () => null }));
 // The section bodies are other tasks' business; the route tree is what is under test here.
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
+vi.mock('@/features/tags/TagsSettings', () => ({ TagsSettings: () => <p>tags body</p> }));
 
-import { getSampleContact } from '@/features/contacts/sample-source';
+import { useContactsStore } from '@/features/contacts/store';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { routes } from './routes';
 
@@ -110,6 +114,13 @@ describe('workspace frame (T3)', () => {
     expect(inbox).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument();
+  });
+
+  it('settings/tags opens the Tags section with its crumb', async () => {
+    renderAt('/w/w1/settings/tags');
+    expect(await screen.findByText('tags body')).toBeInTheDocument();
+    const crumbs = screen.getByRole('navigation', { name: 'breadcrumb' });
+    expect(within(crumbs).getByText('Tags')).toBeInTheDocument();
   });
 
   it('AC-11: old /team lands on settings/team', async () => {
@@ -210,9 +221,29 @@ describe('breadcrumb (review fixes)', () => {
   });
 
   it('S1-6a: the contact crumb carries the contact name', async () => {
-    const c = getSampleContact('ct-01')!;
     renderAt('/w/w1/contacts/ct-01');
-    await waitFor(() => expect(within(crumbNav()).getByText(c.name)).toBeInTheDocument());
+    // the profile (mocked here) fills the store once the workspace is entered
+    await waitFor(() => expect(within(crumbNav()).getByText('Contact')).toBeInTheDocument());
+    act(() => {
+      useContactsStore.setState({
+        profile: {
+          contactId: 'ct-01',
+          status: 'ready',
+          contact: {
+            id: 'ct-01',
+            workspace_id: 'w1',
+            first_name: 'Ada',
+            last_name: 'Lovelace',
+            username: null,
+            language_code: null,
+            first_wrote_at: null,
+            last_wrote_at: null,
+            tags: [],
+          },
+        },
+      });
+    });
+    await waitFor(() => expect(within(crumbNav()).getByText('Ada Lovelace')).toBeInTheDocument());
     expect(within(crumbNav()).getByRole('link', { name: 'Contacts' })).toBeInTheDocument();
     expect(within(crumbNav()).queryByText('Contact')).not.toBeInTheDocument();
   });

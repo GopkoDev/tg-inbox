@@ -1,5 +1,5 @@
 import { ErrorCode, MediaUnavailableReason } from '@tg/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { ApiError, apiBlob } from '@/shared/api/client';
 import { useInboxStore } from './store';
 
@@ -10,6 +10,20 @@ export type MediaState =
   | { status: 'unavailable'; reason: MediaUnavailableReason }
   | { status: 'not_responding' }
   | { status: 'error' };
+
+/** Hands a media 401 / 403 to whoever guards the screen showing it. */
+export type MediaGuard = (error: unknown, workspaceId: string) => void;
+
+const inboxGuard: MediaGuard = (error, workspaceId) => {
+  useInboxStore.getState().reportGuard(error, workspaceId);
+};
+
+/**
+ * The media guard of the screen around: the inbox page (default) reads the inbox store's guard
+ * error; another host (the contact profile) provides its own.
+ */
+export const MediaGuardContext = createContext<MediaGuard>(inboxGuard);
+export const useMediaGuard = () => useContext(MediaGuardContext);
 
 export interface MediaRef {
   workspaceId: string;
@@ -43,14 +57,15 @@ export async function fetchMedia(
 }
 
 /**
- * Map a failed fetch to the view state of the contract's refusals. A 401/403 goes to the shell
+ * Map a failed fetch to the view state of the contract's refusals. A 401/403 goes to the screen's
  * guard (which ends the session or shows the access-removed notice); here it is a plain error.
  */
 export function failureState(
   error: unknown,
   workspaceId: string,
+  guard: MediaGuard = inboxGuard,
 ): Exclude<MediaState, { status: 'ready' | 'loading' }> {
-  useInboxStore.getState().reportGuard(error, workspaceId);
+  guard(error, workspaceId);
   if (error instanceof ApiError) {
     if (error.status === 409 && error.code === ErrorCode.MEDIA_UNAVAILABLE) {
       const reason = MediaUnavailableReason.safeParse(
@@ -71,6 +86,7 @@ export function useMessageMedia(ref: MediaRef, enabled = true) {
   const { workspaceId, conversationId, messageId } = ref;
   const [state, setState] = useState<MediaState>({ status: 'loading' });
   const [attempt, setAttempt] = useState(0);
+  const guard = useMediaGuard();
 
   useEffect(() => {
     if (!enabled) return;
@@ -89,14 +105,14 @@ export function useMessageMedia(ref: MediaRef, enabled = true) {
         }
       },
       (error: unknown) => {
-        if (!controller.signal.aborted) setState(failureState(error, workspaceId));
+        if (!controller.signal.aborted) setState(failureState(error, workspaceId, guard));
       },
     );
     return () => {
       controller.abort();
       if (url) URL.revokeObjectURL(url);
     };
-  }, [workspaceId, conversationId, messageId, enabled, attempt]);
+  }, [workspaceId, conversationId, messageId, enabled, attempt, guard]);
 
   const retry = useCallback(() => {
     setState({ status: 'loading' });

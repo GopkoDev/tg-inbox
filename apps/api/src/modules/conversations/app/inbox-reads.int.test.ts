@@ -178,4 +178,25 @@ describe('inbox reads (Postgres)', () => {
       }),
     ).rejects.toThrow('The cursor is not valid.');
   });
+
+  it('finds the conversation of a contact by workspace and contact, null for a foreign or unknown contact (AC-12)', async () => {
+    const s = await seed();
+    const viewer = { accountId: s.accountId, activeSince: at(0) };
+    const contactId = (
+      await db
+        .selectFrom('conversations')
+        .select('contact_id')
+        .where('id', '=', s.conversationId)
+        .executeTakeFirstOrThrow()
+    ).contact_id;
+    const found = await reads().findByContact(s.workspaceId, contactId, viewer);
+    expect(found).toMatchObject({ id: s.conversationId, contactId, unreadCount: 1 });
+    expect(found?.closeSnapshot).toBeDefined();
+
+    const other = await insertWorkspace(db);
+    expect(await reads().findByContact(other, contactId, viewer)).toBeNull();
+    expect(await reads().findByContact(s.workspaceId, newId(), viewer)).toBeNull();
+    const lonely = await insertContact(db, { workspaceId: s.workspaceId });
+    expect(await reads().findByContact(s.workspaceId, lonely, viewer)).toBeNull();
+  });
 });

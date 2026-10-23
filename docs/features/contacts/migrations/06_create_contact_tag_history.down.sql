@@ -1,0 +1,3 @@
+DROP INDEX IF EXISTS contact_tag_history_workspace_id_actor_kind_created_at_idx;
+DROP INDEX IF EXISTS contact_tag_history_workspace_id_contact_id_created_at_idx;
+DROP TABLE IF EXISTS contact_tag_history;

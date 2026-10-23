@@ -18,6 +18,7 @@ function renderAt(path: string) {
           { index: true, element: <SettingsIndexRedirect /> },
           { path: 'bot', element: <p>bot body</p> },
           { path: 'team', element: <p>team body</p> },
+          { path: 'tags', element: <p>tags body</p> },
           { path: 'notifications', element: <p>notifications body</p> },
         ],
       },
@@ -35,13 +36,28 @@ const menu = () =>
 beforeEach(() => useWorkspaceStore.getState().clear());
 
 describe('SettingsLayout (SCR-16, Decision 1)', () => {
-  it('an owner sees Bot, Team and Notifications and the full description', () => {
+  it('an owner sees Bot, Team, Tags and Notifications and the full description', () => {
     useWorkspaceStore.getState().setCurrent(owner);
     renderAt('/w/w1/settings/bot');
-    expect(menu()).toEqual(['Bot', 'Team', 'Notifications']);
+    expect(menu()).toEqual(['Bot', 'Team', 'Tags', 'Notifications']);
     expect(
-      screen.getByText("Manage your workspace's bot and team, and your notifications"),
+      screen.getByText("Manage your workspace's bot, team and tags, and your notifications"),
     ).toBeInTheDocument();
+  });
+
+  it('the Tags entry links to settings/tags and is marked current there', () => {
+    useWorkspaceStore.getState().setCurrent(owner);
+    renderAt('/w/w1/settings/tags');
+    const tags = screen.getByRole('link', { name: 'Tags' });
+    expect(tags).toHaveAttribute('href', '/w/w1/settings/tags');
+    expect(tags).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByText('tags body')).toBeInTheDocument();
+  });
+
+  it('an operator never sees Tags in the menu, even on the Tags address (AC-11)', () => {
+    useWorkspaceStore.getState().setCurrent(operator);
+    renderAt('/w/w1/settings/tags');
+    expect(menu()).toEqual(['Notifications']);
   });
 
   it('an operator sees Notifications only and the short description', () => {

@@ -56,6 +56,30 @@ describe('realtime signal schema', () => {
     expect(realtimeSignalSchema.safeParse({ ...signal, v: 2 }).success).toBe(false);
   });
 
+  it('accepts contact.changed and tags.changed with ids and a change kind only', () => {
+    const contact = {
+      type: 'contact.changed',
+      v: 1,
+      workspace_id: ws,
+      contact_id: newId(),
+      change: 'tags',
+    };
+    const tags = { type: 'tags.changed', v: 1, workspace_id: ws };
+    expect(realtimeSignalSchema.safeParse(contact).success).toBe(true);
+    expect(realtimeSignalSchema.safeParse(tags).success).toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(contact))).toBeLessThan(MAX_SIGNAL_BYTES);
+    expect(realtimeSignalSchema.safeParse({ ...contact, contact_id: undefined }).success).toBe(
+      false,
+    );
+    expect(realtimeSignalSchema.safeParse({ ...contact, change: 'profile' }).success).toBe(false);
+    expect(realtimeSignalSchema.safeParse({ ...contact, workspace_id: 'x' }).success).toBe(false);
+    expect(realtimeSignalSchema.safeParse({ ...contact, v: 2 }).success).toBe(false);
+    expect(realtimeSignalSchema.safeParse({ ...tags, workspace_id: undefined }).success).toBe(
+      false,
+    );
+    expect(realtimeSignalSchema.safeParse({ ...tags, v: 2 }).success).toBe(false);
+  });
+
   it('requires account_id for a read change', () => {
     expect(realtimeSignalSchema.safeParse({ ...changed, item: null, change: 'read' }).success).toBe(
       false,

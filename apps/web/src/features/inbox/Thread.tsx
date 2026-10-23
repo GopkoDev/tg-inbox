@@ -1,82 +1,85 @@
-import type { ThreadItem } from '@tg/shared';
 import { ArrowLeft } from 'lucide-react';
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 import { Link, useLocation, useParams } from 'react-router';
+import { useContactsStore } from '@/features/contacts/store';
+import { TagControl } from '@/features/tags/TagControl';
+import { useGuard } from '@/features/workspaces/guard';
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { useIsMobile } from '@/shared/hooks/use-mobile';
 import { initials } from '@/shared/lib/initials';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Avatar, AvatarFallback } from '@/shared/ui/avatar';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import * as source from './api-source';
-import { ActivityLine } from './ActivityLine';
 import { ConversationActions } from './ConversationActions';
 import { contactName } from './ConversationList';
-import { MessageBubble } from './MessageBubble';
-import { MessageContent } from './MessageContent';
 import { ReplyComposer } from './ReplyComposer';
-import { ReplyDeliveryState } from './ReplyDeliveryState';
+import { BubbleSkeletons, ThreadItemView } from './ThreadItemView';
 import { useInboxStore } from './store';
 
 const TOP_THRESHOLD = 48;
 const BOTTOM_THRESHOLD = 48;
 
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+/**
+ * SCR-02 header: the contact's tags (from `getContact`, live through the contacts store) and the
+ * tag control (`source: inbox`). Replying and the actions never wait for it.
+ */
+function HeaderTags({ workspaceId, contactId }: { workspaceId: string; contactId: string }) {
+  const guard = useGuard();
+  const header = useContactsStore((s) => (s.header?.contactId === contactId ? s.header : null));
 
-function Item({
-  item,
-  workspaceId,
-  contactName,
-}: {
-  item: ThreadItem;
-  workspaceId: string;
-  contactName: string;
-}) {
-  if (item.type === 'activity')
-    return <ActivityLine activity={item} at={timeOf(item.position_at)} />;
-  if (item.type === 'reply')
-    return (
-      <MessageBubble
-        sender="operator"
-        text={item.body}
-        at={timeOf(item.sent_at ?? item.position_at)}
-        author={item.author.display_name}
-        footer={<ReplyDeliveryState reply={item} workspaceId={workspaceId} />}
-      />
-    );
-  const at = timeOf(item.sent_at);
-  return (
-    <MessageBubble
-      sender="customer"
-      at={at}
-      edited={item.edited_at !== null}
-      content={
-        <MessageContent
-          message={item}
-          workspaceId={workspaceId}
-          contactName={contactName}
-          at={at}
-        />
-      }
-    />
-  );
-}
+  useEffect(() => {
+    const store = useContactsStore.getState();
+    void store.openHeader(workspaceId, contactId, guard);
+    const stop = store.watch(workspaceId, guard);
+    return () => {
+      stop();
+      useContactsStore.getState().closeHeader();
+    };
+    // the guard is stable per address; the header is opened once per contact
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, contactId]);
 
-function BubbleSkeletons({ count }: { count: number }) {
-  return (
-    <>
-      {Array.from({ length: count }, (_, i) => (
-        <div
-          key={i}
-          data-testid="bubble-skeleton"
-          className={i % 2 === 0 ? 'flex justify-start' : 'flex justify-end'}
+  let row: React.ReactNode;
+  if (!header || header.status === 'loading')
+    row = <Skeleton data-testid="header-tags-loading" className="h-5 w-24" />;
+  else if (header.status === 'error')
+    row = (
+      <>
+        <span className="text-xs text-muted-foreground">Couldn&apos;t load tags</span>
+        <Button
+          type="button"
+          variant="link"
+          size="xs"
+          onClick={() => void useContactsStore.getState().openHeader(workspaceId, contactId, guard)}
         >
-          <Skeleton className="h-10 w-1/2 rounded-2xl" />
-        </div>
-      ))}
-    </>
+          Retry
+        </Button>
+      </>
+    );
+  else if (header.status === 'not_found' || !header.contact) row = null;
+  else
+    row = (
+      <>
+        {header.contact.tags.map((t) => (
+          <Badge key={t.id} variant="secondary">
+            {t.name}
+          </Badge>
+        ))}
+        <TagControl
+          workspaceId={workspaceId}
+          contactId={contactId}
+          tags={header.contact.tags}
+          source="inbox"
+        />
+      </>
+    );
+  return (
+    <div data-testid="header-tags" className="mt-1 flex flex-wrap items-center gap-1">
+      {row}
+    </div>
   );
 }
 
@@ -205,14 +208,28 @@ export function Thread() {
           </div>
         ) : (
           <>
-            <Avatar>
-              <AvatarFallback>{initials(name)}</AvatarFallback>
-            </Avatar>
+            <Link
+              to={`/w/${workspaceId}/contacts/${contact.id}`}
+              aria-label={name}
+              className="shrink-0 self-start rounded-full"
+            >
+              <Avatar>
+                <AvatarFallback>{initials(name)}</AvatarFallback>
+              </Avatar>
+            </Link>
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold">{name}</h2>
+              <h2 className="truncate text-sm font-semibold">
+                <Link
+                  to={`/w/${workspaceId}/contacts/${contact.id}`}
+                  className="underline-offset-4 hover:underline"
+                >
+                  {name}
+                </Link>
+              </h2>
               {contact.username ? (
                 <p className="truncate text-xs text-muted-foreground">@{contact.username}</p>
               ) : null}
+              <HeaderTags workspaceId={workspaceId} contactId={contact.id} />
             </div>
             {!isMobile && showActions ? <div className="ml-auto">{actions}</div> : null}
           </>
@@ -269,7 +286,7 @@ export function Thread() {
           <p className="text-center text-xs text-muted-foreground">Start of the conversation</p>
         ) : null}
         {open.items.map((item) => (
-          <Item key={item.id} item={item} workspaceId={workspaceId} contactName={name} />
+          <ThreadItemView key={item.id} item={item} workspaceId={workspaceId} contactName={name} />
         ))}
       </div>
     );
