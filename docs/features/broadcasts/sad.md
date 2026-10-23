@@ -390,6 +390,807 @@ sequenceDiagram
 
 The claim is a conditional single-row update (`waiting → sending`), so the stop's commit is the moment after which no send of that broadcast can start (spec §6: 0 sends started more than 2 s after the stop).
 
+Flows 5–19 below were added by the `sequences` stage. They use the generic runtime vocabulary: `<user>` (an operator or business owner in the panel, or the end customer in Telegram where a flow says so), `<ui>` (a tab of the web panel), `<service>` (tg-inbox's backend), `<data-store>`, `<message-bus>` (the job queue and the live-signal fan-out; a flow that needs both draws two, marked "jobs" and "live") and `<external-system>` (the Telegram Bot API). `SCR-NN` ids refer to [`ux-flows.md`](ux-flows.md). Every persist or read note is a hint for `data-model`. The seeded flows 1–4 above are unchanged.
+
+**Assumptions (autonomous run 2026-10-23, `sequences`)**, each can be vetoed at review:
+
+- Depth = medium, size L (`.size`), route `full` (`.route`). The pipeline confirmed every flow itself against spec §5, `ux-flows.md` and ADR-0001…0012. Each flow's prose account is the paragraph under it.
+- The same session guard (signed out, another workspace, deactivated) fronts every broadcasts route. It is drawn in full in flow 5 and referred to elsewhere. A broadcast id of another workspace is not found, with no hint.
+- "Launch" on the draft reads the launch confirmation. That one read is also the pre-check: it answers either the confirmation (text, version, breakdown, fingerprint) or the refusal ux-flows shows on the draft (no working bot, nobody reachable, over 10 000, the 24-hour cap). No separate pre-check route.
+- With no bot at all (no bot row), the draft breakdown shows the audience size and says that reach is known once a bot is connected. A bot that is not working (`needs_token`, `taken_over`) still has its Telegram bot id, so the breakdown is computed against it.
+- At launch each recipient gets a position in the order the fingerprint sorts them (by contact id). The sender serves a broadcast's waiting recipients in position order, and the report lists recipients in that order, optionally narrowed to one outcome.
+- The launch also freezes the breakdown it confirmed (audience size, blocked, never wrote to the current bot, recipients) on the broadcast. The Broadcasts list and the broadcast page read these numbers instead of recounting.
+- The group is shown 50 contacts at a time, the most recently added first. The group picker asks the draft which contacts of its current page are already in the group (ids of that page only).
+- A delivered broadcast item sits at the time the answer was recorded. A not confirmed one sits at its claim time (the time the send was made).
+- Every write on a broadcast (draft fields, group, launch, stop, abort, finish) moves its "last changed" time, which orders the list. Only draft field saves raise the version.
+
+### Flow 5: Open the Broadcasts list, and it stays live (US-01, US-04 — AC-01, AC-08)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: a person opens Broadcasts of workspace W from the navigation or by its address (SCR-15, SCR-24)
+    U->>UI: opens Broadcasts
+    UI->>S: ask for the broadcasts of W
+    S->>D: check the session and the membership in W
+    alt not signed in
+        S-->>UI: sign in first
+        UI-->>U: sign-in, then back to the same address (SCR-09)
+    else account of another workspace, or an unknown workspace
+        S-->>UI: not found, no hint the workspace exists
+        UI-->>U: not-found card in the frame (SCR-06)
+    else membership deactivated
+        S-->>UI: access removed
+        UI-->>U: access-removed landing (SCR-07)
+    else active member of either role
+        S->>D: read every broadcast of W, most recently changed first
+        Note over S,D: reads broadcasts by (workspace, last changed desc, id desc) - name, status, who last changed or launched it, the frozen breakdown of launched ones
+        S->>D: audience size of each draft
+        Note over S,D: a group counts its rows by (workspace, broadcast) - a tag audience runs the Contacts filter count over contact tags by (workspace, tag, contact)
+        S-->>UI: rows with name, status, audience size and who last changed or launched it
+        alt W has broadcasts
+            UI-->>U: drafts and launched together, newest change first
+        else none yet
+            UI-->>U: what a broadcast is, and New broadcast for every member
+        end
+        loop while the list is open
+            B-->>UI: broadcast changed, ids only
+            UI->>S: refetch the list
+        end
+    end
+    Note over U,S: Postcondition: only broadcasts of W are listed, the same list for both roles
+```
+
+Broadcasts, from the navigation or by its address, asks for the workspace's broadcasts. The usual guard sends a signed-out visitor to sign in and back, gives another workspace's account the not-found card with no hint, and gives a deactivated member the access-removed landing (AC-08). An active member of either role gets every broadcast of the workspace, drafts and launched ones together, the most recently changed first, each with its name, status, audience size and who last changed or launched it (AC-01). A draft's audience size is its group's row count or its tag audience's matching count. A launched broadcast shows the breakdown frozen at launch. An empty list explains broadcasts and offers "New broadcast". While the list is open, every `broadcast.changed` frame makes it refetch, so statuses change live.
+
+### Flow 6: Create a draft and save its name and text against the version shown (US-01 — AC-01, AC-02, AC-03, AC-09, AC-10)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: an active member on Broadcasts of W past the guard of flow 5, with or without a working bot
+    U->>UI: New broadcast, types a name and a text
+    UI->>UI: tidy and measure with the shared rule, show the remaining length as Telegram counts it
+    alt name outside 1 to 80, or text empty, spaces only or over 4096 code units
+        UI-->>U: message next to the field, nothing saved
+    else first valid name
+        UI->>S: create a draft with the name and the text
+        S->>S: tidy and measure again, refuse an invalid name or text
+        S->>D: insert the draft - status draft, version 1, author and last changed by the member, tag audience any of with no tags
+        Note over S,D: persists broadcasts (id from newId, workspace, author, version, trimmed text, last changed by and at)
+        S->>B: publish broadcast changed draft, commit
+        S-->>UI: the draft with its version and breakdown
+    end
+    U->>UI: changes the name or the text
+    UI->>S: save the field with the version shown
+    S->>S: tidy and measure, refuse an invalid value - the draft keeps its last valid content
+    S->>D: lock the broadcast row of W for no key update
+    alt not a broadcast of W
+        S-->>UI: not found, no hint
+    else launched already
+        S-->>UI: refused, not a draft
+        UI-->>U: the read-only broadcast page with Duplicate (SCR-28)
+    else another version
+        S-->>UI: refused, draft changed, with the current draft
+        UI-->>U: the teammate's version next to the member's own edit, to apply again
+    else the version shown
+        S->>D: write the field, raise the version, record who and when
+        Note over S,D: persists broadcasts version, name or text, last changed by and at
+        S->>B: publish broadcast changed draft, commit
+        S-->>UI: the draft with its new version
+    end
+    Note over U,S: Postcondition: the draft holds the last valid content saved on the version its author saw, no customer is messaged, and no bot was needed
+```
+
+"New broadcast" opens an empty editor. The browser tidies and measures with the shared rule while the member types (ADR-0012), shows the remaining length as Telegram counts it, and creates the draft at the first valid name (AC-02). The server checks the same rule again, so an invalid name or text is refused and the draft keeps its last valid content. The draft starts at version 1, with the member as its author and last changer, and is listed for every member (flow 5). Each later save of the name or the text carries the version the member saw. Under the broadcast row lock, a launched broadcast refuses the save as not a draft (AC-09), and another version refuses it as changed with the current draft, which the editor shows next to the member's own edit (AC-03). Otherwise the field is written, the version goes up and the list signal fires. Nothing here needs a bot (AC-10) or sends anything.
+
+### Flow 7: Choose a tag audience, read the breakdown, switch the audience kind (US-01, US-02 — AC-01, AC-03, AC-05, AC-10, AC-14)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: an active member on a draft of W (SCR-25)
+    U->>UI: picks tags, any of, all of or no tags, and tags to leave out
+    UI->>S: save the tag audience with the version shown
+    S->>D: lock the broadcast row, still a draft and the version shown - as flow 6
+    S->>D: resolve the tag ids among the tags of W
+    Note over S,D: reads tags by (workspace, id) - an id of another workspace does not resolve and is refused as not found
+    S->>D: replace the draft's tag rows, each with include or leave out and its name now, raise the version
+    Note over S,D: persists broadcast audience tags keyed by (workspace, broadcast, tag) - no foreign key to tags
+    S->>B: publish broadcast changed draft, commit
+    UI->>S: read the draft
+    S->>S: ask the bot module for the current Telegram bot id
+    S->>D: which of the stored tag ids still exist
+    S->>D: breakdown for the audience and that bot - audience size, blocked, never wrote, reachable
+    Note over S,D: one aggregate query - contact tags by (workspace, tag, contact) for the match and the leave-out, reach rows by (workspace, contact, Telegram bot)
+    S-->>UI: the draft, its breakdown and the names of dropped tags
+    alt a stored tag was deleted or merged away
+        UI-->>U: dropped from the audience with a notice naming it
+    else a stored tag was renamed
+        UI-->>U: still in the audience under its current name
+    end
+    alt audience over 10 000
+        UI-->>U: saved, cannot be launched, and why
+    else no bot at all
+        UI-->>U: the audience size, reach known once a bot is connected
+    else a bot, working or not
+        UI-->>U: audience, left out as blocked, left out as never wrote to the current bot, would reach
+    end
+    opt switch from a broadcast group holding N contacts to a tag audience
+        UI-->>U: confirm switch, the group holds N contacts (SCR-32)
+        U->>UI: confirms
+        UI->>S: switch to a tag audience with the version shown and the group size N
+        S->>D: lock the broadcast row, still a draft and the version shown, count the group rows
+        alt the group size is no longer N
+            S-->>UI: refused, group changed, with its current size
+            UI-->>U: asks again with the current number
+        else still N
+            S->>D: delete the group rows, kind tags, raise the version
+            S->>B: publish broadcast changed draft, commit
+        end
+    end
+    opt switch from a tag audience to a broadcast group
+        UI->>S: switch to a group with the version shown
+        S->>D: lock, check, delete the tag rows, kind group, raise the version, commit
+    end
+    Note over U,S: Postcondition: the draft's tag audience is saved by tag id with the name when chosen, and every read counts it with the Contacts filter's rules for the current bot
+```
+
+The member picks tags, the match mode and tags to leave out. The save carries the version shown and is checked as in flow 6. The tag ids are resolved among the workspace's own tags, so a foreign id is refused. Each chosen tag is stored by id with "include" or "leave out" and its name at that moment, with no foreign key to tags (ADR-0004). Every draft read asks `bots` for the current Telegram bot id, keeps only the stored tags that still exist, and runs one aggregate query with the Contacts filter's rules ("any of", "all of", "no tags", no tag = every contact, a left-out tag removes the contact) joined to the reach rows of that bot. It answers the audience size, blocked, never wrote to the current bot and would reach (AC-01, AC-10, AC-14). A renamed tag keeps working under its new name, and a deleted or merged one is dropped with a notice that uses its stored name. An audience over 10 000 is saved but cannot be launched (AC-05). With no bot at all, only the audience size is shown. Switching from a non-empty group asks first with its size. The switch carries that size, and a different size is refused with the current one (AC-03). Switching to a group simply drops the tag rows.
+
+### Flow 8: Fill a broadcast group from the group picker (US-02 — AC-03, AC-04, AC-05, AC-08, AC-14)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: an active member on a draft of W whose audience is a broadcast group (SCR-25)
+    U->>UI: Add contacts, then searches and filters (SCR-26)
+    UI->>S: a page of contacts with the search and the filter - the Contacts list read
+    S->>D: the Contacts list query of W, as contacts flow 5
+    S-->>UI: rows, matching count and total, as on the Contacts list
+    UI->>S: which contacts of this page are already in the group
+    S->>D: group rows of the draft for those contact ids
+    Note over S,D: reads broadcast group contacts by (workspace, broadcast, contact)
+    S-->>UI: the ids already there, marked in the picker
+    opt add one contact
+        U->>UI: adds Olena K.
+        UI->>S: add one contact to the group
+        S->>D: lock the broadcast row of W for no key update, still a draft, count the group rows
+        alt not a contact of W
+            S-->>UI: not found, no hint
+        else already in the group
+            S-->>UI: unchanged, already there
+        else the group holds 10 000
+            S-->>UI: refused, audience too large, 0 can still be added
+        else added
+            S->>D: insert the group row with the adder and the time, on conflict nothing, record last changed - the version stays
+            Note over S,D: persists broadcast group contacts keyed by (workspace, broadcast, contact) - the composite foreign key to contacts (workspace, id) cannot hold a contact of another workspace
+            S->>B: publish broadcast changed group, commit
+            S-->>UI: added, with the group size
+        end
+    end
+    opt add all matching
+        U->>UI: add all matching
+        UI->>S: how many contacts match and are not in the group
+        S->>D: matching contact ids of W minus the group rows
+        S-->>UI: N to add
+        UI-->>U: states N, asks to confirm
+        U->>UI: confirms
+        UI->>S: add all matching with the search, the filter and N
+        S->>D: lock the broadcast row, still a draft, count the group rows
+        S->>D: the matching contact ids now, up to the room left plus one, minus the group rows
+        Note over S,D: reads the Contacts filter (contacts and contact tags of W) and group rows by (workspace, broadcast, contact)
+        alt the group would pass 10 000
+            S-->>UI: refused as a whole, audience too large, how many can still be added
+        else within the limit
+            S->>D: insert the rows on conflict nothing, record last changed
+            S->>B: publish broadcast changed group, commit
+            S-->>UI: how many were added
+            UI-->>U: says how many - the current matches when they changed since the count
+        end
+    end
+    opt remove a contact
+        U->>UI: removes a contact from the group
+        UI->>S: remove the contact from the group
+        S->>D: lock the broadcast row, still a draft, delete the group row by its key - an absent row changes nothing
+        S->>B: publish broadcast changed group, commit
+    end
+    UI->>S: read the group - 50 contacts, newest added first, with the breakdown
+    S->>D: group rows by (workspace, broadcast, added at desc, contact), then their names, usernames, tags and block marks for the current bot
+    Note over S,D: breakdown for a group - its contact ids joined to reach rows by (workspace, contact, Telegram bot)
+    S-->>UI: the group page, its size and how many it would reach
+    UI-->>U: contacts with name, username, tags and a blocked marker
+    Note over U,S: Postcondition: two members' adds and removes both stand, never raise the version, and the group holds at most 10 000 contacts of W
+```
+
+The group picker is the Contacts list's own read with the same search and tag filter, so matching and counts are the same by construction (AC-04, ADR-0004). It marks the page's contacts that are already in the group. Adding one contact locks the broadcast row, checks that it is still a draft and that the group is under 10 000, and inserts one row keyed by workspace, broadcast and contact. A contact already there changes nothing and says so (AC-05). The composite foreign key makes a contact of another workspace unstorable, and the request answers not found (AC-08). "Add all matching" first counts the matching contacts not in the group, and on confirmation re-reads the matches under the row lock. It refuses the whole add if the group would pass 10 000, saying how many can still be added (AC-05). Otherwise it adds the current matches and says how many, which can differ from the count shown. Removing deletes one row by its key and changes nothing on the contact. Group writes are set operations that never raise the version, so two members' adds and removes both stand and never make a teammate's name or text save stale (AC-03, ADR-0005). The group shows 50 contacts at a time with their tags and block marks for the current bot, its size and how many it would reach (AC-14).
+
+### Flow 9: Delete a draft (US-01 — AC-07, AC-08, AC-09)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: an active member on a draft of W, or on its row of the Broadcasts list
+    alt neither the draft's author nor a business owner
+        UI-->>U: no delete, a draft is deleted by its author or a business owner
+    else author or business owner
+        U->>UI: Delete
+        UI-->>U: confirm delete, names the draft and its audience size (SCR-31)
+        U->>UI: confirms
+        UI->>S: delete the draft
+        opt the member is a business owner
+            S->>D: share-lock the member's active membership of W
+        end
+        S->>D: lock the broadcast row of W for no key update
+        alt not a broadcast of W
+            S-->>UI: not found, no hint
+        else launched
+            S-->>UI: refused, not a draft
+            UI-->>U: read-only, offer Duplicate
+        else neither its author nor an active business owner
+            S-->>UI: forbidden, a draft is deleted by its author or a business owner
+        else may delete
+            S->>D: delete its tag rows and group rows, then the broadcast row
+            Note over S,D: deletes broadcast audience tags and broadcast group contacts by (workspace, broadcast), then broadcasts by (workspace, id)
+            S->>B: publish broadcast changed deleted, commit
+            S-->>UI: deleted
+            UI-->>U: back to the Broadcasts list (SCR-24)
+        end
+    end
+    Note over U,S: Postcondition: only a draft is ever deleted, by its author or a business owner, and launched broadcasts stay
+```
+
+Only the draft's author and business owners see Delete. Anyone else sees why not (AC-07). The confirmation names the draft and its audience size. The server takes a business owner's membership with a share lock first (§8 lock order), then the broadcast row. A foreign id is not found (AC-08). A launched broadcast is refused as not a draft and stays read-only (AC-09). A member who is neither its author nor an active business owner is refused, whatever the browser showed (AC-07). Otherwise the draft's tag and group rows go with it, and every open list drops it on the `deleted` signal.
+
+### Flow 10: Launch — from "Launch" to a launched broadcast or a refusal (US-03 — AC-05, AC-06, AC-07, AC-08, AC-09, AC-10)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: a member on a draft of W (SCR-25), or a saved launch-confirmation address
+    alt an operator
+        UI-->>U: no launch action, only a business owner launches - a confirmation address lands on the draft with the same note
+    else a business owner
+        U->>UI: Launch
+        UI->>S: read the launch confirmation
+        S->>D: guard, business owner role, a draft of W
+        S->>S: ask the bot module for readiness - state and Telegram bot id
+        S->>D: launches of W in the last 24 h
+        Note over S,D: reads broadcasts by (workspace, launched at) where launched
+        S->>D: existing tags, then the reachable set and the breakdown for that bot
+        alt no bot, or the bot is not connected
+            S-->>UI: refused, needs a working bot, with its state
+            UI-->>U: on the draft, with the way to Settings - Bot (SCR-08)
+        else audience over 10 000
+            S-->>UI: refused, audience too large
+            UI-->>U: on the draft, at most 10 000
+        else nobody reachable
+            S-->>UI: refused, no reachable contact
+            UI-->>U: on the draft, the audience has no reachable contact
+        else 10 launches in the last 24 h
+            S-->>UI: refused, launch limit, next launch at the 10th newest launch plus 24 h
+            UI-->>U: on the draft, when the next launch is possible
+        else it can be launched
+            S->>S: fingerprint over the sorted reachable contact ids
+            S-->>UI: trimmed text, version, breakdown, fingerprint
+            UI-->>U: text as the customer sees it, count, left out and why, the warning (SCR-27)
+            U->>UI: confirms
+            UI->>S: launch with the version and the fingerprint
+            Note over S,D: the launch transaction of seeded flow 1 - every check above runs again
+            S->>D: insert the recipients in fingerprint order, freeze text, tag names, bot and breakdown, status sending
+            Note over S,D: persists broadcast recipients (workspace, broadcast, contact, position, Telegram user id, waiting) and broadcasts launched by, launched at, Telegram bot id, frozen counts
+            alt launched
+                S->>B: publish broadcast changed status, commit with the first link queued
+                S-->>UI: the broadcast, sending
+                UI-->>U: the broadcast page (SCR-28), sending for every member
+            else launched already by a teammate or a double click
+                S-->>UI: the launched broadcast, nothing launched again
+                UI-->>U: the broadcast page
+            else text, audience or reachable set changed since the confirmation
+                S-->>UI: refused, with the current version, breakdown and fingerprint
+                UI-->>U: the current version and number to confirm again
+            else the owner was deactivated meanwhile
+                S-->>UI: access removed, nothing launched
+                UI-->>U: access-removed landing (SCR-07)
+            else bot, size, reach or cap no longer holds
+                S-->>UI: the same refusal as at the confirmation read
+            end
+        end
+    end
+    opt an operator posts a launch anyway
+        S-->>UI: forbidden, nothing sent or changed
+    end
+    Note over U,S: Postcondition: a broadcast is launched at most once, to exactly the fingerprinted set, within the cap
+```
+
+An operator sees no launch action, and a saved confirmation address brings them to the draft with the owners-only note. A launch request from them is refused and changes nothing (AC-07). For a business owner, "Launch" reads the confirmation, which is also the pre-check (sequences assumption). It asks `bots` for the bot's state and Telegram id and counts the launches of the last 24 h. It then evaluates the audience for that bot. No bot or a bot that is not connected is refused with the way to the bot settings (AC-10). An audience over 10 000 (AC-05), nobody reachable (AC-09) and the 10th launch within 24 h are refused too, the last one with the next launch time (AC-09). Otherwise the confirmation shows the trimmed text, the count, who is left out and why, and the warning. It carries the version and the fingerprint (AC-06, ADR-0006). Confirming runs the launch transaction of seeded flow 1, which re-checks all of it. A double click or a second owner gets the launched broadcast back and launches nothing again. A changed text, audience or reachable set (even with the same number) is refused with the current version to confirm again. An owner deactivated meanwhile launches nothing (AC-08). A successful launch inserts the recipients in fingerprint order, freezes the text, the tag names, the Telegram bot id and the confirmed breakdown, sets status `sending`, queues the first link and signals every tab.
+
+### Flow 11: Follow the delivery report (US-04 — AC-07, AC-09, AC-11, AC-18)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: a member opens a broadcast of W from the list, its address, a launch, or a broadcast item in a thread
+    UI->>S: read the broadcast
+    S->>D: guard, then the broadcast of W
+    alt not a broadcast of W
+        S-->>UI: not found, no hint
+        UI-->>U: not-found card (SCR-06)
+    else a draft
+        UI-->>U: the draft editor at the same address (SCR-25)
+    else launched
+        S->>D: totals of its recipients by state
+        Note over S,D: reads broadcast recipients counted by (workspace, broadcast, state)
+        S-->>UI: name, text, the audience as defined with tag names at launch, launched by and at, status, stop or finish, totals
+        UI->>S: first 50 recipients, optionally of one outcome
+        S->>D: recipients after the cursor in position order, then their contact names
+        Note over S,D: reads broadcast recipients by (workspace, broadcast, position) or by (workspace, broadcast, state, position) when narrowed
+        S-->>UI: recipients with outcome, reason and time, and the next cursor
+        UI-->>U: the read-only page and its report (SCR-28)
+        loop while it sends
+            B-->>UI: broadcast changed report or status, at most once per second per broadcast
+            UI->>S: refetch the totals and the current page, one fetch at a time
+            UI-->>U: totals and outcomes move, sent or stopped at the end
+        end
+        opt someone tries to edit or delete it
+            S-->>UI: refused, not a draft
+            UI-->>U: read-only, offer Duplicate
+        end
+        opt an operator
+            UI-->>U: no stop action - a stop request is refused as forbidden and changes nothing
+        end
+        opt a business owner while it sends
+            UI-->>U: Stop with the waiting count (SCR-29) - seeded flow 4
+        end
+        opt picks a recipient
+            UI-->>U: the contact's profile (SCR-19)
+        end
+    end
+    Note over U,S: Postcondition: the page shows the stored outcome of every recipient of W's broadcast, never more than one fetch behind the newest signal
+```
+
+A broadcast's address shows the draft editor while it is a draft and the read-only page once it is launched. A foreign id is the not-found card. The page shows the name, the text, the audience as it was defined (tag names at launch), who launched it and when, its status and the totals by outcome, which are one grouped count over the recipient rows (AC-11). Recipients come 50 at a time in position order, optionally narrowed to one outcome, each with its outcome, reason and time. While it sends, `broadcast.changed` frames (at most one per second per broadcast, ADR-0011) make the page refetch its totals and its current page, one fetch at a time. Every edit or delete is refused as not a draft, and the page offers Duplicate (AC-09). An operator has no Stop, and a stop request from them is refused (AC-18). A business owner gets Stop, drawn in seeded flow 4. Picking a recipient opens their profile.
+
+### Flow 12: One recipient's turn — the end customer receives the broadcast once (US-08, US-04 — AC-08, AC-11, AC-12, AC-14, AC-16, AC-17, AC-18)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Q as #lt;message-bus#gt; jobs
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    actor C as #lt;user#gt; end customer
+    participant B as #lt;message-bus#gt; live
+    Note over Q,S: Trigger: a send link of W is running (flow 14) and recipient R of broadcast A has its turn
+    Q->>S: link of W, ids only
+    S->>D: is R's contact blocked for A's launch Telegram bot
+    Note over S,D: reads reach rows by (workspace, contact, Telegram bot)
+    alt blocked now
+        S->>D: R blocked the bot, with the time, nothing sent
+        Note over S,D: persists the recipient's state, reason and outcome time
+    else reachable
+        S->>D: claim R - waiting to sending with the claim time, only if still waiting, commit
+        Note over S,D: idempotency key - the conditional single-row update, a recipient that is not waiting is never claimed again
+        alt R was not waiting - settled by a stop or an abort
+            S->>S: skip R, nothing sent
+        else claimed
+            S->>S: the bot module checks the same Telegram bot of W, connected or taken over, no send pause, then a pacer slot
+            S->>X: send the trimmed text to R's private chat, no formatting
+            X->>C: one plain-text message from the business bot
+            X-->>S: answer
+            alt accepted
+                S->>D: R delivered with the Telegram message id, broadcast item delivered at that time
+                Note over S,D: persists the recipient outcome and the broadcast item keyed by (workspace, broadcast, conversation)
+                S->>B: conversation changed, item type broadcast
+            else refused, bot blocked by the user
+                S->>D: R blocked the bot, and the contact's reach row marked blocked
+                S->>B: contact changed reach
+            else refused, account deleted or chat not found
+                S->>D: R failed with that reason, no item
+            else no answer - timeout or a lost connection
+                S->>D: R not confirmed, broadcast item not confirmed at the claim time
+                S->>B: conversation changed, item type broadcast
+            else rate limited, or the bot module refuses because of the send pause
+                S->>D: R back to waiting, the bot's send pause stored
+                S->>S: the link stops and queues its successor at the pause end - flow 19
+            else Telegram refuses the text, or the bot is not working, disconnected or replaced
+                S->>D: abort A - flow 13
+            else any other Telegram error
+                S->>D: R failed, Telegram error, no item
+            end
+            S->>B: broadcast changed report, when 1 s passed since the last one for A
+        end
+    end
+    Note over S,X: retry - none per recipient, only a rate-limited recipient waits and is tried again
+    alt the link dies between the claim and the answer
+        S->>D: the next link resolves R as not confirmed with its item at the claim time - flow 14
+        Note over S,D: dead-letter - a lost send is never repeated
+    end
+    Note over Q,C: Postcondition: R got the broadcast at most once, as plain text, and has exactly one outcome
+```
+
+Each turn first re-checks the recipient's block mark for the Telegram bot the broadcast was launched with: a contact blocked now gets "blocked the bot" and no send, and one who unblocked is sent it (AC-11, AC-14). Otherwise the recipient is claimed with a conditional single-row update (`waiting → sending`) that commits before the Telegram call. That update is the idempotency key: a recipient settled by a stop or an abort is never claimed (AC-18), and a recipient that is not waiting is never sent again (AC-11). `bots` checks that the workspace's bot is still the same Telegram bot and working, that no send pause runs, and takes a pacer slot. The send is scoped by the workspace, so one workspace's bot never sends another's broadcast (AC-08). The customer gets one plain-text message with the trimmed text, with no formatting and nothing about other recipients (AC-17). Telegram's answer decides the outcome (ADR-0009). Accepted means delivered, with a broadcast item at that time (AC-16). Blocked means "blocked the bot", and the contact is marked (AC-14). A deleted account or an unknown chat fails with that reason. No answer means not confirmed, with an item at the claim time, never sent again (AC-11, AC-16). A rate limit, or the pause seen by `bots`, puts the recipient back to waiting. A refused text or a lost bot aborts the broadcast (flow 13, AC-12). Any other error fails only this recipient. No outcome is retried except the rate-limited wait. If the link dies after the claim, the next link marks the recipient not confirmed. Outcomes, items and report signals are written in the outcome transaction.
+
+### Flow 13: A broadcast ends — finished or aborted (US-04 — AC-11, AC-12)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant Q as #lt;message-bus#gt; jobs
+    participant B as #lt;message-bus#gt; live
+    Note over S,D: Trigger: the send link recorded an outcome of broadcast A, or a send of A came back as a refused text or a lost bot
+    S->>D: lock A's row for no key update
+    alt A is no longer sending - stopped or ended meanwhile
+        S->>S: nothing to settle
+    else Telegram refused the text
+        S->>D: every waiting recipient of A failed, Telegram refused the text, A sent with its finish time and end reason
+        Note over S,D: one bulk update of broadcast recipients by (workspace, broadcast, state) - persists broadcasts finished at and end reason
+    else the bot is not working, disconnected or replaced
+        S->>D: every waiting recipient of A failed, the bot stopped working, A sent with its finish time and end reason
+    else nothing of A is waiting or in flight
+        S->>D: A sent with its finish time
+        Note over S,D: reads broadcast recipients by (workspace, broadcast, state) for waiting and sending
+    else recipients still wait or are in flight
+        S->>S: A keeps sending
+    end
+    opt A ended in this transaction
+        S->>Q: queue the blocked-share measure for A 48 h later, one per broadcast
+        S->>B: publish broadcast changed status, commit
+    end
+    opt sends of A in flight at the abort
+        S->>D: they record their own outcome as usual
+    end
+    opt the bot works again, or another bot is connected later
+        S->>S: nothing of A is sent - no recipient of A is waiting
+    end
+    Note over S,B: Postcondition: an ended broadcast has no waiting recipient, and its report shows who got it before the end
+```
+
+After each outcome the link checks whether the broadcast is done. Under the broadcast row lock (ADR-0009), a refused text fails every waiting recipient with "Telegram refused the text", and a bot that is not working, disconnected or replaced (both `bots` answers) fails them with "the bot stopped working". Either way the broadcast becomes "sent" with its finish time and end reason, in one bulk update (AC-12). A broadcast with nothing waiting and nothing in flight becomes "sent" (AC-11). A broadcast that was stopped meanwhile is left alone. An ending queues the 48-hour blocked-share measurement and signals every tab. Sends already in flight finish and record their outcome. Because no recipient of an ended broadcast is waiting, nothing of it is ever sent later, by a working bot or a new one.
+
+### Flow 14: The send chain stays alive — first link, restart, retries, dead letter (US-04, US-07 — AC-11, AC-15, AC-16)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Q as #lt;message-bus#gt; jobs
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over Q,S: Trigger: a launch queued the first link of W, a link queued its successor, or a retry or the dead-letter handler did
+    Q->>S: deliver the link of W - at most one active per workspace across instances
+    S->>S: check idempotency - the queue's one-active-link rule per workspace means any recipient still sending is stale
+    S->>D: W's sending broadcasts, oldest launch first, and their recipients still sending
+    Note over S,D: reads broadcasts by (workspace, status) where sending, and broadcast recipients by (workspace, broadcast, state)
+    opt recipients left sending by a dead link
+        S->>D: each becomes not confirmed with its broadcast item at its claim time, one transaction
+        S->>B: broadcast changed report, conversation changed per item
+    end
+    loop up to 20 s, at most 8 sends in flight, broadcasts in turn
+        S->>D: the next waiting recipient of the next broadcast in turn
+        Note over S,D: reads broadcast recipients by (workspace, broadcast, state, position) - lowest waiting position
+        S->>S: that recipient's turn - flow 12
+    end
+    S->>S: wait for the sends in flight, each bounded by 10 s
+    S->>D: end the broadcasts with nothing left - flow 13
+    alt a broadcast of W still sends
+        S->>Q: queue the successor in the last transaction, at the send pause end when paused
+    else nothing sends
+        S->>S: the chain ends
+    end
+    Note over Q,S: retry 3 times with back-off when a link fails
+    alt retries exhausted
+        Q->>Q: route the link to the dead-letter queue
+        Q->>S: the dead-letter handler logs an error and queues a fresh link of W 60 s later
+        Note over Q,S: dead-letter after 3 failed attempts, then the chain resumes
+    end
+    opt the process restarts mid-link
+        Q->>S: the queued link or its retry runs on any instance and resumes with the waiting recipients
+    end
+    Note over Q,D: Postcondition: every sending broadcast of W has a link queued or running, and no recipient is sent twice
+```
+
+The chain is a pg-boss queue with one active link per workspace (ADR-0007). A link carries only the workspace id. It first finds the workspace's sending broadcasts and any recipient still `sending`. Because only one link is active, such a recipient was left by a dead link, so it becomes "not confirmed" with its broadcast item at its claim time (AC-11, AC-16). The link then runs for at most 20 s with at most 8 sends in flight. It picks the lowest waiting position of each sending broadcast in turn, oldest launch first, so two broadcasts both move on (AC-15). It waits for the sends in flight, ends the broadcasts with nothing left (flow 13), and queues its successor in its last transaction while anything still sends, delayed to the send pause end when the bot is paused. A failed link is retried 3 times with back-off. After that the dead-letter handler logs it and queues a fresh link 60 s later. A restart loses nothing: the queued link runs on any instance and continues with the recipients still waiting (AC-11).
+
+### Flow 15: Duplicate a broadcast into a new draft (US-05 — AC-07, AC-08, AC-13, AC-18)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    Note over U,S: Precondition: an active member of either role on a broadcast of W, its row or its page
+    alt the source is a draft
+        U->>UI: Duplicate on the row or in the editor
+        UI->>S: duplicate the draft
+    else the source is launched
+        U->>UI: Duplicate on the row or on the page
+        UI-->>U: the copy's audience - same tags (tag audience only), all recipients, or only recipients it did not reach (SCR-30)
+        opt only recipients it did not reach, while it still sends
+            UI-->>U: disabled, available once it has ended
+        end
+        opt the choice includes not confirmed recipients
+            UI-->>U: how many, and that they may have received it
+        end
+        U->>UI: confirms the choice
+        UI->>S: duplicate with the choice, and whether to include not confirmed
+    end
+    S->>D: guard, then the source broadcast of W
+    alt not a broadcast of W
+        S-->>UI: not found, no hint
+    else only recipients it did not reach, while the source still sends
+        S-->>UI: refused, not ended yet
+    else may duplicate
+        S->>D: insert a new draft - author the member, Copy of the name cut to 80, the same text, version 1
+        alt a draft source
+            S->>D: copy its tag rows or its group rows
+        else same tags
+            S->>D: copy the tags the source was launched with as the draft's tag audience
+        else all recipients
+            S->>D: a group of every recipient's contact
+        else only recipients it did not reach
+            S->>D: a group of recipients failed as the bot stopped working, text refused or Telegram error, stopped, and not confirmed when asked
+            Note over S,D: reads broadcast recipients by (workspace, broadcast, state) and their reason
+        end
+        Note over S,D: persists broadcasts and broadcast group contacts or audience tags - the composite foreign keys keep every copied contact in W
+        S->>B: publish broadcast changed draft for the copy, commit
+        S-->>UI: the new draft
+        UI-->>U: the copy's draft editor (SCR-25), the original unchanged
+    end
+    Note over U,S: Postcondition: a new draft of W authored by the member, launched like any draft, and the source is untouched
+```
+
+Any member duplicates any broadcast. A draft is copied at once with its text and its audience rows. A launched broadcast asks for the copy's audience first (AC-13). "Same tags" copies the tag audience it was launched with, evaluated again at the copy's launch. "All recipients" makes a group of every recipient, and those who blocked the bot are counted unreachable by the breakdown. "Only recipients it did not reach" is offered once the broadcast has ended, and the server refuses it before then. It copies recipients who failed with a fixable reason (the bot stopped working, Telegram refused the text, a Telegram error), those stopped before their turn (AC-18), and the not confirmed ones only when the member confirmed the warning. Delivered, blocked and deleted-account recipients are never copied. The copy is named "Copy of …" within 80 characters by the shared name rule, its author is the member who duplicated it, and the source does not change. That is how an operator duplicates any broadcast while launching none (AC-07). Every copied contact passes the composite foreign key to the workspace's contacts (AC-08).
+
+### Flow 16: Block marks follow Telegram, and Contacts shows them for the current bot (US-06 — AC-10, AC-14)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor C as #lt;user#gt; end customer
+    participant X as #lt;external-system#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    participant UI as #lt;ui#gt;
+    actor U as #lt;user#gt;
+    Note over C,S: Precondition: Olena K. is a contact of W who wrote to W's current Telegram bot
+    alt a reply or a broadcast to her is refused as blocked
+        S->>X: send to her chat
+        X-->>S: refused, bot was blocked by the user
+        S->>D: mark her reach row for that Telegram bot blocked at the answer time, if newer than its last fact
+    else she blocks or unblocks the bot in Telegram
+        C->>X: blocks or unblocks
+        X->>S: my chat member update through the webhook - seeded flow 3
+        S->>D: blocked or cleared at the update time, if newer than its last fact
+    else she writes to the bot again
+        C->>X: a message
+        X->>S: message update
+        S->>D: capture as before, and her reach row for this Telegram bot - wrote at, a block older than the message cleared
+        Note over S,D: persists contact bot reach keyed by (workspace, contact, Telegram bot) - wrote at, blocked at, changed at
+    end
+    S->>B: contact changed reach, commit
+    B-->>UI: frame to every tab of W
+    UI->>S: refetch the Contacts rows or the profile
+    S->>S: ask the bot module for the current Telegram bot id
+    S->>D: contacts with blocked since for that bot
+    Note over S,D: reads reach rows by (workspace, contact, Telegram bot) for the listed contacts
+    S-->>UI: rows and profile with blocked since, or none
+    UI-->>U: a marker on her row and blocked since on her profile, or gone
+    opt W reconnects the same Telegram bot
+        S->>D: reads keep the same bot id - her marks and wrote stay
+    end
+    opt W connects a different Telegram bot
+        S->>D: reads for the new bot id find no row - not blocked, never wrote to the current bot
+        UI-->>U: drafts count her apart as never wrote to the current bot, a launch leaves her out
+    end
+    Note over C,U: Postcondition: no message, conversation, unread or ping came of a block, and no launched recipient list changed
+```
+
+A contact's reachability is a row per Telegram bot (ADR-0002). A reply or a broadcast refused as blocked marks it, a `my_chat_member` update blocks or clears it (seeded flow 3), and a new customer message, through the existing capture, records "wrote" and clears an older block. Each fact applies only when it is newer than the last one applied, so out-of-order updates cannot flip the mark back (AC-14). Each write signals `contact.changed` with `change: 'reach'`, and open Contacts rows and profiles refetch. Every read asks `bots` for the current Telegram bot id and shows "blocked the bot since …" for that bot only. Reconnecting the same Telegram bot keeps the marks, and connecting a different one finds no rows, so its contacts count as never wrote to the current bot and are left out at launch (AC-10). A block creates no message, conversation, unread or ping, and no launched recipient list changes (AC-14).
+
+### Flow 17: Existing bots start receiving block notices — the health check re-registers the webhook (US-06 — AC-14)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Q as #lt;message-bus#gt; jobs
+    participant S as #lt;service#gt;
+    participant X as #lt;external-system#gt;
+    participant D as #lt;data-store#gt;
+    Note over Q,S: Trigger: the existing scheduled health check of one bot, every 3 minutes
+    Q->>S: check the health of bot T of W
+    S->>S: check idempotency - one check per bot at a time, as today
+    S->>X: who am I, and the webhook's info
+    X-->>S: the webhook URL and its allowed updates
+    alt the URL is ours and allowed updates lack my chat member
+        S->>X: set the webhook again - same URL and secret, message, edited message and my chat member, keep pending updates
+        X-->>S: accepted
+        S->>D: record the check as today
+    else the URL is ours and up to date
+        S->>D: record the check as today
+    else the URL points elsewhere
+        S->>D: taken over, as today - no re-registration
+    end
+    Note over S,X: retry - none within a check, the next scheduled check 3 minutes later is the retry
+    alt the set webhook call fails
+        S->>S: log by code, dead-letter - nothing queued, the next check tries again
+    end
+    Note over Q,D: Postcondition: within minutes of the deploy every live bot of ours receives my chat member updates
+```
+
+Bots connected before this feature registered only `message` and `edited_message`. The existing 3-minute health check now compares the webhook's allowed updates with the expected set. When the URL is ours but the set is outdated, it registers the webhook again with the same URL and secret, keeping pending updates (ADR-0003). A webhook taken over by someone else is left alone, as today. A failure is logged by code and the next scheduled check tries again, as the health check already does (no retry, no dead-letter queue). Until then, refused sends still mark blocks (AC-14).
+
+### Flow 18: The broadcast item in the thread, and the customer's answer (US-07 — AC-16)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant B as #lt;message-bus#gt; live
+    participant X as #lt;external-system#gt;
+    actor C as #lt;user#gt; end customer
+    Note over U,S: Precondition: Olena K.'s conversation is closed, unassigned and not waiting, and she was sent A (flow 12)
+    S->>D: insert the broadcast item in the outcome transaction - no column of her conversation changes
+    Note over S,D: persists broadcast items (workspace, conversation, broadcast, state, position at, Telegram message id) - finds her conversation by (workspace, contact)
+    S->>B: conversation changed, item type broadcast, created
+    B-->>UI: frame to every tab of W
+    alt her conversation is open in this tab
+        UI->>S: refetch the new thread item
+    else any other tab or view
+        UI->>UI: ignore it - the inbox list and the attention count are not refetched
+    end
+    U->>UI: opens her conversation
+    UI->>S: a thread page
+    S->>D: messages, replies, activity entries and broadcast items in position order
+    Note over S,D: reads broadcast items by (workspace, conversation, position at, id) in the thread's keyset
+    S->>D: name, text and launching owner of those broadcasts
+    Note over S,D: reads broadcasts by (workspace, id) - the owner's name from member display names, deactivated ones included
+    S-->>UI: the thread with broadcast items - delivered at their time, or not confirmed at the send time
+    UI-->>U: the broadcast item apart from replies, status, assignee, waiting and unread unchanged, no ping
+    opt picks the broadcast name
+        UI-->>U: the broadcast page (SCR-28)
+    end
+    C->>X: answers the broadcast
+    X->>S: message update
+    S->>D: captured as a customer message as before - reopens, unread, waiting for a reply, ping as usual
+    alt failed for another reason, stopped before the turn, or left out at launch
+        S->>S: no item exists for that contact
+    end
+    Note over U,C: Postcondition: the item shows what the customer is answering and moved no conversation state
+```
+
+The broadcast item is written by `conversations` in the same transaction as the recipient's outcome, for delivered and not confirmed sends only (ADR-0010). It finds the contact's conversation and changes none of its columns: status, assignee, state version, waiting, last activity and read marks stay (AC-16). Its `conversation.changed` frame carries the item type `broadcast`. Only a tab with that conversation open refetches. The inbox list and the attention count ignore it. The thread read returns broadcast items in the same keyset order as messages, replies and activity entries. `inbox` adds each broadcast's name, text and launching owner from `broadcasts`, and names a deactivated owner too. A not confirmed item is marked and sits at the time of the send. The item links to the broadcast page. The customer's answer is captured as an ordinary message and reopens the conversation, counts as unread and waiting, and pings as usual. A recipient who failed for another reason, was stopped, or was left out has no item.
+
+### Flow 19: Replies keep going while broadcasts send, and a rate limit pauses only broadcasts (US-07 — AC-15)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as #lt;user#gt;
+    participant UI as #lt;ui#gt;
+    participant S as #lt;service#gt;
+    participant D as #lt;data-store#gt;
+    participant X as #lt;external-system#gt;
+    Note over U,S: Precondition: W's broadcasts A and B are sending through its bot, and an operator answers a customer
+    U->>UI: sends a reply
+    UI->>S: reply
+    S->>D: store the reply and queue its delivery, as before
+    S->>X: send the reply now - no broadcast pacer, no wait for the send pause
+    X-->>S: accepted
+    S-->>UI: delivered as fast as on a quiet day
+    loop while A and B send
+        S->>S: next recipient alternates between A and B, oldest launch first
+        S->>S: a pacer slot - at most 25 per second for all of the bot's broadcasts
+        S->>X: a broadcast send - flow 12
+    end
+    alt Telegram rate-limits any send of the bot - a reply, a ping or a broadcast
+        X-->>S: rate limited, retry after N seconds
+        S->>D: store the bot's send pause until now plus N
+        Note over S,D: persists the bot's send pause, as today
+        S->>S: broadcast sends refuse while paused, the claimed recipient goes back to waiting, the link queues its successor at the pause end
+        S->>S: the reply backs off as today and never waits for the pause
+        S->>S: after the pause the next waiting recipient is sent - none skipped or doubled
+    end
+    opt another workspace V sends replies, pings or broadcasts
+        S->>S: V has its own link, bot, pacer and pause - nothing of V waits for W
+    end
+    Note over U,X: Postcondition: replies kept their latency, broadcasts stayed at or under 25 per second per bot, and every recipient is sent at most once
+```
+
+Replies keep their own path: `sendText` neither takes the broadcast pacer nor waits for the send pause (ADR-0008), so a reply during a broadcast goes out as on a quiet day (AC-15). Broadcast sends of the bot take 40 ms start slots of one per-bot pacer, so all its broadcasts together stay at or under 25 per second. Two sending broadcasts of the workspace alternate, so neither waits for the other to finish. A rate-limit answer to any send of the bot stores the bot's send pause. Broadcast sends then refuse without calling Telegram, the claimed recipient goes back to waiting and the link queues its successor at the pause end. After the pause the broadcasts continue with the next waiting recipient, skipping and doubling no one. The reply that met the rate limit backs off as replies do today. Each workspace has its own link, bot, pacer and pause, so one workspace's broadcast never slows another's replies, pings or broadcasts.
+
+**Coverage — every spec §4 user story and §5 acceptance criterion → where §6 shows it:**
+
+| Spec item | Shown by |
+|---|---|
+| US-01 | Flow 5, flow 6, flow 7, flow 9 |
+| US-02 | Flow 8, flow 7 (switching the audience kind) |
+| US-03 | Seeded flow 1, flow 10 |
+| US-04 | Flow 11, seeded flow 2, seeded flow 4, flow 12, flow 13, flow 14 |
+| US-05 | Flow 15 |
+| US-06 | Seeded flow 3, flow 16, flow 17 |
+| US-07 | Flow 18, flow 19, flow 14 (turns between broadcasts) |
+| US-08 | Flow 12 (one plain-text message, at most once) |
+| AC-01 | Flow 5: the list for every member with status, audience size and who last changed it. Flow 6: the draft saved with its text, nothing sent. Flow 7: the breakdown with the Contacts filter's rules, left-out tags, a renamed tag kept, a deleted or merged tag dropped with a notice, the count as it is now on reopening |
+| AC-02 | Flow 6: name 1–80 and text 1–4096 UTF-16 code units after trimming, checked in the browser and again on the server, the last valid content kept, the remaining length shown |
+| AC-03 | Flow 6: a stale field save refused with the current draft and the member's own edit kept. Flow 8: group adds and removes commute and never raise the version. Flow 7: a kind switch confirmed against the group size |
+| AC-04 | Flow 8: the Contacts list read for search and filter, add one, add all matching with the count first and the current matches on confirmation, removal from this draft only, the group page with name, username, tags and blocked marker, its size and reach |
+| AC-05 | Flow 8: already in the group, a bulk add over 10 000 refused as a whole with the room left. Flow 7: a tag audience over 10 000 saved but not launchable. Flow 10: launch refused over 10 000. Flow 8: the composite key keeps the group in its workspace |
+| AC-06 | Flow 10: the confirmation's text, count, left-out reasons and warning, the version and fingerprint, a changed set refused to confirm again, a double click or two owners launching once. Seeded flow 1: the launch transaction |
+| AC-07 | Flow 10: no launch action for an operator, a confirmation address lands on the draft, a launch request refused. Flow 9: delete only by the author or a business owner. Flow 15: an operator still duplicates. Flow 6: an operator edits |
+| AC-08 | Flow 5: the guard (sign in, not found with no hint, access removed). Flow 8: a contact of another workspace refused, the composite key. Flow 10: an owner deactivated on the confirmation launches nothing. Flow 12: the send is scoped by the workspace and its bot. Flow 15: copies stay in the workspace. Flows 6, 9 and 11: a foreign broadcast id is not found |
+| AC-09 | Flow 6, flow 9 and flow 11: a launched broadcast refuses every edit and the delete, read-only with Duplicate. Flow 10: nobody reachable and the 11th launch within 24 h refused with the next launch time, every confirmed launch counted. Seeded flow 1 and flow 16: the recipient list never changes after launch |
+| AC-10 | Flow 10: no bot or a bot not working refused with the way to the bot settings. Flow 7: never wrote to the current bot counted apart, the no-bot case. Flow 16: the same Telegram bot keeps its marks, a different one starts clean. Flow 6: drafts need no bot |
+| AC-11 | Flow 11: the report with totals and outcomes, live. Flow 12: blocked at the turn, unblocked sent, other refusals failed without retry, no answer not confirmed. Flow 13: sent with its finish time. Flow 14: a restart resumes with waiting recipients and a stale in-flight send ends not confirmed. Seeded flow 2 |
+| AC-12 | Flow 12: a refused text or a lost bot aborts. Flow 13: every waiting recipient failed with the plain reason, the broadcast sent, nothing sent later by a working or new bot |
+| AC-13 | Flow 15: Copy of within 80, the same text, the member as author, the original unchanged, a draft's group copied, all recipients, only recipients it did not reach once ended with the fixable reasons and the not confirmed warning, the same tags evaluated again |
+| AC-14 | Seeded flow 3: my chat member blocks and unblocks without a message. Flow 16: refused sends, writing again, newer facts only, the Contacts marker and profile line. Flow 17: existing webhooks re-registered. Flow 12: the mark decides at the turn. Flow 7 and flow 8: drafts count blocked contacts as unreachable |
+| AC-15 | Flow 19: replies never wait, 25 per second per bot for all broadcasts, turns, the send pause after any rate limit, no skipping or doubling, other workspaces untouched. Flow 14: turns between broadcasts in a link. Seeded flow 2 |
+| AC-16 | Flow 18: the item in the thread with text, name and launching owner, not confirmed at the send time, no state change, the answer captured as usual, no item for other outcomes. Flow 12 and flow 14: items written with the outcome, also for stale in-flight sends |
+| AC-17 | Flow 12: one plain-text message with the trimmed text, no formatting, nothing about other recipients |
+| AC-18 | Seeded flow 4: the stop settles waiting recipients under the row lock, a late stop changes nothing. Flow 12: a settled recipient is never claimed, sends in flight finish. Flow 11: no stop for operators. Flow 15: stopped recipients copied by "did not reach" |
+
+**Flagged by `sequences` (for `design` / `data-model` / `api` to reconcile, no ADR written):**
+
+- **No new participants.** Every flow stays within §5's containers. `<message-bus>` is both pg-boss (jobs) and `platform/realtime` (live signals through `LISTEN/NOTIFY` and the inbox hub). `<external-system>` is the Telegram Bot API. The seeded flows 1–4 keep their concrete participant names from `design`, and flows 5–19 use the generic vocabulary.
+- **The launch confirmation read is also the pre-check (flow 10).** `api` gives it one route that answers either the confirmation or one of the launch refusals, with the same codes as the launch itself.
+- **Two reads `api` needs that §5 does not list:** the group picker's "which of these contacts are in the group" (ids of one page, flow 8) and the group page (50 contacts, newest added first, with the breakdown, flow 8).
+- **Frozen breakdown on the broadcast (flows 5, 10).** The launch stores the confirmed audience size, blocked, never wrote and recipient counts on the broadcast row, so the list and the page never recount a launched audience. `data-model` adds the columns.
+- **Recipient position (flows 10, 11, 14).** Recipients get a position at launch in fingerprint order. It drives the sending order and the report's keyset. `data-model` adds it.
+- **The no-bot breakdown (flow 7).** With no bot row, a draft shows only the audience size. `screens` draws the line.
+- **Indexes for `data-model`** (from the persist and read notes):
+  - `broadcasts` by `(workspace_id, updated_at DESC, id DESC)` for the list (flow 5); by `(workspace_id, launched_at)` where launched, for the 24-hour cap (flow 10, seeded flow 1); by `(workspace_id, status)` where `sending`, for the link's broadcasts (flow 14); unique `(workspace_id, id)` as the composite FK target;
+  - `broadcast_audience_tags` keyed by `(workspace_id, broadcast_id, tag_id)` (flows 7, 9, 15);
+  - `broadcast_group_contacts` keyed by `(workspace_id, broadcast_id, contact_id)` (flow 8 add, remove, membership of a page, count), by `(workspace_id, broadcast_id, added_at DESC, contact_id)` for the group page (flow 8), and by `(workspace_id, contact_id)` for the contacts foreign key;
+  - `broadcast_recipients` unique `(workspace_id, broadcast_id, contact_id)`, by `(workspace_id, broadcast_id, position)` for the report (flow 11), by `(workspace_id, broadcast_id, state, position)` for totals, the next waiting recipient, stale in-flight, settling and the duplicate (flows 11–15), and by `(workspace_id, contact_id)` for the contacts foreign key;
+  - `contact_bot_reach` keyed by `(workspace_id, contact_id, telegram_bot_id)` (flows 7, 8, 12, 16);
+  - `broadcast_items` unique `(workspace_id, broadcast_id, conversation_id)` (one item per broadcast and conversation), by `(workspace_id, conversation_id, position_at, id)` for the thread keyset (flow 18); the conversation is found by the existing `(workspace_id, contact_id)` key of `conversations`.
+
 ## 7. Deployment view
 
 No new deployable. The one API process keeps serving HTTP, webhooks, the live sockets and every pg-boss worker (architecture map, "One process"). broadcasts adds three queues, created and registered by `buildApp()`:
