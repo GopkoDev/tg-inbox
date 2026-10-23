@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/infra/recipient-repo.ts", "apps/ap
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T15 — Build the broadcasts recipient repository: the launch insert by unnest with positions, the conditional claim, outcome writes, back to waiting, stale in-flight resolution, settling waiting recipients, totals, the report page, the next waiting recipient and the duplicate sets, with isolation tests
@@ -130,14 +130,14 @@ Internal — no API surface (the repository behind `broadcasts/app/ports.ts`; it
 
 ## Checklist
 
-- [ ] Failing integration tests first, each method also run with a foreign workspace id (isolation) — `apps/api/src/modules/broadcasts/infra/recipient-repo.int.test.ts`
-- [ ] `insertAll(ws, broadcastId, rows[{ id, contactId, position, telegramUserId }], tx)` in one `INSERT … SELECT … FROM unnest(…)` — `apps/api/src/modules/broadcasts/infra/recipient-repo.ts`
-- [ ] `claim(ws, id, at)` = `UPDATE … SET state = 'sending', claimed_at = $at WHERE id = $1 AND workspace_id = $ws AND state = 'waiting'` → claimed or not — same file
-- [ ] `recordOutcome(ws, id, { state, reason?, at, messageId? }, tx)` only from `sending` (or from `waiting` for a blocked-at-turn outcome); `backToWaiting(ws, id, tx)` clearing `claimed_at` — same file
-- [ ] `resolveStaleInFlight(ws, broadcastIds, at, tx)` → `sending` → `not_confirmed` keeping `claimed_at`, returning `(id, contact_id, claimed_at)` for the items — same file
-- [ ] `settleWaiting(ws, broadcastId, { state: 'stopped' } | { state: 'failed', reason }, at, tx)` → count — same file
-- [ ] Reads: `totals(ws, broadcastId)` grouped by state, `page(ws, broadcastId, { after?, state? }, 50)` by position, `nextWaiting(ws, broadcastId)` lowest position, `hasWaitingOrInFlight`, `allContactIds`, `notReachedContactIds(ws, broadcastId, includeNotConfirmed)`, `deliveredContactIds` for the blocked share — same file
-- [ ] Tests: 10 000 rows inserted in one statement; two concurrent claims → exactly one wins; settle touches only `waiting`; did-not-reach set excludes `delivered`, `blocked`, `account_gone`, `chat_not_found`
+- [x] Failing integration tests first, each method also run with a foreign workspace id (isolation) — `apps/api/src/modules/broadcasts/infra/recipient-repo.int.test.ts`
+- [x] `insertAll(ws, broadcastId, rows[{ id, contactId, position, telegramUserId }], tx)` in one `INSERT … SELECT … FROM unnest(…)` — `apps/api/src/modules/broadcasts/infra/recipient-repo.ts`
+- [x] `claim(ws, id, at)` = `UPDATE … SET state = 'sending', claimed_at = $at WHERE id = $1 AND workspace_id = $ws AND state = 'waiting'` → claimed or not — same file
+- [x] `recordOutcome(ws, id, { state, reason?, at, messageId? }, tx)` only from `sending` (or from `waiting` for a blocked-at-turn outcome); `backToWaiting(ws, id, tx)` clearing `claimed_at` — same file
+- [x] `resolveStaleInFlight(ws, broadcastIds, at, tx)` → `sending` → `not_confirmed` keeping `claimed_at`, returning `(id, contact_id, claimed_at)` for the items — same file
+- [x] `settleWaiting(ws, broadcastId, { state: 'stopped' } | { state: 'failed', reason }, at, tx)` → count — same file
+- [x] Reads: `totals(ws, broadcastId)` grouped by state, `page(ws, broadcastId, { after?, state? }, 50)` by position, `nextWaiting(ws, broadcastId)` lowest position, `hasWaitingOrInFlight`, `allContactIds`, `notReachedContactIds(ws, broadcastId, includeNotConfirmed)`, `deliveredContactIds` for the blocked share — same file
+- [x] Tests: 10 000 rows inserted in one statement; two concurrent claims → exactly one wins; settle touches only `waiting`; did-not-reach set excludes `delivered`, `blocked`, `account_gone`, `chat_not_found`
 
 ## Edge cases
 
@@ -153,6 +153,14 @@ Internal — no API surface (the repository behind `broadcasts/app/ports.ts`; it
 
 ## Definition of Done
 
-- [ ] Integration tests prove 10 000 recipients insert in one unnest statement with positions 1…n, the claim updates a waiting row only once under two concurrent claimers, an outcome sets its state, reason, time and message id, a rate-limited recipient returns to waiting with claimed_at cleared, sending rows become not_confirmed keeping claimed_at, settling turns only waiting rows into stopped or failed with the reason, totals group by state, the page follows position with an optional state filter, the next waiting recipient is the lowest position, the "did not reach" set holds exactly the fixable reasons plus stopped (plus not_confirmed when asked), and every method is scoped by workspace.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Integration tests prove 10 000 recipients insert in one unnest statement with positions 1…n, the claim updates a waiting row only once under two concurrent claimers, an outcome sets its state, reason, time and message id, a rate-limited recipient returns to waiting with claimed_at cleared, sending rows become not_confirmed keeping claimed_at, settling turns only waiting rows into stopped or failed with the reason, totals group by state, the page follows position with an optional state filter, the next waiting recipient is the lowest position, the "did not reach" set holds exactly the fixable reasons plus stopped (plus not_confirmed when asked), and every method is scoped by workspace.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T15): ports in `broadcasts/app/ports.ts` (`RecipientRepo`, `NewRecipient`, `RecipientRecord`, `StaleRecipient`, `Settlement`, `RecipientTotals`); `toRecipient` is exported from `recipient-repo.ts` for the reads.
+- `implement` (T15): `insertAll` is one raw `INSERT … SELECT … FROM unnest($ids, $contact_ids, $positions, $user_ids)`; the test counts statements through a Kysely plugin and asserts exactly one for 10 000 rows. The caller (T20) computes ids (UUIDv7) and positions from the sorted reachable set.
+- `implement` (T15): `recordOutcome` takes the domain `RecordedOutcome` and applies it from `sending`, or `blocked` also straight from `waiting` (the mark at the turn, never claimed — `claimed_at` stays NULL); a recorded row is never recorded again. `resolveStaleInFlight` also sets `outcome_at` (the CHECK requires it off `waiting` / `sending`) and returns `(id, broadcastId, contactId, claimedAt)`.
+- `implement` (T15): `hasWaitingOrInFlight` and `allContactIds` were added beside the checklist reads (the successor decision and duplicate "all recipients"); `notReachedContactIds` reuses the domain's `notReachedStates`.
+- `implement` (T15): gate — full `pnpm test` failed only timing/concurrency tests under load (`e2e/contacts-load`, `e2e/notification-load` reply p95, `inbox/http/changes` p95 + the 61-concurrent limit, `migrations.int` timeouts); all four files passed re-run alone. `pnpm lint` clean.

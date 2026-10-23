@@ -1,6 +1,12 @@
 import type { Db } from '../../../platform/db.js';
 import type { AudienceTagKind, StoredAudienceTag, TagMode } from '../domain/audience.js';
 import type { BroadcastStatus } from '../domain/broadcast.js';
+import type {
+  AbortReason,
+  FailureReason,
+  RecipientState,
+  RecordedOutcome,
+} from '../domain/recipient.js';
 
 /** A Kysely handle or a transaction. */
 export type Executor = Db;
@@ -168,4 +174,107 @@ export interface GroupRepo {
     after: GroupPosition | undefined,
     limit: number,
   ): Promise<{ rows: GroupRow[]; hasNext: boolean }>;
+}
+
+// ───────── recipients (ADR-0007, ADR-0009) ─────────
+
+/** One recipient frozen at launch: position = rank of the contact id in the sorted reachable set. */
+export interface NewRecipient {
+  id: string;
+  contactId: string;
+  position: number;
+  telegramUserId: bigint;
+}
+
+export interface RecipientRecord {
+  id: string;
+  broadcastId: string;
+  contactId: string;
+  position: number;
+  telegramUserId: bigint;
+  state: RecipientState;
+  failureReason: FailureReason | null;
+  claimedAt: Date | null;
+  outcomeAt: Date | null;
+  telegramMessageId: bigint | null;
+}
+
+/** A `sending` recipient left by a dead link, resolved as not confirmed (its item sits at `claimedAt`). */
+export interface StaleRecipient {
+  id: string;
+  broadcastId: string;
+  contactId: string;
+  claimedAt: Date;
+}
+
+export type Settlement = { state: 'stopped' } | { state: 'failed'; reason: AbortReason };
+
+export type RecipientTotals = Record<RecipientState, number>;
+
+export interface RecipientRepo {
+  /** Every recipient of the launch in one `INSERT … SELECT … FROM unnest(…)`, all `waiting`. */
+  insertAll(
+    workspaceId: string,
+    broadcastId: string,
+    rows: readonly NewRecipient[],
+    tx: Executor,
+  ): Promise<void>;
+  /** `waiting` → `sending` at `at`; false when the row is not (or no longer) waiting. */
+  claim(workspaceId: string, id: string, at: Date, tx?: Executor): Promise<boolean>;
+  /**
+   * The outcome of a claimed (`sending`) recipient, or `blocked` straight from `waiting` (the mark
+   * at its turn); false when the row is in neither state.
+   */
+  recordOutcome(
+    workspaceId: string,
+    id: string,
+    outcome: RecordedOutcome,
+    at: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+  /** `sending` → `waiting`, `claimed_at` cleared (a rate limit: nothing was sent). */
+  backToWaiting(workspaceId: string, id: string, tx?: Executor): Promise<boolean>;
+  /** Every `sending` recipient of these broadcasts → `not_confirmed` at `at`, keeping `claimed_at`. */
+  resolveStaleInFlight(
+    workspaceId: string,
+    broadcastIds: readonly string[],
+    at: Date,
+    tx: Executor,
+  ): Promise<StaleRecipient[]>;
+  /** Every `waiting` recipient → `stopped`, or `failed` with the abort reason; the count. */
+  settleWaiting(
+    workspaceId: string,
+    broadcastId: string,
+    settlement: Settlement,
+    at: Date,
+    tx: Executor,
+  ): Promise<number>;
+  /** The count per state, every state present (0 when none). */
+  totals(workspaceId: string, broadcastId: string, tx?: Executor): Promise<RecipientTotals>;
+  /** Up to `limit` recipients by position after `after`, optionally of one state. */
+  page(
+    workspaceId: string,
+    broadcastId: string,
+    q: { after?: number; state?: RecipientState },
+    limit: number,
+  ): Promise<{ rows: RecipientRecord[]; hasNext: boolean }>;
+  /** The waiting recipient with the lowest position. */
+  nextWaiting(
+    workspaceId: string,
+    broadcastId: string,
+    tx?: Executor,
+  ): Promise<RecipientRecord | null>;
+  /** Whether any recipient is still `waiting` or `sending`. */
+  hasWaitingOrInFlight(workspaceId: string, broadcastId: string, tx?: Executor): Promise<boolean>;
+  /** Every recipient's contact id, sorted (duplicate "all recipients"). */
+  allContactIds(workspaceId: string, broadcastId: string, tx?: Executor): Promise<string[]>;
+  /** "Only recipients it did not reach": the fixable failures plus stopped (plus not confirmed). */
+  notReachedContactIds(
+    workspaceId: string,
+    broadcastId: string,
+    includeNotConfirmed: boolean,
+    tx?: Executor,
+  ): Promise<string[]>;
+  /** The delivered recipients' contact ids, sorted (the 48-hour blocked share). */
+  deliveredContactIds(workspaceId: string, broadcastId: string): Promise<string[]>;
 }
