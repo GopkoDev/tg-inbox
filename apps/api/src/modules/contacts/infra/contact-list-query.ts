@@ -5,7 +5,7 @@ import type { ContactListFilter, ContactListPosition, ContactListQuery } from '.
 import { contactSearchPredicate } from './contact-search.js';
 import { createContactTagRepo } from './contact-tag-repo.js';
 
-const uuidArray = (ids: readonly string[]) => sql`${[...new Set(ids)]}::uuid[]`;
+export const uuidArray = (ids: readonly string[]) => sql`${[...new Set(ids)]}::uuid[]`;
 
 /**
  * "All of": contact ids carrying every chosen tag, as a grouped semi-join over the tag links
@@ -22,8 +22,11 @@ function carryingAll(db: Db, workspaceId: string, ids: readonly string[]) {
     .having(sql<boolean>`count(*) = ${ids.length}`);
 }
 
-/** The workspace's contacts with the search and the tag filter applied. */
-function filtered(db: Db, workspaceId: string, f: ContactListFilter) {
+/**
+ * The workspace's contacts (`c`) with the search and the tag filter applied — the one filter
+ * builder of the Contacts list and the broadcast audiences (ADR-0004).
+ */
+export function filteredContacts(db: Db, workspaceId: string, f: ContactListFilter) {
   const ids = [...new Set(f.tagIds)];
   let q = db.selectFrom('contacts as c').where('c.workspace_id', '=', workspaceId);
   const search = contactSearchPredicate(f.q ?? '');
@@ -71,7 +74,7 @@ export function listPageQuery(
   workspaceId: string,
   f: ContactListFilter & { after?: ContactListPosition },
 ) {
-  let q = filtered(db, workspaceId, f);
+  let q = filteredContacts(db, workspaceId, f);
   if (f.after) q = q.where(afterPredicate(f.after));
   return q
     .select([
@@ -90,7 +93,7 @@ export function listPageQuery(
 
 /** The matching count: the same predicates as the page. */
 export function matchingCountQuery(db: Db, workspaceId: string, f: ContactListFilter) {
-  return filtered(db, workspaceId, f).select((eb) => eb.fn.countAll<string>().as('n'));
+  return filteredContacts(db, workspaceId, f).select((eb) => eb.fn.countAll<string>().as('n'));
 }
 
 export function createContactListQuery(db: Db): ContactListQuery {

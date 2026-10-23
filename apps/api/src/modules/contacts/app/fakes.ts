@@ -4,6 +4,8 @@ import { tagNameKey } from '../domain/tag-name.js';
 import { CONTACTS_PAGE_SIZE, mergeLink, TAG_HISTORY_PAGE_SIZE } from '../domain/tags.js';
 import {
   normalizeSearchQuery,
+  type AudienceQuery,
+  type AudienceSpec,
   type ContactListFilter,
   type ContactListQuery,
   type ContactRecord,
@@ -268,6 +270,120 @@ export function fakeReadPorts(
   };
 
   return { lists, tags, contactTags, tagHistory };
+}
+
+// ───────── audiences ─────────
+
+export interface FakeReach {
+  workspaceId: string;
+  contactId: string;
+  telegramBotId: bigint;
+  wroteAt: Date | null;
+  blockedAt: Date | null;
+}
+
+/**
+ * In-memory `AudienceQuery` over the contact and tag fakes plus `reach` rows, with the SQL's rules:
+ * the Contacts filter (left-out tags remove), the partition blocked → never wrote → reachable, the
+ * reachable set sorted by id. `calls` logs each query (`breakdown`, `reachable:<limit>`, …).
+ */
+export function fakeAudienceQuery(
+  contactRepo: ReturnType<typeof fakeContactRepo>,
+  store: FakeTagStore,
+): AudienceQuery & { reach: FakeReach[]; calls: string[] } {
+  const reach: FakeReach[] = [];
+  const calls: string[] = [];
+  const { lists } = fakeReadPorts(contactRepo, store);
+  const carries = (ws: string, contactId: string, tagIds: readonly string[]) =>
+    store.links.some(
+      (l) => l.workspaceId === ws && l.contactId === contactId && tagIds.includes(l.tagId),
+    );
+  async function members(ws: string, audience: AudienceSpec): Promise<ContactRecord[]> {
+    if (audience.kind === 'ids') {
+      return contactRepo.rows.filter(
+        (c) => c.workspaceId === ws && audience.contactIds.includes(c.id),
+      );
+    }
+    const all: ContactRecord[] = [];
+    let after: { lastWroteAt: Date | null; id: string } | undefined;
+    const filter = { q: null, mode: audience.mode, tagIds: audience.include };
+    for (;;) {
+      const page = await lists.listPage(ws, { ...filter, ...(after && { after }) });
+      for (const r of page.rows) all.push(contactRepo.rows.find((c) => c.id === r.id)!);
+      if (!page.hasNext) break;
+      const last = page.rows.at(-1)!;
+      after = { lastWroteAt: last.lastWroteAt, id: last.id };
+    }
+    return all.filter((c) => !carries(ws, c.id, audience.exclude));
+  }
+  const reachOf = (ws: string, contactId: string, bot: bigint) =>
+    reach.find((r) => r.workspaceId === ws && r.contactId === contactId && r.telegramBotId === bot);
+  const kind = (ws: string, contactId: string, bot: bigint) => {
+    const r = reachOf(ws, contactId, bot);
+    if (r?.blockedAt) return 'blocked' as const;
+    if (!r?.wroteAt) return 'neverWrote' as const;
+    return 'reachable' as const;
+  };
+  return {
+    reach,
+    calls,
+    async breakdown(ws, audience, bot) {
+      calls.push('breakdown');
+      const list = await members(ws, audience);
+      if (bot === null) return { audienceSize: list.length, reach: null };
+      const counts = { blocked: 0, neverWrote: 0, reachable: 0 };
+      for (const c of list) counts[kind(ws, c.id, bot)] += 1;
+      return { audienceSize: list.length, reach: counts };
+    },
+    async reachable(ws, audience, bot, limit) {
+      calls.push(`reachable:${limit}`);
+      return (await members(ws, audience))
+        .filter((c) => kind(ws, c.id, bot) === 'reachable')
+        .sort((x, y) => (x.id < y.id ? -1 : 1))
+        .slice(0, limit)
+        .map((c) => ({ id: c.id, telegramUserId: c.telegramUserId }));
+    },
+    async matchingIds(ws, filter) {
+      calls.push('matchingIds');
+      const all = await members(ws, {
+        kind: 'tags',
+        mode: filter.mode,
+        include: filter.tagIds,
+        exclude: [],
+      });
+      const searched = await contactRepo.searchContactIds(ws, filter.q ?? '');
+      return all
+        .filter((c) => searched === null || searched.includes(c.id))
+        .map((c) => c.id)
+        .sort();
+    },
+    async cards(ws, ids, bot) {
+      calls.push('cards');
+      return ids.flatMap((id) => {
+        const c = contactRepo.rows.find((r) => r.workspaceId === ws && r.id === id);
+        if (!c) return [];
+        const tags = store.links
+          .filter((l) => l.workspaceId === ws && l.contactId === id)
+          .map((l) => store.tags.find((t) => t.id === l.tagId)!)
+          .sort((x, y) => collator.compare(x.name, y.name))
+          .map((t) => ({ id: t.id, name: t.name }));
+        return [
+          {
+            id,
+            firstName: c.firstName,
+            lastName: c.lastName,
+            username: c.username,
+            tags,
+            blockedSince: bot === null ? null : (reachOf(ws, id, bot)?.blockedAt ?? null),
+          },
+        ];
+      });
+    },
+    async isBlocked(ws, contactId, bot) {
+      calls.push('isBlocked');
+      return Boolean(reachOf(ws, contactId, bot)?.blockedAt);
+    },
+  };
 }
 
 // ───────── tag writes ─────────

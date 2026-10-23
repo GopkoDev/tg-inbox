@@ -200,7 +200,7 @@
         "apps/api/src/modules/contacts/app/fakes.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t08-contacts-audience-evaluation.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T9",

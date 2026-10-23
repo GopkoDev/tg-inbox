@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/contacts/infra/audience-query.ts", "apps/api/
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T8 — Evaluate audiences in contacts with the Contacts filter rules: the breakdown for a tag audience or a list of ids against a Telegram bot, the reachable set sorted by id, existing tags, contacts matching a search and filter, contact cards and the blocked check at a recipient's turn
@@ -152,3 +152,10 @@ No DB changes (reads `contacts`, `contact_tags`, `tags` and `contact_bot_reach` 
 - [ ] Every new query method takes `workspaceId` and is covered by the cross-workspace isolation test.
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T8): `matchingContactIds` takes no `excludeGroupOf`: excluding a broadcast group's rows would have `contacts` read `broadcast_group_contacts`, which CLAUDE.md forbids (never query another module's tables). `contacts` answers the matching ids (sorted) and `broadcasts` (T18) subtracts its own group rows.
+- `implement` (T8): `existingTags` reuses `TagRepo.resolveIds`; the app layer (`contacts/app/audiences.ts`, `createContactAudiences`) drops tags that are gone from a tag audience before evaluating it, so a deleted or merged tag never empties an "all of" audience.
+- `implement` (T8): the filter builder of the Contacts list is exported as `filteredContacts` and reused by `infra/audience-query.ts`; the list's plan is unchanged.
+- `implement` (T8): the 10 000-contact p95 timing of the draft count is left to the seeded checks of T28.

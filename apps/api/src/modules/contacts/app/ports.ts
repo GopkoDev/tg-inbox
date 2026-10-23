@@ -298,6 +298,73 @@ export interface ContactListQuery {
   totalCount(workspaceId: string): Promise<number>;
 }
 
+// ───────── audiences (broadcasts, ADR-0004) ─────────
+
+/**
+ * An audience to evaluate: a tag audience by the Contacts filter's rules (no chosen tag with `any` /
+ * `all` = every contact; a left-out tag removes the contact), or a list of contact ids (a group).
+ * Tag ids are tags of the workspace (unknown ones are dropped by the app layer first).
+ */
+export type AudienceSpec =
+  | {
+      kind: 'tags';
+      mode: TagFilterMode;
+      include: readonly string[];
+      exclude: readonly string[];
+    }
+  | { kind: 'ids'; contactIds: readonly string[] };
+
+/**
+ * The count breakdown for one Telegram bot, partitioned blocked, then never wrote, then reachable
+ * (data-model assumption 5); `reach` is null when no bot is given.
+ */
+export interface AudienceBreakdown {
+  audienceSize: number;
+  reach: { blocked: number; neverWrote: number; reachable: number } | null;
+}
+
+export interface ReachableContact {
+  id: string;
+  telegramUserId: bigint;
+}
+
+/** A contact as a group row and the report show it. */
+export interface ContactCard {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  /** In tag-list order. */
+  tags: { id: string; name: string }[];
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked or no bot. */
+  blockedSince: Date | null;
+}
+
+export interface AudienceQuery {
+  breakdown(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint | null,
+  ): Promise<AudienceBreakdown>;
+  /** The reachable contacts sorted by id, at most `limit`. */
+  reachable(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    limit: number,
+  ): Promise<ReachableContact[]>;
+  /** Ids of the contacts matching the search and the tag filter, sorted. */
+  matchingIds(workspaceId: string, filter: ContactListFilter): Promise<string[]>;
+  /** Cards of the given ids of the workspace, in the given order; foreign or unknown ids are left out. */
+  cards(
+    workspaceId: string,
+    contactIds: readonly string[],
+    telegramBotId: bigint | null,
+  ): Promise<ContactCard[]>;
+  /** Whether the contact has blocked the bot (by the reach PK). */
+  isBlocked(workspaceId: string, contactId: string, telegramBotId: bigint): Promise<boolean>;
+}
+
 /** What `contacts` uses of `workspaces` (sad.md §5): names of adders and actors, deactivated members included. */
 export interface DisplayNames {
   displayNames(workspaceId: string, accountIds: readonly string[]): Promise<Map<string, string>>;
