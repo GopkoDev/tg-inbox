@@ -144,7 +144,7 @@
         "apps/api/src/modules/broadcasts/domain/duplicate.test.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t06-sending-and-copy-domain.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T7",
