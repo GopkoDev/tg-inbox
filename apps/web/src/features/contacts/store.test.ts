@@ -67,6 +67,7 @@ const row = (n: number) => ({
   language_code: null,
   first_wrote_at: null,
   last_wrote_at: null,
+  blocked_since: null,
   tags: [],
 });
 const page = (over: Partial<ContactPage> = {}): ContactPage => ({
@@ -90,6 +91,7 @@ const profile = (contactId = C1, over: Partial<ContactProfile> = {}): ContactPro
   language_code: 'uk',
   first_wrote_at: at(0),
   last_wrote_at: at(5),
+  blocked_since: null,
   tags: [],
   ...over,
 });

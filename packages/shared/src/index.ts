@@ -1,6 +1,7 @@
 export * from './auth.js';
 export * from './bots.js';
 export * from './broadcast-text.js';
+export * from './broadcasts.js';
 export * from './contacts.js';
 export * from './errors.js';
 export * from './health.js';

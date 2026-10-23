@@ -815,10 +815,20 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       case 'contact.changed':
       case 'tags.changed':
         return; // the tag control and the contacts screens subscribe to these; nothing here yet
+      case 'broadcast.changed':
+        return; // the broadcasts screens subscribe to it; the inbox has nothing to refresh
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
+        // A broadcast item never touches the row, unread or read state (ADR-0010).
+        if (item?.type === 'broadcast') return;
         const open = get().thread?.conversationId === conversationId;
-        if (item && open) refetchItem(workspaceId, conversationId, item, change === 'created');
+        if (item && open)
+          refetchItem(
+            workspaceId,
+            conversationId,
+            { type: item.type, id: item.id },
+            change === 'created',
+          );
         const row = get().conversations.find((c) => c.id === conversationId);
         const rowChanges =
           change === 'read' ||

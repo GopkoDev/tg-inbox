@@ -78,6 +78,7 @@ const profile = (over: Partial<ContactProfileDto> = {}): ContactProfileDto => ({
   language_code: 'uk',
   first_wrote_at: '2026-09-02T09:00:00Z',
   last_wrote_at: ago(3 * 60_000),
+  blocked_since: null,
   tags: [
     {
       id: id(301),
@@ -248,6 +249,7 @@ describe('SCR-19 header card', () => {
         language_code: null,
         first_wrote_at: null,
         last_wrote_at: null,
+        blocked_since: null,
         tags: [],
       }),
     );

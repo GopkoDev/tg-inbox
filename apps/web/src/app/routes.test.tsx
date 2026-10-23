@@ -238,6 +238,7 @@ describe('breadcrumb (review fixes)', () => {
             language_code: null,
             first_wrote_at: null,
             last_wrote_at: null,
+            blocked_since: null,
             tags: [],
           },
         },

@@ -126,3 +126,7 @@ It puts the block mark on the Contacts list row and the profile, always for the 
 - [ ] An `EXPLAIN` in the integration test (or the existing contacts plan check) shows the reach lookup as an index access on `contact_bot_reach_pkey`, not a per-row query.
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- From T4: `apps/api/src/modules/contacts/app/contacts.ts` answers `blocked_since: null` in `listContacts` and `getContact` as a placeholder — replace it with the current bot's mark here.

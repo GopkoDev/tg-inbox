@@ -16,7 +16,7 @@ const conversationChanged = z
     v: z.literal(1),
     workspace_id: id,
     conversation_id: id,
-    item: z.object({ type: z.enum(['message', 'reply', 'activity']), id }).nullable(),
+    item: z.object({ type: z.enum(['message', 'reply', 'activity', 'broadcast']), id }).nullable(),
     change: z.enum(['created', 'edited', 'state', 'read']),
     account_id: id.optional(),
   })
@@ -30,6 +30,9 @@ const conversationChanged = z
     }
     if (s.item?.type === 'activity' && s.change !== 'created') {
       ctx.addIssue({ code: 'custom', path: ['change'], message: 'activity is created only' });
+    }
+    if (s.item?.type === 'broadcast' && s.change !== 'created') {
+      ctx.addIssue({ code: 'custom', path: ['change'], message: 'broadcast item is created only' });
     }
   });
 
@@ -58,7 +61,15 @@ const contactChanged = z.object({
   v: z.literal(1),
   workspace_id: id,
   contact_id: id,
-  change: z.enum(['tags']),
+  change: z.enum(['tags', 'reach']),
+});
+
+const broadcastChanged = z.object({
+  type: z.literal('broadcast.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+  broadcast_id: id,
+  change: z.enum(['draft', 'group', 'status', 'report', 'deleted']),
 });
 
 const tagsChanged = z.object({
@@ -74,6 +85,7 @@ export const realtimeSignalSchema = z.discriminatedUnion('type', [
   telegramLinkChanged,
   contactChanged,
   tagsChanged,
+  broadcastChanged,
 ]);
 
 export type RealtimeSignal = z.infer<typeof realtimeSignalSchema>;

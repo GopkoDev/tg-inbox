@@ -59,6 +59,7 @@ const row = (n: number, over: Partial<ContactRow> = {}): ContactRow => ({
   language_code: 'uk',
   first_wrote_at: ago(30 * 86_400_000),
   last_wrote_at: ago(3 * 60_000),
+  blocked_since: null,
   tags: [],
   ...over,
 });
@@ -198,6 +199,7 @@ describe('SCR-18 loading and default', () => {
             language_code: null,
             first_wrote_at: null,
             last_wrote_at: null,
+            blocked_since: null,
           }),
         ],
       }),

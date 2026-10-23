@@ -9,8 +9,8 @@ files_hint: ["packages/shared/src/broadcasts.ts", "packages/shared/src/broadcast
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T4 — Add the broadcasts zod contracts, the eleven BROADCAST_* error codes, the broadcast.changed frame and signal, the widened contact.changed (reach) and conversation.changed (broadcast) frames with their hub mapping, and keep the web stores ignoring what they do not handle yet
@@ -146,3 +146,10 @@ No DB changes.
 - [ ] `pnpm -r build` type-checks api and web with the widened unions (no exhaustive switch left without the new members).
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T4): `ContactRow` / `ContactProfile.blocked_since` is required (nullable) as the contract says, so the contacts use cases (`apps/api/src/modules/contacts/app/contacts.ts`) answer `blocked_since: null` until T9 reads the current bot's mark, and the web contact test fixtures gained `blocked_since: null`. Kept the gate green without weakening the schema.
+- `implement` (T4): `ThreadItemView` returns `null` for a `broadcast` item until T37 renders `BroadcastItem`; no broadcast item reaches a thread before T13/T25.
+- `implement` (T4): the tag-audience request refinements (`"No tags"` with tags → `tag_ids`; a tag both chosen and left out → `exclude_tag_ids`; repeated ids) and `BroadcastGroupAddMatching` (`none` + tags → `tag_ids`) live in the shared zod schemas, so the routes answer `VALIDATION_ERROR` with the contract's `details.field`.
+- `implement` (T4): `BROADCAST_LAUNCH_LIMIT_REACHED`'s message names the wait in minutes (the panel formats `next_launch_at` itself); the contract example's wording "at 14:20" is illustrative.

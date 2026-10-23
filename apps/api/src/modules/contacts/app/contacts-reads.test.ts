@@ -201,6 +201,7 @@ describe('getContact (AC-04, AC-13)', () => {
           added_at: at(3).toISOString(),
         },
       ],
+      blocked_since: null,
     });
   });
 

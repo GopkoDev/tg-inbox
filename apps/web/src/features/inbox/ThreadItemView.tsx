@@ -24,6 +24,8 @@ export function ThreadItemView({
   contactName: string;
   readOnly?: boolean;
 }) {
+  // Broadcast items are rendered by BroadcastItem (broadcasts T37); none reach the thread before it.
+  if (item.type === 'broadcast') return null;
   if (item.type === 'activity')
     return <ActivityLine activity={item} at={timeOf(item.position_at)} />;
   if (item.type === 'reply')

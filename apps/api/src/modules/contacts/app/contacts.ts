@@ -134,6 +134,8 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           first_wrote_at: isoOrNull(r.firstWroteAt),
           last_wrote_at: isoOrNull(r.lastWroteAt),
           tags: r.tags,
+          // The current bot's blocked mark is read by broadcasts T9; until then nothing is marked.
+          blocked_since: null,
         })),
         has_prev: after !== null,
         has_next: page.hasNext,
@@ -170,6 +172,8 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           added_by: ref(t.addedByAccountId),
           added_at: iso(t.addedAt),
         })),
+        // The current bot's blocked mark is read by broadcasts T9; until then nothing is marked.
+        blocked_since: null,
       };
     },
 

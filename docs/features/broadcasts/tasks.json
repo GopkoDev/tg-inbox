@@ -94,7 +94,7 @@
         "apps/web/src/features/inbox/store.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t04-contracts-codes-and-frames.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T5",

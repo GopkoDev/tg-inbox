@@ -176,6 +176,58 @@ describe('live hub dispatch', () => {
     expect(z.socket.frames).toEqual([]);
   });
 
+  it('forwards broadcast.changed, contact.changed reach and a broadcast item to every socket of the workspace only', () => {
+    const { hub, open } = setup();
+    const [a, b] = [newId(), newId()];
+    const x = open(a, newId());
+    const y = open(a, newId());
+    const z = open(b, newId());
+    const [broadcastId, contactId, conversationId, itemId] = [newId(), newId(), newId(), newId()];
+    hub.dispatch({
+      type: 'broadcast.changed',
+      v: 1,
+      workspace_id: a,
+      broadcast_id: broadcastId,
+      change: 'status',
+    });
+    hub.dispatch({
+      type: 'contact.changed',
+      v: 1,
+      workspace_id: a,
+      contact_id: contactId,
+      change: 'reach',
+    });
+    hub.dispatch({
+      type: 'conversation.changed',
+      v: 1,
+      workspace_id: a,
+      conversation_id: conversationId,
+      item: { type: 'broadcast', id: itemId },
+      change: 'created',
+    });
+    for (const s of [x, y]) {
+      expect(s.socket.frames.map((f) => LiveFrame.parse(f))).toEqual([
+        {
+          type: 'broadcast.changed',
+          v: 1,
+          workspace_id: a,
+          broadcast_id: broadcastId,
+          change: 'status',
+        },
+        { type: 'contact.changed', v: 1, workspace_id: a, contact_id: contactId, change: 'reach' },
+        {
+          type: 'conversation.changed',
+          v: 1,
+          workspace_id: a,
+          conversation_id: conversationId,
+          item: { type: 'broadcast', id: itemId },
+          change: 'created',
+        },
+      ]);
+    }
+    expect(z.socket.frames).toEqual([]);
+  });
+
   it('membership.deactivated closes only that account sockets of that workspace with 4403 and forwards nothing', () => {
     const { hub, open } = setup();
     const [a, b] = [newId(), newId()];

@@ -115,3 +115,7 @@ No DB changes.
 - [ ] Testing Library and store tests cover every SCR-02 broadcast-item state in screens.md: delivered and not confirmed, a deactivated launcher still named, the text as plain text with line breaks, the item fetched by getThreadBroadcastItem on conversation.changed broadcast for the open conversation only and inserted at its position, and no mark-read call, no list refetch and no attention change.
 - [ ] every Hard Rule inlined above still holds
 - [ ] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- From T4: `apps/web/src/features/inbox/ThreadItemView.tsx` returns `null` for `item.type === 'broadcast'`, and the inbox store returns early on a `conversation.changed` with a broadcast item (no row refetch, no mark-read) — replace the early return with the thread-only refetch of the item here.
