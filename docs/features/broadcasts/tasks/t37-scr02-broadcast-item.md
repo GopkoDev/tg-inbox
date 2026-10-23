@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/inbox/BroadcastItem.tsx", "apps/web/src/feat
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T37 — Render the broadcast item in the inbox thread (SCR-02): BroadcastItem as a new ThreadItemView kind with the name linking to the broadcast, the launching owner, the text and the delivered or not-confirmed time, inserted live without touching read state or attention
@@ -92,11 +92,11 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `BroadcastItem`: centred full-width block, `Megaphone` icon, «Broadcast «name» · sent by <launched_by>» with the name as a link to `/w/:workspaceId/broadcasts/:broadcastId`, the text as plain text (`whitespace-pre-wrap`), the time, or the «Not confirmed» `Badge` with «sent at … — Telegram did not answer» — `apps/web/src/features/inbox/BroadcastItem.tsx`
-- [ ] `ThreadItemView` renders kind `broadcast` with `BroadcastItem` — `apps/web/src/features/inbox/ThreadItemView.tsx`
-- [ ] API source `getThreadBroadcastItem`; the inbox store, on `conversation.changed { item.type: broadcast, change: created }` for the open conversation only, fetches it and merges it at its `(position_at, kind, id)` place; no mark-read, no list or attention refetch — `apps/web/src/features/inbox/api-source.ts`, `apps/web/src/features/inbox/store.ts`
-- [ ] Testing Library tests: delivered, not confirmed, deactivated launcher named, markup shown literally — `apps/web/src/features/inbox/BroadcastItem.test.tsx`
-- [ ] Thread / store tests: the live frame inserts the item in place for the open conversation, a frame for another conversation fetches nothing, and the header state, unread and attention count stay — `apps/web/src/features/inbox/Thread.test.tsx`
+- [x] `BroadcastItem`: centred full-width block, `Megaphone` icon, «Broadcast «name» · sent by <launched_by>» with the name as a link to `/w/:workspaceId/broadcasts/:broadcastId`, the text as plain text (`whitespace-pre-wrap`), the time, or the «Not confirmed» `Badge` with «sent at … — Telegram did not answer» — `apps/web/src/features/inbox/BroadcastItem.tsx`
+- [x] `ThreadItemView` renders kind `broadcast` with `BroadcastItem` — `apps/web/src/features/inbox/ThreadItemView.tsx`
+- [x] API source `getThreadBroadcastItem`; the inbox store, on `conversation.changed { item.type: broadcast, change: created }` for the open conversation only, fetches it and merges it at its `(position_at, kind, id)` place; no mark-read, no list or attention refetch — `apps/web/src/features/inbox/api-source.ts`, `apps/web/src/features/inbox/store.ts`
+- [x] Testing Library tests: delivered, not confirmed, deactivated launcher named, markup shown literally — `apps/web/src/features/inbox/BroadcastItem.test.tsx`
+- [x] Thread / store tests: the live frame inserts the item in place for the open conversation, a frame for another conversation fetches nothing, and the header state, unread and attention count stay — `apps/web/src/features/inbox/Thread.test.tsx`
 
 ## Edge cases
 
@@ -112,10 +112,13 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library and store tests cover every SCR-02 broadcast-item state in screens.md: delivered and not confirmed, a deactivated launcher still named, the text as plain text with line breaks, the item fetched by getThreadBroadcastItem on conversation.changed broadcast for the open conversation only and inserted at its position, and no mark-read call, no list refetch and no attention change.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library and store tests cover every SCR-02 broadcast-item state in screens.md: delivered and not confirmed, a deactivated launcher still named, the text as plain text with line breaks, the item fetched by getThreadBroadcastItem on conversation.changed broadcast for the open conversation only and inserted at its position, and no mark-read call, no list refetch and no attention change.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
 
 ## Implementation notes
 
 - From T4: `apps/web/src/features/inbox/ThreadItemView.tsx` returns `null` for `item.type === 'broadcast'`, and the inbox store returns early on a `conversation.changed` with a broadcast item (no row refetch, no mark-read) — replace the early return with the thread-only refetch of the item here.
+- `implement` (T37): `BroadcastItem` (`features/inbox/BroadcastItem.tsx`) is a centred dashed block (Megaphone icon, «Broadcast <name link> · sent by <launcher>», the text in `whitespace-pre-wrap`, the time or the «Not confirmed» `Badge` with «sent at … — Telegram did not answer»); `ThreadItemView` renders it, so the profile's read-only history shows it too. Registering it in `docs/design-system.md` is left to T40 (docs and canon).
+- `implement` (T37): the inbox store's T4 early return is replaced: `conversation.changed` with item type `broadcast` fetches `getThreadBroadcastItem` (background) only for the open conversation and merges it, never marking read and never refetching the row or attention. The client thread order (`byPosition`) now puts a broadcast item after any other item of the same time, matching the server's kind order; other ties are unchanged.
+- `implement` (T37): gate — full `pnpm test` failed only `e2e/contacts-load`, `e2e/notification-load` (reply p95) and `inbox/http/changes` (p95 and a change-limit concurrency case), all timing/concurrency under load and green re-run alone; `pnpm lint` clean.

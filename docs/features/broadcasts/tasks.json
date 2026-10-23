@@ -910,7 +910,7 @@
         "apps/web/src/features/inbox/api-source.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t37-scr02-broadcast-item.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T38",

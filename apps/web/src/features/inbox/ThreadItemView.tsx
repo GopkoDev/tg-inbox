@@ -1,6 +1,7 @@
 import type { ThreadItem } from '@tg/shared';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { ActivityLine } from './ActivityLine';
+import { BroadcastItem } from './BroadcastItem';
 import { MessageBubble } from './MessageBubble';
 import { MessageContent } from './MessageContent';
 import { ReplyDeliveryState } from './ReplyDeliveryState';
@@ -10,7 +11,7 @@ const timeOf = (iso: string) =>
 
 /**
  * One item of a conversation's history: a customer message, a team reply with its delivery state,
- * or an activity line. `readOnly` (the contact profile) shows the delivery state without the
+ * an activity line, or a broadcast item. `readOnly` (the contact profile) shows the delivery state without the
  * resend buttons, because that view acts on nothing.
  */
 export function ThreadItemView({
@@ -24,8 +25,7 @@ export function ThreadItemView({
   contactName: string;
   readOnly?: boolean;
 }) {
-  // Broadcast items are rendered by BroadcastItem (broadcasts T37); none reach the thread before it.
-  if (item.type === 'broadcast') return null;
+  if (item.type === 'broadcast') return <BroadcastItem item={item} at={timeOf(item.position_at)} />;
   if (item.type === 'activity')
     return <ActivityLine activity={item} at={timeOf(item.position_at)} />;
   if (item.type === 'reply')

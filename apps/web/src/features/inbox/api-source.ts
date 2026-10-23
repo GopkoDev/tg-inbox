@@ -11,6 +11,7 @@ import {
   type StateChangeRequest,
   type StatusLens,
   ThreadActivity,
+  ThreadBroadcastItem,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
@@ -150,6 +151,19 @@ export const getThreadActivity = (
   apiRequest(
     `${conversationPath(workspaceId, conversationId)}/activities/${encodeURIComponent(activityId)}`,
     ThreadActivity,
+    bg(options),
+  );
+
+/** One broadcast item of the thread (ADR-0010); never marks anything read. */
+export const getThreadBroadcastItem = (
+  workspaceId: string,
+  conversationId: string,
+  broadcastItemId: string,
+  options: ReadOptions = {},
+) =>
+  apiRequest(
+    `${conversationPath(workspaceId, conversationId)}/broadcast-items/${encodeURIComponent(broadcastItemId)}`,
+    ThreadBroadcastItem,
     bg(options),
   );
 
