@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: '2026-10-19'
+updated_at: '2026-10-23'
 ---
 
 # Roadmap — tg-inbox
@@ -26,7 +26,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | M | shipped → [`features/assignment-statuses`](features/assignment-statuses/spec.md) |
 | 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | M | shipped → [`features/operator-notifications`](features/operator-notifications/spec.md) |
 | 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | M | shipped → [`features/contacts`](features/contacts/spec.md) |
-| 8 | Broadcasts by tag — send a message to a tagged segment, throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation | M | idea |
+| 8 | Broadcasts — an operator drafts a message for an audience picked by contact tags or for a hand-picked broadcast group of contacts (added and removed while it is a draft) and launches it; once launched its recipients are frozen and it is read-only apart from a delivery report; throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation · roadmap.md § Decisions so far | L | idea |
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
 | 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | idea |
 | 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
@@ -63,6 +63,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 - AI comes as reply drafts for operators, not autonomous answers → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
 - MCP means a platform server for the owner's external AI assistant → [`docs/idea-brief.md` §5 Out of scope](idea-brief.md)
 - Broadcasts must throttle to ~30 msgs/s per bot; blocked users surface via the my_chat_member update → [Telegram Bot FAQ](https://core.telegram.org/bots/faq)
+- Broadcasts ship both audience kinds in one step (size M → L): contact tags, or a hand-picked broadcast group built from contact search / filter (add one, add all matching the filter, remove); a broadcast is an editable draft until launch, then its recipients freeze and it goes sending → sent and becomes read-only except its delivery report (delivered / failed / blocked the bot); reusing a group means duplicating a broadcast into a new draft — no standalone saved group → owner decision in the step 8 roadmap revision (this file's `updated_at`)
 - An operator is "inactive on the web" (away from the web) for a workspace when none of their tabs, on any device, has that workspace's panel open with a working live connection and on screen within the last 10 minutes; the bot pings only members who linked their own Telegram from the panel, after a customer has waited 5 minutes (assignee first; unassigned, an assignee who cannot be pinged, or a 30-minute wait → the team), at most once per conversation per waiting period, with no customer text (closes D1) → [`features/operator-notifications/spec.md` §1](features/operator-notifications/spec.md)
 - Channel posting needs the bot as admin with can_post_messages; scheduling is ours to build (no native scheduling) → [Telegram Bot API](https://core.telegram.org/bots/api#chatadministratorrights)
 
@@ -76,7 +77,7 @@ flowchart LR
   s3 -->|contacts are created on inbound| s7["7 · Contacts"]
   s4 -->|statuses live on inbox conversations| s5["5 · Assignment & statuses"]
   s4 -->|notifies about inbox messages| s6["6 · Notifications"]
-  s7 -->|segments are contact tags| s8["8 · Broadcasts"]
+  s7 -->|audiences are contact tags or picked contacts| s8["8 · Broadcasts"]
   s4 -->|drafts appear in the reply box| s9["9 · AI drafts (fog)"]
   s3 -->|posts go out via the connected bot| s10["10 · Group posts"]
   s7 -->|exposes contacts & tags| s11["11 · MCP server (fog)"]
