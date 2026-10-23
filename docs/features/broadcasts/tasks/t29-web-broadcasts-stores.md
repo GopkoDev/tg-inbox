@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/api.ts", "apps/web/src/features/b
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T29 — Add the web broadcasts API source and stores: the list store, the draft store (save as you go, one save in flight against the shown version, the stale-save merge, group adds and removes one by one) and the report store (totals plus one 50-recipient page, one fetch at a time), with the broadcast.changed subscriptions
@@ -121,12 +121,12 @@ Calls, each response parsed with its `packages/shared/src/broadcasts.ts` schema 
 
 ## Checklist
 
-- [ ] API functions over `shared/api/client.ts`, one per operation, each parsing its shared schema — `apps/web/src/features/broadcasts/api.ts`
-- [ ] List store keyed by workspace: `listBroadcasts`, re-read on every `broadcast.changed` of the workspace and on `resync`, one fetch in flight plus one queued — `apps/web/src/features/broadcasts/list-store.ts`
-- [ ] Draft store keyed by broadcast id: the held draft (version, fields, audience, breakdown), the save queue (one in flight; a change made meanwhile replayed with the answer's version), status `saving | saved | failed`, the stale state from `details.draft` keeping the member's own value of the touched field, group page + membership + add / remove / matching / add-matching calls one by one, `status` → re-read and mark launched, `deleted` → gone; `draft` / `group` frames ignored — `apps/web/src/features/broadcasts/draft-store.ts`
-- [ ] Report store keyed by broadcast id: `getBroadcast` totals + one `listBroadcastRecipients` page (50, optional state filter, `after` for Show more), re-read on `report` / `status` one fetch at a time — `apps/web/src/features/broadcasts/report-store.ts`
-- [ ] A failed background re-read keeps what is shown; a 401 keeps an unsent edit in the draft store for the same address — same files
-- [ ] Store unit tests per frame kind and per save outcome, including frames of another workspace dropped — `list-store.test.ts`, `draft-store.test.ts`, `report-store.test.ts`
+- [x] API functions over `shared/api/client.ts`, one per operation, each parsing its shared schema — `apps/web/src/features/broadcasts/api.ts`
+- [x] List store keyed by workspace: `listBroadcasts`, re-read on every `broadcast.changed` of the workspace and on `resync`, one fetch in flight plus one queued — `apps/web/src/features/broadcasts/list-store.ts`
+- [x] Draft store keyed by broadcast id: the held draft (version, fields, audience, breakdown), the save queue (one in flight; a change made meanwhile replayed with the answer's version), status `saving | saved | failed`, the stale state from `details.draft` keeping the member's own value of the touched field, group page + membership + add / remove / matching / add-matching calls one by one, `status` → re-read and mark launched, `deleted` → gone; `draft` / `group` frames ignored — `apps/web/src/features/broadcasts/draft-store.ts`
+- [x] Report store keyed by broadcast id: `getBroadcast` totals + one `listBroadcastRecipients` page (50, optional state filter, `after` for Show more), re-read on `report` / `status` one fetch at a time — `apps/web/src/features/broadcasts/report-store.ts`
+- [x] A failed background re-read keeps what is shown; a 401 keeps an unsent edit in the draft store for the same address — same files
+- [x] Store unit tests per frame kind and per save outcome, including frames of another workspace dropped — `list-store.test.ts`, `draft-store.test.ts`, `report-store.test.ts`
 
 ## Edge cases
 
@@ -142,7 +142,15 @@ Calls, each response parsed with its `packages/shared/src/broadcasts.ts` schema 
 
 ## Definition of Done
 
-- [ ] Store unit tests prove each broadcast.changed frame triggers exactly the re-reads screens.md lists (list on any change with one fetch in flight and one queued, the report on report and status one fetch at a time, the open draft only on status and deleted), that the draft store sends one save at a time with the version it holds and replays a change made meanwhile on the new version, that BROADCAST_DRAFT_CHANGED keeps the member's own edit beside the teammate's version, and that frames of another workspace are dropped.
-- [ ] A store test proves a `report` frame during an in-flight report fetch leads to exactly one more fetch after it, and that a `group` frame never re-reads the open draft.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Store unit tests prove each broadcast.changed frame triggers exactly the re-reads screens.md lists (list on any change with one fetch in flight and one queued, the report on report and status one fetch at a time, the open draft only on status and deleted), that the draft store sends one save at a time with the version it holds and replays a change made meanwhile on the new version, that BROADCAST_DRAFT_CHANGED keeps the member's own edit beside the teammate's version, and that frames of another workspace are dropped.
+- [x] A store test proves a `report` frame during an in-flight report fetch leads to exactly one more fetch after it, and that a `group` frame never re-reads the open draft.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T29): three Zustand stores in `apps/web/src/features/broadcasts/` — `useBroadcastListStore` (`load` / `watch` / `clear`), `useBroadcastDraftStore` (`open`, `editFields`, `saveAudience`, `retry`, `useMine` / `keepTheirs`, `loadGroup` / `showMoreGroup`, `addContact` / `removeContact` / `addMatching`, `watch`, `close`, `forget`) and `useBroadcastReportStore` (`open`, `setFilter`, `showMore`, `watch`, `close`); each clears on a workspace switch. A small helper `serial-read.ts` (outside files_hint) implements "one read in flight, one queued" for the list and the report.
+- `implement` (T29): the draft store does not debounce — the 800 ms / blur timing belongs to the editor (T31), which calls `editFields`; the store serialises saves (fields first, then a pending audience choice) with the held version. `unsent` holds every not-yet-acknowledged field edit; it survives `close()` for the same workspace + broadcast (a 401 round trip) and is dropped by `forget()` or a workspace switch. Reopening with an unsent edit shows `save: 'failed'` so Retry sends it.
+- `implement` (T29): `BROADCAST_DRAFT_CHANGED` applies `details.draft` as the held draft and puts the member's unsent field values in `stale.mine`; `useMine` re-sends them on the new version, `keepTheirs` drops them. `BROADCAST_GROUP_CHANGED` sets `groupChanged` (the SCR-32 re-ask). `BROADCAST_NOT_A_DRAFT` (save or group write) and a `status` frame re-read `getBroadcast` and mark the store `launched`; `deleted` → `not_found`; `draft` / `group` / `report` frames are ignored by the editor.
+- `implement` (T29): the report re-read reloads `getBroadcast` and as many recipient pages as are shown (Show more kept), one fetch at a time; group adds / removes / add-matching run in a promise chain and follow `group_size` into the held draft's audience without touching its version.
+- `implement` (T29): gate — full `pnpm test` failed only `e2e/contacts-load` and `migrations.int` (known set), both green re-run alone; `pnpm lint` clean.

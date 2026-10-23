@@ -721,7 +721,7 @@
         "apps/web/src/features/broadcasts/report-store.test.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t29-web-broadcasts-stores.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T30",
