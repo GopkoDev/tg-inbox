@@ -1,0 +1,994 @@
+{
+  "slug": "broadcasts",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add the shared broadcast text and name rules: trim both ends, 1–4096 UTF-16 code units for the text, 1–80 graphemes for the name, and the \"Copy of …\" cut",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-02",
+        "AC-17"
+      ],
+      "dod": "Unit tests prove the text is trimmed at both ends (spaces and line breaks) before it is measured, that 4096 UTF-16 code units pass and 4097 fail (an emoji counts 2, a 2 048-emoji text passes), that an empty or whitespace-only text fails, that a name of 1–80 graphemes passes and 0 or 81 fail (an emoji counts 1), and that \"Copy of …\" is cut to 80 graphemes without splitting a grapheme.",
+      "files_hint": [
+        "packages/shared/src/broadcast-text.ts",
+        "packages/shared/src/broadcast-text.test.ts",
+        "packages/shared/src/index.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t01-shared-broadcast-text-rules.md",
+      "status": "todo"
+    },
+    {
+      "id": "T2",
+      "title": "Promote migrations 01–02 (contact_bot_reach and its backfill for the workspace's current Telegram bot), regenerate DB types and add the reach fixtures",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-10",
+        "AC-14"
+      ],
+      "dod": "Migrations 01–02 are promoted as TypeScript migrations, apply, backfill one \"wrote\" row per contact that wrote for its workspace's bot row in any state (none for a workspace with no bot row), re-run without duplicates and revert cleanly; db.types.gen.ts is regenerated with ContactBotReach; the migrations integration test refuses a reach row naming another workspace's contact and a blocked_at or wrote_at later than changed_at; insertReach and insertContact({ reachForBot }) exist.",
+      "files_hint": [
+        "docs/features/broadcasts/migrations/01_create_contact_bot_reach.up.sql",
+        "docs/features/broadcasts/migrations/02_backfill_contact_bot_reach.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/contacts.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t02-promote-reach-migrations.md",
+      "status": "todo"
+    },
+    {
+      "id": "T3",
+      "title": "Promote migrations 03–08 (the conversations (workspace_id, id) key, broadcasts, broadcast_audience_tags, broadcast_group_contacts, broadcast_recipients, broadcast_items), regenerate DB types and add the broadcast fixtures",
+      "layer": "migration",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Migrations 03–08 are promoted in order, apply and revert cleanly, db.types.gen.ts gains Broadcasts, BroadcastAudienceTags, BroadcastGroupContacts, BroadcastRecipients and BroadcastItems, the migrations integration test refuses on its named constraint a group row, recipient or item naming another workspace's contact, broadcast or conversation, a frozen breakdown that does not add up or exceeds 10 000, a failed recipient without a reason and a second item for one broadcast and conversation, and insertBroadcast, launchBroadcastFixture, endBroadcastFixture, insertAudienceTag, insertGroupContact, insertBroadcastItem and twoWorkspacesWithBroadcasts exist.",
+      "files_hint": [
+        "docs/features/broadcasts/migrations/03_add_conversations_workspace_id_id_key.up.sql",
+        "docs/features/broadcasts/migrations/04_create_broadcasts.up.sql",
+        "docs/features/broadcasts/migrations/08_create_broadcast_items.up.sql",
+        "apps/api/migrations/",
+        "apps/api/src/platform/db.types.gen.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/test/fixtures/broadcasts.ts",
+        "apps/api/src/test/fixtures/conversations.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t03-promote-broadcast-tables-and-fixtures.md",
+      "status": "todo"
+    },
+    {
+      "id": "T4",
+      "title": "Add the broadcasts zod contracts, the eleven BROADCAST_* error codes, the broadcast.changed frame and signal, the widened contact.changed (reach) and conversation.changed (broadcast) frames with their hub mapping, and keep the web stores ignoring what they do not handle yet",
+      "layer": "ports",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-11",
+        "AC-14",
+        "AC-16"
+      ],
+      "dod": "packages/shared and platform unit tests parse every contract example of openapi.yaml and events.md (including the refusal bodies with their details), map each BROADCAST_* code to its status and AppError subclass (BROADCAST_LAUNCH_LIMIT_REACHED as 429 with Retry-After), accept broadcast.changed with each change kind and refuse an unknown one, refuse a broadcast conversation.changed whose change is not created, and the hub forwards the three signals to every socket of the workspace; web store tests prove the inbox list and the attention store ignore a conversation.changed whose item type is broadcast.",
+      "files_hint": [
+        "packages/shared/src/broadcasts.ts",
+        "packages/shared/src/broadcasts.test.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/contacts.ts",
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/index.ts",
+        "apps/api/src/platform/errors.ts",
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/modules/inbox/infra/hub.ts",
+        "apps/web/src/features/attention/store.ts",
+        "apps/web/src/features/inbox/store.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t04-contracts-codes-and-frames.md",
+      "status": "todo"
+    },
+    {
+      "id": "T5",
+      "title": "Add the broadcasts domain for drafts and launches: the status machine, the version rule, who may delete, launch and stop, the tag audience shape with the dropped-tag notice, the 10 000 limit and the audience fingerprint",
+      "layer": "domain",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-05",
+        "AC-06",
+        "AC-07",
+        "AC-09",
+        "AC-18"
+      ],
+      "dod": "Domain unit tests prove the status machine (draft → sending → sent | stopped, no other move), that only draft fields raise the version, that a draft is deletable by its author or a business owner and by no one else, that only a business owner launches and stops, that a tag audience keeps only existing tags and reports dropped ones by stored name, that 10 000 is allowed and 10 001 is not, and that the fingerprint is the same SHA-256 for the same set in any order and differs for the same count with another contact.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/domain/broadcast.ts",
+        "apps/api/src/modules/broadcasts/domain/broadcast.test.ts",
+        "apps/api/src/modules/broadcasts/domain/audience.ts",
+        "apps/api/src/modules/broadcasts/domain/audience.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t05-draft-and-launch-domain.md",
+      "status": "todo"
+    },
+    {
+      "id": "T6",
+      "title": "Add the broadcasts domain for sending and copies: recipient states and failure reasons, the bots answer → outcome map with its abort kinds, the fixable set, the pace constants and the round-robin turn picker, and the duplicate audience choices",
+      "layer": "domain",
+      "deps": [
+        "T1"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-13",
+        "AC-15"
+      ],
+      "dod": "Domain unit tests prove every sendBroadcastMessage answer maps to its outcome (delivered, blocked, failed with account_gone, chat_not_found or telegram_error, not_confirmed, back to waiting for a rate limit or a pause, abort with text_refused or bot_stopped for text_refused, bot_unavailable and bot_changed), that the fixable set is exactly bot_stopped, text_refused, telegram_error plus stopped (and not_confirmed only when asked), that the turn picker serves sending broadcasts oldest launch first one recipient each in turn, that the constants are 25 per second (40 ms), 8 in flight, a 20 s link and 1 s report coalescing, and that each duplicate audience choice is accepted only for the source it fits.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/domain/recipient.ts",
+        "apps/api/src/modules/broadcasts/domain/recipient.test.ts",
+        "apps/api/src/modules/broadcasts/domain/sending.ts",
+        "apps/api/src/modules/broadcasts/domain/sending.test.ts",
+        "apps/api/src/modules/broadcasts/domain/duplicate.ts",
+        "apps/api/src/modules/broadcasts/domain/duplicate.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t06-sending-and-copy-domain.md",
+      "status": "todo"
+    },
+    {
+      "id": "T7",
+      "title": "Record reachability in contacts: capture's upsertFromProfile takes the receiving bot's Telegram id and writes \"wrote\" (clearing an older block), recordBlockChange applies a block or unblock only when newer, and contact.changed reach fires only when a mark changed",
+      "layer": "app",
+      "deps": [
+        "T2",
+        "T4"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-14"
+      ],
+      "dod": "Integration tests prove capture writes a reach row for the receiving Telegram bot (wrote_at = the earliest message, a newer message clears an older block, an older one does not), recordBlockChange blocks and unblocks only when its time is not older than changed_at, a fact for an unknown Telegram user is a no-op, a second bot id gets its own row, every write is scoped by workspace with an isolation test, and contact.changed { change: reach } is published in the writing transaction only when the blocked mark actually changed.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/reach-repo.ts",
+        "apps/api/src/modules/contacts/infra/reach-repo.int.test.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts",
+        "apps/api/src/modules/contacts/app/reach.ts",
+        "apps/api/src/modules/contacts/app/reach.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/app/fakes.ts",
+        "apps/api/src/modules/contacts/infra/tag-signals.ts",
+        "apps/api/src/modules/conversations/app/conversations.ts",
+        "apps/api/src/modules/conversations/app/ports.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t07-contacts-reach-writes.md",
+      "status": "todo"
+    },
+    {
+      "id": "T8",
+      "title": "Evaluate audiences in contacts with the Contacts filter rules: the breakdown for a tag audience or a list of ids against a Telegram bot, the reachable set sorted by id, existing tags, contacts matching a search and filter, contact cards and the blocked check at a recipient's turn",
+      "layer": "infra",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-05",
+        "AC-10",
+        "AC-14"
+      ],
+      "dod": "Integration tests on the AC-01 seed prove the breakdown of \"any of VIP, leaving out Staff\" is 38 / 2 blocked / 0 never wrote / 36, that all, none and no-tag modes match the Contacts list exactly, that a group's ids give the same partition, that with no bot only the audience size is returned, that the reachable set is sorted by contact id with Telegram user ids and stops at 10 001, that existingTags drops deleted and merged tags, that matchingContactIds equals the Contacts list's matching set, and that every method is scoped by workspace with an isolation test.",
+      "files_hint": [
+        "apps/api/src/modules/contacts/infra/audience-query.ts",
+        "apps/api/src/modules/contacts/infra/audience-query.int.test.ts",
+        "apps/api/src/modules/contacts/infra/contact-list-query.ts",
+        "apps/api/src/modules/contacts/app/audiences.ts",
+        "apps/api/src/modules/contacts/app/audiences.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/app/fakes.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t08-contacts-audience-evaluation.md",
+      "status": "todo"
+    },
+    {
+      "id": "T9",
+      "title": "Show \"blocked the bot\" on Contacts reads: list rows and the profile gain blocked_since for the current Telegram bot through a late-bound currentBot port",
+      "layer": "app",
+      "deps": [
+        "T7",
+        "T8"
+      ],
+      "acs": [
+        "AC-10",
+        "AC-14"
+      ],
+      "dod": "Unit and integration tests prove a list row and a profile carry blocked_since when the contact is blocked for the current Telegram bot and null when unblocked, when blocked only for an older bot, or when the workspace has no bot, and that the list query keeps its contacts §6 plan (no extra query per row).",
+      "files_hint": [
+        "apps/api/src/modules/contacts/app/contacts.ts",
+        "apps/api/src/modules/contacts/app/contacts.test.ts",
+        "apps/api/src/modules/contacts/app/ports.ts",
+        "apps/api/src/modules/contacts/infra/contact-list-query.ts",
+        "apps/api/src/modules/contacts/infra/contact-repo.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t09-contacts-blocked-since-reads.md",
+      "status": "todo"
+    },
+    {
+      "id": "T10",
+      "title": "Learn blocks in bots: allowed_updates gains my_chat_member, the classifier turns a private kicked / member update into a reach decision handled before the interceptor and capture, and a reply refused as blocked records the block",
+      "layer": "app",
+      "deps": [
+        "T7"
+      ],
+      "acs": [
+        "AC-14"
+      ],
+      "dod": "Unit and webhook integration tests prove a private my_chat_member kicked update calls contacts.recordBlockChange(blocked, at = update date) and member clears it, that neither creates a message, conversation, unread change or ping nor reaches the inbound interceptor, that a non-private my_chat_member is ignored, that setWebhook registers message, edited_message and my_chat_member, and that sendText refused with \"bot was blocked by the user\" records the block for that bot.",
+      "files_hint": [
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/modules/bots/domain/inbound.ts",
+        "apps/api/src/modules/bots/domain/inbound.test.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts",
+        "apps/api/src/modules/bots/app/send-text.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/app/fakes.ts",
+        "apps/api/src/test/fake-telegram.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t10-bots-learn-blocks.md",
+      "status": "todo"
+    },
+    {
+      "id": "T11",
+      "title": "Re-register outdated webhooks in the bots health check: a webhook that is ours but lacks my_chat_member is set again with the same URL and secret, keeping pending updates",
+      "layer": "app",
+      "deps": [
+        "T10"
+      ],
+      "acs": [
+        "AC-14"
+      ],
+      "dod": "Health-check tests against the fake Bot API prove an ours-but-outdated webhook is re-registered once with the same URL, secret and the full allowed updates without dropping pending updates, an up-to-date one is left alone, a taken-over webhook is not touched, and a failed re-registration is logged by code and retried by the next scheduled check.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/health-check.ts",
+        "apps/api/src/modules/bots/app/health-check.test.ts",
+        "apps/api/src/modules/bots/domain/health.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t11-bots-health-check-reregister.md",
+      "status": "todo"
+    },
+    {
+      "id": "T12",
+      "title": "Add bots.sendBroadcastMessage and launchReadiness: a per-bot broadcast pacer at 40 ms start slots, refusal while the send pause runs, when the bot is not working or is not the launch Telegram bot, plain-text sendMessage, and every Telegram answer classified (blocked recorded in contacts)",
+      "layer": "app",
+      "deps": [
+        "T10"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10",
+        "AC-12",
+        "AC-15",
+        "AC-17"
+      ],
+      "dod": "Unit and fake-Bot-API integration tests prove launchReadiness answers the bot state and Telegram bot id, sendBroadcastMessage sends the exact text with no parse_mode to the user's chat through the workspace's own bot, refuses without a Telegram call while send_paused_until is ahead, for a needs_token or disconnected bot and for another Telegram bot, spaces sends at least 40 ms apart per bot (no 1 s window above 25) while sendText is never delayed by it, stores the send pause on a 429, maps 403 blocked / deactivated, 400 chat-not-found and text refusals, other errors and a 10 s timeout to their answers, and records a blocked answer through contacts.recordBlockChange.",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/send-broadcast-message.ts",
+        "apps/api/src/modules/bots/app/send-broadcast-message.test.ts",
+        "apps/api/src/modules/bots/app/send-broadcast-message.int.test.ts",
+        "apps/api/src/modules/bots/app/launch-readiness.ts",
+        "apps/api/src/modules/bots/app/pacer.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/test/fake-telegram.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t12-bots-send-broadcast-message.md",
+      "status": "todo"
+    },
+    {
+      "id": "T13",
+      "title": "Add broadcast items to conversations: recordBroadcastItem in the outcome transaction without touching any conversation column, the thread kind broadcast in the keyset order, one-item reads and conversation.changed with item type broadcast",
+      "layer": "app",
+      "deps": [
+        "T3",
+        "T4"
+      ],
+      "acs": [
+        "AC-16"
+      ],
+      "dod": "Integration tests prove recordBroadcastItem writes one item per broadcast and conversation at the given position time (delivered with its message id, not confirmed without) and publishes conversation.changed { item.type: broadcast, change: created } while the conversation's status, assignee, state_version, waiting, last activity and every read mark stay unchanged, that the thread pages interleave broadcast items with messages, replies and activity entries in (position_at, kind, id) order with broadcast after activity, and that every read is scoped by workspace with an isolation test.",
+      "files_hint": [
+        "apps/api/src/modules/conversations/app/broadcast-items.ts",
+        "apps/api/src/modules/conversations/app/broadcast-items.test.ts",
+        "apps/api/src/modules/conversations/infra/broadcast-item-repo.ts",
+        "apps/api/src/modules/conversations/infra/broadcast-item-repo.int.test.ts",
+        "apps/api/src/modules/conversations/domain/thread.ts",
+        "apps/api/src/modules/conversations/domain/thread.test.ts",
+        "apps/api/src/modules/conversations/infra/thread-queries.ts",
+        "apps/api/src/modules/conversations/infra/conversation-signals.ts",
+        "apps/api/src/modules/conversations/app/ports.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t13-conversations-broadcast-items.md",
+      "status": "todo"
+    },
+    {
+      "id": "T14",
+      "title": "Build the broadcasts draft-side repositories: the broadcast row (insert, lock FOR NO KEY UPDATE, versioned field save, list order, launch-cap count and 10th newest launch, sending broadcasts, delete), the audience tag rows and the group rows (add, remove, membership, count, page), with isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-05",
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Integration tests prove each repository method filters by workspace (isolation over twoWorkspacesWithBroadcasts), a field save applies only at the expected version and raises it, the list orders by last change then id, the cap count and the 10th newest launched_at include stopped and aborted broadcasts, a group add is ON CONFLICT DO NOTHING and reports whether a row was written, a remove deletes one row by key, membership answers only the asked ids, the group page is newest added first with a keyset, and a delete removes the draft with its tag and group rows.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/infra/broadcast-repo.ts",
+        "apps/api/src/modules/broadcasts/infra/broadcast-repo.int.test.ts",
+        "apps/api/src/modules/broadcasts/infra/audience-tag-repo.ts",
+        "apps/api/src/modules/broadcasts/infra/group-repo.ts",
+        "apps/api/src/modules/broadcasts/infra/group-repo.int.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t14-draft-repos.md",
+      "status": "todo"
+    },
+    {
+      "id": "T15",
+      "title": "Build the broadcasts recipient repository: the launch insert by unnest with positions, the conditional claim, outcome writes, back to waiting, stale in-flight resolution, settling waiting recipients, totals, the report page, the next waiting recipient and the duplicate sets, with isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T3"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-11",
+        "AC-13",
+        "AC-18"
+      ],
+      "dod": "Integration tests prove 10 000 recipients insert in one unnest statement with positions 1…n, the claim updates a waiting row only once under two concurrent claimers, an outcome sets its state, reason, time and message id, a rate-limited recipient returns to waiting with claimed_at cleared, sending rows become not_confirmed keeping claimed_at, settling turns only waiting rows into stopped or failed with the reason, totals group by state, the page follows position with an optional state filter, the next waiting recipient is the lowest position, the \"did not reach\" set holds exactly the fixable reasons plus stopped (plus not_confirmed when asked), and every method is scoped by workspace.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/infra/recipient-repo.ts",
+        "apps/api/src/modules/broadcasts/infra/recipient-repo.int.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t15-recipient-repo.md",
+      "status": "todo"
+    },
+    {
+      "id": "T16",
+      "title": "Add the broadcasts draft use cases: ports, the broadcast.changed publisher, create, save name and text against the version, save the tag audience or switch the kind against the confirmed group size, and delete by the author or a business owner",
+      "layer": "app",
+      "deps": [
+        "T4",
+        "T5",
+        "T14"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-07",
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "Unit and integration tests prove create starts a draft at version 1 with the member as author and last changer and needs no bot, a save at the shown version writes and raises the version, a stale save answers BROADCAST_DRAFT_CHANGED with the current draft, a save on a launched broadcast answers BROADCAST_NOT_A_DRAFT, an invalid name or text answers its code and keeps the last valid content, foreign tag ids answer TAG_NOT_FOUND, a switch from a group carries its confirmed size and a different size answers BROADCAST_GROUP_CHANGED, a delete by a non-author operator is FORBIDDEN and by the author or an active owner removes the draft, and each recorded write publishes one broadcast.changed (draft or deleted) in its transaction.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/ports.ts",
+        "apps/api/src/modules/broadcasts/app/fakes.ts",
+        "apps/api/src/modules/broadcasts/app/drafts.ts",
+        "apps/api/src/modules/broadcasts/app/drafts.test.ts",
+        "apps/api/src/modules/broadcasts/app/drafts.int.test.ts",
+        "apps/api/src/modules/broadcasts/infra/signals.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t16-draft-use-cases.md",
+      "status": "todo"
+    },
+    {
+      "id": "T17",
+      "title": "Add the broadcasts reads: the list with each draft's audience size, one broadcast as a draft with its breakdown for the current bot or as a launched broadcast with its frozen audience and totals, the recipients page, and itemDetails for the inbox thread",
+      "layer": "app",
+      "deps": [
+        "T8",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-08",
+        "AC-11",
+        "AC-16"
+      ],
+      "dod": "Unit and integration tests prove the list returns drafts and launched broadcasts together by last change with a draft's live audience size and a launched one's frozen size, a draft read carries the breakdown for the current Telegram bot (size only with no bot) and the dropped-tag notice, a launched read carries the audience as defined at launch, who launched and stopped it, the totals by outcome and not_reached_count (fixable failures plus stopped, api flag F-5), the recipients page follows position 50 at a time with an optional outcome filter, itemDetails names the launching owner even when deactivated, and a foreign broadcast id is not found.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/reads.ts",
+        "apps/api/src/modules/broadcasts/app/reads.test.ts",
+        "apps/api/src/modules/broadcasts/app/reads.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts",
+        "apps/api/src/modules/broadcasts/app/fakes.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t17-broadcast-reads.md",
+      "status": "todo"
+    },
+    {
+      "id": "T18",
+      "title": "Add the broadcast group use cases: add one contact, count the matching contacts not yet in the group, add all matching as a whole or not at all, remove one, the group page with cards and breakdown, and the membership of a picker page",
+      "layer": "app",
+      "deps": [
+        "T8",
+        "T16"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-05",
+        "AC-08",
+        "AC-14"
+      ],
+      "dod": "Unit and integration tests on the AC-04 / AC-05 seeds prove adding a contact already there answers unchanged, a foreign contact is not found, a write on a launched broadcast answers BROADCAST_NOT_A_DRAFT and on a draft switched to tags BROADCAST_DRAFT_CHANGED, the matching count excludes group members and gives can_add, add-all-matching adds the current matches under the row lock and says how many (13 of 14), a bulk add past 10 000 is refused whole with BROADCAST_AUDIENCE_TOO_LARGE and the room left, a remove of an absent row answers unchanged, group writes never raise the version, and each written change publishes broadcast.changed group.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/group.ts",
+        "apps/api/src/modules/broadcasts/app/group.test.ts",
+        "apps/api/src/modules/broadcasts/app/group.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts",
+        "apps/api/src/modules/broadcasts/app/fakes.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t18-group-use-cases.md",
+      "status": "todo"
+    },
+    {
+      "id": "T19",
+      "title": "Add the launch confirmation read, which is also the pre-check: owner only, a working bot, a non-empty text, at most 10 000, at least one reachable contact and the 10-per-24-hours cap, answering the trimmed text, version, breakdown and fingerprint",
+      "layer": "app",
+      "deps": [
+        "T5",
+        "T8",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-07",
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "Unit and integration tests prove an operator gets OWNER_ONLY, no bot or a bot that is not connected answers BROADCAST_NEEDS_WORKING_BOT with the bot state, an empty text BROADCAST_TEXT_INVALID, an audience over 10 000 BROADCAST_AUDIENCE_TOO_LARGE, nobody reachable BROADCAST_NO_REACHABLE_CONTACT, an 11th launch in 24 h BROADCAST_LAUNCH_LIMIT_REACHED with next_launch_at = the 10th newest launch + 24 h, and otherwise the confirmation returns the text, the version, the breakdown (36 of 38 on the AC-06 seed) and the fingerprint of the sorted reachable ids.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/preview.ts",
+        "apps/api/src/modules/broadcasts/app/preview.test.ts",
+        "apps/api/src/modules/broadcasts/app/preview.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts",
+        "apps/api/src/modules/broadcasts/app/fakes.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t19-launch-confirmation.md",
+      "status": "todo"
+    },
+    {
+      "id": "T20",
+      "title": "Add the launch transaction: memberships FOR SHARE, the per-workspace launch lock and cap, the broadcast row, the bot and the audience re-checked against the confirmed version and fingerprint, then recipients frozen, the first broadcasts.send link queued and broadcast.changed status published",
+      "layer": "app",
+      "deps": [
+        "T19"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-08",
+        "AC-09"
+      ],
+      "dod": "Integration tests prove a launch at the confirmed version and fingerprint inserts exactly the confirmed recipients in fingerprint order, freezes the text, the tag names, the Telegram bot id and the breakdown, sets sending with launched_by and launched_at, queues one broadcasts.send link in the same transaction and publishes one broadcast.changed status; two concurrent launches of one draft launch once (the second answers already_launched), two launches racing for the 10th slot let one through, a retag between confirmation and launch with the same count answers BROADCAST_AUDIENCE_CHANGED, a changed text answers BROADCAST_DRAFT_CHANGED, and an owner deactivated before the commit launches nothing.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/launch.ts",
+        "apps/api/src/modules/broadcasts/app/launch.test.ts",
+        "apps/api/src/modules/broadcasts/app/launch.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t20-launch-transaction.md",
+      "status": "todo"
+    },
+    {
+      "id": "T21",
+      "title": "Add stop and the settling transaction: a business owner stops a sending broadcast (waiting → stopped), an abort fails the waiting recipients with text_refused or bot_stopped, a finish marks sent, and every ending queues the 48-hour blocked-share measure",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-18"
+      ],
+      "dod": "Unit and integration tests prove a stop by an operator is OWNER_ONLY, a stop by an owner marks every waiting recipient stopped and the broadcast stopped with who and when in one transaction while sending recipients keep their claim, a stop after the last outcome answers unchanged, an abort marks the waiting recipients failed with the plain reason and the broadcast sent with its end reason, a finish with nothing waiting or in flight marks it sent with completed, a stopped broadcast is never finished or aborted afterwards, and each ending publishes broadcast.changed status and queues broadcasts.measure-blocked-share 48 h later with the broadcast id as singleton key.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/stop.ts",
+        "apps/api/src/modules/broadcasts/app/stop.test.ts",
+        "apps/api/src/modules/broadcasts/app/stop.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/settle.ts",
+        "apps/api/src/modules/broadcasts/app/settle.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t21-stop-and-settle.md",
+      "status": "todo"
+    },
+    {
+      "id": "T22",
+      "title": "Add one link of the sending chain: resolve stale in-flight recipients as not confirmed with their items, serve the sending broadcasts in turns with at most 8 sends in flight for at most 20 s, check the block at each turn, claim before the send, record each outcome with its broadcast item and a coalesced report signal, abort or finish, and decide the successor",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T13",
+        "T21"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-11",
+        "AC-12",
+        "AC-14",
+        "AC-15",
+        "AC-16",
+        "AC-17"
+      ],
+      "dod": "Unit tests with fakes and integration tests against the fake Bot API prove a link sends each waiting recipient at most once in position order, two sending broadcasts alternate, a recipient blocked at its turn gets blocked with no send, a delivered or not-confirmed outcome writes its broadcast item in the outcome transaction, a rate limit or pause returns the recipient to waiting and delays the successor to the pause end, a refused text or a lost bot aborts through the settling transaction, a recipient left sending by a killed link becomes not confirmed with its item at the claim time and is never resent, report signals are at most one per broadcast per second, and the link stops claiming after 20 s and asks for a successor while anything still sends.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/send-link.ts",
+        "apps/api/src/modules/broadcasts/app/send-link.test.ts",
+        "apps/api/src/modules/broadcasts/app/send-link.int.test.ts",
+        "apps/api/src/modules/broadcasts/infra/signals.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts",
+        "apps/api/src/modules/broadcasts/app/fakes.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t22-send-link.md",
+      "status": "todo"
+    },
+    {
+      "id": "T23",
+      "title": "Add duplicate: any member copies any broadcast into a new draft named \"Copy of …\" within 80, a draft with its audience, a launched one as the same tags, all recipients or only the recipients it did not reach once ended",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T15",
+        "T16"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-13",
+        "AC-18"
+      ],
+      "dod": "Unit and integration tests on the AC-13 seed prove a draft copy keeps the text and the 14-contact group, \"all recipients\" makes a group of all 36 with the blocked one counted unreachable, \"only recipients it did not reach\" gives the 2 bot_stopped failures (plus stopped recipients and, only with include_not_confirmed, not confirmed ones) and never delivered, blocked or account_gone, the same-tags copy keeps the frozen tags, a not-reached copy of a still-sending broadcast answers BROADCAST_NOT_ENDED, a choice that does not fit the source answers VALIDATION_ERROR, the copy's author is the member and the source is unchanged, and an operator can duplicate.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/app/duplicate.ts",
+        "apps/api/src/modules/broadcasts/app/duplicate.test.ts",
+        "apps/api/src/modules/broadcasts/app/duplicate.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/ports.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t23-duplicate.md",
+      "status": "todo"
+    },
+    {
+      "id": "T24",
+      "title": "Add the broadcasts queues and workers: broadcasts.send (stately per workspace, retry 3, expire 60 s, 16 links per instance) with its dead letter that restarts the chain 60 s later, and broadcasts.measure-blocked-share logging the 48-hour blocked share",
+      "layer": "wiring",
+      "deps": [
+        "T20",
+        "T22"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-15"
+      ],
+      "dod": "Integration tests prove a launch's queued link runs and its successors carry the chain to the end, at most one link per workspace is active across two workers, a link that throws three times lands in broadcasts.send-dlq whose handler logs the workspace id and queues a fresh link 60 s later, a restart mid-broadcast resumes with the waiting recipients, and the measure job logs broadcast.blocked_share with delivered_count, blocked_since_count and share and no text, name or chat id.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/infra/jobs.ts",
+        "apps/api/src/modules/broadcasts/infra/jobs.int.test.ts",
+        "apps/api/src/modules/broadcasts/app/blocked-share.ts",
+        "apps/api/src/modules/broadcasts/app/blocked-share.test.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t24-queues-and-workers.md",
+      "status": "todo"
+    },
+    {
+      "id": "T25",
+      "title": "Enrich the inbox thread with broadcast items: listThreadItems returns broadcast entries with the broadcast name, text and launching owner from broadcasts.itemDetails, and getThreadBroadcastItem reads one",
+      "layer": "ports",
+      "deps": [
+        "T13",
+        "T17"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-16"
+      ],
+      "dod": "Route integration tests prove listThreadItems returns a broadcast item between the messages and replies at its position with name, text, state and the launching owner (also when deactivated), getThreadBroadcastItem answers one item and 404 ITEM_NOT_FOUND for an item of another conversation or workspace, and neither read changes read state or attention.",
+      "files_hint": [
+        "apps/api/src/modules/inbox/app/reads.ts",
+        "apps/api/src/modules/inbox/app/reads.test.ts",
+        "apps/api/src/modules/inbox/app/ports.ts",
+        "apps/api/src/modules/inbox/http/routes.ts",
+        "apps/api/src/modules/inbox/http/routes.int.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t25-inbox-thread-broadcast-items.md",
+      "status": "todo"
+    },
+    {
+      "id": "T26",
+      "title": "Register the broadcasts routes (registerBroadcasts): the seventeen operations with their zod schemas, the owner-only launch confirmation, launch and stop, the masked picker search, and the wiring in buildDeps (contacts ⇄ bots late-bound ports, broadcasts after team, inbox given itemDetails) and buildApp",
+      "layer": "ports",
+      "deps": [
+        "T9",
+        "T11",
+        "T12",
+        "T18",
+        "T23",
+        "T24",
+        "T25"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08"
+      ],
+      "dod": "Route integration tests prove every broadcasts operation answers its contract shape and every listed error code through the real modules, an operator gets 403 OWNER_ONLY on the launch confirmation, the launch and the stop, a foreign broadcast or contact id is 404 with no hint, a deactivated member gets 403 ACCESS_REMOVED and a signed-out caller 401, the group picker's q is masked in request logs, and buildApp boots with the three new queues registered.",
+      "files_hint": [
+        "apps/api/src/modules/broadcasts/http/routes.ts",
+        "apps/api/src/modules/broadcasts/http/routes.int.test.ts",
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t26-register-broadcasts-routes.md",
+      "status": "todo"
+    },
+    {
+      "id": "T27",
+      "title": "Add the API end-to-end broadcasts stories, the cross-workspace and secrecy suite, the broadcastIntegrity run-book queries and the live-push assertions",
+      "layer": "tests",
+      "deps": [
+        "T26"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-08",
+        "AC-09",
+        "AC-11",
+        "AC-13",
+        "AC-14",
+        "AC-16",
+        "AC-18"
+      ],
+      "dod": "The API e2e stories pass against Postgres and the fake Bot API: draft → launch → report → sent with one message per recipient and a broadcast item per delivered recipient, a my_chat_member block and a refused send marking the contact, stop mid-send, abort on a revoked token, duplicate \"did not reach\", the cross-workspace refusals with no hint, no text, name or chat id in logs, frames or job payloads, and every broadcastIntegrity query returns zero rows after each story.",
+      "files_hint": [
+        "apps/api/src/e2e/broadcasts-flows.int.test.ts",
+        "apps/api/src/e2e/broadcasts-tenancy.int.test.ts",
+        "apps/api/src/e2e/helpers.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t27-api-e2e-tenancy-integrity.md",
+      "status": "todo"
+    },
+    {
+      "id": "T28",
+      "title": "Add the seeded sending and timing checks: pace per 1 s window with two broadcasts, 1 000 recipients within 90 s, replies during a broadcast, a reply's 429 pausing broadcasts, the stop within 2 s, the 10 000-contact draft count and launch, and blocked freshness",
+      "layer": "tests",
+      "deps": [
+        "T26"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-15",
+        "AC-18"
+      ],
+      "dod": "Seeded integration tests against the fake Bot API prove no 1 s window holds more than 25 broadcast sends of one bot with two broadcasts sending, 1 000 recipients with a 150 ms answer delay all have an outcome within 90 s, replies sent during a broadcast are accepted with p95 ≤ 2 s, a 429 to a reply stops every broadcast send until retry_after, no send starts more than 2 s after a stop commits, the draft count of a 10 000-contact workspace is ≤ 500 ms and freezing 10 000 recipients ≤ 2 s, and a my_chat_member update marks the contact within 5 s.",
+      "files_hint": [
+        "apps/api/src/e2e/broadcasts-load.int.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t28-sending-load-and-timing.md",
+      "status": "todo"
+    },
+    {
+      "id": "T29",
+      "title": "Add the web broadcasts API source and stores: the list store, the draft store (save as you go, one save in flight against the shown version, the stale-save merge, group adds and removes one by one) and the report store (totals plus one 50-recipient page, one fetch at a time), with the broadcast.changed subscriptions",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-03",
+        "AC-11"
+      ],
+      "dod": "Store unit tests prove each broadcast.changed frame triggers exactly the re-reads screens.md lists (list on any change with one fetch in flight and one queued, the report on report and status one fetch at a time, the open draft only on status and deleted), that the draft store sends one save at a time with the version it holds and replays a change made meanwhile on the new version, that BROADCAST_DRAFT_CHANGED keeps the member's own edit beside the teammate's version, and that frames of another workspace are dropped.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/api.ts",
+        "apps/web/src/features/broadcasts/list-store.ts",
+        "apps/web/src/features/broadcasts/list-store.test.ts",
+        "apps/web/src/features/broadcasts/draft-store.ts",
+        "apps/web/src/features/broadcasts/draft-store.test.ts",
+        "apps/web/src/features/broadcasts/report-store.ts",
+        "apps/web/src/features/broadcasts/report-store.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t29-web-broadcasts-stores.md",
+      "status": "todo"
+    },
+    {
+      "id": "T30",
+      "title": "Build SCR-24, the Broadcasts list: BroadcastsTable with statuses, audience sizes and last change, the empty state with New broadcast, the Broadcasts navigation item, the broadcast routes and BroadcastCrumb",
+      "layer": "ui",
+      "deps": [
+        "T29"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-08"
+      ],
+      "dod": "Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/BroadcastsTable.tsx",
+        "apps/web/src/features/broadcasts/BroadcastsTable.test.tsx",
+        "apps/web/src/features/broadcasts/BroadcastCrumb.tsx",
+        "apps/web/src/pages/BroadcastsPage.tsx",
+        "apps/web/src/pages/BroadcastDetailPage.tsx",
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/app/routes.test.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t30-scr24-broadcasts-list.md",
+      "status": "todo"
+    },
+    {
+      "id": "T31",
+      "title": "Build SCR-25, the draft editor's Message card and frame: name and text saved as you go with the remaining length by the shared rule, the status line and the stale-save merge, AudienceBreakdown, the role-aware title actions with the launch pre-check refusals in place, and SCR-31 DeleteDraftDialog",
+      "layer": "ui",
+      "deps": [
+        "T30"
+      ],
+      "acs": [
+        "AC-02",
+        "AC-03",
+        "AC-07",
+        "AC-10"
+      ],
+      "dod": "Testing Library tests cover every SCR-25 Message-card, breakdown, title-action and live state in screens.md and every SCR-31 state: the remaining length counted in UTF-16 units with the field error past 4096, nothing saved while invalid, Saving… / Saved / Couldn't save — Retry, the stale-save view keeping the member's edit, no Launch for an operator with the owners-only note, Delete only for the author or an owner, each launch refusal with its message and the way to the bot settings, and the switch to the read-only page when a teammate launches.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/BroadcastEditor.tsx",
+        "apps/web/src/features/broadcasts/BroadcastEditor.test.tsx",
+        "apps/web/src/features/broadcasts/AudienceBreakdown.tsx",
+        "apps/web/src/features/broadcasts/AudienceBreakdown.test.tsx",
+        "apps/web/src/features/broadcasts/DeleteDraftDialog.tsx",
+        "apps/web/src/features/broadcasts/DeleteDraftDialog.test.tsx",
+        "apps/web/src/pages/BroadcastDetailPage.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t31-scr25-message-and-actions.md",
+      "status": "todo"
+    },
+    {
+      "id": "T32",
+      "title": "Build the tag audience on SCR-25: TagFilter's controlled mode for Send to, the Leave out popover, the chosen and left-out badges, the dropped-tag notice and the over-10 000 warning, and SCR-32 SwitchAudienceDialog",
+      "layer": "ui",
+      "deps": [
+        "T31"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-03",
+        "AC-05"
+      ],
+      "dod": "Testing Library tests cover every tag-audience state of SCR-25 and every SCR-32 state in screens.md: TagFilter driven by value / onChange without touching the address (the Contacts list behaviour unchanged), a chosen tag disabled in Leave out and the reverse, No tags disabling Leave out, the dropped-tag notice by stored name, the over-10 000 warning, the switch confirmation naming the group size and re-asking on BROADCAST_GROUP_CHANGED.",
+      "files_hint": [
+        "apps/web/src/features/contacts/TagFilter.tsx",
+        "apps/web/src/features/contacts/TagFilter.test.tsx",
+        "apps/web/src/features/broadcasts/TagAudience.tsx",
+        "apps/web/src/features/broadcasts/TagAudience.test.tsx",
+        "apps/web/src/features/broadcasts/SwitchAudienceDialog.tsx",
+        "apps/web/src/features/broadcasts/SwitchAudienceDialog.test.tsx",
+        "apps/web/src/features/broadcasts/BroadcastEditor.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t32-scr25-tag-audience-and-scr32.md",
+      "status": "todo"
+    },
+    {
+      "id": "T33",
+      "title": "Build the broadcast group on SCR-25 and SCR-26: BroadcastGroupList with tags, blocked markers and Remove, and GroupPicker over the Contacts read with membership marks, Add, and the two-step Add all matching",
+      "layer": "ui",
+      "deps": [
+        "T32"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05"
+      ],
+      "dod": "Testing Library tests cover every group state of SCR-25 and every SCR-26 state in screens.md: the group page with name, username, tags and the blocked marker, Show more, Remove, the picker's search and controlled TagFilter with the Contacts list's counts, In group ✓ marks, Add with already-there, Add all matching (13) then Add 13 with the added count when the matches changed, and the too-large refusal with the room left.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/BroadcastGroupList.tsx",
+        "apps/web/src/features/broadcasts/BroadcastGroupList.test.tsx",
+        "apps/web/src/features/broadcasts/GroupPicker.tsx",
+        "apps/web/src/features/broadcasts/GroupPicker.test.tsx",
+        "apps/web/src/features/broadcasts/BroadcastEditor.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t33-scr25-group-and-scr26-picker.md",
+      "status": "todo"
+    },
+    {
+      "id": "T34",
+      "title": "Build SCR-27, the LaunchConfirmDialog on the /launch address: the exact text, the count, who is left out and why, the risk warning, launch with the version and fingerprint, the re-ask on a changed draft or audience, and the operator redirect",
+      "layer": "ui",
+      "deps": [
+        "T31"
+      ],
+      "acs": [
+        "AC-06",
+        "AC-07",
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "Testing Library tests cover every SCR-27 state in screens.md: the text as plain text with line breaks, Send to 36 with the left-out lines and the warning, Launch sending the version and fingerprint once (a double click launches once), BROADCAST_AUDIENCE_CHANGED and BROADCAST_DRAFT_CHANGED re-asking with the current numbers, each pre-check refusal shown on the draft instead of the dialog, the cap refusal with the next launch time, and an operator on the /launch address replaced to the draft with the owners-only note.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/LaunchConfirmDialog.tsx",
+        "apps/web/src/features/broadcasts/LaunchConfirmDialog.test.tsx",
+        "apps/web/src/pages/BroadcastDetailPage.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t34-scr27-launch-confirmation.md",
+      "status": "todo"
+    },
+    {
+      "id": "T35",
+      "title": "Build SCR-28, the read-only broadcast page with BroadcastReport (live totals, outcome filter, 50-recipient pages with plain reasons) and SCR-29 StopBroadcastDialog for business owners",
+      "layer": "ui",
+      "deps": [
+        "T30"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-12",
+        "AC-18"
+      ],
+      "dod": "Testing Library tests cover every SCR-28 and SCR-29 state in screens.md: the message, the audience as defined, launched by and when, the status and the ended-early line, the five totals, the outcome filter and Show more with each reason in plain words, live re-reads on report and status one at a time, Stop only for an owner with the waiting count, the stopped and unchanged answers, and Duplicate offered instead of any edit.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/BroadcastPage.tsx",
+        "apps/web/src/features/broadcasts/BroadcastPage.test.tsx",
+        "apps/web/src/features/broadcasts/BroadcastReport.tsx",
+        "apps/web/src/features/broadcasts/BroadcastReport.test.tsx",
+        "apps/web/src/features/broadcasts/StopBroadcastDialog.tsx",
+        "apps/web/src/features/broadcasts/StopBroadcastDialog.test.tsx",
+        "apps/web/src/pages/BroadcastDetailPage.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t35-scr28-report-and-scr29-stop.md",
+      "status": "todo"
+    },
+    {
+      "id": "T36",
+      "title": "Build SCR-30, the DuplicateBroadcastDialog from the list, the draft and the broadcast page: the audience choice with per-option counts, \"did not reach\" disabled until the broadcast ends, and the not-confirmed warning",
+      "layer": "ui",
+      "deps": [
+        "T31",
+        "T35"
+      ],
+      "acs": [
+        "AC-13"
+      ],
+      "dod": "Testing Library tests cover every SCR-30 state in screens.md: a draft duplicated at once, a launched broadcast offering same tags (tag audiences only), all recipients and did not reach with their counts, did not reach disabled while sending, the not-confirmed checkbox and its warning sent as include_not_confirmed, BROADCAST_NOT_ENDED shown in place, and the new draft opened after 201.",
+      "files_hint": [
+        "apps/web/src/features/broadcasts/DuplicateBroadcastDialog.tsx",
+        "apps/web/src/features/broadcasts/DuplicateBroadcastDialog.test.tsx",
+        "apps/web/src/features/broadcasts/BroadcastsTable.tsx",
+        "apps/web/src/features/broadcasts/BroadcastEditor.tsx",
+        "apps/web/src/features/broadcasts/BroadcastPage.tsx"
+      ],
+      "file": "docs/features/broadcasts/tasks/t36-scr30-duplicate-dialog.md",
+      "status": "todo"
+    },
+    {
+      "id": "T37",
+      "title": "Render the broadcast item in the inbox thread (SCR-02): BroadcastItem as a new ThreadItemView kind with the name linking to the broadcast, the launching owner, the text and the delivered or not-confirmed time, inserted live without touching read state or attention",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-16"
+      ],
+      "dod": "Testing Library and store tests cover every SCR-02 broadcast-item state in screens.md: delivered and not confirmed, a deactivated launcher still named, the text as plain text with line breaks, the item fetched by getThreadBroadcastItem on conversation.changed broadcast for the open conversation only and inserted at its position, and no mark-read call, no list refetch and no attention change.",
+      "files_hint": [
+        "apps/web/src/features/inbox/BroadcastItem.tsx",
+        "apps/web/src/features/inbox/BroadcastItem.test.tsx",
+        "apps/web/src/features/inbox/ThreadItemView.tsx",
+        "apps/web/src/features/inbox/Thread.test.tsx",
+        "apps/web/src/features/inbox/store.ts",
+        "apps/web/src/features/inbox/api-source.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t37-scr02-broadcast-item.md",
+      "status": "todo"
+    },
+    {
+      "id": "T38",
+      "title": "Show the blocked mark on Contacts (SCR-18) and the profile (SCR-19), re-read live on contact.changed reach",
+      "layer": "ui",
+      "deps": [
+        "T4"
+      ],
+      "acs": [
+        "AC-14"
+      ],
+      "dod": "Testing Library and store tests cover the SCR-18 and SCR-19 states screens.md adds: the Blocked the bot badge with its since title on a row, the profile line, no marker when blocked_since is null, the list re-reading its current page only when the changed contact is on it, the profile re-reading on its own contact, and nothing else on SCR-18 becoming live.",
+      "files_hint": [
+        "apps/web/src/features/contacts/ContactsTable.tsx",
+        "apps/web/src/features/contacts/ContactsTable.test.tsx",
+        "apps/web/src/features/contacts/ContactProfile.tsx",
+        "apps/web/src/features/contacts/ContactProfile.test.tsx",
+        "apps/web/src/features/contacts/store.ts",
+        "apps/web/src/features/contacts/store.test.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t38-scr18-scr19-blocked-marker.md",
+      "status": "todo"
+    },
+    {
+      "id": "T39",
+      "title": "Add browser end-to-end broadcasts flows against the real API: draft a tag audience, build a group, launch and follow the live report, stop, duplicate \"did not reach\", the broadcast item in the thread, the blocked marker, and the operator's missing launch",
+      "layer": "tests",
+      "deps": [
+        "T27",
+        "T33",
+        "T34",
+        "T36",
+        "T37",
+        "T38"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-06",
+        "AC-07",
+        "AC-11",
+        "AC-14",
+        "AC-16",
+        "AC-18"
+      ],
+      "dod": "The browser flows pass locally and in CI with pnpm test:e2e: an operator drafts a tag audience and builds a group, an owner launches from the confirmation and watches the report reach sent live, an owner stops a second broadcast, duplicates it as \"did not reach\", the inbox thread shows the broadcast item without changing unread, Contacts shows the blocked marker after a my_chat_member block, and an operator sees no Launch or Stop.",
+      "files_hint": [
+        "apps/web/e2e/broadcasts.spec.ts",
+        "apps/web/e2e/support/world.ts"
+      ],
+      "file": "docs/features/broadcasts/tasks/t39-browser-e2e.md",
+      "status": "todo"
+    },
+    {
+      "id": "T40",
+      "title": "Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the broadcasts module, its routes, tables, queues and signals, the new edges, contact_bot_reach and broadcast_items, and the new components",
+      "layer": "docs",
+      "deps": [
+        "T26",
+        "T33",
+        "T34",
+        "T36",
+        "T37",
+        "T38"
+      ],
+      "acs": [
+        "AC-08"
+      ],
+      "dod": "CLAUDE.md and the architecture map name the broadcasts module with its routes, four tables, three queues and the broadcast.changed signal, the edges broadcasts → {contacts, conversations, bots, workspaces} and inbox → broadcasts, contact_bot_reach under contacts and broadcast_items under conversations, with the tenancy exceptions unchanged; the design-system canon registers every new and extended component of screens.md; and sad.md §8 lists BROADCAST_NOT_ENDED (api flag F-2).",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md",
+        "CONTEXT.md",
+        "docs/features/broadcasts/sad.md"
+      ],
+      "file": "docs/features/broadcasts/tasks/t40-docs-and-canon.md",
+      "status": "todo"
+    }
+  ]
+}
