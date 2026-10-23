@@ -22,25 +22,36 @@ import {
   type ContactTagRepo,
   type DisplayNames,
   type Executor,
+  type ReachRepo,
+  type ReachSignals,
   type TagHistoryRepo,
   type TagRepo,
   type UpsertResult,
 } from './ports.js';
 import { memberRefs } from './member-refs.js';
+import { recordWrote } from './reach.js';
 
 export interface ContactsDeps {
   repo: ContactRepo;
+  /** The "wrote" mark per Telegram bot (ADR-0002) and its `contact.changed reach` signal. */
+  reach: Pick<ReachRepo, 'upsertWrote'>;
+  signals: ReachSignals;
   clock: Clock;
 }
 
 /** The contacts app layer — what `conversations` (capture) and `bots` (settings) call. */
 export interface Contacts {
-  /** Called inside the capture transaction (`tx`) with the message's time as `seenAt`. */
+  /**
+   * Called inside the capture transaction (`tx`) with the message's time as `seenAt` and the
+   * Telegram id of the bot that received it: the contact, then its "wrote" mark for that bot
+   * (clearing an older block, ADR-0002).
+   */
   upsertFromProfile(
     workspaceId: string,
     profile: ContactProfile,
     seenAt: Date,
-    tx?: Executor,
+    telegramBotId: bigint,
+    tx: Executor,
   ): Promise<UpsertResult>;
   countContacts(workspaceId: string): Promise<number>;
   /** Contact ids matching the inbox search text; `null` when the text is empty (no filter). */
@@ -48,10 +59,21 @@ export interface Contacts {
   contactsByIds(workspaceId: string, ids: readonly string[]): Promise<ContactSummary[]>;
 }
 
-export function createContacts({ repo, clock }: ContactsDeps): Contacts {
+export function createContacts({ repo, reach, signals, clock }: ContactsDeps): Contacts {
   return {
-    upsertFromProfile: (workspaceId, profile, seenAt, tx) =>
-      repo.upsertFromProfile(workspaceId, profile, seenAt, clock.now(), tx),
+    async upsertFromProfile(workspaceId, profile, seenAt, telegramBotId, tx) {
+      const result = await repo.upsertFromProfile(workspaceId, profile, seenAt, clock.now(), tx);
+      // Lock order (sad.md §8): the contact row, then only its reach row.
+      await recordWrote(
+        { reach, signals },
+        tx,
+        workspaceId,
+        result.contactId,
+        telegramBotId,
+        seenAt,
+      );
+      return result;
+    },
     countContacts: (workspaceId) => repo.count(workspaceId),
     searchContactIds: (workspaceId, query) => repo.searchContactIds(workspaceId, query),
     contactsByIds: (workspaceId, ids) => repo.contactsByIds(workspaceId, ids),

@@ -11,6 +11,8 @@ import {
   type ContactRecord,
   type ContactRepo,
   type ContactTagRepo,
+  type ReachRepo,
+  type ReachSignals,
   type TagHistoryRepo,
   type Executor,
   type TagHistoryRow,
@@ -73,6 +75,12 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
     },
     async lockContact(workspaceId, contactId) {
       return rows.some((r) => r.workspaceId === workspaceId && r.id === contactId);
+    },
+    async idByTelegramUser(workspaceId, telegramUserId) {
+      return (
+        rows.find((r) => r.workspaceId === workspaceId && r.telegramUserId === telegramUserId)
+          ?.id ?? null
+      );
     },
     async contactsByIds(workspaceId, ids) {
       return rows
@@ -647,4 +655,73 @@ export function fakeTagWritePorts(
   }
 
   return { tags, contactTags, tagHistory, signals, transaction, signalLog, events };
+}
+
+export interface FakeReachRow {
+  workspaceId: string;
+  contactId: string;
+  telegramBotId: bigint;
+  wroteAt: Date | null;
+  blockedAt: Date | null;
+  changedAt: Date;
+}
+
+/** In-memory ReachRepo; applies the same "not older than changed_at" rule as the SQL. */
+export function fakeReachRepo(): ReachRepo & { rows: FakeReachRow[] } {
+  const rows: FakeReachRow[] = [];
+  const find = (ws: string, contactId: string, bot: bigint) =>
+    rows.find((r) => r.workspaceId === ws && r.contactId === contactId && r.telegramBotId === bot);
+  return {
+    rows,
+    async upsertWrote(workspaceId, contactId, telegramBotId, sentAt) {
+      const row = find(workspaceId, contactId, telegramBotId);
+      if (!row) {
+        rows.push({
+          workspaceId,
+          contactId,
+          telegramBotId,
+          wroteAt: sentAt,
+          blockedAt: null,
+          changedAt: sentAt,
+        });
+        return false;
+      }
+      if (row.wroteAt === null || sentAt < row.wroteAt) row.wroteAt = sentAt;
+      if (sentAt < row.changedAt) return false;
+      const cleared = row.blockedAt !== null;
+      row.blockedAt = null;
+      row.changedAt = sentAt;
+      return cleared;
+    },
+    async applyBlockChange(workspaceId, contactId, telegramBotId, blocked, at) {
+      const row = find(workspaceId, contactId, telegramBotId);
+      if (!row) {
+        rows.push({
+          workspaceId,
+          contactId,
+          telegramBotId,
+          wroteAt: null,
+          blockedAt: blocked ? at : null,
+          changedAt: at,
+        });
+        return blocked;
+      }
+      if (at < row.changedAt) return false;
+      const was = row.blockedAt !== null;
+      row.blockedAt = blocked ? (row.blockedAt ?? at) : null;
+      row.changedAt = at;
+      return was !== blocked;
+    },
+  };
+}
+
+/** ReachSignals as a log: `contact.changed:reach:<ws>:<contact>`. */
+export function fakeReachSignals(): ReachSignals & { log: string[] } {
+  const log: string[] = [];
+  return {
+    log,
+    async reachChanged(_tx, workspaceId, contactId) {
+      log.push(`contact.changed:reach:${workspaceId}:${contactId}`);
+    },
+  };
 }

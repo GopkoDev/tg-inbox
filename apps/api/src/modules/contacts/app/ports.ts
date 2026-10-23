@@ -71,6 +71,50 @@ export interface ContactRepo {
   lockContact(workspaceId: string, contactId: string, tx: Executor): Promise<boolean>;
   /** The contact's facts by (workspace, id), first and last wrote included; null for an unknown or foreign id. */
   profile(workspaceId: string, contactId: string): Promise<ContactRecord | null>;
+  /** The id of the workspace's contact with this Telegram user id; null when there is none. */
+  idByTelegramUser(
+    workspaceId: string,
+    telegramUserId: bigint,
+    tx?: Executor,
+  ): Promise<string | null>;
+}
+
+// ───────── reachability (ADR-0002) ─────────
+//
+// One `contact_bot_reach` row per (workspace, contact, Telegram bot id). A fact (a message, a block,
+// an unblock) is applied only when its time is not older than the row's `changed_at`, so an
+// out-of-order fact never flips the mark back. Each write locks only its reach row.
+
+export interface ReachRepo {
+  /**
+   * Capture's "wrote" in the capture transaction, after the contact upsert: `wrote_at` keeps the
+   * earliest message; a message not older than `changed_at` clears a block and becomes `changed_at`.
+   * True when it cleared a block (the visible mark changed).
+   */
+  upsertWrote(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId: bigint,
+    sentAt: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+  /**
+   * A block (`blocked`) or unblock at `at`, applied only when `at >= changed_at`; a block keeps an
+   * earlier "since". True when the blocked mark changed.
+   */
+  applyBlockChange(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId: bigint,
+    blocked: boolean,
+    at: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+}
+
+/** `contact.changed { change: "reach" }`, published in the writing transaction. */
+export interface ReachSignals {
+  reachChanged(tx: Executor, workspaceId: string, contactId: string): Promise<void>;
 }
 
 // ───────── tags ─────────

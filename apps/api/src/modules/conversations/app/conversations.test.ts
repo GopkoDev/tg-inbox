@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { createContacts } from '../../contacts/app/contacts.js';
-import { fakeContactRepo } from '../../contacts/app/fakes.js';
+import { fakeContactRepo, fakeReachRepo, fakeReachSignals } from '../../contacts/app/fakes.js';
 import {
   createConversations,
   type InboundEdit,
@@ -24,6 +24,7 @@ const message = (o: Partial<InboundMessage> = {}): InboundMessage => ({
   kind: 'text',
   body: 'Hello',
   sentAt: at(1),
+  telegramBotId: 9401n,
   sender: {
     telegramUserId: 700001n,
     firstName: 'Olena',
@@ -48,7 +49,12 @@ const edit = (o: Partial<InboundEdit> = {}): InboundEdit => ({
 function setup() {
   const clock = fixedClock(at(100));
   const contactRepo = fakeContactRepo();
-  const contacts = createContacts({ repo: contactRepo, clock });
+  const contacts = createContacts({
+    repo: contactRepo,
+    reach: fakeReachRepo(),
+    signals: fakeReachSignals(),
+    clock,
+  });
   const conversations = fakeConversationRepo();
   const messages = fakeMessageRepo();
   const signals = fakeConversationSignals();
@@ -122,7 +128,13 @@ describe('conversations use cases', () => {
       clock: fixedClock(at(100)),
     });
     await useCases.captureInbound('ws-a', message());
-    expect(contacts.upsertFromProfile).toHaveBeenCalledWith('ws-a', message().sender, at(1), tx);
+    expect(contacts.upsertFromProfile).toHaveBeenCalledWith(
+      'ws-a',
+      message().sender,
+      at(1),
+      9401n,
+      tx,
+    );
     expect(upsert.mock.calls[0]![3]).toBe(tx);
     expect(insert.mock.calls[0]![3]).toBe(tx);
   });

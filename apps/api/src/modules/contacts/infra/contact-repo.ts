@@ -115,6 +115,16 @@ export function createContactRepo(db: Db): ContactRepo {
       return row !== undefined;
     },
 
+    async idByTelegramUser(workspaceId, telegramUserId, tx) {
+      const row = await (tx ?? db)
+        .selectFrom('contacts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('telegram_user_id', '=', String(telegramUserId))
+        .executeTakeFirst();
+      return row?.id ?? null;
+    },
+
     async profile(workspaceId, contactId) {
       const r = await db
         .selectFrom('contacts')

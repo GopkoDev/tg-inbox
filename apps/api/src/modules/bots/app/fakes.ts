@@ -257,23 +257,26 @@ export function fakeBotSignals(): BotSignals & { published: string[] } {
   };
 }
 
+/** A captured message as `bots` hands it over: with the receiving bot's Telegram id. */
+type CapturedMessage = NormalisedMessage & { telegramBotId: bigint };
+
 /** Scriptable conversations / contacts app layers as `bots` sees them. */
 export function fakeConversationsApi(): ConversationsApi & {
   last: Map<string, Date>;
   withConversations: Set<string>;
-  captured: { workspaceId: string; message: NormalisedMessage }[];
+  captured: { workspaceId: string; message: CapturedMessage }[];
   edits: { workspaceId: string; edit: NormalisedEdit }[];
   editOutcome: 'applied' | 'not_later' | 'not_found';
 } {
   const fake = {
     last: new Map<string, Date>(),
     withConversations: new Set<string>(),
-    captured: [] as { workspaceId: string; message: NormalisedMessage }[],
+    captured: [] as { workspaceId: string; message: CapturedMessage }[],
     edits: [] as { workspaceId: string; edit: NormalisedEdit }[],
     editOutcome: 'applied' as 'applied' | 'not_later' | 'not_found',
     lastMessageReceivedAt: async (w: string) => fake.last.get(w) ?? null,
     hasConversations: async (w: string) => fake.withConversations.has(w),
-    async captureInbound(workspaceId: string, message: NormalisedMessage) {
+    async captureInbound(workspaceId: string, message: CapturedMessage) {
       const seen = fake.captured.some(
         (c) =>
           c.workspaceId === workspaceId &&

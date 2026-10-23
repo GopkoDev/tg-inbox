@@ -55,9 +55,10 @@ import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-l
 import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
 import { createTagAdmin } from './modules/contacts/app/tag-admin.js';
 import { createTagWrites } from './modules/contacts/app/tags.js';
-import { createTagSignals } from './modules/contacts/infra/tag-signals.js';
+import { createReachSignals, createTagSignals } from './modules/contacts/infra/tag-signals.js';
 import { createContactListQuery } from './modules/contacts/infra/contact-list-query.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
+import { createReachRepo } from './modules/contacts/infra/reach-repo.js';
 import { createContactTagRepo } from './modules/contacts/infra/contact-tag-repo.js';
 import { createTagHistoryRepo } from './modules/contacts/infra/tag-history-repo.js';
 import { createTagRepo } from './modules/contacts/infra/tag-repo.js';
@@ -155,7 +156,12 @@ export function buildDeps(
 
   // --- contacts → conversations → bots (one-way: bots → conversations → contacts, bots → contacts) ---
   const transaction = <T>(fn: (tx: typeof db) => Promise<T>) => db.transaction().execute(fn);
-  const contacts = createContacts({ repo: createContactRepo(db), clock });
+  const contacts = createContacts({
+    repo: createContactRepo(db),
+    reach: createReachRepo(db),
+    signals: createReachSignals(),
+    clock,
+  });
   const conversations = createConversations({
     transaction,
     conversations: createConversationRepo(db),

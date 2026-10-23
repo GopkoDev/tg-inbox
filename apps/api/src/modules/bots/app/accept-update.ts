@@ -108,7 +108,10 @@ export function createAcceptUpdate({
       log.info({ ...ids, outcome: 'edited', edit: result }, 'telegram edit handled');
       return 'edited';
     }
-    const outcome = await conversations.captureInbound(bot.workspaceId, decision.message);
+    const outcome = await conversations.captureInbound(bot.workspaceId, {
+      ...decision.message,
+      telegramBotId: bot.telegramBotId,
+    });
     log.info({ ...ids, outcome }, 'telegram update captured');
     return outcome;
   };

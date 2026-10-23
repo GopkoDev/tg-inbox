@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/contacts/infra/reach-repo.ts", "apps/api/src/
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T7 — Record reachability in contacts: capture's upsertFromProfile takes the receiving bot's Telegram id and writes "wrote" (clearing an older block), recordBlockChange applies a block or unblock only when newer, and contact.changed reach fires only when a mark changed
@@ -109,12 +109,12 @@ Key `contact_bot_reach_pkey (workspace_id, contact_id, telegram_bot_id)`; `recor
 
 ## Checklist
 
-- [ ] Red: reach-repo integration tests — `upsertWrote` keeps the earliest `wrote_at`, clears an older block and moves `changed_at` only for a newer message; `applyBlockChange` blocks / unblocks only when `at >= changed_at` and returns whether the mark changed; two bot ids → two rows; isolation over two workspaces — `apps/api/src/modules/contacts/infra/reach-repo.int.test.ts`
-- [ ] Green: `reach-repo.ts` (`INSERT … ON CONFLICT … DO UPDATE … WHERE changed_at <= excluded.changed_at`, `RETURNING` old/new blocked) — `apps/api/src/modules/contacts/infra/reach-repo.ts`
-- [ ] `upsertFromProfile(…, telegramBotId)` calls the reach upsert in the same transaction after the contact upsert — `apps/api/src/modules/contacts/infra/contact-repo.ts`, `apps/api/src/modules/contacts/app/ports.ts`, `apps/api/src/modules/contacts/app/fakes.ts`
-- [ ] `recordBlockChange(workspaceId, telegramBotId, telegramUserId, blocked, at)` use case: unknown user → no-op; publish `contact.changed reach` in the transaction only on a change — `apps/api/src/modules/contacts/app/reach.ts` (+ `reach.test.ts`), publisher in `apps/api/src/modules/contacts/infra/tag-signals.ts`
-- [ ] Capture passes the receiving bot's Telegram id through — `apps/api/src/modules/conversations/app/conversations.ts`, `apps/api/src/modules/conversations/app/ports.ts`, `apps/api/src/modules/bots/app/accept-update.ts`
-- [ ] Existing capture tests updated for the new argument; no log line carries a name or chat id
+- [x] Red: reach-repo integration tests — `upsertWrote` keeps the earliest `wrote_at`, clears an older block and moves `changed_at` only for a newer message; `applyBlockChange` blocks / unblocks only when `at >= changed_at` and returns whether the mark changed; two bot ids → two rows; isolation over two workspaces — `apps/api/src/modules/contacts/infra/reach-repo.int.test.ts`
+- [x] Green: `reach-repo.ts` (`INSERT … ON CONFLICT … DO UPDATE … WHERE changed_at <= excluded.changed_at`, `RETURNING` old/new blocked) — `apps/api/src/modules/contacts/infra/reach-repo.ts`
+- [x] `upsertFromProfile(…, telegramBotId)` calls the reach upsert in the same transaction after the contact upsert — `apps/api/src/modules/contacts/infra/contact-repo.ts`, `apps/api/src/modules/contacts/app/ports.ts`, `apps/api/src/modules/contacts/app/fakes.ts`
+- [x] `recordBlockChange(workspaceId, telegramBotId, telegramUserId, blocked, at)` use case: unknown user → no-op; publish `contact.changed reach` in the transaction only on a change — `apps/api/src/modules/contacts/app/reach.ts` (+ `reach.test.ts`), publisher in `apps/api/src/modules/contacts/infra/tag-signals.ts`
+- [x] Capture passes the receiving bot's Telegram id through — `apps/api/src/modules/conversations/app/conversations.ts`, `apps/api/src/modules/conversations/app/ports.ts`, `apps/api/src/modules/bots/app/accept-update.ts`
+- [x] Existing capture tests updated for the new argument; no log line carries a name or chat id
 
 ## Edge cases
 
@@ -129,7 +129,16 @@ Key `contact_bot_reach_pkey (workspace_id, contact_id, telegram_bot_id)`; `recor
 
 ## Definition of Done
 
-- [ ] Integration tests prove capture writes a reach row for the receiving Telegram bot (wrote_at = the earliest message, a newer message clears an older block, an older one does not), recordBlockChange blocks and unblocks only when its time is not older than changed_at, a fact for an unknown Telegram user is a no-op, a second bot id gets its own row, every write is scoped by workspace with an isolation test, and contact.changed { change: reach } is published in the writing transaction only when the blocked mark actually changed.
-- [ ] Every new repository method takes `workspaceId` and is covered by the isolation test.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Integration tests prove capture writes a reach row for the receiving Telegram bot (wrote_at = the earliest message, a newer message clears an older block, an older one does not), recordBlockChange blocks and unblocks only when its time is not older than changed_at, a fact for an unknown Telegram user is a no-op, a second bot id gets its own row, every write is scoped by workspace with an isolation test, and contact.changed { change: reach } is published in the writing transaction only when the blocked mark actually changed.
+- [x] Every new repository method takes `workspaceId` and is covered by the isolation test.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T7): the reach write sits in its own repository (`contacts/infra/reach-repo.ts`, `ReachRepo.upsertWrote` / `applyBlockChange`), called by the contacts app layer in the capture transaction right after `ContactRepo.upsertFromProfile` — the same transaction and lock order the audit asks for, without widening the contact repo's SQL. `Contacts.upsertFromProfile(workspaceId, profile, seenAt, telegramBotId, tx)` now takes the bot id and a required `tx` (the signal is published in it); `createContacts` takes `reach` + `signals` (`createReachSignals` in `infra/tag-signals.ts`).
+- `implement` (T7): Postgres 16 has no `RETURNING old.*`, so each reach write locks its row `FOR UPDATE` (or inserts it with `ON CONFLICT DO NOTHING` and re-reads the winner under the lock) and decides in code whether the blocked mark changed; two concurrent blocks report one change.
+- `implement` (T7): a block of an already blocked contact keeps the first `blocked_at` ("since when") and moves `changed_at`; an unblock with no row inserts a row with `changed_at` only (no signal), so an older block notice cannot flip the mark later.
+- `implement` (T7): `InboundMessage` (conversations) gains `telegramBotId`; `bots` `ConversationsApi.captureInbound` takes `NormalisedMessage & { telegramBotId }` and `accept-update.ts` adds the receiving bot's id. `deps.ts` (not in files_hint) builds `createContacts` with the reach repo and signals so production capture writes reach.
+- `implement` (T7): `createContactReach({ transaction, contacts, reach, signals }).recordBlockChange(...)` (`contacts/app/reach.ts`) runs its own transaction and returns whether the mark changed; it is not wired into `buildDeps` yet — T10 / T26 bind it for `bots`.
+- `implement` (T7): gate — full `pnpm test` had 2 failures, both from the known timing set (`e2e/contacts-load` merge, `inbox/http/changes` p95); both passed re-run alone. `pnpm lint` clean.

@@ -34,6 +34,12 @@ describe('acceptUpdate', () => {
     });
   });
 
+  it('hands capture the Telegram id of the bot the message came to (ADR-0002)', async () => {
+    const h = setup();
+    await h.accept.acceptUpdate(BOT, SECRET, update(), h.log);
+    expect(h.conversations.captured[0]!.message.telegramBotId).toBe(100001n);
+  });
+
   it('a redelivery is already_present (AC-11)', async () => {
     const h = setup();
     await h.accept.acceptUpdate(BOT, SECRET, update(), h.log);

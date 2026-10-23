@@ -173,7 +173,7 @@
         "apps/api/src/modules/bots/app/accept-update.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t07-contacts-reach-writes.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T8",

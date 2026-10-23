@@ -264,10 +264,13 @@ export interface BotSignals {
 
 /** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
 export interface ConversationsApi {
-  /** Contact, conversation and message in one transaction; a redelivery is `already_present`. */
+  /**
+   * Contact (with its "wrote" mark for the receiving Telegram bot), conversation and message in
+   * one transaction; a redelivery is `already_present`.
+   */
   captureInbound(
     workspaceId: string,
-    message: NormalisedMessage,
+    message: NormalisedMessage & { telegramBotId: bigint },
   ): Promise<'captured' | 'already_present'>;
   /** Replaces the text only when the edit is later; nothing for an uncaptured message (AC-10). */
   applyEdit(
