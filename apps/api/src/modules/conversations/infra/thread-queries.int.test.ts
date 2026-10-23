@@ -22,7 +22,9 @@ const label = (e: ThreadEntry) =>
     ? `m${e.message.body}`
     : e.type === 'reply'
       ? `r${e.reply.body}`
-      : `a${e.activity.kind}`;
+      : e.type === 'activity'
+        ? `a${e.activity.kind}`
+        : `b${e.broadcastItem.state}`;
 
 describe('thread queries', () => {
   let database: TestDatabase;

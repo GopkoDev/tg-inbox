@@ -262,10 +262,13 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
           return [];
         }),
       );
-      const items: ThreadItem[] = page.items.map((e) => {
-        if (e.type === 'message') return messageDto(workspaceId, e.message);
-        if (e.type === 'reply') return replyDto(workspaceId, e.reply, names);
-        return activityDto(workspaceId, e.activity, names);
+      // Broadcast items are enriched from `broadcasts` by T25 (listThreadItems, ADR-0010); until
+      // then they are left out of the page.
+      const items: ThreadItem[] = page.items.flatMap((e): ThreadItem[] => {
+        if (e.type === 'message') return [messageDto(workspaceId, e.message)];
+        if (e.type === 'reply') return [replyDto(workspaceId, e.reply, names)];
+        if (e.type === 'activity') return [activityDto(workspaceId, e.activity, names)];
+        return [];
       });
       return {
         workspace_id: workspaceId,

@@ -3,14 +3,16 @@ import { createHash } from 'node:crypto';
 export type ThreadPosition =
   | { positionAt: Date; kind: 'message'; id: bigint }
   | { positionAt: Date; kind: 'reply'; id: string }
-  | { positionAt: Date; kind: 'activity'; id: string };
+  | { positionAt: Date; kind: 'activity'; id: string }
+  | { positionAt: Date; kind: 'broadcast'; id: string };
 
 export interface ListPosition {
   lastActivityAt: Date;
   id: string;
 }
 
-const KIND_ORDER = { message: 0, reply: 1, activity: 2 } as const;
+/** At equal positions: message < reply < activity < broadcast item (ADR-0010). */
+const KIND_ORDER = { message: 0, reply: 1, activity: 2, broadcast: 3 } as const;
 
 export function compareThreadPosition(a: ThreadPosition, b: ThreadPosition): number {
   const dt = a.positionAt.getTime() - b.positionAt.getTime();
@@ -54,6 +56,7 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
   if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
   if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
+  if (o.kind === 'broadcast') return { positionAt, kind: 'broadcast', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };
   }

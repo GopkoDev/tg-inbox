@@ -168,3 +168,28 @@ describe('list cursor', () => {
     expect(decodeListCursor(encodeListCursor(v))).toEqual(v);
   });
 });
+
+describe('compareThreadPosition with broadcast items (ADR-0010, AC-16)', () => {
+  const broadcast = (s: number, id: string): ThreadPosition => ({
+    positionAt: t(s),
+    kind: 'broadcast',
+    id,
+  });
+
+  it('orders message < reply < activity < broadcast at equal positions', () => {
+    const items = [broadcast(5, 'b'), activity(5, 'a'), reply(5, 'r'), msg(5, 1n)];
+    items.sort(compareThreadPosition);
+    expect(items.map((i) => i.kind)).toEqual(['message', 'reply', 'activity', 'broadcast']);
+    expect(compareThreadPosition(broadcast(4, 'z'), msg(5, 1n))).toBeLessThan(0);
+    expect(compareThreadPosition(broadcast(5, 'a'), broadcast(5, 'b'))).toBeLessThan(0);
+  });
+
+  it('round-trips a broadcast cursor, and a cursor issued before broadcasts still decodes', () => {
+    const p = broadcast(7, '01900000-0000-7000-8000-000000000001');
+    expect(decodeThreadCursor(encodeThreadCursor(p))).toEqual(p);
+    const old = Buffer.from(
+      JSON.stringify({ k: 't', at: t(7).getTime(), kind: 'activity', id: 'x' }),
+    ).toString('base64url');
+    expect(decodeThreadCursor(old)).toEqual(activity(7, 'x'));
+  });
+});

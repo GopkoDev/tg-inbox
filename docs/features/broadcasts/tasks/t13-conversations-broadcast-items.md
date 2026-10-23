@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/conversations/app/broadcast-items.ts", "apps/
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T13 — Add broadcast items to conversations: recordBroadcastItem in the outcome transaction without touching any conversation column, the thread kind broadcast in the keyset order, one-item reads and conversation.changed with item type broadcast
@@ -106,14 +106,14 @@ Indexes: `broadcast_items_broadcast_conversation_key` (one item per broadcast an
 
 ## Checklist
 
-- [ ] Failing domain tests first: `compareThreadPosition` orders `broadcast` after `activity` at equal times; cursors with kind `broadcast` round-trip and an old cursor still decodes — `apps/api/src/modules/conversations/domain/thread.test.ts`
-- [ ] `KIND_ORDER` gains `broadcast: 3`; `ThreadPosition.kind` gains it — `apps/api/src/modules/conversations/domain/thread.ts`
-- [ ] Repo: insert one item (conversation found by `(workspace_id, contact_id)`), read one by (workspace, conversation, id), and the thread half by `(position_at, id)` — `apps/api/src/modules/conversations/infra/broadcast-item-repo.ts`
-- [ ] Fourth keyset half merged into before / after pages — `apps/api/src/modules/conversations/infra/thread-queries.ts`
-- [ ] `recordBroadcastItem(tx, …)` + `getBroadcastItem(workspaceId, conversationId, itemId)` exposed in the app layer (ports in `apps/api/src/modules/conversations/app/ports.ts`) — `apps/api/src/modules/conversations/app/broadcast-items.ts`
-- [ ] Publish `conversation.changed` item type `broadcast`, `created` — `apps/api/src/modules/conversations/infra/conversation-signals.ts`
-- [ ] Unit test with fakes: the use case never calls a conversation-state, read-mark or activity writer — `apps/api/src/modules/conversations/app/broadcast-items.test.ts`
-- [ ] Integration tests: status / assignee / `state_version` / waiting / last activity / read marks unchanged after an item; a second item for the same broadcast and conversation refused by the unique key; mixed pages in keyset order; isolation over `twoWorkspacesWithBroadcasts` — `apps/api/src/modules/conversations/infra/broadcast-item-repo.int.test.ts`
+- [x] Failing domain tests first: `compareThreadPosition` orders `broadcast` after `activity` at equal times; cursors with kind `broadcast` round-trip and an old cursor still decodes — `apps/api/src/modules/conversations/domain/thread.test.ts`
+- [x] `KIND_ORDER` gains `broadcast: 3`; `ThreadPosition.kind` gains it — `apps/api/src/modules/conversations/domain/thread.ts`
+- [x] Repo: insert one item (conversation found by `(workspace_id, contact_id)`), read one by (workspace, conversation, id), and the thread half by `(position_at, id)` — `apps/api/src/modules/conversations/infra/broadcast-item-repo.ts`
+- [x] Fourth keyset half merged into before / after pages — `apps/api/src/modules/conversations/infra/thread-queries.ts`
+- [x] `recordBroadcastItem(tx, …)` + `getBroadcastItem(workspaceId, conversationId, itemId)` exposed in the app layer (ports in `apps/api/src/modules/conversations/app/ports.ts`) — `apps/api/src/modules/conversations/app/broadcast-items.ts`
+- [x] Publish `conversation.changed` item type `broadcast`, `created` — `apps/api/src/modules/conversations/infra/conversation-signals.ts`
+- [x] Unit test with fakes: the use case never calls a conversation-state, read-mark or activity writer — `apps/api/src/modules/conversations/app/broadcast-items.test.ts`
+- [x] Integration tests: status / assignee / `state_version` / waiting / last activity / read marks unchanged after an item; a second item for the same broadcast and conversation refused by the unique key; mixed pages in keyset order; isolation over `twoWorkspacesWithBroadcasts` — `apps/api/src/modules/conversations/infra/broadcast-item-repo.int.test.ts`
 
 ## Edge cases
 
@@ -128,6 +128,14 @@ Indexes: `broadcast_items_broadcast_conversation_key` (one item per broadcast an
 
 ## Definition of Done
 
-- [ ] Integration tests prove recordBroadcastItem writes one item per broadcast and conversation at the given position time (delivered with its message id, not confirmed without) and publishes conversation.changed { item.type: broadcast, change: created } while the conversation's status, assignee, state_version, waiting, last activity and every read mark stay unchanged, that the thread pages interleave broadcast items with messages, replies and activity entries in (position_at, kind, id) order with broadcast after activity, and that every read is scoped by workspace with an isolation test.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Integration tests prove recordBroadcastItem writes one item per broadcast and conversation at the given position time (delivered with its message id, not confirmed without) and publishes conversation.changed { item.type: broadcast, change: created } while the conversation's status, assignee, state_version, waiting, last activity and every read mark stay unchanged, that the thread pages interleave broadcast items with messages, replies and activity entries in (position_at, kind, id) order with broadcast after activity, and that every read is scoped by workspace with an isolation test.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T13): `createBroadcastItems({ items, signals, clock })` (`conversations/app/broadcast-items.ts`) exposes `recordBroadcastItem(tx, { workspaceId, contactId, broadcastId, state, positionAt, telegramMessageId })` → `{ id, conversationId } | null` and `getBroadcastItem(workspaceId, conversationId, itemId)`. Its deps hold no conversation, read-mark or activity writer, so by construction it cannot touch conversation state. Null (nothing written, no signal) when the contact has no conversation in the workspace. Not wired into `buildDeps` yet — T22 / T25 / T26 bind it.
+- `implement` (T13): the insert is one `INSERT … SELECT` from `conversations` by `(workspace_id, contact_id)`; a duplicate item raises the `broadcast_items_broadcast_conversation_key` unique violation to the caller.
+- `implement` (T13): the fourth keyset part lives in `thread-queries.ts` (not `broadcast-item-repo.ts`) so the thread page stays one repeatable-read snapshot; the row mapper `toBroadcastItem` is shared from `broadcast-item-repo.ts`. `ThreadEntry` gains `{ type: 'broadcast', broadcastItem }`.
+- `implement` (T13): `inbox/app/reads.ts` (outside files_hint) now leaves `broadcast` entries out of `listThreadItems` until T25 enriches them with name, text and launcher — the only compile-forced change there.
+- `implement` (T13): gate — full `pnpm test` failed only `e2e/contacts-load` (merge timing) and `migrations.int` (timeout), both in the known flake set and green re-run alone; an earlier partial run under load timed out `thread-queries.int` "pages up and down" (1.0 s alone, green in the full run). `pnpm lint` clean.
