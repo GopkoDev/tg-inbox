@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/infra/broadcast-repo.ts", "apps/ap
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T14 — Build the broadcasts draft-side repositories: the broadcast row (insert, lock FOR NO KEY UPDATE, versioned field save, list order, launch-cap count and 10th newest launch, sending broadcasts, delete), the audience tag rows and the group rows (add, remove, membership, count, page), with isolation tests
@@ -139,11 +139,11 @@ Internal — no API surface (repositories behind `broadcasts/app/ports.ts`).
 
 ## Checklist
 
-- [ ] Failing integration tests first over `twoWorkspacesWithBroadcasts` (every method with a foreign id returns nothing / changes nothing) — `apps/api/src/modules/broadcasts/infra/broadcast-repo.int.test.ts`, `apps/api/src/modules/broadcasts/infra/group-repo.int.test.ts`
-- [ ] Broadcast repo: `insertDraft`, `lockForUpdate(ws, id, tx)` (`FOR NO KEY UPDATE`), `saveFields(ws, id, expectedVersion, fields, actor, at, tx)` → written or not, `list(ws)` by `last_changed_at DESC, id DESC`, `launchesSince(ws, since, tx)` + `tenthNewestLaunchedAt(ws, tx)`, `sendingBroadcasts(ws)` oldest launch first, `deleteDraft(ws, id, tx)` (tags + group + row) — `apps/api/src/modules/broadcasts/infra/broadcast-repo.ts`
-- [ ] Audience-tag repo: `list(ws, broadcastId)`, `replace(ws, broadcastId, rows, tx)`, `copy(…)` — `apps/api/src/modules/broadcasts/infra/audience-tag-repo.ts`
-- [ ] Group repo: `add` (`ON CONFLICT DO NOTHING`, returns written), `addMany` (one statement), `remove` (returns written), `membership(ws, broadcastId, contactIds)`, `count`, `ids`, `page(ws, broadcastId, after?, 50)` newest added first — `apps/api/src/modules/broadcasts/infra/group-repo.ts`
-- [ ] Tests: stale-version save writes nothing; cap count and 10th newest include `stopped` and aborted; two concurrent adds of the same contact → one row; a foreign contact id refused by the composite FK
+- [x] Failing integration tests first over `twoWorkspacesWithBroadcasts` (every method with a foreign id returns nothing / changes nothing) — `apps/api/src/modules/broadcasts/infra/broadcast-repo.int.test.ts`, `apps/api/src/modules/broadcasts/infra/group-repo.int.test.ts`
+- [x] Broadcast repo: `insertDraft`, `lockForUpdate(ws, id, tx)` (`FOR NO KEY UPDATE`), `saveFields(ws, id, expectedVersion, fields, actor, at, tx)` → written or not, `list(ws)` by `last_changed_at DESC, id DESC`, `launchesSince(ws, since, tx)` + `tenthNewestLaunchedAt(ws, tx)`, `sendingBroadcasts(ws)` oldest launch first, `deleteDraft(ws, id, tx)` (tags + group + row) — `apps/api/src/modules/broadcasts/infra/broadcast-repo.ts`
+- [x] Audience-tag repo: `list(ws, broadcastId)`, `replace(ws, broadcastId, rows, tx)`, `copy(…)` — `apps/api/src/modules/broadcasts/infra/audience-tag-repo.ts`
+- [x] Group repo: `add` (`ON CONFLICT DO NOTHING`, returns written), `addMany` (one statement), `remove` (returns written), `membership(ws, broadcastId, contactIds)`, `count`, `ids`, `page(ws, broadcastId, after?, 50)` newest added first — `apps/api/src/modules/broadcasts/infra/group-repo.ts`
+- [x] Tests: stale-version save writes nothing; cap count and 10th newest include `stopped` and aborted; two concurrent adds of the same contact → one row; a foreign contact id refused by the composite FK
 
 ## Edge cases
 
@@ -158,6 +158,15 @@ Internal — no API surface (repositories behind `broadcasts/app/ports.ts`).
 
 ## Definition of Done
 
-- [ ] Integration tests prove each repository method filters by workspace (isolation over twoWorkspacesWithBroadcasts), a field save applies only at the expected version and raises it, the list orders by last change then id, the cap count and the 10th newest launched_at include stopped and aborted broadcasts, a group add is ON CONFLICT DO NOTHING and reports whether a row was written, a remove deletes one row by key, membership answers only the asked ids, the group page is newest added first with a keyset, and a delete removes the draft with its tag and group rows.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Integration tests prove each repository method filters by workspace (isolation over twoWorkspacesWithBroadcasts), a field save applies only at the expected version and raises it, the list orders by last change then id, the cap count and the 10th newest launched_at include stopped and aborted broadcasts, a group add is ON CONFLICT DO NOTHING and reports whether a row was written, a remove deletes one row by key, membership answers only the asked ids, the group page is newest added first with a keyset, and a delete removes the draft with its tag and group rows.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T14): the repository ports live in `broadcasts/app/ports.ts` (`BroadcastRepo`, `AudienceTagRepo`, `GroupRepo`, `BroadcastRecord`); T16 adds the use-case ports beside them. `toBroadcast` is exported from `broadcast-repo.ts` for later reads.
+- `implement` (T14): beyond the checklist, `BroadcastRepo.find` (plain read) and `touch` (last change only, version kept — group adds and removes set `last_changed_*` per data-model assumption 10 while staying outside the version, ADR-0005) were added. `saveFields` raises the version by exactly one and only matches `status = 'draft'` at the expected version; the caller decides `BROADCAST_DRAFT_CHANGED`.
+- `implement` (T14): `tenthNewestLaunchedAt` is the 10th newest `launched_at` over all launches (`OFFSET 9`), null below ten; the caller pairs it with `launchesSince(now − 24 h)` for `next_launch_at`. `deleteDraft` re-checks `status = 'draft'` under `FOR NO KEY UPDATE`, removes tag and group rows, then the row (no cascade).
+- `implement` (T14): `AudienceTagRepo.list` orders by kind, name, id (include before exclude).
+- `implement` (T14): `conversations/infra/thread-queries.int.test.ts` "pages up and down across every cursor kind" got a 60 s per-test timeout (no assertion changed): since T13 each of its ~250 page reads runs four keyset parts and it hit the 30 s default under full-suite load (load average ≈ 26), while it runs in ~1 s alone.
+- `implement` (T14): gate — full `pnpm test` under heavy machine load failed only timing/timeout tests: `e2e/contacts-load`, `state-changes.int`, `migrations.int` (known set), `inbox/infra/jobs.int` latency p95 (same class as the known reply-p95 flake) and the thread-queries walk above; all five files passed re-run alone. `pnpm lint` clean.
