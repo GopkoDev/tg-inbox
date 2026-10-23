@@ -1326,7 +1326,9 @@ ADR files live under `docs/features/broadcasts/adr/NNNN-<title>.md`.
 | Duplicate | (CONTEXT) a new draft from any broadcast, with the same text and a copied audience |
 | Not confirmed | (CONTEXT) a send that got no answer; never sent again |
 | Send pause | (CONTEXT) the bot's stored time until which Telegram asked to stop; broadcasts wait for it, replies never do |
-| Audience fingerprint | the SHA-256 over the sorted ids of the reachable contacts the confirmation showed; the launch compares it with the set it would freeze (ADR-0006). *Not in CONTEXT — glossary follow-up* |
-| Sending link | one run (≤ 20 s) of the per-workspace `broadcasts.send` chain; exactly one is active per workspace (ADR-0007). *Not in CONTEXT — glossary follow-up* |
-| Claim | the committed `waiting → sending` update of one recipient right before its send; what makes a send at most once (ADR-0007). *Not in CONTEXT — glossary follow-up* |
-| Reach row | per contact and Telegram bot: wrote through it, blocked since, newest fact time (ADR-0002). *Not in CONTEXT — glossary follow-up* |
+| Count breakdown | (CONTEXT) audience size, blocked, never wrote to the current bot, would reach; recomputed for a draft and the confirmation, frozen at launch |
+| Audience fingerprint | the SHA-256 over the sorted ids of the reachable contacts the confirmation showed; the launch compares it with the set it would freeze (ADR-0006). *Technical — kept in the SAD, not in CONTEXT (glossary 2026-10-23)* |
+| Sending link | one run (≤ 20 s) of the per-workspace `broadcasts.send` chain; exactly one is active per workspace (ADR-0007). *Technical — kept in the SAD, not in CONTEXT (glossary 2026-10-23)* |
+| Claim | the committed `waiting → sending` update of one recipient right before its send; what makes a send at most once (ADR-0007). *Technical — kept in the SAD, not in CONTEXT (glossary 2026-10-23)* |
+| Reach row | per contact and Telegram bot: wrote through it, blocked since, newest fact time (ADR-0002). *Technical — kept in the SAD, not in CONTEXT (glossary 2026-10-23)* |
+| Recipient position | a recipient's rank (1…n) in the fingerprint's contact-id order; the send order and the report's keyset (data-model). *Technical — kept in the SAD, not in CONTEXT (glossary 2026-10-23)* |
