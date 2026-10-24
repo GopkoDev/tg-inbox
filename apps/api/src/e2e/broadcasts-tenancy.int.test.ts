@@ -92,7 +92,12 @@ describe('broadcasts tenancy and secrecy (postgres + pg-boss chain + fake Bot AP
   /** A workspace with its bot, an owner and an operator. */
   async function workspace(name: string) {
     const ws = await insertWorkspace(deps.db, name);
-    const { bot, token, webhookSecret } = await insertBot(deps.db, { workspaceId: ws });
+    // Checked just now: the minute's health-check tick does not find it due during a story (the
+    // fake reports no webhook of ours, which a due check would read as taken over).
+    const { bot, token, webhookSecret } = await insertBot(deps.db, {
+      workspaceId: ws,
+      lastCheckedAt: new Date(),
+    });
     fake.bot(token).script({});
     return {
       ws,

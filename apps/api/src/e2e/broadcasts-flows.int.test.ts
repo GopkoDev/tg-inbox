@@ -97,7 +97,12 @@ describe('broadcasts end-to-end stories (postgres + pg-boss chain + fake Bot API
   async function workspace(name = 'Acme Flowers') {
     const ws = await insertWorkspace(deps.db, name);
     touched.push(ws);
-    const { bot, token, webhookSecret } = await insertBot(deps.db, { workspaceId: ws });
+    // Checked just now: the minute's health-check tick does not find it due during a story (the
+    // fake reports no webhook of ours, which a due check would read as taken over).
+    const { bot, token, webhookSecret } = await insertBot(deps.db, {
+      workspaceId: ws,
+      lastCheckedAt: new Date(),
+    });
     fake.bot(token).script({});
     return {
       ws,
