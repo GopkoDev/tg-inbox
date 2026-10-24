@@ -31,7 +31,7 @@ Broadcasts share one bot with support. All of a bot's broadcasts together stay a
 
 ## Decision outcome
 
-**Chosen:** Option 1. With one active sender per workspace (ADR-0007), an in-process pacer is exact for that bot; 40 ms start spacing caps any 1 s window at 25. Eight in flight cover a Telegram round trip of up to 320 ms at full pace, so 1 000 recipients take about 40 s and 10 000 about 7 minutes. Replies keep their own path. The pause and the bot identity are checked inside `bots` before each call, so a rate limit from any sender pauses broadcasts, and a replaced bot is never used for an old broadcast.
+**Chosen:** Option 1. With one active sender per workspace (ADR-0007), an in-process pacer is exact for that bot; 40 ms start spacing caps any 1 s window at 25. The spacing is measured from the previous send's actual start, never from a slot booked in advance, so a timer that fires late (an event-loop stall) delays the sends behind it instead of releasing them together; the pause is read again after the pacer wait, so a `429` answered while a send waited for its turn holds it too; and a send is refused as `bot_unavailable` when the bot was connected again after the launch (it stopped working meanwhile, AC-12). <!-- review 2026-10-24: K1, A2, A4 --> Eight in flight cover a Telegram round trip of up to 320 ms at full pace, so 1 000 recipients take about 40 s and 10 000 about 7 minutes. Replies keep their own path. The pause and the bot identity are checked inside `bots` before each call, so a rate limit from any sender pauses broadcasts, and a replaced bot is never used for an old broadcast.
 
 ## Consequences
 
