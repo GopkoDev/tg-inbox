@@ -6,6 +6,7 @@ import type {
   BotRepo,
   BotSignals,
   ContactsApi,
+  BroadcastSendAnswer,
   ContactsReach,
   FileFetch,
   ConversationsApi,
@@ -145,7 +146,14 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
 }
 
 export interface GatewayCall {
-  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook' | 'sendText' | 'openFile';
+  method:
+    | 'getMe'
+    | 'getWebhook'
+    | 'setWebhook'
+    | 'deleteWebhook'
+    | 'sendText'
+    | 'sendBroadcast'
+    | 'openFile';
   token: string;
   timeoutMs: number;
   webhook?: { url: string; secret: string; dropPending: boolean };
@@ -165,6 +173,7 @@ export function fakeGateway(): TelegramGateway & {
   setResult: 'ok' | 'failed';
   deleteResult: 'ok' | 'failed';
   sendResult: SendOutcome;
+  broadcastResult: BroadcastSendAnswer;
   fileResult: FileFetch;
 } {
   const fake = {
@@ -179,6 +188,7 @@ export function fakeGateway(): TelegramGateway & {
     setResult: 'ok' as 'ok' | 'failed',
     deleteResult: 'ok' as 'ok' | 'failed',
     sendResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as SendOutcome,
+    broadcastResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as BroadcastSendAnswer,
     fileResult: { outcome: 'gone' } as FileFetch,
     async openFile(token: string, fileReference: string, range: string | undefined) {
       fake.calls.push({ method: 'openFile', token, timeoutMs: 0, fileReference, range });
@@ -200,6 +210,10 @@ export function fakeGateway(): TelegramGateway & {
         ...(options ? { options } : {}),
       });
       return fake.sendResult;
+    },
+    async sendBroadcast(token: string, chatId: bigint, text: string, timeoutMs: number) {
+      fake.calls.push({ method: 'sendBroadcast', token, timeoutMs, chatId, text });
+      return fake.broadcastResult;
     },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });

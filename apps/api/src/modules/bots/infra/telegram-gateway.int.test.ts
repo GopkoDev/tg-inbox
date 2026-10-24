@@ -213,6 +213,50 @@ describe('Telegram gateway (against the fake Bot API)', () => {
     expect(serialised).not.toContain(fake.apiRoot);
   });
 
+  describe('sendBroadcast (ADR-0008, AC-11, AC-12, AC-17)', () => {
+    const CHAT = 700001n;
+    const send = (timeoutMs = SEND_TIMEOUT, text = 'Spring prices') =>
+      gateway.sendBroadcast(TOKEN, CHAT, text, timeoutMs);
+    const script = (...sendMessage: ReturnType<(typeof sendAnswers)[keyof typeof sendAnswers]>[]) =>
+      fake.bot(TOKEN).script({ sendMessage });
+
+    it('sends the exact text, as plain text, to the chat; answers the message id and time', async () => {
+      const text = 'Hi <b>there</b> *you*\nsecond line';
+      script(sendAnswers.ok(91));
+      const out = await send(SEND_TIMEOUT, text);
+      expect(out).toMatchObject({ outcome: 'accepted', messageId: 91n });
+      const calls = fake.calls(TOKEN).filter((c) => c.method === 'sendMessage');
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.params.text).toBe(text);
+      expect(Number(calls[0]!.params.chat_id)).toBe(700001);
+      expect(calls[0]!.params).not.toHaveProperty('parse_mode');
+    });
+
+    it.each([
+      ['blocked', sendAnswers.blocked(), { outcome: 'blocked' }],
+      ['a deactivated user', sendAnswers.deactivated(), { outcome: 'account_gone' }],
+      ['chat not found', sendAnswers.chatNotFound(), { outcome: 'chat_not_found' }],
+      ['user not found', sendAnswers.userNotFound(), { outcome: 'chat_not_found' }],
+      ['PEER_ID_INVALID', sendAnswers.peerIdInvalid(), { outcome: 'chat_not_found' }],
+      ['a text too long', sendAnswers.textTooLong(), { outcome: 'text_refused' }],
+      ['an empty text', sendAnswers.textEmpty(), { outcome: 'text_refused' }],
+      ['an unclassified 400', sendAnswers.otherBadRequest(), { outcome: 'text_refused' }],
+      ['a 5xx', sendAnswers.serverError(), { outcome: 'error' }],
+      ['a 429', sendAnswers.tooMany(7), { outcome: 'rate_limited', retryAfterMs: 7000 }],
+      ['a rejected token', sendAnswers.unauthorized(), { outcome: 'bot_unauthorized' }],
+      ['a connection lost after the write', sendAnswers.resetAfterWrite(), { outcome: 'unknown' }],
+    ])('classifies %s', async (_name, answer, expected) => {
+      script(answer);
+      expect(await send()).toEqual(expected);
+    });
+
+    it('no answer within the timeout is unknown (never retried)', async () => {
+      script(sendAnswers.hang(5_000));
+      expect(await send(200)).toEqual({ outcome: 'unknown' });
+      expect(fake.calls(TOKEN).filter((c) => c.method === 'sendMessage')).toHaveLength(1);
+    });
+  });
+
   describe('sendText', () => {
     const CHAT = 700001n;
     const send = (text = 'Hello', timeoutMs = SEND_TIMEOUT, chat = CHAT) =>

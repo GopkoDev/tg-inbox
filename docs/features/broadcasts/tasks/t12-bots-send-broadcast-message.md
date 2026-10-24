@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/bots/app/send-broadcast-message.ts", "apps/ap
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T12 — Add bots.sendBroadcastMessage and launchReadiness: a per-bot broadcast pacer at 40 ms start slots, refusal while the send pause runs, when the bot is not working or is not the launch Telegram bot, plain-text sendMessage, and every Telegram answer classified (blocked recorded in contacts)
@@ -139,15 +139,15 @@ Internal — no API surface (an app-layer call used by the `broadcasts.send` lin
 
 ## Checklist
 
-- [ ] Failing unit tests first with the fakes: every answer of the union below, the pause and identity refusals without a Telegram call, the 40 ms spacing with a fake clock — `apps/api/src/modules/bots/app/send-broadcast-message.test.ts`
-- [ ] `launchReadiness(workspaceId)` → `{ state, telegramBotId } | null` (no row) — `apps/api/src/modules/bots/app/launch-readiness.ts`
-- [ ] `sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text })` answering `delivered { messageId, at }` · `blocked` · `account_gone` · `chat_not_found` · `text_refused` · `telegram_error` · `rate_limited { retryAfter }` · `paused { until }` · `bot_unavailable` · `bot_changed` · `not_confirmed` — `apps/api/src/modules/bots/app/send-broadcast-message.ts`, types in `apps/api/src/modules/bots/app/ports.ts`
-- [ ] Order inside: load the workspace's bot row → `bot_unavailable` unless `connected` / `taken_over` → `bot_changed` if its Telegram id ≠ `telegramBotId` → `paused` if `send_paused_until` is ahead → pacer slot → `sendMessage` with no `parse_mode`, timeout `SEND_TIMEOUT` (10 s) — same file
-- [ ] A second pacer instance keyed by bot at 25 per second (`createPacer({ perSecond: 25 })`), separate from the member-message pacer; `sendText` never uses it — `apps/api/src/modules/bots/app/pacer.ts`
-- [ ] Gateway: classify the `sendMessage` answer for broadcasts (`429` → store the pause, `403` blocked / deactivated, `400` chat-not-found class vs text class, `401` → `markNeedsToken` + `bot_unavailable`, timeout after write → `not_confirmed`) — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
-- [ ] `blocked` also calls the `ContactsReach` port (T10) with `blocked: true, at: clock.now()`
-- [ ] Fake Bot API: per-call scripted answers and delays, and a send log with timestamps per bot for the pace assertion — `apps/api/src/test/fake-telegram.ts`
-- [ ] Integration test: two workspaces' bots never cross; `sendText` during a full-pace burst is not delayed; a scripted `429` sets `send_paused_until` and the next broadcast send answers `paused` with no Telegram call — `apps/api/src/modules/bots/app/send-broadcast-message.int.test.ts`
+- [x] Failing unit tests first with the fakes: every answer of the union below, the pause and identity refusals without a Telegram call, the 40 ms spacing with a fake clock — `apps/api/src/modules/bots/app/send-broadcast-message.test.ts`
+- [x] `launchReadiness(workspaceId)` → `{ state, telegramBotId } | null` (no row) — `apps/api/src/modules/bots/app/launch-readiness.ts`
+- [x] `sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text })` answering `delivered { messageId, at }` · `blocked` · `account_gone` · `chat_not_found` · `text_refused` · `telegram_error` · `rate_limited { retryAfter }` · `paused { until }` · `bot_unavailable` · `bot_changed` · `not_confirmed` — `apps/api/src/modules/bots/app/send-broadcast-message.ts`, types in `apps/api/src/modules/bots/app/ports.ts`
+- [x] Order inside: load the workspace's bot row → `bot_unavailable` unless `connected` / `taken_over` → `bot_changed` if its Telegram id ≠ `telegramBotId` → `paused` if `send_paused_until` is ahead → pacer slot → `sendMessage` with no `parse_mode`, timeout `SEND_TIMEOUT` (10 s) — same file
+- [x] A second pacer instance keyed by bot at 25 per second (`createPacer({ perSecond: 25 })`), separate from the member-message pacer; `sendText` never uses it — `apps/api/src/modules/bots/app/pacer.ts`
+- [x] Gateway: classify the `sendMessage` answer for broadcasts (`429` → store the pause, `403` blocked / deactivated, `400` chat-not-found class vs text class, `401` → `markNeedsToken` + `bot_unavailable`, timeout after write → `not_confirmed`) — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
+- [x] `blocked` also calls the `ContactsReach` port (T10) with `blocked: true, at: clock.now()`
+- [x] Fake Bot API: per-call scripted answers and delays, and a send log with timestamps per bot for the pace assertion — `apps/api/src/test/fake-telegram.ts`
+- [x] Integration test: two workspaces' bots never cross; `sendText` during a full-pace burst is not delayed; a scripted `429` sets `send_paused_until` and the next broadcast send answers `paused` with no Telegram call — `apps/api/src/modules/bots/app/send-broadcast-message.int.test.ts`
 - [ ] Manual (not a CI gate): send a 4096-UTF-16-unit emoji-heavy text through a real test bot to confirm Telegram's count (sad.md §11)
 
 ## Edge cases
@@ -169,7 +169,16 @@ Internal — no API surface (an app-layer call used by the `broadcasts.send` lin
 
 ## Definition of Done
 
-- [ ] Unit and fake-Bot-API integration tests prove launchReadiness answers the bot state and Telegram bot id, sendBroadcastMessage sends the exact text with no parse_mode to the user's chat through the workspace's own bot, refuses without a Telegram call while send_paused_until is ahead, for a needs_token or disconnected bot and for another Telegram bot, spaces sends at least 40 ms apart per bot (no 1 s window above 25) while sendText is never delayed by it, stores the send pause on a 429, maps 403 blocked / deactivated, 400 chat-not-found and text refusals, other errors and a 10 s timeout to their answers, and records a blocked answer through contacts.recordBlockChange.
-- [ ] A test proves no log line or error of this path carries the text, the chat id or the token (ids, outcome and description class only).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and fake-Bot-API integration tests prove launchReadiness answers the bot state and Telegram bot id, sendBroadcastMessage sends the exact text with no parse_mode to the user's chat through the workspace's own bot, refuses without a Telegram call while send_paused_until is ahead, for a needs_token or disconnected bot and for another Telegram bot, spaces sends at least 40 ms apart per bot (no 1 s window above 25) while sendText is never delayed by it, stores the send pause on a 429, maps 403 blocked / deactivated, 400 chat-not-found and text refusals, other errors and a 10 s timeout to their answers, and records a blocked answer through contacts.recordBlockChange.
+- [x] A test proves no log line or error of this path carries the text, the chat id or the token (ids, outcome and description class only).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+- `implement` (T12): `createSendBroadcastMessage` (`bots/app/send-broadcast-message.ts`) and `createLaunchReadiness` (`bots/app/launch-readiness.ts`, `{ state, telegramBotId } | null`). Types `BroadcastSendAnswer` (gateway) and `BroadcastSendOutcome` (app) in `bots/app/ports.ts`; the gateway gains `sendBroadcast(token, chatId, text, timeoutMs)` with its own classifier, so `sendText`'s reply classification is untouched. `BROADCAST_MESSAGES_PER_SECOND = 25` in `pacer.ts` (a separate `createPacer` instance, 40 ms slots).
+- `implement` (T12): classification — `403` deactivated → `account_gone`, other `403` → `blocked` (+ `recordBlockChange(…, true, clock.now())`, a failing write swallowed so the answer stays `blocked`); `400` matching `chat not found | user not found | PEER_ID_INVALID` → `chat_not_found`, **every other `400` → `text_refused`** (the sad §11 risk row: an unknown 400 aborts the broadcast); `429` → pause stored, `rate_limited { retryAfter }` (no `retry_after` → a 1 s pause, a choice made here); `401/404` → `markNeedsToken` + `bot_unavailable`; `5xx` and a network error before the write → `telegram_error`; no answer after the write (timeout, reset) → `not_confirmed`. No description is kept or logged; the path has no logger and its answers carry no text, chat id or token (unit test).
+- `implement` (T12): order — bot row (missing / not `connected`·`taken_over` → `bot_unavailable`) → Telegram id ≠ launch id → `bot_changed` → pause ahead → `paused { until }` → token (undecryptable → `needs_token`) → pacer slot → send. The pause is not re-read after the pacer wait (a 429 landing during the ≤ 40 ms·n wait is caught by the next send).
+- `implement` (T12): the fake Bot API gained `sendAnswers.userNotFound / peerIdInvalid / textTooLong / textEmpty / otherBadRequest` and `sendTimes(token)` (arrival times of `sendMessage`), used by the pace assertion; `fakeGateway` gained `sendBroadcast` + `broadcastResult`. **Hand-off → T22 / T26:** nothing is wired in `buildDeps()` yet — T26 builds `createSendBroadcastMessage` with `createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND })` and the existing `contactReach`, and `createLaunchReadiness` for the `BotsApi` port.
+- `implement` (T12): the manual check (a 4096-unit emoji-heavy text through a real test bot) is left open — not a CI gate.
+- `implement` (T12): also moved a doc comment in `telegram-gateway.ts` that T11 had left above the wrong function (no code change).
+- `implement` (T12): gate — full `pnpm test` failed only `e2e/contacts-load` merge timing and `inbox/http/changes` p95 (known set), both green re-run alone; `pnpm lint` clean.

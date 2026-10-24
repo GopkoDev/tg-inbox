@@ -202,6 +202,41 @@ export type MemberMessageOutcome =
   | { outcome: 'transient' }
   | { outcome: 'unknown' };
 
+/**
+ * A broadcast `sendMessage` answer as the gateway classifies it (ADR-0008, sad.md §11): `400`s
+ * naming the chat ("chat not found", "user not found", `PEER_ID_INVALID`) are the recipient's;
+ * any other `400` is the text's. `error`: Telegram answered with another failure, or the request
+ * was never written; `unknown`: no answer after the write (it may have been delivered).
+ */
+export type BroadcastSendAnswer =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'blocked' }
+  | { outcome: 'account_gone' }
+  | { outcome: 'chat_not_found' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'rate_limited'; retryAfterMs?: number }
+  | { outcome: 'error' }
+  | { outcome: 'unknown' };
+
+/** What `broadcasts` gets back from `sendBroadcastMessage` (sad.md §5, flow 12). */
+export type BroadcastSendOutcome =
+  | { outcome: 'delivered'; messageId: bigint; at: Date }
+  | { outcome: 'blocked' }
+  | { outcome: 'account_gone' }
+  | { outcome: 'chat_not_found' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'telegram_error' }
+  /** A 429: the pause is stored; nothing was sent. */
+  | { outcome: 'rate_limited'; retryAfter: Date }
+  /** The bot's send pause runs: not called. */
+  | { outcome: 'paused'; until: Date }
+  /** No bot, or not `connected` / `taken_over`, or its token was rejected. */
+  | { outcome: 'bot_unavailable' }
+  /** The workspace's bot is no longer the Telegram bot of the launch. */
+  | { outcome: 'bot_changed' }
+  | { outcome: 'not_confirmed' };
+
 /** `getFile` timeout (sad.md §8). */
 export const GET_FILE_TIMEOUT = 5000;
 /** A media download is aborted after this long without a byte (sad.md §8). */
@@ -244,6 +279,16 @@ export interface TelegramGateway {
     timeoutMs: number,
     options?: { disableLinkPreview?: boolean },
   ): Promise<SendOutcome>;
+  /**
+   * A broadcast's plain text (no `parse_mode`, link previews at Telegram's default). Never throws;
+   * never repeated here. The answer carries no text, chat id or token.
+   */
+  sendBroadcast(
+    token: string,
+    chatId: bigint,
+    text: string,
+    timeoutMs: number,
+  ): Promise<BroadcastSendAnswer>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /**

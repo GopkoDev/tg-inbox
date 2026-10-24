@@ -295,7 +295,7 @@
         "apps/api/src/test/fake-telegram.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t12-bots-send-broadcast-message.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T13",

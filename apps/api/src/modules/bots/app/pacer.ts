@@ -1,8 +1,15 @@
 /** Pings and bot answers per second and bot: a third of Telegram's ~30 per second (ADR-0006). */
 export const MEMBER_MESSAGES_PER_SECOND = 10;
 
+/**
+ * Broadcast sends per second and bot (ADR-0008): 40 ms start slots, so any 1 s window holds at
+ * most 25, leaving room under Telegram's ~30 for replies, pings and bot answers. A pacer of its
+ * own, separate from the member-message one; replies (`sendText`) use neither.
+ */
+export const BROADCAST_MESSAGES_PER_SECOND = 25;
+
 export interface Pacer {
-  /** Resolves when a send of this bot may start; callers of one key start at least 100 ms apart. */
+  /** Resolves when a send of this bot may start; callers of one key start `1000 / perSecond` ms apart. */
   wait(key: string): Promise<void>;
 }
 

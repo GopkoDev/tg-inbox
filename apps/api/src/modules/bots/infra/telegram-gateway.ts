@@ -6,6 +6,7 @@ import {
   GET_FILE_TIMEOUT,
   MAX_DOWNLOAD_BYTES,
   type FileFetch,
+  type BroadcastSendAnswer,
   type SendOutcome,
   type TelegramGateway,
 } from '../app/ports.js';
@@ -116,13 +117,46 @@ function classifySendError(err: unknown): SendOutcome {
   return { outcome: 'unknown' };
 }
 
-/** Same webhook when scheme, host and path match, ignoring a trailing slash. */
 /** Whether a registered `allowed_updates` is exactly the current set (order aside). */
 function sameUpdates(registered: readonly string[]): boolean {
   const set = new Set(registered);
   return set.size === ALLOWED_UPDATES.length && ALLOWED_UPDATES.every((u) => set.has(u));
 }
 
+/** A `400` about the recipient's chat, not the text (sad.md §11: reviewed with pilot data). */
+const CHAT_LEVEL_400 = /chat not found|user not found|PEER_ID_INVALID/i;
+
+/** Classifies a failed broadcast `sendMessage`; Telegram's description is matched, never kept. */
+function classifyBroadcastError(err: unknown): BroadcastSendAnswer {
+  if (err instanceof GrammyError) {
+    const code = err.error_code;
+    if (code === 401 || code === 404) return { outcome: 'bot_unauthorized' };
+    if (code === 403) {
+      return /deactivated/i.test(err.description)
+        ? { outcome: 'account_gone' }
+        : { outcome: 'blocked' };
+    }
+    if (code === 400) {
+      return CHAT_LEVEL_400.test(err.description)
+        ? { outcome: 'chat_not_found' }
+        : { outcome: 'text_refused' };
+    }
+    if (code === 429) {
+      const seconds = err.parameters.retry_after;
+      return typeof seconds === 'number' && seconds >= 0
+        ? { outcome: 'rate_limited', retryAfterMs: seconds * 1000 }
+        : { outcome: 'rate_limited' };
+    }
+    return { outcome: 'error' };
+  }
+  // A network failure before anything was written: nothing was sent.
+  if (err instanceof HttpError && causeCodes(err).some((c) => NOT_WRITTEN.has(c))) {
+    return { outcome: 'error' };
+  }
+  return { outcome: 'unknown' };
+}
+
+/** Same webhook when scheme, host and path match, ignoring a trailing slash. */
 function sameUrl(a: string, b: string): boolean {
   try {
     const x = new URL(a);
@@ -261,6 +295,24 @@ export function createTelegramGateway({
         };
       } catch (err) {
         return classifySendError(err);
+      }
+    },
+
+    async sendBroadcast(token, chatId, text, timeoutMs) {
+      try {
+        const sent = await api(token).sendMessage(
+          Number(chatId),
+          text,
+          undefined,
+          timeout(timeoutMs),
+        );
+        return {
+          outcome: 'accepted',
+          messageId: BigInt(sent.message_id),
+          at: new Date(sent.date * 1000),
+        };
+      } catch (err) {
+        return classifyBroadcastError(err);
       }
     },
 
