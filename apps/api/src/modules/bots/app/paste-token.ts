@@ -232,8 +232,8 @@ export function createPasteToken(deps: PasteTokenDeps): PasteToken {
             row.state !== 'disconnected' &&
             // An undecryptable old token cannot be put back: the bot still needs a new one.
             (previous.token === null
-              ? { state: 'needs_token' as const }
-              : { token: previous.token, state: row.state })),
+              ? { state: 'needs_token' as const, stoppedWorkingAt: clock.now() }
+              : { token: previous.token, state: row.state, stoppedWorkingAt: clock.now() })),
         },
         tx,
         action === 'connectAgain' ? 'disconnected' : written,

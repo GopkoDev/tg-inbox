@@ -55,7 +55,13 @@ export type BotPatch = Partial<
     NewBot,
     'name' | 'username' | 'state' | 'token' | 'webhookSecret' | 'connectedAt' | 'lastCheckedAt'
   >
->;
+> & {
+  /**
+   * With `state: 'needs_token'`: the app's time the bot stopped working (AC-12), stored unless the
+   * row already needed a token.
+   */
+  stoppedWorkingAt?: Date;
+};
 
 export type BotWriteResult =
   | { ok: true }

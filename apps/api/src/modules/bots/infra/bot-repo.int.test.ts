@@ -226,13 +226,20 @@ describe('bot repository', () => {
   it('update to needs_token (a paste undone with an unreadable old token) also records when the bot stopped working (AC-12)', async () => {
     const w = await insertWorkspace(db);
     const { bot } = await insertBot(db, { workspaceId: w });
-    const before = Date.now();
-    expect((await repo.update(w, bot.id, { state: 'needs_token', lastCheckedAt: at(1) })).ok).toBe(
-      true,
-    );
-    const stopped = (await repo.findByWorkspace(w))?.stoppedWorkingAt;
-    // The moment it happened, not the old exchange time it carries.
-    expect(stopped?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+    expect(
+      (
+        await repo.update(w, bot.id, {
+          state: 'needs_token',
+          lastCheckedAt: at(1),
+          stoppedWorkingAt: at(9),
+        })
+      ).ok,
+    ).toBe(true);
+    // The app's moment it happened, not the old exchange time the patch carries.
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));
+    // A row already needing a token keeps its own moment.
+    await repo.update(w, bot.id, { state: 'needs_token', stoppedWorkingAt: at(12) });
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));
   });
 
   it('setState with ifLastCheckedAt writes only when the row is unchanged since it was read', async () => {
