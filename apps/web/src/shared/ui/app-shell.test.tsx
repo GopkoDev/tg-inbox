@@ -182,18 +182,18 @@ describe('AppShell', () => {
     expect(useWorkspaceStore.getState().accessRemovedNotice).toBeNull();
   });
 
-  it('owner sees Inbox, Contacts and Settings in the nav (SCR-01)', () => {
+  it('owner sees Inbox, Contacts, Broadcasts and Settings in the nav (SCR-01, SCR-15)', () => {
     useWorkspaceStore.getState().setCurrent(acme);
     renderShell();
     const nav = screen.getByRole('navigation', { name: 'Workspace' });
     const names = within(nav)
       .getAllByRole('link')
       .map((l) => l.textContent);
-    expect(names).toEqual(['Inbox', 'Contacts', 'Settings']);
+    expect(names).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
     expect(within(nav).getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current');
   });
 
-  it('operator sees Inbox, Contacts and Settings (AC-12, SCR-15 role: operator)', () => {
+  it('operator sees Inbox, Contacts, Broadcasts and Settings (AC-12, SCR-15 role: operator)', () => {
     useWorkspaceStore.getState().setCurrent(bolt);
     renderShell('/w/w2');
     const nav = screen.getByRole('navigation', { name: 'Workspace' });
@@ -201,7 +201,7 @@ describe('AppShell', () => {
       within(nav)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(['Inbox', 'Contacts', 'Settings']);
+    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
   });
 
   it('the Settings link is marked current on a settings page', () => {

@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/BroadcastsTable.tsx", "apps/web/s
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T30 — Build SCR-24, the Broadcasts list: BroadcastsTable with statuses, audience sizes and last change, the empty state with New broadcast, the Broadcasts navigation item, the broadcast routes and BroadcastCrumb
@@ -107,12 +107,12 @@ No DB changes.
 
 ## Checklist
 
-- [ ] Routes `/w/:workspaceId/broadcasts`, `/broadcasts/new`, `/broadcasts/:broadcastId`, `/broadcasts/:broadcastId/launch` with crumb handles; the detail page picks SCR-25 or SCR-28 from `getBroadcast`'s status (editor and page mounted by T31 / T35) — `apps/web/src/app/routes.tsx`, `apps/web/src/pages/BroadcastDetailPage.tsx`, `apps/web/src/app/routes.test.tsx`
-- [ ] Broadcasts nav item (lucide `Megaphone`) between Contacts and Settings for both roles — `apps/web/src/shared/ui/app-shell.tsx`
-- [ ] `BroadcastCrumb` from the draft / report store, like `ContactCrumb` — `apps/web/src/features/broadcasts/BroadcastCrumb.tsx`
-- [ ] `BroadcastsTable` composing `Card`, `Table`, `Badge`, `DropdownMenu`, `Button`, `Tooltip`, `Skeleton`, `Alert`: status badges (Decision 11), audience with the over-limit warning, last-change wording by status with `relativeTime`, role-aware row actions, phone stacking — `apps/web/src/features/broadcasts/BroadcastsTable.tsx`
-- [ ] `BroadcastsPage` with title, **New broadcast** → `/broadcasts/new`, the table on the list store (T29) — `apps/web/src/pages/BroadcastsPage.tsx`
-- [ ] Testing Library tests per SCR-24 state (loading, default, empty, error + Retry, live, duplicate draft / launched, delete opener, action failed, phone) and the nav item for both roles — `apps/web/src/features/broadcasts/BroadcastsTable.test.tsx`
+- [x] Routes `/w/:workspaceId/broadcasts`, `/broadcasts/new`, `/broadcasts/:broadcastId`, `/broadcasts/:broadcastId/launch` with crumb handles; the detail page picks SCR-25 or SCR-28 from `getBroadcast`'s status (editor and page mounted by T31 / T35) — `apps/web/src/app/routes.tsx`, `apps/web/src/pages/BroadcastDetailPage.tsx`, `apps/web/src/app/routes.test.tsx`
+- [x] Broadcasts nav item (lucide `Megaphone`) between Contacts and Settings for both roles — `apps/web/src/shared/ui/app-shell.tsx`
+- [x] `BroadcastCrumb` from the draft / report store, like `ContactCrumb` — `apps/web/src/features/broadcasts/BroadcastCrumb.tsx`
+- [x] `BroadcastsTable` composing `Card`, `Table`, `Badge`, `DropdownMenu`, `Button`, `Tooltip`, `Skeleton`, `Alert`: status badges (Decision 11), audience with the over-limit warning, last-change wording by status with `relativeTime`, role-aware row actions, phone stacking — `apps/web/src/features/broadcasts/BroadcastsTable.tsx`
+- [x] `BroadcastsPage` with title, **New broadcast** → `/broadcasts/new`, the table on the list store (T29) — `apps/web/src/pages/BroadcastsPage.tsx`
+- [x] Testing Library tests per SCR-24 state (loading, default, empty, error + Retry, live, duplicate draft / launched, delete opener, action failed, phone) and the nav item for both roles — `apps/web/src/features/broadcasts/BroadcastsTable.test.tsx`
 
 ## Edge cases
 
@@ -126,6 +126,14 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels. The guard landings (sign-in back to the same address, access removed, not found for an unknown broadcast) are covered too (test plan).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every SCR-24 state in screens.md (loading, empty, rows by last change with status badges and audience sizes, sending live, row actions by role, error, phone rows), the Broadcasts item in the frame for both roles, the routes /broadcasts, /broadcasts/new, /broadcasts/:id and /broadcasts/:id/launch, and the breadcrumb labels. The guard landings (sign-in back to the same address, access removed, not found for an unknown broadcast) are covered too (test plan).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+- `implement` (T30): routes `/w/:id/broadcasts` (index → `BroadcastsPage`), `new`, `:broadcastId` and `:broadcastId/launch` (all three → `BroadcastDetailPage`, lazy like the contacts pages); crumbs «Broadcasts», «New broadcast», and `BroadcastCrumb` (the name from the draft store's draft / launched broadcast or the report store, «Broadcast» while loading or not found).
+- `implement` (T30): **hand-off → T31 / T34 / T35:** `BroadcastDetailPage` opens the draft store (`open` + `watch`, `close` on leave) and renders placeholders the later tasks replace — `data-testid="broadcast-draft-view"` (SCR-25, and `/new` with no id and no read) and `broadcast-launched-view` (SCR-28) with the name as `h1`; `NotFoundCard` on `not_found`; an error `Alert` with Retry. The `/launch` address mounts the same page (SCR-27 is T34).
+- `implement` (T30): **hand-off → T31 / T36:** `BroadcastsTable` takes optional `onDelete` (SCR-31) and `onDuplicateLaunched` (SCR-30) openers; a menu item is shown only when its opener is passed (Delete also needs a draft and the author or an owner), so `BroadcastsPage` passes neither yet and a launched row shows no «⋯» until T36. A draft's Duplicate calls `duplicateBroadcast { audience: 'same', include_not_confirmed: false }` (the request type requires the defaulted flag), shows a spinner on the row trigger and opens the copy; a failure shows «Couldn't duplicate the broadcast».
+- `implement` (T30): last change uses `relativeTime` («Test User · 3m», «Launched by …» for sending / sent, «Stopped by …»), full `toLocaleString()` in `title`; counts via `Intl.NumberFormat`. On a phone the status badge sits beside the name and audience + last change stack under it (`md:hidden`), so a row renders the badge twice (one hidden per breakpoint) — the tests query with `getAllBy…`.
+- `implement` (T30): `app-shell.test.tsx` nav expectations now include Broadcasts between Contacts and Settings (for both roles).
+- `implement` (T30): gate — full `pnpm test` failed only `inbox/http/changes.int.test.ts` (p95 + "61 concurrent changes", known set), green re-run alone; after two type fixes from `pnpm lint` (the crumb's null check, the duplicate body) the web suite was re-run whole (81 files, 1238 tests) and `pnpm lint` is clean.

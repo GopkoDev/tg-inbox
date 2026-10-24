@@ -42,7 +42,15 @@ vi.mock('@/features/contacts/ContactProfile', () => ({ ContactProfile: () => nul
 vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p> }));
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
 vi.mock('@/features/tags/TagsSettings', () => ({ TagsSettings: () => <p>tags body</p> }));
+// The broadcasts reads are answered here; the screens' bodies have their own tests.
+const broadcastsApi = vi.hoisted(() => ({ listBroadcasts: vi.fn(), getBroadcast: vi.fn() }));
+vi.mock('@/features/broadcasts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/broadcasts/api')>()),
+  listBroadcasts: (...a: unknown[]) => broadcastsApi.listBroadcasts(...a),
+  getBroadcast: (...a: unknown[]) => broadcastsApi.getBroadcast(...a),
+}));
 
+import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
 import { useContactsStore } from '@/features/contacts/store';
 import { resolveWorkspace } from '@/features/workspaces/resolve';
 import { routes } from './routes';
@@ -346,5 +354,89 @@ describe('phone drawer for an operator workspace (S1-7)', () => {
     openMenu(/o@x\.io/);
     expect(await screen.findByRole('menuitem', { name: 'Sign out' })).toBeInTheDocument();
     await act(async () => undefined);
+  });
+});
+
+describe('broadcasts routes and crumbs (T30, SCR-15, SCR-24)', () => {
+  const crumbNav = () => screen.getByRole('navigation', { name: 'breadcrumb' });
+  const ref = { account_id: 'a', display_name: 'O' };
+  const draft = (over: Record<string, unknown> = {}) => ({
+    id: 'b1',
+    workspace_id: 'w1',
+    name: 'Spring prices',
+    status: 'draft',
+    version: 1,
+    text: '',
+    author: ref,
+    last_changed_by: ref,
+    last_changed_at: '2026-10-23T09:00:00Z',
+    created_at: '2026-10-23T09:00:00Z',
+    audience: { kind: 'tags', mode: 'any', tags: [], dropped_tags: [] },
+    breakdown: { audience_size: 0, reach: null },
+    ...over,
+  });
+
+  beforeEach(() => {
+    useBroadcastDraftStore.getState().forget();
+    broadcastsApi.listBroadcasts.mockResolvedValue({ workspace_id: 'w1', items: [] });
+  });
+
+  it('the Broadcasts item sits between Contacts and Settings and opens SCR-24 with its crumb', async () => {
+    renderAt('/w/w1/broadcasts');
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Broadcasts' }),
+    ).toBeInTheDocument();
+    const nav = screen.getByRole('navigation', { name: 'Workspace' });
+    expect(
+      within(nav)
+        .getAllByRole('link')
+        .map((l) => l.textContent),
+    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
+    expect(within(nav).getByRole('link', { name: 'Broadcasts' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+    expect(within(crumbNav()).getByText('Broadcasts')).toBeInTheDocument();
+  });
+
+  it('/broadcasts/new reads «New broadcast» in the breadcrumb', async () => {
+    renderAt('/w/w1/broadcasts/new');
+    await waitFor(() => expect(within(crumbNav()).getByText('New broadcast')).toBeInTheDocument());
+    expect(within(crumbNav()).getByRole('link', { name: 'Broadcasts' })).toBeInTheDocument();
+    expect(broadcastsApi.getBroadcast).not.toHaveBeenCalled();
+  });
+
+  it('a draft: «Broadcast» while loading, then its name; the draft view is chosen', async () => {
+    let answer!: (b: unknown) => void;
+    broadcastsApi.getBroadcast.mockReturnValue(new Promise((r) => (answer = r)));
+    renderAt('/w/w1/broadcasts/b1');
+    await waitFor(() => expect(within(crumbNav()).getByText('Broadcast')).toBeInTheDocument());
+    await act(async () => answer(draft()));
+    await waitFor(() => expect(within(crumbNav()).getByText('Spring prices')).toBeInTheDocument());
+    expect(screen.getByTestId('broadcast-draft-view')).toBeInTheDocument();
+    expect(broadcastsApi.getBroadcast).toHaveBeenCalledWith('w1', 'b1', {});
+  });
+
+  it('a launched broadcast: the read-only page view is chosen', async () => {
+    broadcastsApi.getBroadcast.mockResolvedValue({
+      ...draft({ status: 'sent' }),
+      version: undefined,
+    });
+    renderAt('/w/w1/broadcasts/b1');
+    expect(await screen.findByTestId('broadcast-launched-view')).toBeInTheDocument();
+  });
+
+  it('/broadcasts/<id>/launch mounts the same broadcast page', async () => {
+    broadcastsApi.getBroadcast.mockResolvedValue(draft());
+    renderAt('/w/w1/broadcasts/b1/launch');
+    expect(await screen.findByTestId('broadcast-draft-view')).toBeInTheDocument();
+    expect(within(crumbNav()).getByText('Spring prices')).toBeInTheDocument();
+  });
+
+  it('an unknown or foreign broadcast shows the not-found card, the crumb stays generic', async () => {
+    broadcastsApi.getBroadcast.mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found'));
+    renderAt('/w/w1/broadcasts/nope');
+    expect(await screen.findByText('Page not found')).toBeInTheDocument();
+    expect(within(crumbNav()).getByText('Broadcast')).toBeInTheDocument();
   });
 });

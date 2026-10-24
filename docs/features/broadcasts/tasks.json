@@ -746,7 +746,7 @@
         "apps/web/src/shared/ui/app-shell.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t30-scr24-broadcasts-list.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T31",
