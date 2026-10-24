@@ -71,6 +71,10 @@ interface DraftStoreState {
   stale: StaleSave | null;
   /** `BROADCAST_GROUP_CHANGED` on a switch to tags: the group size to confirm again (SCR-32). */
   groupChanged: number | null;
+  /** `TAG_NOT_FOUND` on an audience save: the tag that is gone; nothing was saved (SCR-25). */
+  tagGone: string | null;
+  /** The editor took the gone tag in (its notice shows, the tags are read again). */
+  clearTagGone: () => void;
   group: GroupState | null;
   open: (workspaceId: string, broadcastId: string, guard: GuardFn) => Promise<void>;
   editFields: (edit: DraftFieldsEdit, guard: GuardFn) => void;
@@ -178,6 +182,11 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
             pendingAudience = null;
             await markLaunched(workspaceId, broadcastId, opened);
             return;
+          }
+          if (code === ErrorCode.TAG_NOT_FOUND && audience) {
+            const tagId = (error as ApiError & { details?: { tag_id?: string } }).details?.tag_id;
+            set({ tagGone: tagId ?? null, save: 'idle' });
+            continue;
           }
           if (code === ErrorCode.BROADCAST_GROUP_CHANGED) {
             const size = (error as ApiError & { details: { group_size: number } }).details
@@ -304,7 +313,11 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     unsent: {},
     stale: null,
     groupChanged: null,
+    tagGone: null,
     group: null,
+    clearTagGone() {
+      set({ tagGone: null });
+    },
     async open(workspaceId, broadcastId, guard) {
       const opened = ++epoch;
       pendingAudience = null;
@@ -322,6 +335,7 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
         unsent,
         stale: null,
         groupChanged: null,
+        tagGone: null,
         group: null,
       });
       try {
@@ -435,6 +449,7 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
         save: 'idle',
         stale: null,
         groupChanged: null,
+        tagGone: null,
         group: null,
       });
     },

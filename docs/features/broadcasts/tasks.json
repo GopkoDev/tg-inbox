@@ -797,7 +797,7 @@
         "apps/web/src/features/broadcasts/BroadcastEditor.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t32-scr25-tag-audience-and-scr32.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T33",

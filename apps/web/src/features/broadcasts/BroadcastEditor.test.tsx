@@ -31,6 +31,10 @@ vi.mock('./api', async (importOriginal) => ({
   listBroadcastGroup: (...a: unknown[]) => api.listBroadcastGroup(...a),
   listBroadcastRecipients: (...a: unknown[]) => api.listBroadcastRecipients(...a),
 }));
+vi.mock('@/features/tags/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/features/tags/api')>()),
+  listTags: async () => ({ items: [] }),
+}));
 const live = vi.hoisted(() => ({ onFrame: null as ((f: LiveFrame) => void) | null }));
 vi.mock('@/shared/api/live-connection', () => ({
   subscribeLive: (_ws: string, handlers: { onFrame: (f: LiveFrame) => void }) => {
@@ -359,6 +363,40 @@ describe('SCR-25 — breakdown and audience card (AC-01, AC-10)', () => {
         expected_version: 3,
       }),
     );
+  });
+});
+
+describe('SCR-25 — the Audience card kinds (AC-01, AC-03)', () => {
+  it('a tag audience shows Send to and Leave out', async () => {
+    await openDraft();
+    expect(screen.getByRole('button', { name: /^Send to/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Leave out/ })).toBeInTheDocument();
+  });
+
+  it('«Contacts with tags» on a non-empty group asks first (SCR-32) and saves nothing yet', async () => {
+    api.listBroadcastGroup.mockResolvedValue({
+      workspace_id: WS,
+      broadcast_id: DRAFT,
+      size: 14,
+      items: [],
+      has_prev: false,
+      has_next: false,
+      next_cursor: null,
+    });
+    await openDraft(draft({ audience: { kind: 'group', size: 14 } }));
+    fireEvent.click(screen.getByRole('radio', { name: 'Contacts with tags' }));
+    expect(
+      await screen.findByRole('heading', { name: 'Switch to contacts with tags?' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText('The hand-picked group of 14 contacts will be removed from this draft.'),
+    ).toBeInTheDocument();
+    expect(api.saveBroadcastAudience).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep the group' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Switch to contacts with tags?' })).toBeNull(),
+    );
+    expect(screen.getByRole('radio', { name: 'Hand-picked group' })).toBeChecked();
   });
 });
 

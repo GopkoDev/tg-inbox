@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/contacts/TagFilter.tsx", "apps/web/src/featu
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T32 — Build the tag audience on SCR-25: TagFilter's controlled mode for Send to, the Leave out popover, the chosen and left-out badges, the dropped-tag notice and the over-10 000 warning, and SCR-32 SwitchAudienceDialog
@@ -109,11 +109,11 @@ No DB changes.
 
 ## Checklist
 
-- [ ] Extend `TagFilter` with a controlled mode (`value` / `onChange`, no address read or write); the address-bound Contacts list stays unchanged — `apps/web/src/features/contacts/TagFilter.tsx`, `TagFilter.test.tsx`
-- [ ] `TagAudience`: **Send to** (controlled TagFilter), **Leave out** `Popover` + `Checkbox`es with the mutual disabling and «No tags» disabling Leave out, the `Badge`s, the dropped-tag and over-10 000 `Alert`s, a save per choice through the draft store — `apps/web/src/features/broadcasts/TagAudience.tsx`
-- [ ] Kind `RadioGroup` wiring in the Audience card: to group at once; to tags at once on an empty group, else SCR-32 — `apps/web/src/features/broadcasts/BroadcastEditor.tsx`
-- [ ] `SwitchAudienceDialog` on `AlertDialog`, sending the size it shows and re-asking on `BROADCAST_GROUP_CHANGED`, after `DeleteTagDialog`'s pattern — `apps/web/src/features/broadcasts/SwitchAudienceDialog.tsx`
-- [ ] Testing Library tests per state above — `TagAudience.test.tsx`, `SwitchAudienceDialog.test.tsx`
+- [x] Extend `TagFilter` with a controlled mode (`value` / `onChange`, no address read or write); the address-bound Contacts list stays unchanged — `apps/web/src/features/contacts/TagFilter.tsx`, `TagFilter.test.tsx`
+- [x] `TagAudience`: **Send to** (controlled TagFilter), **Leave out** `Popover` + `Checkbox`es with the mutual disabling and «No tags» disabling Leave out, the `Badge`s, the dropped-tag and over-10 000 `Alert`s, a save per choice through the draft store — `apps/web/src/features/broadcasts/TagAudience.tsx`
+- [x] Kind `RadioGroup` wiring in the Audience card: to group at once; to tags at once on an empty group, else SCR-32 — `apps/web/src/features/broadcasts/BroadcastEditor.tsx`
+- [x] `SwitchAudienceDialog` on `AlertDialog`, sending the size it shows and re-asking on `BROADCAST_GROUP_CHANGED`, after `DeleteTagDialog`'s pattern — `apps/web/src/features/broadcasts/SwitchAudienceDialog.tsx`
+- [x] Testing Library tests per state above — `TagAudience.test.tsx`, `SwitchAudienceDialog.test.tsx`
 
 ## Edge cases
 
@@ -128,7 +128,18 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every tag-audience state of SCR-25 and every SCR-32 state in screens.md: TagFilter driven by value / onChange without touching the address (the Contacts list behaviour unchanged), a chosen tag disabled in Leave out and the reverse, No tags disabling Leave out, the dropped-tag notice by stored name, the over-10 000 warning, the switch confirmation naming the group size and re-asking on BROADCAST_GROUP_CHANGED.
-- [ ] The existing TagFilter and Contacts list tests still pass unchanged (the address-bound mode is untouched).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every tag-audience state of SCR-25 and every SCR-32 state in screens.md: TagFilter driven by value / onChange without touching the address (the Contacts list behaviour unchanged), a chosen tag disabled in Leave out and the reverse, No tags disabling Leave out, the dropped-tag notice by stored name, the over-10 000 warning, the switch confirmation naming the group size and re-asking on BROADCAST_GROUP_CHANGED.
+- [x] The existing TagFilter and Contacts list tests still pass unchanged (the address-bound mode is untouched).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T32): `TagFilter` was already driven only by `mode` / `tagIds` / `onChange` (the Contacts list binds them to its address in `ContactsTable`), so the "controlled mode" is three optional props: `label` (the trigger reads «Send to», «Send to · Any of 2», «Send to · All of 2», «Send to · No tags» — the wireframe's wording), `disabledTagIds` (tags left out elsewhere) and `adornment` / `triggerClassName` (the saving spinner, full width on phones). Without them it renders exactly as before; the existing TagFilter and Contacts list tests pass unchanged.
+- `implement` (T32): `TagAudience({ workspaceId })` reads the draft from the draft store and the tags from the tags store (loads them once per workspace): **Send to** (TagFilter with `label`) and **Leave out** (`Popover` + `Checkbox`es, disabled under «No tags»; a chosen tag is disabled in the other control), `Badge`s («VIP» secondary, «− Staff» outline) under the current tag names, one notice per `dropped_tags` name and per tag gone on save, and the over-10 000 `Alert`. Each choice sends the whole tag audience through `saveAudience` (left-out tags cleared under «No tags», which the contract refuses otherwise); the choice shows at once and gives way to the draft's answer.
+- `implement` (T32): **deviation** — `draft-store.ts` (outside files_hint) gained `tagGone` / `clearTagGone()`: a `TAG_NOT_FOUND` audience save is no longer kept for a retry (it would fail forever); the store marks the tag id, `TagAudience` names it from the tags it held, unchecks it (shows the draft's answer), re-reads the tags in the background and clears the mark.
+- `implement` (T32): `SwitchAudienceDialog({ open, onClose })` on `AlertDialog`, after `DeleteDraftDialog` / `DeleteTagDialog`: sends `{ kind: tags, mode: any, tag_ids: [], exclude_tag_ids: [], expected_group_size }` through the draft store with the size it shows; `BROADCAST_GROUP_CHANGED` (the store's `groupChanged`) shows the new size with «The group changed while you were deciding.» and the next Switch sends it; switched, stale or launched closes it (the editor shows its own notice); any other failure «Couldn't switch the audience». The editor opens it for «Contacts with tags» on a non-empty group; the tag audience is rendered by the editor itself, `audienceControls` now carries only the group's controls (T33).
+- `implement` (T32): new components `TagAudience` and `SwitchAudienceDialog` are not yet registered in `docs/design-system.md` — the canon update is T40's.
+- `implement` (T32): RED — TagFilter `Unable to find an accessible element with the role "button" and name "Send to"`; `Failed to resolve import "./TagAudience"` / `"./SwitchAudienceDialog"`; editor `Unable to find role="heading" and name "Switch to contacts with tags?"` (GOOD red). One BAD red fixed in the test (`ErrorCode.INTERNAL` → `INTERNAL_ERROR`). GREEN found a double `onClose` (effect re-run on a new callback) — fixed with a ref.
+- `implement` (T32): gate — `pnpm lint` clean; full `pnpm test`: only `e2e/contacts-load`, `inbox/http/changes` p95 and `migrations.int` (known set) failed; all green re-run alone.
+

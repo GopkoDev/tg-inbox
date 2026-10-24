@@ -35,6 +35,8 @@ import { createBroadcast, duplicateBroadcast, getLaunchConfirmation } from './ap
 import { AudienceBreakdown, formatCount } from './AudienceBreakdown';
 import { DeleteDraftDialog } from './DeleteDraftDialog';
 import { useBroadcastDraftStore, type DraftFieldsEdit } from './draft-store';
+import { SwitchAudienceDialog } from './SwitchAudienceDialog';
+import { TagAudience } from './TagAudience';
 
 /** Saves wait for a pause in typing (or the field's blur), screens.md Decision 3. */
 export const SAVE_PAUSE_MS = 800;
@@ -84,7 +86,7 @@ export function BroadcastEditor({
 }: {
   workspaceId: string;
   broadcastId?: string;
-  /** The audience kind's own controls (tag audience, group) — T32 / T33. */
+  /** The hand-picked group's controls (T33); the tag audience is built in. */
   audienceControls?: ReactNode;
 }) {
   const navigate = useNavigate();
@@ -102,6 +104,8 @@ export function BroadcastEditor({
     text: draft?.text ?? '',
   });
   const [touched, setTouched] = useState<Record<Field, boolean>>({ name: false, text: false });
+  /** SCR-32 is open: a non-empty group asked to switch to contacts with tags. */
+  const [switching, setSwitching] = useState(false);
   const [syncedFor, setSyncedFor] = useState<string | null>(draft?.id ?? null);
   const [adopted, setAdopted] = useState<BroadcastDraft | null>(null);
   const [launching, setLaunching] = useState(false);
@@ -268,9 +272,9 @@ export function BroadcastEditor({
     const store = useBroadcastDraftStore.getState();
     if (kind === 'group') store.saveAudience({ kind: 'group' }, guard);
     else if (groupSize === 0) {
-      // An empty group switches at once; a non-empty one asks first (SCR-32, T32).
+      // An empty group switches at once; a non-empty one asks first (SCR-32).
       store.saveAudience({ kind: 'tags', mode: 'any', tag_ids: [], exclude_tag_ids: [] }, guard);
-    }
+    } else setSwitching(true);
   };
 
   return (
@@ -414,7 +418,11 @@ export function BroadcastEditor({
                     <Label htmlFor="audience-group">Hand-picked group</Label>
                   </div>
                 </RadioGroup>
-                {audienceControls}
+                {audienceKind === 'tags' ? (
+                  <TagAudience workspaceId={workspaceId} />
+                ) : (
+                  audienceControls
+                )}
                 <AudienceBreakdown breakdown={draft.breakdown} botSettingsHref={botSettingsHref} />
               </>
             )}
@@ -422,6 +430,7 @@ export function BroadcastEditor({
         </Card>
       </div>
 
+      <SwitchAudienceDialog open={switching} onClose={() => setSwitching(false)} />
       <DeleteDraftDialog
         workspaceId={workspaceId}
         draft={
