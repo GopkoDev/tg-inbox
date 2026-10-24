@@ -9,7 +9,7 @@ import {
   type LaunchConfirmation,
 } from '@tg/shared';
 import { Loader2, MoreHorizontal } from 'lucide-react';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { useAuthStore } from '@/features/auth/store';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -198,6 +198,7 @@ export function BroadcastEditor({
   /** Sends a field when it is valid and differs from what the draft holds. */
   const commit = (field: Field, value: string) => {
     clearTimeout(timers.current[field]);
+    delete timers.current[field];
     if (field === 'name') {
       const check = checkBroadcastName(value);
       if (!check.ok) return;
@@ -217,6 +218,22 @@ export function BroadcastEditor({
       return;
     useBroadcastDraftStore.getState().editFields({ text: check.text }, guard);
   };
+
+  /**
+   * Fires every armed save timer now: while a stale save is shown its value joins the member's own
+   * values (never sent against their version), so no older timer goes out after Use mine / Keep theirs.
+   */
+  const flushTimers = () => {
+    for (const field of Object.keys(timers.current) as Field[]) {
+      if (timers.current[field] !== undefined) commit(field, latest.current[field]);
+    }
+  };
+
+  // A stale save adopted: the armed timers' values join the member's own values at once.
+  const onStaleShown = useEffectEvent(flushTimers);
+  useEffect(() => {
+    if (stale) onStaleShown();
+  }, [stale]);
 
   const change = (field: Field, value: string) => {
     latest.current = { ...latest.current, [field]: value };
@@ -340,7 +357,8 @@ export function BroadcastEditor({
   };
 
   const useMine = () => {
-    const mine: DraftFieldsEdit = stale?.mine ?? {};
+    flushTimers();
+    const mine: DraftFieldsEdit = useBroadcastDraftStore.getState().stale?.mine ?? {};
     setValues((v) => ({ ...v, ...mine }));
     useBroadcastDraftStore.getState().useMine(guard);
   };
@@ -439,7 +457,10 @@ export function BroadcastEditor({
                 type="button"
                 size="sm"
                 variant="outline"
-                onClick={() => useBroadcastDraftStore.getState().keepTheirs()}
+                onClick={() => {
+                  flushTimers();
+                  useBroadcastDraftStore.getState().keepTheirs();
+                }}
               >
                 Keep theirs
               </Button>

@@ -397,6 +397,46 @@ describe('SCR-25 — the Message card (AC-02)', () => {
     expect(screen.getByTestId('mine-text')).toHaveTextContent('Mine, more');
   });
 
+  const staleWithArmedTimer = async () => {
+    const first = deferred<BroadcastDraft>();
+    api.saveBroadcastFields.mockReturnValueOnce(first.promise);
+    await openDraft();
+    vi.useFakeTimers();
+    type(textField(), 'Mine');
+    // Arms the 800 ms save timer.
+    fireEvent.change(textField(), { target: { value: 'Mine, more' } });
+    await act(async () => vi.advanceTimersByTime(100));
+    await act(async () =>
+      first.reject(
+        new ApiError(409, ErrorCode.BROADCAST_DRAFT_CHANGED, 'changed', {
+          draft: draft({ version: 5, text: 'Theirs' }),
+        }),
+      ),
+    );
+    await act(async () => vi.advanceTimersByTime(500));
+  };
+
+  it('RR-W2: Keep theirs before an armed save timer fires sends nothing against their version', async () => {
+    await staleWithArmedTimer();
+    fireEvent.click(screen.getByRole('button', { name: 'Keep theirs' }));
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(1);
+    expect(textField()).toHaveValue('Theirs');
+  });
+
+  it('RR-W2: Use mine before an armed save timer fires sends the latest own text once', async () => {
+    await staleWithArmedTimer();
+    expect(screen.getByTestId('mine-text')).toHaveTextContent('Mine, more');
+    api.saveBroadcastFields.mockResolvedValue(draft({ version: 6, text: 'Mine, more' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Use mine' }));
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(2);
+    expect(api.saveBroadcastFields).toHaveBeenLastCalledWith(WS, DRAFT, {
+      expected_version: 5,
+      text: 'Mine, more',
+    });
+  });
+
   it('W8: an edit kept across a 401 is shown again on the same address', async () => {
     const unauth = new ApiError(401, ErrorCode.UNAUTHENTICATED, 'sign in');
     api.saveBroadcastFields.mockRejectedValueOnce(unauth);

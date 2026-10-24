@@ -5,7 +5,7 @@ import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { subscribeLive } from '@/shared/api/live-connection';
 import { listBroadcasts } from './api';
-import { serialRead } from './serial-read';
+import { serialRead } from '@/shared/lib/serial-read';
 
 export type Phase = 'idle' | 'loading' | 'ready' | 'error';
 

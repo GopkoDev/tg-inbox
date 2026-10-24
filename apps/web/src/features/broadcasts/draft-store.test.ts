@@ -470,6 +470,45 @@ describe('broadcast draft store (SCR-25)', () => {
     expect(store().group!.more).toBe('idle');
   });
 
+  it('RR-W1: a Show more started while a group re-read is in flight wins; the re-read runs again after it', async () => {
+    await opened();
+    api.listBroadcastGroup.mockResolvedValueOnce(groupPage([C1], 'cursor-1'));
+    await store().loadGroup(guard);
+    const reread = deferred<unknown>();
+    const more = deferred<unknown>();
+    api.listBroadcastGroup
+      .mockReturnValueOnce(reread.promise)
+      .mockReturnValueOnce(more.promise)
+      .mockResolvedValue(groupPage([C1, C2], null));
+    api.addBroadcastGroupContact.mockResolvedValue({
+      broadcast_id: BC,
+      outcome: 'added',
+      group_size: 2,
+    });
+    await store().addContact(C2, guard);
+    await settle();
+    // A second trigger queues one more re-read behind the one in flight.
+    await store().addContact(C2, guard);
+    await settle();
+    const shown = store().showMoreGroup(guard);
+    await settle();
+    // The re-read lands first, then Show more.
+    reread.resolve(groupPage([C1], 'cursor-1'));
+    await settle();
+    await settle();
+    // The queued re-read waits for Show more instead of reading meanwhile.
+    expect(api.listBroadcastGroup).toHaveBeenCalledTimes(3);
+    more.resolve(groupPage([C2], null));
+    await shown;
+    expect(store().group!.items.map((r) => r.contact.id)).toEqual([C1, C2]);
+    await settle();
+    await settle();
+    expect(api.listBroadcastGroup).toHaveBeenCalledTimes(4);
+    expect(api.listBroadcastGroup).toHaveBeenLastCalledWith(A, BC, {}, { background: true });
+    expect(store().group!.items.map((r) => r.contact.id)).toEqual([C1, C2]);
+    expect(store().group!.more).toBe('idle');
+  });
+
   it('U8: a stale audience save keeps the rejected choice; Use mine sends it on their version', async () => {
     await opened();
     const theirs = draft(2, { text: 'Teammate text' });

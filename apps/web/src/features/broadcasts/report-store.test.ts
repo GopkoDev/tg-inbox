@@ -235,6 +235,48 @@ describe('broadcast report store (SCR-28)', () => {
     expect(useBroadcastReportStore.getState().recipients.more).toBe('idle');
   });
 
+  it('RR-W1: a Show more started while a re-read is in flight wins; the re-read runs again after it', async () => {
+    api.getBroadcast.mockResolvedValue(broadcast());
+    api.listBroadcastRecipients.mockResolvedValue(
+      page({ items: [row(1)], has_next: true, next_cursor: 'c1' }),
+    );
+    await useBroadcastReportStore.getState().open(A, BC, guard);
+    useBroadcastReportStore.getState().watch(A, guard);
+    api.getBroadcast.mockClear();
+    api.listBroadcastRecipients.mockClear();
+    const reread = deferred<LaunchedBroadcast>();
+    const again = deferred<LaunchedBroadcast>();
+    api.getBroadcast.mockReturnValueOnce(reread.promise).mockReturnValueOnce(again.promise);
+    emit(frame());
+    await settle();
+    const more = deferred<BroadcastRecipientPage>();
+    api.listBroadcastRecipients
+      .mockReturnValueOnce(more.promise)
+      .mockResolvedValueOnce(page({ items: [row(1)], has_next: true, next_cursor: 'c1' }))
+      .mockResolvedValue(page({ items: [row(1), row(2)] }));
+    const shown = useBroadcastReportStore.getState().showMore(guard);
+    // The re-read lands first.
+    reread.resolve(broadcast(1));
+    await settle();
+    await settle();
+    more.resolve(page({ items: [row(2)] }));
+    await shown;
+    await settle();
+    expect(useBroadcastReportStore.getState().recipients.items.map((r) => r.id)).toEqual([
+      row(1).id,
+      row(2).id,
+    ]);
+    expect(api.getBroadcast).toHaveBeenCalledTimes(2);
+    again.resolve(broadcast(2));
+    await settle();
+    await settle();
+    expect(useBroadcastReportStore.getState().broadcast).toEqual(broadcast(2));
+    expect(useBroadcastReportStore.getState().recipients.items.map((r) => r.id)).toEqual([
+      row(1).id,
+      row(2).id,
+    ]);
+  });
+
   it('U3: a failed filter read keeps the page and fails in the report; Retry reads the same filter', async () => {
     await opened();
     api.listBroadcastRecipients.mockRejectedValueOnce(new Error('network'));

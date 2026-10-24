@@ -11,7 +11,7 @@ import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { subscribeLive } from '@/shared/api/live-connection';
 import { getBroadcast, listBroadcastRecipients } from './api';
-import { serialRead } from './serial-read';
+import { serialRead } from '@/shared/lib/serial-read';
 
 export type Phase = 'idle' | 'loading' | 'ready' | 'error' | 'not_found';
 export type MoreStatus = 'idle' | 'loading' | 'error';
@@ -95,6 +95,7 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
         key,
         run: serialRead(async () => {
           const opened = epoch;
+          const seq = listSeq;
           const { filter, recipients } = get();
           if (recipients.more === 'loading') {
             rereadWaits = true;
@@ -115,7 +116,12 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
               items.push(...page.items);
             }
             if (opened !== epoch || !shows(workspaceId, broadcastId) || !page) return;
-            // A Show more started meanwhile continues the old list: it is dropped on answer.
+            if (seq !== listSeq) {
+              // A Show more started meanwhile wins: this answer is dropped and read again after it.
+              if (get().recipients.more === 'loading') rereadWaits = true;
+              else void reread?.run(); // Show more has already landed: queue one more read now
+              return;
+            }
             replaceRecipients({ ...recipientsOf(page), items }, { status: 'ready', broadcast });
           } catch (error) {
             if (isGuardAnswer(error)) guard(error, workspaceId);
@@ -206,7 +212,8 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
       if (!workspaceId || !broadcastId || !recipients.nextCursor || recipients.more === 'loading')
         return;
       const opened = epoch;
-      const seq = listSeq;
+      // Show more wins over a background re-read in flight: its answer is dropped (it runs again).
+      const seq = ++listSeq;
       set({ recipients: { ...recipients, more: 'loading' } });
       try {
         const page = await listBroadcastRecipients(

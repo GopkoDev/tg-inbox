@@ -15,7 +15,7 @@ import { ApiError } from '@/shared/api/client';
 import { subscribeLive } from '@/shared/api/live-connection';
 import { byPosition, upsertItem } from '@/features/inbox/store';
 import { listThreadItems } from '@/features/inbox/api-source';
-import { serialRead } from '@/features/broadcasts/serial-read';
+import { serialRead } from '@/shared/lib/serial-read';
 import { getContact, getContactConversation, listContactTagHistory, listContacts } from './api';
 
 // The profile's conversation uses the inbox *reads* only: summary + thread pages. This store never

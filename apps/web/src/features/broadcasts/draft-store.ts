@@ -24,7 +24,7 @@ import {
   saveBroadcastAudience,
   saveBroadcastFields,
 } from './api';
-import { serialRead } from './serial-read';
+import { serialRead } from '@/shared/lib/serial-read';
 
 // The draft editor's store (SCR-25/26/27/31/32, screens.md Decision 3): fields are saved as they
 // change against the version the store holds, one save in flight; a change made meanwhile goes out
@@ -294,10 +294,17 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       });
     }
     const loads = groupLoads;
+    const seq = groupSeq;
     try {
       const page = await listBroadcastGroup(workspaceId, broadcastId, {}, { background });
       // A newer full load (Retry, the picker closing) answers for the list instead.
       if (opened !== epoch || loads !== groupLoads) return;
+      if (background && seq !== groupSeq) {
+        // A Show more started meanwhile wins: this answer is dropped and read again after it.
+        if (get().group?.more === 'loading') groupRereadWaits = true;
+        else void groupReread?.(); // Show more has already landed: queue one more read now
+        return;
+      }
       groupSeq++;
       set({
         group: {
@@ -318,11 +325,14 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
 
   /** The group's first page again in the background: one at a time, after a Show more in flight. */
   const rereadGroup = (guard: GuardFn) => {
-    if (get().group?.more === 'loading') {
-      groupRereadWaits = true;
-      return Promise.resolve();
-    }
-    groupReread ??= serialRead(() => readGroup(guard, true));
+    groupReread ??= serialRead(async () => {
+      // Checked when the read runs, so a queued re-read also waits for a Show more in flight.
+      if (get().group?.more === 'loading') {
+        groupRereadWaits = true;
+        return;
+      }
+      await readGroup(guard, true);
+    });
     return groupReread();
   };
 
@@ -530,7 +540,8 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       const { workspaceId, broadcastId, group } = get();
       if (!workspaceId || !broadcastId || !group?.nextCursor || group.more === 'loading') return;
       const opened = epoch;
-      const seq = groupSeq;
+      // Show more wins over a background re-read in flight: its answer is dropped (it runs again).
+      const seq = ++groupSeq;
       set({ group: { ...group, more: 'loading' } });
       try {
         const page = await listBroadcastGroup(
