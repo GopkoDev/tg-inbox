@@ -409,6 +409,14 @@ export function buildDeps(
     contactTags: contactTagRepo,
     tagHistory: tagHistoryRepo,
     workspaces: workspaceAccess,
+    // The contacts -> bots runtime edge (ADR-0002): the current Telegram bot, read through the
+    // bots core's app layer; whose blocked marks the list and the profile show.
+    currentBot: {
+      currentBot: async (workspaceId) => {
+        const bot = await pingReadiness(workspaceId);
+        return bot === null ? null : { telegramBotId: bot.telegramBotId };
+      },
+    },
   });
   const tagSignals = createTagSignals();
   const tagWrites = createTagWrites({

@@ -223,7 +223,7 @@
         "apps/api/src/modules/contacts/infra/contact-repo.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t09-contacts-blocked-since-reads.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T10",

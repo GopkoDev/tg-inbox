@@ -22,10 +22,14 @@ import {
 } from './ports.js';
 
 /** In-memory ContactRepo for unit tests; applies the same profile-refresh rule as the SQL. */
-export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
+export function fakeContactRepo(
+  /** Reach rows the profile's and the list's blocked marks are read from. */
+  reach: FakeReachRow[] = [],
+): ContactRepo & { rows: ContactRecord[]; reach: FakeReachRow[] } {
   const rows: ContactRecord[] = [];
   return {
     rows,
+    reach,
     async upsertFromProfile(workspaceId, profile, seenAt, now) {
       const existing = rows.find(
         (r) => r.workspaceId === workspaceId && r.telegramUserId === profile.telegramUserId,
@@ -69,9 +73,11 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
         .map((r) => r.id)
         .sort();
     },
-    async profile(workspaceId, contactId) {
+    async profile(workspaceId, contactId, telegramBotId = null) {
       const row = rows.find((r) => r.workspaceId === workspaceId && r.id === contactId);
-      return row ? { ...row } : null;
+      return row
+        ? { ...row, blockedSince: blockedSinceOf(reach, workspaceId, contactId, telegramBotId) }
+        : null;
     },
     async lockContact(workspaceId, contactId) {
       return rows.some((r) => r.workspaceId === workspaceId && r.id === contactId);
@@ -93,6 +99,24 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
         }));
     },
   };
+}
+
+/** The blocked mark of one contact for one bot in reach rows; null bot = no mark. */
+function blockedSinceOf(
+  reach: readonly FakeReachRow[],
+  workspaceId: string,
+  contactId: string,
+  telegramBotId: bigint | null,
+): Date | null {
+  if (telegramBotId === null) return null;
+  return (
+    reach.find(
+      (r) =>
+        r.workspaceId === workspaceId &&
+        r.contactId === contactId &&
+        r.telegramBotId === telegramBotId,
+    )?.blockedAt ?? null
+  );
 }
 
 // ───────── tags and the Contacts reads ─────────
@@ -191,7 +215,7 @@ export function fakeReadPorts(
   }
 
   const lists: ContactListQuery = {
-    async listPage(ws, f) {
+    async listPage(ws, f, telegramBotId = null) {
       const all = (await matching(ws, f)).sort((a, b) => {
         if (a.lastWroteAt === null || b.lastWroteAt === null) {
           if (a.lastWroteAt !== b.lastWroteAt) return a.lastWroteAt === null ? 1 : -1;
@@ -223,6 +247,7 @@ export function fakeReadPorts(
           firstWroteAt: c.firstWroteAt,
           lastWroteAt: c.lastWroteAt,
           tags: tagsOfContact(ws, c.id).map((x) => ({ id: x.tag.id, name: x.tag.name })),
+          blockedSince: blockedSinceOf(contactRepo.reach, ws, c.id, telegramBotId),
         })),
         hasNext: slice.length > CONTACTS_PAGE_SIZE,
       };

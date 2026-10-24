@@ -96,16 +96,39 @@ export function matchingCountQuery(db: Db, workspaceId: string, f: ContactListFi
   return filteredContacts(db, workspaceId, f).select((eb) => eb.fn.countAll<string>().as('n'));
 }
 
+/**
+ * The blocked marks of a page of contacts for one Telegram bot: one lookup by
+ * `contact_bot_reach_pkey` for the page ids, never a query per row; unblocked rows are left out.
+ */
+export function blockedSinceQuery(
+  db: Db,
+  workspaceId: string,
+  contactIds: readonly string[],
+  telegramBotId: bigint,
+) {
+  return db
+    .selectFrom('contact_bot_reach')
+    .select(['contact_id', 'blocked_at'])
+    .where('workspace_id', '=', workspaceId)
+    .where(sql<boolean>`contact_id = ANY(${uuidArray(contactIds)})`)
+    .where('telegram_bot_id', '=', String(telegramBotId))
+    .where('blocked_at', 'is not', null);
+}
+
 export function createContactListQuery(db: Db): ContactListQuery {
   const contactTags = createContactTagRepo(db);
   return {
-    async listPage(workspaceId, filter) {
+    async listPage(workspaceId, filter, telegramBotId = null) {
       const rows = await listPageQuery(db, workspaceId, filter).execute();
       const page = rows.slice(0, CONTACTS_PAGE_SIZE);
-      const tags = await contactTags.tagsOfMany(
-        workspaceId,
-        page.map((r) => r.id),
-      );
+      const ids = page.map((r) => r.id);
+      const [tags, marks] = await Promise.all([
+        contactTags.tagsOfMany(workspaceId, ids),
+        telegramBotId === null || ids.length === 0
+          ? []
+          : blockedSinceQuery(db, workspaceId, ids, telegramBotId).execute(),
+      ]);
+      const blocked = new Map(marks.map((m) => [m.contact_id, m.blocked_at]));
       return {
         rows: page.map((r) => ({
           id: r.id,
@@ -116,6 +139,7 @@ export function createContactListQuery(db: Db): ContactListQuery {
           firstWroteAt: r.first_wrote_at,
           lastWroteAt: r.last_wrote_at,
           tags: tags.get(r.id) ?? [],
+          blockedSince: blocked.get(r.id) ?? null,
         })),
         hasNext: rows.length > CONTACTS_PAGE_SIZE,
       };

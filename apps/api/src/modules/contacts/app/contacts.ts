@@ -20,6 +20,7 @@ import {
   type ContactRepo,
   type ContactSummary,
   type ContactTagRepo,
+  type CurrentBot,
   type DisplayNames,
   type Executor,
   type ReachRepo,
@@ -90,6 +91,8 @@ export interface ContactReadsDeps {
   tagHistory: Pick<TagHistoryRepo, 'page'>;
   /** The `contacts → workspaces` edge (app layer): adders' and actors' names. */
   workspaces: DisplayNames;
+  /** The workspace's current Telegram bot (late-bound `bots` port): whose blocked marks are shown. */
+  currentBot: CurrentBot;
 }
 
 /** The query of `listContacts` as the use case takes it: `tagIds` and `after` optional, `q` raw. */
@@ -114,7 +117,10 @@ const iso = (d: Date) => d.toISOString();
 const isoOrNull = (d: Date | null) => (d === null ? null : iso(d));
 
 export function createContactReads(deps: ContactReadsDeps): ContactReads {
-  const { repo, lists, tags, contactTags, tagHistory, workspaces } = deps;
+  const { repo, lists, tags, contactTags, tagHistory, workspaces, currentBot } = deps;
+  /** Marks are per Telegram bot (ADR-0002): only the current bot's apply; no bot, no marks. */
+  const botIdOf = async (workspaceId: string) =>
+    (await currentBot.currentBot(workspaceId))?.telegramBotId ?? null;
 
   const refs = (workspaceId: string, accountIds: readonly string[]) =>
     memberRefs(workspaces, workspaceId, accountIds);
@@ -137,8 +143,9 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
         after = decodeContactCursor(input.after, key);
         if (after === null) throw new ValidationError('The cursor is not valid.');
       }
+      const botId = await botIdOf(workspaceId);
       const [page, matching, total] = await Promise.all([
-        lists.listPage(workspaceId, { ...filter, ...(after && { after }) }),
+        lists.listPage(workspaceId, { ...filter, ...(after && { after }) }, botId),
         lists.matchingCount(workspaceId, filter),
         lists.totalCount(workspaceId),
       ]);
@@ -156,8 +163,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           first_wrote_at: isoOrNull(r.firstWroteAt),
           last_wrote_at: isoOrNull(r.lastWroteAt),
           tags: r.tags,
-          // The current bot's blocked mark is read by broadcasts T9; until then nothing is marked.
-          blocked_since: null,
+          blocked_since: isoOrNull(r.blockedSince),
         })),
         has_prev: after !== null,
         has_next: page.hasNext,
@@ -172,7 +178,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
     },
 
     async getContact(workspaceId, contactId) {
-      const contact = await repo.profile(workspaceId, contactId);
+      const contact = await repo.profile(workspaceId, contactId, await botIdOf(workspaceId));
       if (contact === null) throw new NotFoundError('Contact not found.');
       const carried = await contactTags.tagsOf(workspaceId, contactId);
       const ref = await refs(
@@ -194,8 +200,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           added_by: ref(t.addedByAccountId),
           added_at: iso(t.addedAt),
         })),
-        // The current bot's blocked mark is read by broadcasts T9; until then nothing is marked.
-        blocked_since: null,
+        blocked_since: isoOrNull(contact.blockedSince),
       };
     },
 

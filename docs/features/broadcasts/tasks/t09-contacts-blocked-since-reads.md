@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/contacts/app/contacts.ts", "apps/api/src/modu
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T9 — Show "blocked the bot" on Contacts reads: list rows and the profile gain blocked_since for the current Telegram bot through a late-bound currentBot port
@@ -103,12 +103,12 @@ It puts the block mark on the Contacts list row and the profile, always for the 
 
 ## Checklist
 
-- [ ] Declare `CurrentBot` (`currentBot(workspaceId): Promise<{ telegramBotId: bigint } | null>`) in the contacts ports, late-bound (filled in `buildDeps()` by T26) — `apps/api/src/modules/contacts/app/ports.ts`
-- [ ] Failing unit tests first: the list and profile use cases pass the current bot id (or null) to the reads — `apps/api/src/modules/contacts/app/contacts.test.ts`
-- [ ] List query: one `LEFT JOIN contact_bot_reach` on `(workspace_id, contact_id, telegram_bot_id = $bot)` for the page rows only; null bot → `blocked_since` null without the join — `apps/api/src/modules/contacts/infra/contact-list-query.ts`
-- [ ] Profile read: the same lookup by the reach PK — `apps/api/src/modules/contacts/infra/contact-repo.ts`
-- [ ] Use cases map `blocked_at` → `blocked_since` — `apps/api/src/modules/contacts/app/contacts.ts`
-- [ ] Integration tests: blocked for the current bot, unblocked, blocked only for an older bot id, no bot row, and a foreign workspace's reach row never shows (isolation) — `apps/api/src/modules/contacts/infra/` int tests
+- [x] Declare `CurrentBot` (`currentBot(workspaceId): Promise<{ telegramBotId: bigint } | null>`) in the contacts ports, late-bound (filled in `buildDeps()` by T26) — `apps/api/src/modules/contacts/app/ports.ts`
+- [x] Failing unit tests first: the list and profile use cases pass the current bot id (or null) to the reads — `apps/api/src/modules/contacts/app/contacts.test.ts`
+- [x] List query: one `LEFT JOIN contact_bot_reach` on `(workspace_id, contact_id, telegram_bot_id = $bot)` for the page rows only; null bot → `blocked_since` null without the join — `apps/api/src/modules/contacts/infra/contact-list-query.ts`
+- [x] Profile read: the same lookup by the reach PK — `apps/api/src/modules/contacts/infra/contact-repo.ts`
+- [x] Use cases map `blocked_at` → `blocked_since` — `apps/api/src/modules/contacts/app/contacts.ts`
+- [x] Integration tests: blocked for the current bot, unblocked, blocked only for an older bot id, no bot row, and a foreign workspace's reach row never shows (isolation) — `apps/api/src/modules/contacts/infra/` int tests
 
 ## Edge cases
 
@@ -122,11 +122,15 @@ It puts the block mark on the Contacts list row and the profile, always for the 
 
 ## Definition of Done
 
-- [ ] Unit and integration tests prove a list row and a profile carry blocked_since when the contact is blocked for the current Telegram bot and null when unblocked, when blocked only for an older bot, or when the workspace has no bot, and that the list query keeps its contacts §6 plan (no extra query per row).
-- [ ] An `EXPLAIN` in the integration test (or the existing contacts plan check) shows the reach lookup as an index access on `contact_bot_reach_pkey`, not a per-row query.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests prove a list row and a profile carry blocked_since when the contact is blocked for the current Telegram bot and null when unblocked, when blocked only for an older bot, or when the workspace has no bot, and that the list query keeps its contacts §6 plan (no extra query per row).
+- [x] An `EXPLAIN` in the integration test (or the existing contacts plan check) shows the reach lookup as an index access on `contact_bot_reach_pkey`, not a per-row query.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
 
 ## Implementation notes
 
 - From T4: `apps/api/src/modules/contacts/app/contacts.ts` answers `blocked_since: null` in `listContacts` and `getContact` as a placeholder — replace it with the current bot's mark here.
+- `implement` (T9): `CurrentBot` (`contacts/app/ports.ts`) is a required dep of `createContactReads`; `buildDeps()` binds it now to the `bots` core's app-layer read `pingReadiness` (any bot row, whatever its state → its Telegram bot id; no row → null), so the marks show end-to-end before T26. T26 may swap it for a dedicated `bots` read when it wires the other contacts ⇄ bots ports.
+- `implement` (T9): the list reads the marks with one extra lookup for the page ids (`blockedSinceQuery`, `contact_id = ANY(page ids)` by `contact_bot_reach_pkey`, like `tagsOfMany`) instead of a `LEFT JOIN` in the page query — the page query and its keyset plan stay untouched, and it is still one query per page, never per row (the EXPLAIN test pins the pkey). The profile does the `LEFT JOIN` by the reach key. A null bot skips the lookup.
+- `implement` (T9): `ContactRepo.profile` takes an optional bot id and returns `ContactProfileRecord` (`blockedSince`); `ContactListQuery.listPage` takes an optional bot id and rows gain `blockedSince`. The unit tests live in `contacts-reads.test.ts` (where the read use cases' tests already were), not `contacts.test.ts`; the existing exact-shape assertions of the list row and the profile gained `blockedSince: null`. `fakeContactRepo(reach?)` reads marks from fake reach rows.
+- `implement` (T9): gate — full `pnpm test` green (283 files, 3925 tests); `pnpm lint` clean.

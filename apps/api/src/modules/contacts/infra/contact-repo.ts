@@ -125,12 +125,23 @@ export function createContactRepo(db: Db): ContactRepo {
       return row?.id ?? null;
     },
 
-    async profile(workspaceId, contactId) {
+    async profile(workspaceId, contactId, telegramBotId = null) {
       const r = await db
-        .selectFrom('contacts')
-        .selectAll()
-        .where('workspace_id', '=', workspaceId)
-        .where('id', '=', contactId)
+        .selectFrom('contacts as c')
+        .selectAll('c')
+        // The current bot's mark by the reach key (contact_bot_reach_pkey); no bot = no mark.
+        .$if(telegramBotId !== null, (q) =>
+          q
+            .leftJoin('contact_bot_reach as r', (j) =>
+              j
+                .onRef('r.workspace_id', '=', 'c.workspace_id')
+                .onRef('r.contact_id', '=', 'c.id')
+                .on('r.telegram_bot_id', '=', String(telegramBotId)),
+            )
+            .select('r.blocked_at'),
+        )
+        .where('c.workspace_id', '=', workspaceId)
+        .where('c.id', '=', contactId)
         .executeTakeFirst();
       if (!r) return null;
       return {
@@ -145,6 +156,7 @@ export function createContactRepo(db: Db): ContactRepo {
         createdAt: r.created_at,
         firstWroteAt: r.first_wrote_at,
         lastWroteAt: r.last_wrote_at,
+        blockedSince: r.blocked_at ?? null,
       };
     },
   };

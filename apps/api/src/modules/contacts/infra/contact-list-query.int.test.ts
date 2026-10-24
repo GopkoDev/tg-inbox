@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import { createDb, type Db } from '../../../platform/db.js';
-import { insertContact } from '../../../test/fixtures/contacts.js';
+import { insertContact, insertReach } from '../../../test/fixtures/contacts.js';
 import { insertContactTag, insertTag, twoWorkspacesWithTags } from '../../../test/fixtures/tags.js';
 import { insertMembership, insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import type { ContactListPosition } from '../app/ports.js';
-import { createContactListQuery, listPageQuery, matchingCountQuery } from './contact-list-query.js';
+import {
+  blockedSinceQuery,
+  createContactListQuery,
+  listPageQuery,
+  matchingCountQuery,
+} from './contact-list-query.js';
 
 const T0 = new Date('2026-09-01T10:00:00.000Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
@@ -127,6 +132,7 @@ describe('contacts list query', () => {
           firstWroteAt: at(1),
           lastWroteAt: at(2),
           tags: [],
+          blockedSince: null,
         },
       ]);
       expect(page.hasNext).toBe(false);
@@ -367,6 +373,112 @@ describe('contacts list query', () => {
       expect(
         await list.matchingCount(w.workspaceId, { q: null, mode: 'all', tagIds: [t1, t2] }),
       ).toBe(50);
+    });
+  });
+
+  describe('blocked_since for the current Telegram bot (AC-10, AC-14)', () => {
+    const BOT = 9001n;
+    const OLD_BOT = 8001n;
+
+    it('marks rows blocked for the given bot only, null when unblocked, for an older bot or with no bot', async () => {
+      const w = await workspace();
+      const ws = w.workspaceId;
+      const mk = (s: number) =>
+        insertContact(db, { workspaceId: ws, firstWroteAt: at(-10), lastWroteAt: at(s) });
+      const blocked = await mk(4);
+      const unblocked = await mk(3);
+      const oldBotOnly = await mk(2);
+      const noRow = await mk(1);
+      await insertReach(db, {
+        workspaceId: ws,
+        contactId: blocked,
+        telegramBotId: BOT,
+        wroteAt: at(1),
+        blockedAt: at(7),
+      });
+      await insertReach(db, {
+        workspaceId: ws,
+        contactId: unblocked,
+        telegramBotId: BOT,
+        wroteAt: at(1),
+        blockedAt: null,
+      });
+      await insertReach(db, {
+        workspaceId: ws,
+        contactId: oldBotOnly,
+        telegramBotId: OLD_BOT,
+        blockedAt: at(8),
+      });
+      const marks = async (bot: bigint | null) =>
+        (await list.listPage(ws, none, bot)).rows.map((r) => [r.id, r.blockedSince]);
+      expect(await marks(BOT)).toEqual([
+        [blocked, at(7)],
+        [unblocked, null],
+        [oldBotOnly, null],
+        [noRow, null],
+      ]);
+      expect(await marks(OLD_BOT)).toEqual([
+        [blocked, null],
+        [unblocked, null],
+        [oldBotOnly, at(8)],
+        [noRow, null],
+      ]);
+      // No bot row: every mark is null.
+      expect((await marks(null)).every(([, since]) => since === null)).toBe(true);
+    });
+
+    it("never reads another workspace's reach rows (isolation)", async () => {
+      const a = await workspace();
+      const b = await workspace();
+      const ca = await insertContact(db, {
+        workspaceId: a.workspaceId,
+        firstWroteAt: at(-10),
+        lastWroteAt: at(1),
+      });
+      const cb = await insertContact(db, {
+        workspaceId: b.workspaceId,
+        firstWroteAt: at(-10),
+        lastWroteAt: at(1),
+      });
+      await insertReach(db, {
+        workspaceId: b.workspaceId,
+        contactId: cb,
+        telegramBotId: BOT,
+        blockedAt: at(5),
+      });
+      expect((await list.listPage(a.workspaceId, none, BOT)).rows).toEqual([
+        expect.objectContaining({ id: ca, blockedSince: null }),
+      ]);
+      expect(await blockedSinceQuery(db, a.workspaceId, [ca, cb], BOT).execute()).toEqual([]);
+    });
+
+    it('reads the marks of the page ids by contact_bot_reach_pkey, one query for the page', async () => {
+      const w = await workspace();
+      const ids: string[] = [];
+      for (let i = 0; i < 200; i++) {
+        const c = await insertContact(db, {
+          workspaceId: w.workspaceId,
+          firstWroteAt: at(-10),
+          lastWroteAt: at(i),
+        });
+        ids.push(c);
+        await insertReach(db, {
+          workspaceId: w.workspaceId,
+          contactId: c,
+          telegramBotId: BOT,
+          wroteAt: at(i),
+          blockedAt: i % 5 === 0 ? at(i + 1) : null,
+        });
+      }
+      await sql`ANALYZE contacts, contact_bot_reach`.execute(db);
+      const plan = await db.transaction().execute(async (tx) => {
+        await sql`SET LOCAL enable_seqscan = off`.execute(tx);
+        return JSON.stringify(
+          await blockedSinceQuery(tx, w.workspaceId, ids.slice(0, 50), BOT).explain('json'),
+        );
+      });
+      expect(plan).toContain('contact_bot_reach_pkey');
+      expect(plan).not.toContain('"Parent Relationship":"SubPlan"');
     });
   });
 });

@@ -22,6 +22,20 @@ export interface ContactRecord extends ContactProfile {
   lastWroteAt: Date | null;
 }
 
+/** A contact as the profile reads it: its facts and the current bot's blocked mark. */
+export interface ContactProfileRecord extends ContactRecord {
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked, no row or no bot. */
+  blockedSince: Date | null;
+}
+
+/**
+ * The workspace's current Telegram bot, from the `bots` core (sad.md §5, ADR-0002): a runtime port
+ * late-bound in `buildDeps()`, no import of `bots`. Null when the workspace has no bot row.
+ */
+export interface CurrentBot {
+  currentBot(workspaceId: string): Promise<{ telegramBotId: bigint } | null>;
+}
+
 /** What list rows and thread headers show of a contact. */
 export interface ContactSummary {
   id: string;
@@ -69,8 +83,15 @@ export interface ContactRepo {
    * `tx` ends; false when it is not a contact of the workspace.
    */
   lockContact(workspaceId: string, contactId: string, tx: Executor): Promise<boolean>;
-  /** The contact's facts by (workspace, id), first and last wrote included; null for an unknown or foreign id. */
-  profile(workspaceId: string, contactId: string): Promise<ContactRecord | null>;
+  /**
+   * The contact's facts by (workspace, id), first and last wrote included, with its blocked mark for
+   * `telegramBotId` (the current bot; by the reach key); null for an unknown or foreign id.
+   */
+  profile(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId?: bigint | null,
+  ): Promise<ContactProfileRecord | null>;
   /** The id of the workspace's contact with this Telegram user id; null when there is none. */
   idByTelegramUser(
     workspaceId: string,
@@ -328,13 +349,19 @@ export interface ContactListRow {
   lastWroteAt: Date | null;
   /** In tag-list order. */
   tags: { id: string; name: string }[];
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked, no row or no bot. */
+  blockedSince: Date | null;
 }
 
 export interface ContactListQuery {
-  /** Up to 50 rows by last wrote newest first (NULL tail last, id descending), after `after`. */
+  /**
+   * Up to 50 rows by last wrote newest first (NULL tail last, id descending), after `after`, each
+   * with its blocked mark for `telegramBotId` (read for the page ids only; null bot = no marks).
+   */
   listPage(
     workspaceId: string,
     filter: ContactListFilter & { after?: ContactListPosition },
+    telegramBotId?: bigint | null,
   ): Promise<{ rows: ContactListRow[]; hasNext: boolean }>;
   /** Contacts matching the search and the tag filter. */
   matchingCount(workspaceId: string, filter: ContactListFilter): Promise<number>;
