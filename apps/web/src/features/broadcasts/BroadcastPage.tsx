@@ -1,5 +1,5 @@
 import type { LaunchedBroadcast } from '@tg/shared';
-import { useEffect, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { formatBotTime } from '@/features/bot/settings/format';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { NotFoundCard } from '@/pages/NotFoundPage';
@@ -27,12 +27,13 @@ const ENDED_EARLY: Record<string, { alert: string; note: string }> = {
   },
 };
 
-function whenLine(b: LaunchedBroadcast): string {
+/** Who launched it and when, in every status (AC-11), then how it ended once it did. */
+function whenLines(b: LaunchedBroadcast): string[] {
+  const lines = [`Launched by ${b.launched_by.display_name} · ${formatBotTime(b.launched_at)}`];
   if (b.status === 'stopped' && b.stopped_by && b.stopped_at) {
-    return `Stopped by ${b.stopped_by.display_name} · ${formatBotTime(b.stopped_at)}`;
-  }
-  if (b.status === 'sent' && b.ended_at) return `Finished ${formatBotTime(b.ended_at)}`;
-  return `Launched by ${b.launched_by.display_name} · ${formatBotTime(b.launched_at)}`;
+    lines.push(`Stopped by ${b.stopped_by.display_name} · ${formatBotTime(b.stopped_at)}`);
+  } else if (b.status === 'sent' && b.ended_at) lines.push(`Finished ${formatBotTime(b.ended_at)}`);
+  return lines;
 }
 
 /**
@@ -144,8 +145,12 @@ export function BroadcastPage({
         </div>
       </div>
       <div className="flex flex-wrap gap-x-2 text-sm text-muted-foreground">
-        <span>{whenLine(b)}</span>
-        <span aria-hidden>·</span>
+        {whenLines(b).map((line) => (
+          <Fragment key={line}>
+            <span>{line}</span>
+            <span aria-hidden>·</span>
+          </Fragment>
+        ))}
         <span>Read-only — a launched broadcast can&apos;t be changed.</span>
       </div>
       {unchanged ? (

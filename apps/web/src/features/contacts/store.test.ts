@@ -955,6 +955,51 @@ describe('contacts store: reach marks live (AC-14)', () => {
     expect(list.items[1]!.blocked_since).toBe(at(9));
   });
 
+  it('U7: a reach re-read never cancels a Show more in flight; it runs after it', async () => {
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    api.listContacts.mockResolvedValueOnce(
+      page({ items: [row(1)], has_next: true, next_cursor: 'c1' }),
+    );
+    await useContactsStore.getState().loadList(A, query, guard);
+    useContactsStore.getState().watch(A, guard);
+    let answerMore!: (p: ContactPage) => void;
+    api.listContacts.mockReturnValueOnce(new Promise((r) => (answerMore = r)));
+    const more = useContactsStore.getState().loadMore(A, guard);
+    await settle();
+    api.listContacts.mockResolvedValue(page({ items: [row(1, { blocked_since: at(9) }), row(2)] }));
+    emit(frame({ type: 'contact.changed', contact_id: id(901), change: 'reach' }));
+    await settle();
+    answerMore(page({ items: [row(2)] }));
+    await more;
+    await settle();
+    await settle();
+    await settle();
+    const list = useContactsStore.getState().list!;
+    expect(list.more).toBe('idle');
+    expect(list.items.map((c) => c.id)).toEqual([id(901), id(902)]);
+    expect(list.items[0]!.blocked_since).toBe(at(9));
+  });
+
+  it('W3: reach frames re-read one at a time: frames during a read lead to exactly one more', async () => {
+    useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
+    api.listContacts.mockResolvedValueOnce(page({ items: [row(1), row(2)] }));
+    await useContactsStore.getState().loadList(A, query, guard);
+    useContactsStore.getState().watch(A, guard);
+    let answer!: (p: ContactPage) => void;
+    api.listContacts.mockReturnValueOnce(new Promise((r) => (answer = r)));
+    api.listContacts.mockResolvedValue(page({ items: [row(1, { blocked_since: at(9) }), row(2)] }));
+    for (let i = 0; i < 3; i++)
+      emit(frame({ type: 'contact.changed', contact_id: id(901), change: 'reach' }));
+    await settle();
+    expect(api.listContacts).toHaveBeenCalledTimes(2);
+    answer(page({ items: [row(1), row(2)] }));
+    await settle();
+    await settle();
+    await settle();
+    expect(api.listContacts).toHaveBeenCalledTimes(3);
+    expect(useContactsStore.getState().list!.items[0]!.blocked_since).toBe(at(9));
+  });
+
   it('tags changes still never re-read the list', async () => {
     useWorkspaceStore.getState().setCurrent({ id: A, name: 'Acme', role: 'operator' });
     api.listContacts.mockResolvedValue(page());

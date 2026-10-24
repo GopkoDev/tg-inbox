@@ -8,12 +8,14 @@ import { stubRadixDom } from '@/test/radix';
 const api = vi.hoisted(() => ({
   getBroadcast: vi.fn(),
   saveBroadcastAudience: vi.fn(),
+  saveBroadcastFields: vi.fn(),
   listTags: vi.fn(),
 }));
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   getBroadcast: (...a: unknown[]) => api.getBroadcast(...a),
   saveBroadcastAudience: (...a: unknown[]) => api.saveBroadcastAudience(...a),
+  saveBroadcastFields: (...a: unknown[]) => api.saveBroadcastFields(...a),
 }));
 vi.mock('@/features/tags/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/tags/api')>()),
@@ -146,6 +148,36 @@ describe('SCR-25 — the tag audience (AC-01)', () => {
     fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
     fireEvent.click(sendTo());
     expect(screen.getByRole('checkbox', { name: /Staff/ })).toBeDisabled();
+  });
+
+  it('W11: an unrelated save answering keeps a queued choice; a second toggle builds on it', async () => {
+    let textSaved!: (d: BroadcastDraft) => void;
+    api.saveBroadcastFields.mockReturnValue(new Promise((r) => (textSaved = r)));
+    let audienceSaved!: (d: BroadcastDraft) => void;
+    api.saveBroadcastAudience
+      .mockReturnValueOnce(new Promise((r) => (audienceSaved = r)))
+      .mockResolvedValue(draft({ version: 6 }));
+    await show();
+    act(() => useBroadcastDraftStore.getState().editFields({ text: 'Other text' }, guard));
+    fireEvent.click(leaveOut());
+    fireEvent.click(screen.getByRole('checkbox', { name: /Kyiv/ }));
+    // The text save answers first: the audience is still the old one, the choice still on its way.
+    await act(async () => textSaved(draft({ version: 4, text: 'Other text' })));
+    expect(screen.getByRole('checkbox', { name: /Kyiv/ })).toBeChecked();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Staff/ }));
+    const both = {
+      kind: 'tags' as const,
+      mode: 'any' as const,
+      tags: [
+        { tag_id: VIP, name: 'VIP', kind: 'include' as const },
+        { tag_id: STAFF, name: 'Staff', kind: 'exclude' as const },
+        { tag_id: KYIV, name: 'Kyiv', kind: 'exclude' as const },
+      ],
+      dropped_tags: [],
+    };
+    await act(async () => audienceSaved(draft({ version: 5, audience: both })));
+    await waitFor(() => expect(api.saveBroadcastAudience).toHaveBeenCalledTimes(2));
+    expect(lastSave()).toMatchObject({ exclude_tag_ids: [KYIV] });
   });
 
   it('«No tags» disables Leave out and saves no left-out tags', async () => {

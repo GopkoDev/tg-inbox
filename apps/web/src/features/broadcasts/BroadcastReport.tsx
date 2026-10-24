@@ -8,6 +8,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
+import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { formatCount } from './AudienceBreakdown';
 import { useBroadcastReportStore } from './report-store';
@@ -113,7 +114,21 @@ export function BroadcastReport({
             ))}
           </SelectContent>
         </Select>
-        {recipients.items.length === 0 && filter ? (
+        {recipients.status === 'error' ? (
+          <Alert variant="destructive">
+            <AlertDescription className="flex items-center justify-between gap-2">
+              Couldn&apos;t load recipients
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void useBroadcastReportStore.getState().retryRecipients(guard)}
+              >
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        ) : recipients.status === 'ready' && recipients.items.length === 0 && filter ? (
           <p className="text-sm text-muted-foreground">No recipients with this outcome.</p>
         ) : (
           <Table>
@@ -126,6 +141,24 @@ export function BroadcastReport({
               </TableRow>
             </TableHeader>
             <TableBody>
+              {recipients.status === 'loading'
+                ? Array.from({ length: 8 }, (_, i) => (
+                    <TableRow key={i} data-testid="recipient-row-skeleton">
+                      <TableCell>
+                        <Skeleton className="h-4 w-32" />
+                      </TableCell>
+                      <TableCell>
+                        <Skeleton className="h-5 w-20" />
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <Skeleton className="h-4 w-28" />
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <Skeleton className="h-4 w-24" />
+                      </TableCell>
+                    </TableRow>
+                  ))
+                : null}
               {recipients.items.map((r) => (
                 <TableRow key={r.id}>
                   <TableCell className="break-words">

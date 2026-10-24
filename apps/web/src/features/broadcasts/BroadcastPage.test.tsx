@@ -285,6 +285,32 @@ describe('SCR-28 Broadcast page (AC-11, AC-12, AC-18)', () => {
     expect(await screen.findByText('No recipients with this outcome.')).toBeInTheDocument();
   });
 
+  it('U3: while a narrowed page loads, skeleton rows, never «No recipients with this outcome.»', async () => {
+    await openPage();
+    api.listBroadcastRecipients.mockReturnValue(new Promise(() => undefined));
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Outcome' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Blocked the bot' }));
+    expect((await screen.findAllByTestId('recipient-row-skeleton')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('No recipients with this outcome.')).toBeNull();
+  });
+
+  it('U3: a failed narrowed page: an Alert in the report, Retry reads the same outcome', async () => {
+    await openPage();
+    api.listBroadcastRecipients.mockRejectedValueOnce(new Error('network'));
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Outcome' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Blocked the bot' }));
+    expect(await within(report()).findByText("Couldn't load recipients")).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Spring prices' })).toBeInTheDocument();
+    api.listBroadcastRecipients.mockResolvedValue(
+      page([recipient('blocked')], { state: 'blocked' }),
+    );
+    fireEvent.click(within(report()).getByRole('button', { name: 'Retry' }));
+    await waitFor(() =>
+      expect(api.listBroadcastRecipients).toHaveBeenLastCalledWith(WS, B, { state: 'blocked' }, {}),
+    );
+    expect(await within(report()).findByRole('link', { name: /^Person/ })).toBeInTheDocument();
+  });
+
   it('Show more: the next 50; a failure says so with Retry', async () => {
     const first = Array.from({ length: 50 }, () => recipient('delivered'));
     await openPage(broadcast(), page(first, { has_next: true, next_cursor: 'abc' }));
@@ -324,10 +350,13 @@ describe('SCR-28 Broadcast page (AC-11, AC-12, AC-18)', () => {
     await waitFor(() => expect(total('Delivered')).toHaveTextContent('34'));
   });
 
-  it('sent: «Finished …», no Stop', async () => {
+  it('sent: «Launched by …» stays beside «Finished …», no Stop (AC-11)', async () => {
     await openPage(
       broadcast({ status: 'sent', ended_at: '2026-10-23T09:02:00Z', end_reason: 'completed' }),
     );
+    expect(
+      screen.getByText(`Launched by Test User · ${formatBotTime(LAUNCHED_AT)}`),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(`Finished ${formatBotTime('2026-10-23T09:02:00Z')}`),
     ).toBeInTheDocument();
@@ -361,7 +390,7 @@ describe('SCR-28 Broadcast page (AC-11, AC-12, AC-18)', () => {
     },
   );
 
-  it('stopped: «Stopped by …», no Stop', async () => {
+  it('stopped: «Launched by …» stays beside «Stopped by …», no Stop (AC-11)', async () => {
     await openPage(
       broadcast({
         status: 'stopped',
@@ -371,6 +400,9 @@ describe('SCR-28 Broadcast page (AC-11, AC-12, AC-18)', () => {
         end_reason: 'stopped',
       }),
     );
+    expect(
+      screen.getByText(`Launched by Test User · ${formatBotTime(LAUNCHED_AT)}`),
+    ).toBeInTheDocument();
     expect(
       screen.getByText(`Stopped by Test User · ${formatBotTime('2026-10-23T09:03:00Z')}`),
     ).toBeInTheDocument();

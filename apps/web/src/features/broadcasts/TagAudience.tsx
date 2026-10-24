@@ -30,6 +30,11 @@ const choiceOf = (draft: BroadcastDraft): Choice => {
   return { mode: draft.audience.mode, include: ids('include'), exclude: ids('exclude') };
 };
 
+const sameIds = (a: string[], b: string[]) =>
+  a.length === b.length && a.every((id) => b.includes(id));
+const sameChoice = (a: Choice, b: Choice) =>
+  a.mode === b.mode && sameIds(a.include, b.include) && sameIds(a.exclude, b.exclude);
+
 const goneNotice = (name: string) =>
   `“${name}” no longer exists, so it was left out of this audience.`;
 
@@ -47,6 +52,7 @@ export function TagAudience({ workspaceId }: { workspaceId: string }) {
   const guard = useShellGuard();
   const draft = useBroadcastDraftStore((s) => s.draft);
   const saving = useBroadcastDraftStore((s) => s.save === 'saving');
+  const audiencePending = useBroadcastDraftStore((s) => s.audiencePending);
   const tagGone = useBroadcastDraftStore((s) => s.tagGone);
   const tags = useTagsStore((s) => s.items);
   const tagsStatus = useTagsStore((s) => s.status);
@@ -56,9 +62,11 @@ export function TagAudience({ workspaceId }: { workspaceId: string }) {
   const [choiceFor, setChoiceFor] = useState<BroadcastDraft | null>(draft);
   const [used, setUsed] = useState<'send' | 'leave' | null>(null);
   const [goneNames, setGoneNames] = useState<string[]>([]);
+  // Another answer (a text save) leaves a choice still on its way shown: a next toggle builds on it.
   if (draft !== choiceFor) {
     setChoiceFor(draft);
-    setChoice(null);
+    if (choice && (!audiencePending || !draft || sameChoice(choice, choiceOf(draft))))
+      setChoice(null);
   }
 
   useEffect(() => {

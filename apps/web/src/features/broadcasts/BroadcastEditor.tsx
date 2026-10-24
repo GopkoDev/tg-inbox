@@ -49,6 +49,8 @@ const OWNERS_ONLY = 'Only a business owner launches broadcasts.';
 const NOT_AUTHOR = 'A draft is deleted by its author or a business owner';
 const STALE =
   'A teammate changed this draft. Their version is shown; your edit is kept below to apply again.';
+const STALE_AUDIENCE =
+  'A teammate changed this draft. Their version is shown; your audience choice is kept to apply again.';
 
 type Field = 'name' | 'text';
 
@@ -91,11 +93,19 @@ export function BroadcastEditor({
   );
   const save = useBroadcastDraftStore((s) => s.save);
   const stale = useBroadcastDraftStore((s) => s.stale);
+  const unsent = useBroadcastDraftStore((s) => s.unsent);
+  const rejectedOnSave = useBroadcastDraftStore((s) => s.rejected);
 
-  const [values, setValues] = useState<Record<Field, string>>({
-    name: draft?.name ?? '',
-    text: draft?.text ?? '',
+  /** The draft's values with the member's own unsent edits over them (kept across a 401). */
+  const shown = (d: BroadcastDraft): Record<Field, string> => ({
+    name: unsent.name ?? d.name,
+    text: unsent.text ?? d.text,
   });
+  const [values, setValues] = useState<Record<Field, string>>(
+    draft ? shown(draft) : { name: '', text: '' },
+  );
+  /** The values as last typed, for answers that land after the render that sent them. */
+  const latest = useRef(values);
   const [touched, setTouched] = useState<Record<Field, boolean>>({ name: false, text: false });
   /** SCR-32 is open: a non-empty group asked to switch to contacts with tags. */
   const [switching, setSwitching] = useState(false);
@@ -107,7 +117,11 @@ export function BroadcastEditor({
   const [ownersOnly, setOwnersOnly] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const creating = useRef(false);
+  /** `/new`: the create failed (network / 500) — «Couldn't save — Retry». */
+  const [createFailed, setCreateFailed] = useState(false);
+  /** `/new`: a field the create was refused for (400). */
+  const [createRejected, setCreateRejected] = useState<Partial<Record<Field, true>>>({});
   const timers = useRef<Partial<Record<Field, ReturnType<typeof setTimeout>>>>({});
   const launchRef = useRef<HTMLButtonElement>(null);
   const draftUrl = `/w/${workspaceId}/broadcasts/${broadcastId ?? ''}`;
@@ -116,7 +130,7 @@ export function BroadcastEditor({
   // A newly read draft fills the fields; a stale save shows the teammate's values (adjusted while rendering).
   if (draft && syncedFor !== draft.id) {
     setSyncedFor(draft.id);
-    setValues({ name: draft.name, text: draft.text });
+    setValues(shown(draft));
   }
   if (stale && adopted !== stale.theirs) {
     setAdopted(stale.theirs);
@@ -134,28 +148,51 @@ export function BroadcastEditor({
   const canLaunch = role === 'owner' && !ownersOnly;
   const canDelete = role === 'owner' || (draft !== null && draft.author.account_id === me);
   const botSettingsHref = role === 'owner' ? `/w/${workspaceId}/settings/bot` : undefined;
-  const nameError = touched.name && !checkBroadcastName(values.name).ok ? NAME_ERROR : null;
+  const rejected = isNew ? createRejected : rejectedOnSave;
+  const nameError =
+    rejected.name || (touched.name && !checkBroadcastName(values.name).ok) ? NAME_ERROR : null;
   const text = textState(values.text, touched.text);
-  const textError = noText ? 'Write the text before launching' : text.error;
+  const textError = noText
+    ? 'Write the text before launching'
+    : (text.error ?? (rejected.text ? TEXT_ERROR : null));
 
   /** Creates the draft at the first valid name (`/new`), then the address becomes its own. */
   const create = async (name: string, rawText: string) => {
-    if (creating) return;
-    setCreating(true);
+    if (creating.current) return;
+    creating.current = true;
+    setCreateFailed(false);
     const body = checkBroadcastText(rawText);
     try {
       const created = await createBroadcast(workspaceId, {
         name,
         ...(body.ok && { text: body.text }),
       });
+      // What was typed while the create was in flight goes to the new draft and is saved there.
+      const now = latest.current;
+      const carried: DraftFieldsEdit = {};
+      const nameNow = checkBroadcastName(now.name);
+      if (nameNow.ok && nameNow.name !== created.name) carried.name = nameNow.name;
+      const textNow = checkBroadcastText(now.text);
+      if (textNow.ok && textNow.text !== created.text) carried.text = textNow.text;
+      if (Object.keys(carried).length > 0)
+        useBroadcastDraftStore.getState().carry(workspaceId, created.id, carried);
       void navigate(`/w/${workspaceId}/broadcasts/${created.id}`, { replace: true });
     } catch (error) {
+      const code = error instanceof ApiError ? error.code : null;
       if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
         void guard(error, workspaceId);
-      }
+      } else if (code === ErrorCode.BROADCAST_NAME_INVALID) setCreateRejected({ name: true });
+      else if (code === ErrorCode.BROADCAST_TEXT_INVALID) setCreateRejected({ text: true });
+      else setCreateFailed(true);
     } finally {
-      setCreating(false);
+      creating.current = false;
     }
+  };
+
+  /** `/new` Retry: the create again with the values as they are now. */
+  const retryCreate = () => {
+    const check = checkBroadcastName(latest.current.name);
+    if (check.ok) void create(check.name, latest.current.text);
   };
 
   /** Sends a field when it is valid and differs from what the draft holds. */
@@ -182,7 +219,9 @@ export function BroadcastEditor({
   };
 
   const change = (field: Field, value: string) => {
+    latest.current = { ...latest.current, [field]: value };
     setValues((v) => ({ ...v, [field]: value }));
+    if (createRejected[field]) setCreateRejected({});
     setTouched((t) => ({ ...t, [field]: true }));
     if (field === 'text') setNoText(false);
     clearTimeout(timers.current[field]);
@@ -206,7 +245,7 @@ export function BroadcastEditor({
     } else if (code === ErrorCode.OWNER_ONLY) {
       setOwnersOnly(true);
     } else if (code === ErrorCode.BROADCAST_NOT_A_DRAFT && broadcastId) {
-      void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
+      void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard, 'refused');
     } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
       void guard(error, workspaceId);
     }
@@ -337,9 +376,8 @@ export function BroadcastEditor({
         </h1>
         {!isNew ? <Badge variant="secondary">Draft</Badge> : null}
         <SaveLine
-          status={save}
-          onRetry={() => useBroadcastDraftStore.getState().retry(guard)}
-          hidden={isNew}
+          status={isNew ? (createFailed ? 'failed' : 'idle') : save}
+          onRetry={() => (isNew ? retryCreate() : useBroadcastDraftStore.getState().retry(guard))}
         />
         {!isNew && draft ? (
           <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
@@ -392,7 +430,7 @@ export function BroadcastEditor({
       {stale ? (
         <Alert>
           <AlertDescription className="flex flex-col gap-2">
-            {STALE}
+            {Object.keys(stale.mine).length === 0 && stale.audience ? STALE_AUDIENCE : STALE}
             <span className="flex gap-2">
               <Button type="button" size="sm" onClick={useMine}>
                 Use mine
@@ -493,10 +531,13 @@ export function BroadcastEditor({
           open={confirming}
           confirmation={here?.confirmation ?? null}
           onCancel={() => closeConfirmation({ focusLaunch: true })}
-          onLaunched={() => {
+          onLaunched={(answer) => {
             closeConfirmation();
-            // The store learns the launch (SCR-28 «Sending») at the broadcast's own address.
-            void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
+            // The store learns the launch (SCR-28 «Sending») at the broadcast's own address; no
+            // notice after the own launch, «was launched» when it had been launched already (409).
+            void useBroadcastDraftStore
+              .getState()
+              .open(workspaceId, broadcastId, guard, answer ? undefined : 'refused');
           }}
           onOwnersOnly={() => {
             setOwnersOnly(true);
@@ -518,7 +559,7 @@ export function BroadcastEditor({
         onLaunched={() => {
           setDeleting(false);
           if (broadcastId)
-            void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
+            void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard, 'refused');
         }}
         onGone={() => {
           setDeleting(false);
@@ -532,13 +573,11 @@ export function BroadcastEditor({
 function SaveLine({
   status,
   onRetry,
-  hidden,
 }: {
   status: 'idle' | 'saving' | 'saved' | 'failed';
   onRetry: () => void;
-  hidden: boolean;
 }) {
-  if (hidden || status === 'idle') return null;
+  if (status === 'idle') return null;
   if (status === 'failed')
     return (
       <span className="flex items-center gap-2 text-sm text-destructive">

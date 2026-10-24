@@ -298,12 +298,14 @@ test('an owner launches from the confirmation and follows the report to Sent liv
   await confirm.getByRole('button', { name: 'Send to 3 contacts' }).click();
   await expect(confirm).toHaveCount(0, WAIT);
 
-  // The report: Sending, then Sent with the final totals, without a reload.
+  // The report: Sending, then Sent with the final totals, without a reload; no notice after the
+  // owner's own launch (SCR-28).
+  await expect(page).toHaveURL(new RegExp(`/broadcasts/${draftId}$`), WAIT);
+  await expect(statusBadge(page, 'Sending')).toBeVisible(WAIT);
   await expect(
     page.getByText('This broadcast was launched and can no longer be changed.'),
-  ).toBeVisible(WAIT);
-  await expect(page).toHaveURL(new RegExp(`/broadcasts/${draftId}$`));
-  await expect(statusBadge(page, 'Sending')).toBeVisible(WAIT);
+  ).toHaveCount(0);
+  await expect(page.getByText('A teammate launched this broadcast.')).toHaveCount(0);
   await expect(page.getByText('Launched by Olga ·')).toBeVisible();
   await expect(page.getByTestId('broadcast-text')).toHaveText(text);
   await expect(breakdownLine(page, 'Sent to')).toContainText('3');

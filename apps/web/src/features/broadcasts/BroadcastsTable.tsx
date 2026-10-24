@@ -20,6 +20,7 @@ import {
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import { duplicateBroadcast, getBroadcast } from './api';
+import { DeleteDraftDialog } from './DeleteDraftDialog';
 import { DuplicateBroadcastDialog } from './DuplicateBroadcastDialog';
 import { useBroadcastListStore } from './list-store';
 
@@ -89,7 +90,7 @@ function LastChange({ item }: { item: BroadcastListItem }) {
 interface RowActions {
   /** Replaces a launched row's own SCR-30 opener (the table reads the broadcast and opens it). */
   onDuplicateLaunched?: ((item: BroadcastListItem) => void) | undefined;
-  /** Delete opens SCR-31 (T31). Without it, no row offers Delete. */
+  /** Replaces Delete's own SCR-31 dialog (the table opens it by default). */
   onDelete?: ((item: BroadcastListItem) => void) | undefined;
 }
 
@@ -109,7 +110,7 @@ function RowView({
   duplicating: boolean;
 }) {
   const draft = item.status === 'draft';
-  const canDelete = draft && mayDelete && actions.onDelete !== undefined;
+  const canDelete = draft && mayDelete;
   return (
     <TableRow>
       <TableCell>
@@ -224,6 +225,8 @@ export function BroadcastsTable({
   const [duplicateFailed, setDuplicateFailed] = useState(false);
   /** The launched broadcast SCR-30 is open for (read when its row's Duplicate is chosen). */
   const [copying, setCopying] = useState<LaunchedBroadcast | null>(null);
+  /** The draft SCR-31 is open for (its row's Delete). */
+  const [deleting, setDeleting] = useState<BroadcastListItem | null>(null);
 
   useEffect(() => {
     const store = useBroadcastListStore.getState();
@@ -242,7 +245,11 @@ export function BroadcastsTable({
     setDuplicating(item.id);
     duplicateBroadcast(workspaceId, item.id, { audience: 'same', include_not_confirmed: false })
       .then((copy) => void navigate(`/w/${workspaceId}/broadcasts/${copy.id}`))
-      .catch(() => setDuplicateFailed(true))
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          void guard(error, workspaceId);
+        } else setDuplicateFailed(true);
+      })
       .finally(() => setDuplicating(null));
   };
 
@@ -259,6 +266,12 @@ export function BroadcastsTable({
         } else setDuplicateFailed(true);
       })
       .finally(() => setDuplicating(null));
+  };
+
+  /** After a delete, a launched-meanwhile or a gone draft: the list is read again. */
+  const deleteDone = () => {
+    setDeleting(null);
+    void useBroadcastListStore.getState().reread(workspaceId, guard);
   };
 
   if (status === 'error')
@@ -303,6 +316,14 @@ export function BroadcastsTable({
         broadcast={copying}
         onClose={() => setCopying(null)}
       />
+      <DeleteDraftDialog
+        workspaceId={workspaceId}
+        draft={deleting ? { id: deleting.id, audienceSize: deleting.audience_size } : null}
+        onClose={() => setDeleting(null)}
+        onDeleted={deleteDone}
+        onLaunched={deleteDone}
+        onGone={deleteDone}
+      />
       <Card className="py-0">
         <Table aria-label="Broadcasts">
           <TableHeader>
@@ -328,7 +349,7 @@ export function BroadcastsTable({
                   mayDelete={role === 'owner' || item.author.account_id === me}
                   actions={{
                     onDuplicateLaunched: onDuplicateLaunched ?? duplicateLaunched,
-                    onDelete,
+                    onDelete: onDelete ?? setDeleting,
                   }}
                   onDuplicateDraft={duplicateDraft}
                   duplicating={duplicating === item.id}

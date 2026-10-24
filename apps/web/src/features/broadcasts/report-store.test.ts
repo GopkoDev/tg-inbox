@@ -94,6 +94,14 @@ const page = (o: Partial<BroadcastRecipientPage> = {}): BroadcastRecipientPage =
   next_cursor: null,
   ...o,
 });
+const row = (n: number) => ({
+  id: `0198f0c0-0000-7000-8000-${String(700 + n).padStart(12, '0')}`,
+  position: n,
+  contact: contact(n),
+  state: 'waiting' as const,
+  failure_reason: null,
+  outcome_at: null,
+});
 const frame = (o: Partial<Extract<LiveFrame, { type: 'broadcast.changed' }>> = {}): LiveFrame => ({
   type: 'broadcast.changed',
   v: 1,
@@ -176,7 +184,7 @@ describe('broadcast report store (SCR-28)', () => {
     );
     await useBroadcastReportStore.getState().setFilter('failed', guard);
     expect(api.listBroadcastRecipients).toHaveBeenLastCalledWith(A, BC, { state: 'failed' }, {});
-    api.listBroadcastRecipients.mockResolvedValue(page({ state: 'failed' }));
+    api.listBroadcastRecipients.mockResolvedValue(page({ state: 'failed', items: [row(2)] }));
     await useBroadcastReportStore.getState().showMore(guard);
     expect(api.listBroadcastRecipients).toHaveBeenLastCalledWith(
       A,
@@ -198,5 +206,50 @@ describe('broadcast report store (SCR-28)', () => {
       broadcast: broadcast(),
     });
     expect(guard).not.toHaveBeenCalled();
+  });
+
+  it('W2: a re-read while Show more is in flight waits for it; no recipient is shown twice', async () => {
+    api.getBroadcast.mockResolvedValue(broadcast());
+    api.listBroadcastRecipients.mockResolvedValue(
+      page({ items: [row(1)], has_next: true, next_cursor: 'c1' }),
+    );
+    await useBroadcastReportStore.getState().open(A, BC, guard);
+    useBroadcastReportStore.getState().watch(A, guard);
+    const more = deferred<BroadcastRecipientPage>();
+    api.listBroadcastRecipients.mockReturnValueOnce(more.promise);
+    const shown = useBroadcastReportStore.getState().showMore(guard);
+    await settle();
+    // The re-read's first page now holds both recipients.
+    api.listBroadcastRecipients.mockResolvedValue(page({ items: [row(1), row(2)] }));
+    emit(frame());
+    await settle();
+    await settle();
+    more.resolve(page({ items: [row(2)] }));
+    await shown;
+    await settle();
+    await settle();
+    await settle();
+    const ids = useBroadcastReportStore.getState().recipients.items.map((r) => r.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual([row(1).id, row(2).id]);
+    expect(useBroadcastReportStore.getState().recipients.more).toBe('idle');
+  });
+
+  it('U3: a failed filter read keeps the page and fails in the report; Retry reads the same filter', async () => {
+    await opened();
+    api.listBroadcastRecipients.mockRejectedValueOnce(new Error('network'));
+    await useBroadcastReportStore.getState().setFilter('failed', guard);
+    expect(useBroadcastReportStore.getState()).toMatchObject({
+      status: 'ready',
+      filter: 'failed',
+      recipients: { status: 'error' },
+    });
+    api.listBroadcastRecipients.mockResolvedValue(page({ state: 'failed' }));
+    await useBroadcastReportStore.getState().retryRecipients(guard);
+    expect(api.listBroadcastRecipients).toHaveBeenLastCalledWith(A, BC, { state: 'failed' }, {});
+    expect(useBroadcastReportStore.getState()).toMatchObject({
+      filter: 'failed',
+      recipients: { status: 'ready' },
+    });
   });
 });

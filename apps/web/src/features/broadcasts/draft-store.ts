@@ -24,6 +24,7 @@ import {
   saveBroadcastAudience,
   saveBroadcastFields,
 } from './api';
+import { serialRead } from './serial-read';
 
 // The draft editor's store (SCR-25/26/27/31/32, screens.md Decision 3): fields are saved as they
 // change against the version the store holds, one save in flight; a change made meanwhile goes out
@@ -48,7 +49,15 @@ export interface StaleSave {
   theirs: BroadcastDraft;
   /** The member's own values of the fields they were saving (Use mine / Keep theirs). */
   mine: DraftFieldsEdit;
+  /** The member's own audience choice the stale save carried (sent again by Use mine). */
+  audience?: AudienceChoice;
 }
+
+/** Why the open draft turned out launched (SCR-28's one-line notice); null after an own launch. */
+export type LaunchNotice = 'teammate' | 'refused';
+
+/** Fields the server refused as invalid (SCR-25 field errors) until they are edited again. */
+export type RejectedFields = Partial<Record<keyof DraftFieldsEdit, true>>;
 
 export interface GroupState {
   status: 'loading' | 'ready' | 'error';
@@ -65,7 +74,11 @@ interface DraftStoreState {
   draft: BroadcastDraft | null;
   /** Set when the broadcast turned out launched (SCR-25 switches to SCR-28). */
   launched: LaunchedBroadcast | null;
+  launchNotice: LaunchNotice | null;
   save: SaveStatus;
+  /** An audience choice is queued or in flight (its answer has not landed yet). */
+  audiencePending: boolean;
+  rejected: RejectedFields;
   /** Field edits not saved yet (queued, in flight or failed); kept across a 401 for the same address. */
   unsent: DraftFieldsEdit;
   stale: StaleSave | null;
@@ -76,7 +89,15 @@ interface DraftStoreState {
   /** The editor took the gone tag in (its notice shows, the tags are read again). */
   clearTagGone: () => void;
   group: GroupState | null;
-  open: (workspaceId: string, broadcastId: string, guard: GuardFn) => Promise<void>;
+  /** `notice`: what SCR-28 says when the read answers launched (none after an own launch). */
+  open: (
+    workspaceId: string,
+    broadcastId: string,
+    guard: GuardFn,
+    notice?: LaunchNotice,
+  ) => Promise<void>;
+  /** Hands edits made on `/new` while the create was in flight to the created draft (sent on open). */
+  carry: (workspaceId: string, broadcastId: string, edit: DraftFieldsEdit) => void;
   editFields: (edit: DraftFieldsEdit, guard: GuardFn) => void;
   saveAudience: (choice: AudienceChoice, guard: GuardFn) => void;
   /** Sends the unsent edit again (Couldn't save — Retry). */
@@ -110,31 +131,44 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
   let epoch = 0;
   /** The unsent edit belongs to this address (workspace + broadcast). */
   let unsentFor: string | null = null;
+  /** The address whose carried edit goes out as soon as it opens. */
+  let sendOnOpen: string | null = null;
   let pendingAudience: AudienceChoice | null = null;
-  let saving = false;
+  /** The opening whose save loop is running: an earlier opening's loop never blocks or frees a later one. */
+  let savingEpoch: number | null = null;
   /** The group calls, chained so that each starts after the previous one answered. */
   let groupChain: Promise<unknown> = Promise.resolve();
+  /** Counts every replacement of the group list: a Show more answer for an older list is dropped. */
+  let groupSeq = 0;
+  /** Counts the full (skeleton) group loads: an earlier read's answer is dropped. */
+  let groupLoads = 0;
+  /** A background group re-read asked for while Show more was in flight runs after it. */
+  let groupRereadWaits = false;
+  /** The background reads of this opening, one in flight and one queued (made at open). */
+  let draftReread: (() => Promise<void>) | null = null;
+  let groupReread: (() => Promise<void>) | null = null;
 
   const address = () => `${get().workspaceId}:${get().broadcastId}`;
   const shows = (workspaceId: string) => get().workspaceId === workspaceId;
 
   const markLaunched = async (workspaceId: string, broadcastId: string, opened: number) => {
-    set({ status: 'launched' });
+    set({ status: 'launched', launchNotice: 'refused' });
     try {
       const b = await getBroadcast(workspaceId, broadcastId, { background: true });
       if (opened === epoch && b.status !== 'draft') set({ launched: b });
     } catch {
-      // what is shown stays; the read-only page reads it again
+      // Nothing to show yet: the load error with Retry (which opens the address again).
+      if (opened === epoch && !get().launched) set({ status: 'error' });
     }
   };
 
   /** Sends the queued saves one at a time with the held version. */
   const pump = async (guard: GuardFn) => {
-    if (saving) return;
+    if (savingEpoch === epoch) return;
     const { workspaceId, broadcastId } = get();
     if (!workspaceId || !broadcastId) return;
     const opened = epoch;
-    saving = true;
+    savingEpoch = opened;
     try {
       for (;;) {
         const { draft, status, unsent } = get();
@@ -167,7 +201,7 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
               expected_version: draft.version,
             } as TagAudienceSave | GroupAudienceSave);
             if (opened !== epoch) return;
-            set({ draft: next, groupChanged: null });
+            set({ draft: next, groupChanged: null, audiencePending: pendingAudience !== null });
           }
         } catch (error) {
           if (opened !== epoch) return;
@@ -176,34 +210,61 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
             const theirs = (error as ApiError & { details: { draft: BroadcastDraft } }).details
               .draft;
             const mine = { ...get().unsent };
+            // The member's audience choice (sent or queued) is kept beside theirs too.
+            const kept = pendingAudience ?? (Object.keys(fields).length > 0 ? null : audience);
             pendingAudience = null;
-            set({ draft: theirs, stale: { theirs, mine }, unsent: {}, save: 'idle' });
+            set({
+              draft: theirs,
+              stale: { theirs, mine, ...(kept && { audience: kept }) },
+              unsent: {},
+              save: 'idle',
+              audiencePending: false,
+            });
             return;
           }
           if (code === ErrorCode.BROADCAST_NOT_A_DRAFT) {
             pendingAudience = null;
+            set({ audiencePending: false });
             await markLaunched(workspaceId, broadcastId, opened);
             return;
           }
           if (code === ErrorCode.TAG_NOT_FOUND && audience) {
             const tagId = (error as ApiError & { details?: { tag_id?: string } }).details?.tag_id;
-            set({ tagGone: tagId ?? null, save: 'idle' });
+            set({
+              tagGone: tagId ?? null,
+              save: 'idle',
+              audiencePending: pendingAudience !== null,
+            });
+            continue;
+          }
+          const invalid =
+            code === ErrorCode.BROADCAST_NAME_INVALID
+              ? 'name'
+              : code === ErrorCode.BROADCAST_TEXT_INVALID
+                ? 'text'
+                : null;
+          if (invalid && invalid in fields) {
+            // The field error shows on the field; the refused value leaves the queue.
+            const left: DraftFieldsEdit = { ...get().unsent };
+            if (left[invalid] === fields[invalid]) delete left[invalid];
+            set({ unsent: left, rejected: { ...get().rejected, [invalid]: true }, save: 'idle' });
             continue;
           }
           if (code === ErrorCode.BROADCAST_GROUP_CHANGED) {
             const size = (error as ApiError & { details: { group_size: number } }).details
               .group_size;
-            set({ groupChanged: size, save: 'idle' });
+            set({ groupChanged: size, save: 'idle', audiencePending: pendingAudience !== null });
             continue;
           }
-          if (audience && !Object.keys(fields).length) pendingAudience = audience;
+          // A newer choice queued meanwhile wins over the one that failed.
+          if (audience && !Object.keys(fields).length) pendingAudience ??= audience;
           if (isGuardAnswer(error)) guard(error, workspaceId);
           set({ save: 'failed' });
           return;
         }
       }
     } finally {
-      saving = false;
+      if (savingEpoch === opened) savingEpoch = null;
     }
   };
 
@@ -226,13 +287,18 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     if (!workspaceId || !broadcastId) return;
     const opened = epoch;
     if (!background) {
+      groupLoads++;
+      groupSeq++;
       set({
         group: { status: 'loading', items: [], hasNext: false, nextCursor: null, more: 'idle' },
       });
     }
+    const loads = groupLoads;
     try {
       const page = await listBroadcastGroup(workspaceId, broadcastId, {}, { background });
-      if (opened !== epoch) return;
+      // A newer full load (Retry, the picker closing) answers for the list instead.
+      if (opened !== epoch || loads !== groupLoads) return;
+      groupSeq++;
       set({
         group: {
           status: 'ready',
@@ -244,10 +310,20 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       });
       followGroupSize(page.size);
     } catch (error) {
-      if (opened !== epoch) return;
+      if (opened !== epoch || loads !== groupLoads) return;
       if (isGuardAnswer(error)) guard(error, workspaceId);
       if (!background) set({ group: { ...get().group!, status: 'error' } });
     }
+  };
+
+  /** The group's first page again in the background: one at a time, after a Show more in flight. */
+  const rereadGroup = (guard: GuardFn) => {
+    if (get().group?.more === 'loading') {
+      groupRereadWaits = true;
+      return Promise.resolve();
+    }
+    groupReread ??= serialRead(() => readGroup(guard, true));
+    return groupReread();
   };
 
   const groupWrite = <T extends { group_size: number }>(
@@ -276,12 +352,20 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
   };
 
   /** A status change or a resync: launched → read-only, gone → not found; a draft stays as held. */
-  const recheck = async (workspaceId: string, broadcastId: string, guard: GuardFn) => {
+  const recheck = async (
+    workspaceId: string,
+    broadcastId: string,
+    guard: GuardFn,
+    notice: LaunchNotice,
+  ) => {
     const opened = epoch;
+    // Only a draft on screen learns of a launch from here; an opening answers for itself.
+    const shownDraft = get().status === 'ready';
     try {
       const b = await getBroadcast(workspaceId, broadcastId, { background: true });
       if (opened !== epoch) return;
-      if (b.status !== 'draft') set({ status: 'launched', launched: b });
+      if (b.status !== 'draft')
+        set({ status: 'launched', launched: b, ...(shownDraft && { launchNotice: notice }) });
     } catch (error) {
       if (opened !== epoch) return;
       if (isNotFound(error)) set({ status: 'not_found' });
@@ -293,12 +377,12 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     const broadcastId = get().broadcastId;
     if (frame.workspace_id !== workspaceId || !broadcastId || !shows(workspaceId)) return;
     if (frame.type === 'resync') {
-      void recheck(workspaceId, broadcastId, guard);
+      void recheck(workspaceId, broadcastId, guard, 'refused');
       return;
     }
     if (frame.type !== 'broadcast.changed' || frame.broadcast_id !== broadcastId) return;
     // `draft` / `group` from a teammate: counts are not pushed live; the next own save answers.
-    if (frame.change === 'status') void recheck(workspaceId, broadcastId, guard);
+    if (frame.change === 'status') void recheck(workspaceId, broadcastId, guard, 'teammate');
     if (frame.change === 'deleted') {
       epoch++;
       set({ status: 'not_found' });
@@ -311,7 +395,10 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     status: 'idle',
     draft: null,
     launched: null,
+    launchNotice: null,
     save: 'idle',
+    audiencePending: false,
+    rejected: {},
     unsent: {},
     stale: null,
     groupChanged: null,
@@ -320,20 +407,28 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     clearTagGone() {
       set({ tagGone: null });
     },
-    async open(workspaceId, broadcastId, guard) {
+    async open(workspaceId, broadcastId, guard, notice) {
       const opened = ++epoch;
       pendingAudience = null;
       groupChain = Promise.resolve();
+      draftReread = null;
+      groupReread = null;
+      groupRereadWaits = false;
       const key = `${workspaceId}:${broadcastId}`;
       const unsent = unsentFor === key ? get().unsent : {};
       unsentFor = key;
+      const send = sendOnOpen === key && Object.keys(unsent).length > 0;
+      sendOnOpen = null;
       set({
         workspaceId,
         broadcastId,
         status: 'loading',
         draft: null,
         launched: null,
-        save: Object.keys(unsent).length > 0 ? 'failed' : 'idle',
+        launchNotice: null,
+        save: Object.keys(unsent).length > 0 && !send ? 'failed' : 'idle',
+        audiencePending: false,
+        rejected: {},
         unsent,
         stale: null,
         groupChanged: null,
@@ -343,8 +438,17 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       try {
         const b = await getBroadcast(workspaceId, broadcastId, {});
         if (opened !== epoch) return;
-        if (b.status === 'draft') set({ status: 'ready', draft: b });
-        else set({ status: 'launched', launched: b, unsent: {}, save: 'idle' });
+        if (b.status === 'draft') {
+          set({ status: 'ready', draft: b });
+          if (send) void pump(guard);
+        } else
+          set({
+            status: 'launched',
+            launched: b,
+            launchNotice: notice ?? null,
+            unsent: {},
+            save: 'idle',
+          });
       } catch (error) {
         if (opened !== epoch) return;
         if (isGuardAnswer(error)) guard(error, workspaceId);
@@ -353,13 +457,30 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     },
     editFields(edit, guard) {
       if (get().status !== 'ready') return;
+      const stale = get().stale;
+      if (stale) {
+        // Nothing goes out against their version unasked: the edit joins the member's own values.
+        set({ stale: { ...stale, mine: { ...stale.mine, ...edit } } });
+        return;
+      }
       unsentFor = address();
-      set({ unsent: { ...get().unsent, ...edit } });
+      const rejected = { ...get().rejected };
+      for (const key of Object.keys(edit) as (keyof DraftFieldsEdit)[]) delete rejected[key];
+      set({ unsent: { ...get().unsent, ...edit }, rejected });
       void pump(guard);
+    },
+    carry(workspaceId, broadcastId, edit) {
+      unsentFor = `${workspaceId}:${broadcastId}`;
+      sendOnOpen = unsentFor;
+      set({ unsent: { ...edit } });
     },
     saveAudience(choice, guard) {
       if (get().status !== 'ready') return;
+      const stale = get().stale;
+      // A new choice replaces the one kept from the stale save.
+      if (stale?.audience) set({ stale: { theirs: stale.theirs, mine: stale.mine } });
       pendingAudience = choice;
+      set({ audiencePending: true });
       void pump(guard);
     },
     retry(guard) {
@@ -369,33 +490,47 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       const stale = get().stale;
       if (!stale) return;
       set({ stale: null, unsent: { ...stale.mine, ...get().unsent } });
+      if (stale.audience) {
+        pendingAudience ??= stale.audience;
+        set({ audiencePending: true });
+      }
       void pump(guard);
     },
     keepTheirs() {
       set({ stale: null });
     },
     loadGroup: (guard) => readGroup(guard, false),
-    async reread(guard) {
+    reread(guard) {
       const { workspaceId, broadcastId, status } = get();
-      if (!workspaceId || !broadcastId || status !== 'ready') return;
-      const opened = epoch;
-      try {
-        const b = await getBroadcast(workspaceId, broadcastId, { background: true });
-        if (opened !== epoch) return;
-        if (b.status !== 'draft') set({ status: 'launched', launched: b });
-        // A save in flight or queued answers with the newer draft itself.
-        else if (!saving && !pendingAudience && Object.keys(get().unsent).length === 0)
-          set({ draft: b });
-      } catch (error) {
-        if (opened !== epoch) return;
-        if (isNotFound(error)) set({ status: 'not_found' });
-        else if (isGuardAnswer(error)) guard(error, workspaceId);
-      }
+      if (!workspaceId || !broadcastId || status !== 'ready') return Promise.resolve();
+      draftReread ??= serialRead(async () => {
+        const opened = epoch;
+        try {
+          const b = await getBroadcast(workspaceId, broadcastId, { background: true });
+          if (opened !== epoch) return;
+          const held = get().draft;
+          if (b.status !== 'draft') set({ status: 'launched', launched: b });
+          // A save in flight or queued answers with the newer draft itself; an older read never wins.
+          else if (
+            savingEpoch !== epoch &&
+            !pendingAudience &&
+            Object.keys(get().unsent).length === 0 &&
+            (!held || b.version >= held.version)
+          )
+            set({ draft: b });
+        } catch (error) {
+          if (opened !== epoch) return;
+          if (isNotFound(error)) set({ status: 'not_found' });
+          else if (isGuardAnswer(error)) guard(error, workspaceId);
+        }
+      });
+      return draftReread();
     },
     async showMoreGroup(guard) {
       const { workspaceId, broadcastId, group } = get();
       if (!workspaceId || !broadcastId || !group?.nextCursor || group.more === 'loading') return;
       const opened = epoch;
+      const seq = groupSeq;
       set({ group: { ...group, more: 'loading' } });
       try {
         const page = await listBroadcastGroup(
@@ -405,26 +540,35 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
           {},
         );
         if (opened !== epoch) return;
+        // The list was replaced meanwhile: this page continues an older one.
+        if (seq !== groupSeq) return;
+        const items = get().group!.items;
+        const shown = new Set(items.map((r) => r.contact.id));
         set({
           group: {
             status: 'ready',
-            items: [...get().group!.items, ...page.items],
+            items: [...items, ...page.items.filter((r) => !shown.has(r.contact.id))],
             hasNext: page.has_next,
             nextCursor: page.next_cursor,
             more: 'idle',
           },
         });
       } catch (error) {
-        if (opened !== epoch) return;
+        if (opened !== epoch || seq !== groupSeq) return;
         if (isGuardAnswer(error)) guard(error, workspaceId);
         set({ group: { ...get().group!, more: 'error' } });
+      } finally {
+        if (opened === epoch && groupRereadWaits) {
+          groupRereadWaits = false;
+          void rereadGroup(guard);
+        }
       }
     },
     async addContact(contactId, guard) {
       const answer = await groupWrite(guard, (w, b) =>
         addBroadcastGroupContact(w, b, { contact_id: contactId }),
       );
-      if (answer?.outcome === 'added' && get().group) void readGroup(guard, true);
+      if (answer?.outcome === 'added' && get().group) void rereadGroup(guard);
       return answer;
     },
     async removeContact(contactId, guard) {
@@ -439,13 +583,14 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     },
     async addMatching(body, guard) {
       const answer = await groupWrite(guard, (w, b) => addBroadcastGroupMatching(w, b, body));
-      if (answer && get().group) void readGroup(guard, true);
+      if (answer && get().group) void rereadGroup(guard);
       return answer;
     },
     watch(workspaceId, guard) {
       const again = () => {
         const broadcastId = get().broadcastId;
-        if (broadcastId && shows(workspaceId)) void recheck(workspaceId, broadcastId, guard);
+        if (broadcastId && shows(workspaceId))
+          void recheck(workspaceId, broadcastId, guard, 'refused');
       };
       return subscribeLive(workspaceId, {
         onFrame: (frame) => onFrame(workspaceId, guard, frame),
@@ -457,7 +602,9 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     close() {
       epoch++;
       pendingAudience = null;
-      saving = false;
+      draftReread = null;
+      groupReread = null;
+      groupRereadWaits = false;
       // The unsent edit stays for the same address (a 401 sends the member to sign in and back).
       set({
         workspaceId: null,
@@ -465,7 +612,10 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
         status: 'idle',
         draft: null,
         launched: null,
+        launchNotice: null,
         save: 'idle',
+        audiencePending: false,
+        rejected: {},
         stale: null,
         groupChanged: null,
         tagGone: null,
@@ -474,6 +624,7 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
     },
     forget() {
       unsentFor = null;
+      sendOnOpen = null;
       set({ unsent: {} });
     },
   };

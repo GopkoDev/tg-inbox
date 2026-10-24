@@ -121,6 +121,8 @@ export function GroupPicker({
   const [gone, setGone] = useState(false);
   /** Counts every read of the first page: late answers of an earlier filter are dropped. */
   const readId = useRef(0);
+  /** Counts every matching-count read: only the newest answer is shown (and sent as expected). */
+  const countId = useRef(0);
   const filterRef = useRef(filter);
   useEffect(() => {
     filterRef.current = filter;
@@ -154,13 +156,14 @@ export function GroupPicker({
 
   const readMatching = useCallback(
     async (f: Filter, read: number) => {
+      const count = ++countId.current;
       try {
         const answer = await countBroadcastGroupMatching(workspaceId, broadcastId, {
           q: f.q,
           mode: f.mode,
           tag: f.tagIds,
         });
-        if (read === readId.current) setMatching(answer);
+        if (read === readId.current && count === countId.current) setMatching(answer);
       } catch (error) {
         if (draftGone(error)) onClose();
         else fail(error);
@@ -293,6 +296,13 @@ export function GroupPicker({
         setRow(contactId, null);
         setGone(true);
         void readFirst(filterRef.current, true);
+        return;
+      }
+      if (codeOf(error) === ErrorCode.BROADCAST_AUDIENCE_TOO_LARGE) {
+        // The group is full: the footer says how many more fit (as for Add all matching).
+        const canAdd = (error as ApiError & { details?: { can_add?: number } }).details?.can_add;
+        setRow(contactId, null);
+        setFooter({ step: 'too_large', canAdd: canAdd ?? 0 });
         return;
       }
       setRow(contactId, isGuardAnswer(error) ? null : 'failed');

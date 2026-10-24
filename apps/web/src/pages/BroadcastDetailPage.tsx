@@ -2,13 +2,19 @@ import { useEffect, useState } from 'react';
 import { useMatch, useParams } from 'react-router';
 import { BroadcastEditor } from '@/features/broadcasts/BroadcastEditor';
 import { BroadcastPage } from '@/features/broadcasts/BroadcastPage';
-import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
+import { useBroadcastDraftStore, type LaunchNotice } from '@/features/broadcasts/draft-store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { NotFoundCard } from './NotFoundPage';
+
+/** SCR-25 → SCR-28: a teammate's live launch, or a launch found by a refused change (none after one's own). */
+const LAUNCH_NOTICES: Record<LaunchNotice, string> = {
+  teammate: 'A teammate launched this broadcast.',
+  refused: 'This broadcast was launched and can no longer be changed.',
+};
 
 /**
  * One broadcast address (`/broadcasts/:id`, `/broadcasts/:id/launch`, `/broadcasts/new`): the
@@ -24,6 +30,9 @@ export function BroadcastDetailPage() {
   const draft = useBroadcastDraftStore((s) => (s.broadcastId === broadcastId ? s.draft : null));
   const launched = useBroadcastDraftStore((s) =>
     s.broadcastId === broadcastId ? s.launched : null,
+  );
+  const launchNotice = useBroadcastDraftStore((s) =>
+    s.broadcastId === broadcastId ? s.launchNotice : null,
   );
   /** The draft view was shown at this address: a later launch or delete came while it was open. */
   const [shownDraft, setShownDraft] = useState<string | null>(null);
@@ -80,11 +89,9 @@ export function BroadcastDetailPage() {
         workspaceId={workspaceId}
         broadcastId={broadcastId}
         notice={
-          wasDraft ? (
+          launchNotice ? (
             <Alert>
-              <AlertDescription>
-                This broadcast was launched and can no longer be changed.
-              </AlertDescription>
+              <AlertDescription>{LAUNCH_NOTICES[launchNotice]}</AlertDescription>
             </Alert>
           ) : undefined
         }

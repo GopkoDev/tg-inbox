@@ -16,6 +16,7 @@ const api = vi.hoisted(() => ({
   getLaunchConfirmation: vi.fn(),
   duplicateBroadcast: vi.fn(),
   deleteBroadcast: vi.fn(),
+  launchBroadcast: vi.fn(),
   listBroadcastGroup: vi.fn(),
   listBroadcastRecipients: vi.fn(),
 }));
@@ -28,6 +29,7 @@ vi.mock('./api', async (importOriginal) => ({
   getLaunchConfirmation: (...a: unknown[]) => api.getLaunchConfirmation(...a),
   duplicateBroadcast: (...a: unknown[]) => api.duplicateBroadcast(...a),
   deleteBroadcast: (...a: unknown[]) => api.deleteBroadcast(...a),
+  launchBroadcast: (...a: unknown[]) => api.launchBroadcast(...a),
   listBroadcastGroup: (...a: unknown[]) => api.listBroadcastGroup(...a),
   listBroadcastRecipients: (...a: unknown[]) => api.listBroadcastRecipients(...a),
 }));
@@ -122,7 +124,11 @@ const Where = () => {
 };
 const where = () => screen.getByTestId('where').textContent;
 
-function renderAt(path: string, role: 'owner' | 'operator' = 'owner') {
+function renderAt(
+  path: string,
+  role: 'owner' | 'operator' = 'owner',
+  { launchPage = false }: { launchPage?: boolean } = {},
+) {
   useWorkspaceStore.setState({ current: { id: WS, name: 'Acme Flowers', role } });
   return render(
     <ShellGuardContext.Provider value={guard}>
@@ -134,7 +140,7 @@ function renderAt(path: string, role: 'owner' | 'operator' = 'owner') {
           <Route path="/w/:workspaceId/broadcasts/:broadcastId" element={<BroadcastDetailPage />} />
           <Route
             path="/w/:workspaceId/broadcasts/:broadcastId/launch"
-            element={<p>launch confirmation</p>}
+            element={launchPage ? <BroadcastDetailPage /> : <p>launch confirmation</p>}
           />
           <Route path="/w/:workspaceId/settings/bot" element={<p>bot settings</p>} />
         </Routes>
@@ -143,10 +149,24 @@ function renderAt(path: string, role: 'owner' | 'operator' = 'owner') {
   );
 }
 
-async function openDraft(d: BroadcastDraft = draft(), role: 'owner' | 'operator' = 'owner') {
+async function openDraftView(d: BroadcastDraft = draft(), role: 'owner' | 'operator' = 'owner') {
   api.getBroadcast.mockResolvedValue(d);
-  renderAt(`/w/${WS}/broadcasts/${d.id}`, role);
+  const view = renderAt(`/w/${WS}/broadcasts/${d.id}`, role);
   await screen.findByRole('heading', { level: 1, name: d.name });
+  return view;
+}
+async function openDraft(d: BroadcastDraft = draft(), role: 'owner' | 'operator' = 'owner') {
+  await openDraftView(d, role);
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
 }
 
 const nameField = () => screen.getByLabelText('Name');
@@ -195,6 +215,48 @@ describe('SCR-25 — new and loading (AC-01)', () => {
       expect(api.createBroadcast).toHaveBeenCalledWith(WS, { name: 'Spring prices', text: 'Hi' }),
     );
     await waitFor(() => expect(where()).toBe(`/w/${WS}/broadcasts/${DRAFT}`));
+  });
+
+  it("U5: a failed create says «Couldn't save» with Retry, which creates it", async () => {
+    api.createBroadcast.mockRejectedValueOnce(new Error('network'));
+    api.createBroadcast.mockResolvedValueOnce(draft({ version: 1, text: '' }));
+    api.getBroadcast.mockResolvedValue(draft({ version: 1, text: '' }));
+    renderAt(`/w/${WS}/broadcasts/new`);
+    type(nameField(), 'Spring prices');
+    expect(await screen.findByText("Couldn't save")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(where()).toBe(`/w/${WS}/broadcasts/${DRAFT}`));
+    expect(api.createBroadcast).toHaveBeenCalledTimes(2);
+  });
+
+  it('U5: a create refused with BROADCAST_NAME_INVALID shows the name field error', async () => {
+    api.createBroadcast.mockRejectedValueOnce(
+      new ApiError(400, ErrorCode.BROADCAST_NAME_INVALID, 'invalid'),
+    );
+    renderAt(`/w/${WS}/broadcasts/new`);
+    type(nameField(), 'Spring prices');
+    expect(await screen.findByText('A name must be 1 to 80 characters')).toBeInTheDocument();
+    expect(screen.queryByText("Couldn't save")).toBeNull();
+  });
+
+  it('W9: text typed while the create is in flight is carried to the new draft and saved', async () => {
+    const created = deferred<BroadcastDraft>();
+    api.createBroadcast.mockReturnValueOnce(created.promise);
+    api.getBroadcast.mockResolvedValue(draft({ version: 1, text: '' }));
+    api.saveBroadcastFields.mockResolvedValue(draft({ version: 2, text: 'Typed meanwhile' }));
+    renderAt(`/w/${WS}/broadcasts/new`);
+    type(nameField(), 'Spring prices');
+    fireEvent.change(textField(), { target: { value: 'Typed meanwhile' } });
+    await act(async () => created.resolve(draft({ version: 1, text: '' })));
+    await waitFor(() => expect(where()).toBe(`/w/${WS}/broadcasts/${DRAFT}`));
+    await screen.findByRole('heading', { level: 1, name: 'Spring prices' });
+    expect(textField()).toHaveValue('Typed meanwhile');
+    await waitFor(() =>
+      expect(api.saveBroadcastFields).toHaveBeenCalledWith(WS, DRAFT, {
+        expected_version: 1,
+        text: 'Typed meanwhile',
+      }),
+    );
   });
 });
 
@@ -313,6 +375,95 @@ describe('SCR-25 — the Message card (AC-02)', () => {
     expect(screen.queryByTestId('mine-name')).toBeNull();
     expect(api.saveBroadcastFields).toHaveBeenCalledTimes(1);
   });
+
+  it('W1: an edit typed while a save is in flight never goes out after a stale answer', async () => {
+    const first = deferred<BroadcastDraft>();
+    api.saveBroadcastFields.mockReturnValueOnce(first.promise);
+    await openDraft();
+    vi.useFakeTimers();
+    type(textField(), 'Mine');
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(1);
+    fireEvent.change(textField(), { target: { value: 'Mine, more' } });
+    await act(async () =>
+      first.reject(
+        new ApiError(409, ErrorCode.BROADCAST_DRAFT_CHANGED, 'changed', {
+          draft: draft({ version: 5, text: 'Theirs' }),
+        }),
+      ),
+    );
+    await act(async () => vi.advanceTimersByTime(1000));
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(1);
+    expect(textField()).toHaveValue('Theirs');
+    expect(screen.getByTestId('mine-text')).toHaveTextContent('Mine, more');
+  });
+
+  it('W8: an edit kept across a 401 is shown again on the same address', async () => {
+    const unauth = new ApiError(401, ErrorCode.UNAUTHENTICATED, 'sign in');
+    api.saveBroadcastFields.mockRejectedValueOnce(unauth);
+    const view = await openDraftView();
+    type(textField(), 'Kept text');
+    await waitFor(() => expect(guard).toHaveBeenCalledWith(unauth, WS));
+    view.unmount();
+    api.saveBroadcastFields.mockResolvedValueOnce(draft({ version: 4, text: 'Kept text' }));
+    await openDraft();
+    expect(textField()).toHaveValue('Kept text');
+    expect(screen.getByText("Couldn't save")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Saved')).toBeInTheDocument();
+    expect(textField()).toHaveValue('Kept text');
+  });
+
+  it('U8: a stale audience save says so and Use mine sends the choice again', async () => {
+    api.saveBroadcastAudience.mockRejectedValueOnce(
+      new ApiError(409, ErrorCode.BROADCAST_DRAFT_CHANGED, 'changed', {
+        draft: draft({ version: 5, text: 'Theirs' }),
+      }),
+    );
+    api.saveBroadcastAudience.mockResolvedValueOnce(
+      draft({ version: 6, text: 'Theirs', audience: { kind: 'group', size: 0 } }),
+    );
+    api.listBroadcastGroup.mockResolvedValue({
+      workspace_id: WS,
+      broadcast_id: DRAFT,
+      size: 0,
+      items: [],
+      has_prev: false,
+      has_next: false,
+      next_cursor: null,
+    });
+    await openDraft();
+    fireEvent.click(screen.getByRole('radio', { name: 'Hand-picked group' }));
+    expect(
+      await screen.findByText(
+        'A teammate changed this draft. Their version is shown; your audience choice is kept to apply again.',
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Use mine' }));
+    await waitFor(() =>
+      expect(api.saveBroadcastAudience).toHaveBeenLastCalledWith(WS, DRAFT, {
+        kind: 'group',
+        expected_version: 5,
+      }),
+    );
+  });
+
+  it.each([
+    [ErrorCode.BROADCAST_NAME_INVALID, 'name', 'A name must be 1 to 80 characters'],
+    [
+      ErrorCode.BROADCAST_TEXT_INVALID,
+      'text',
+      'The text must be 1 to 4096 characters as Telegram counts them',
+    ],
+  ] as const)(
+    'U5: a save refused with %s shows the field error, not «Couldn’t save»',
+    async (code, field, message) => {
+      api.saveBroadcastFields.mockRejectedValueOnce(new ApiError(400, code, 'invalid'));
+      await openDraft();
+      type(field === 'name' ? nameField() : textField(), 'Refused value');
+      expect(await screen.findByText(message)).toBeInTheDocument();
+      expect(screen.queryByText("Couldn't save")).toBeNull();
+    },
+  );
 
   it('the text is plain: markup and links are shown as typed', async () => {
     await openDraft(draft({ text: '<b>Hi</b> https://x.io' }));
@@ -568,9 +719,64 @@ describe('SCR-25 — live and errors', () => {
       } as LiveFrame),
     );
     expect(await screen.findByTestId('broadcast-launched-view')).toBeInTheDocument();
+    expect(screen.getByText('A teammate launched this broadcast.')).toBeInTheDocument();
+    expect(
+      screen.queryByText('This broadcast was launched and can no longer be changed.'),
+    ).toBeNull();
+  });
+
+  it('U6: launched meanwhile (409 on a save): «This broadcast was launched and can no longer be changed.»', async () => {
+    api.saveBroadcastFields.mockRejectedValue(
+      new ApiError(409, ErrorCode.BROADCAST_NOT_A_DRAFT, 'launched', {
+        broadcast_id: DRAFT,
+        status: 'sending',
+      }),
+    );
+    await openDraft();
+    api.getBroadcast.mockResolvedValue(launched());
+    api.listBroadcastRecipients.mockReturnValue(new Promise(() => undefined));
+    type(textField(), 'Late');
+    expect(await screen.findByTestId('broadcast-launched-view')).toBeInTheDocument();
     expect(
       screen.getByText('This broadcast was launched and can no longer be changed.'),
     ).toBeInTheDocument();
+  });
+
+  it('U6: after the own confirm, SCR-28 «Sending» with no notice', async () => {
+    api.getBroadcast.mockResolvedValue(draft());
+    api.getLaunchConfirmation.mockResolvedValue({
+      broadcast_id: DRAFT,
+      version: 3,
+      name: 'Spring prices',
+      text: 'New prices from Monday.',
+      breakdown: { audience_size: 38, blocked_count: 2, never_wrote_count: 0, recipient_count: 36 },
+      fingerprint: 'a'.repeat(64),
+    });
+    renderAt(`/w/${WS}/broadcasts/${DRAFT}/launch`, 'owner', { launchPage: true });
+    const dialog = await screen.findByRole('alertdialog');
+    api.getBroadcast.mockResolvedValue(launched());
+    api.listBroadcastRecipients.mockReturnValue(new Promise(() => undefined));
+    api.launchBroadcast.mockResolvedValue({ outcome: 'launched', broadcast: launched() });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^Send to/ }));
+    expect(await screen.findByTestId('broadcast-launched-view')).toBeInTheDocument();
+    expect(
+      screen.queryByText('This broadcast was launched and can no longer be changed.'),
+    ).toBeNull();
+    expect(screen.queryByText('A teammate launched this broadcast.')).toBeNull();
+  });
+
+  it('W10: launched meanwhile but the re-read fails: the load error with Retry', async () => {
+    api.saveBroadcastFields.mockRejectedValue(
+      new ApiError(409, ErrorCode.BROADCAST_NOT_A_DRAFT, 'launched', {
+        broadcast_id: DRAFT,
+        status: 'sending',
+      }),
+    );
+    await openDraft();
+    api.getBroadcast.mockRejectedValue(new Error('network'));
+    type(textField(), 'Late');
+    expect(await screen.findByText("Couldn't load this broadcast")).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   it('deleted while open: «This draft was deleted.»', async () => {

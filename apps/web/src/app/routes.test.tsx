@@ -448,6 +448,31 @@ describe('broadcasts routes and crumbs (T30, SCR-15, SCR-24)', () => {
     expect(within(crumbNav()).getByText('Spring prices')).toBeInTheDocument();
   });
 
+  it('a pre-check refused at /launch shows on the draft, which is not opened again', async () => {
+    broadcastsApi.getBroadcast.mockResolvedValue(draft());
+    broadcastsApi.getLaunchConfirmation.mockRejectedValue(
+      new ApiError(409, 'BROADCAST_NO_REACHABLE_CONTACT' as never, 'nobody', {
+        breakdown: { audience_size: 1, blocked_count: 1, never_wrote_count: 0, recipient_count: 0 },
+      }),
+    );
+    const router = renderAt('/w/w1/broadcasts/b1/launch');
+    await waitFor(() => expect(router.state.location.pathname).toBe('/w/w1/broadcasts/b1'));
+    expect(await screen.findByText('This audience has no reachable contact.')).toBeInTheDocument();
+    expect(broadcastsApi.getBroadcast).toHaveBeenCalledTimes(1);
+  });
+
+  it('Launch and Cancel keep the same broadcast page: the draft is not read again', async () => {
+    broadcastsApi.getBroadcast.mockResolvedValue(draft({ text: 'Hi' }));
+    broadcastsApi.getLaunchConfirmation.mockReturnValue(new Promise(() => undefined));
+    const router = renderAt('/w/w1/broadcasts/b1');
+    expect(await screen.findByTestId('broadcast-draft-view')).toBeInTheDocument();
+    await act(() => router.navigate('/w/w1/broadcasts/b1/launch'));
+    await act(() => router.navigate('/w/w1/broadcasts/b1'));
+    expect(screen.getByTestId('broadcast-draft-view')).toBeInTheDocument();
+    expect(screen.queryByTestId('broadcast-skeleton')).toBeNull();
+    expect(broadcastsApi.getBroadcast).toHaveBeenCalledTimes(1);
+  });
+
   it('an unknown or foreign broadcast shows the not-found card, the crumb stays generic', async () => {
     broadcastsApi.getBroadcast.mockRejectedValue(new ApiError(404, 'NOT_FOUND', 'Not found'));
     renderAt('/w/w1/broadcasts/nope');

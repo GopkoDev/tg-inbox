@@ -11,11 +11,13 @@ import { openMenu, stubRadixDom } from '@/test/radix';
 const api = vi.hoisted(() => ({
   listBroadcasts: vi.fn(),
   duplicateBroadcast: vi.fn(),
+  deleteBroadcast: vi.fn(),
 }));
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
   listBroadcasts: (...a: unknown[]) => api.listBroadcasts(...a),
   duplicateBroadcast: (...a: unknown[]) => api.duplicateBroadcast(...a),
+  deleteBroadcast: (...a: unknown[]) => api.deleteBroadcast(...a),
 }));
 const live = vi.hoisted(() => ({ onFrame: null as ((f: LiveFrame) => void) | null }));
 vi.mock('@/shared/api/live-connection', () => ({
@@ -273,6 +275,18 @@ describe('SCR-24 row actions (AC-07)', () => {
     expect(where()).toBe(`/w/${WS}/broadcasts`);
   });
 
+  it('a 401 / 403 on a draft duplicate goes to the shell guard, not the failure alert', async () => {
+    const err = new ApiError(403, 'ACCESS_REMOVED', 'gone');
+    api.listBroadcasts.mockResolvedValue(list([item(1, { name: 'Spring prices' })]));
+    api.duplicateBroadcast.mockRejectedValue(err);
+    renderTable();
+    await screen.findByRole('link', { name: 'Spring prices' });
+    openMenu('Actions for Spring prices');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Duplicate' }));
+    await waitFor(() => expect(guard).toHaveBeenCalledWith(err, WS));
+    expect(screen.queryByText("Couldn't duplicate the broadcast")).not.toBeInTheDocument();
+  });
+
   it('a launched row opens the duplicate dialog (SCR-30) instead', async () => {
     const onDuplicateLaunched = vi.fn();
     const sent = item(1, { name: 'Summer', status: 'sent' });
@@ -294,6 +308,27 @@ describe('SCR-24 row actions (AC-07)', () => {
     openMenu('Actions for Mine');
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
     expect(onDelete).toHaveBeenCalledWith(mine);
+  });
+
+  it('the page offers Delete on an own draft: SCR-31 confirms and the row disappears', async () => {
+    api.listBroadcasts.mockResolvedValue(
+      list([item(1, { name: 'Mine' }), item(2, { name: 'Other' })]),
+    );
+    renderPage('operator');
+    await screen.findByRole('link', { name: 'Mine' });
+    openMenu('Actions for Mine');
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Delete' }));
+    const dialog = await screen.findByRole('alertdialog');
+    expect(within(dialog).getByText('Delete this draft?')).toBeInTheDocument();
+    api.deleteBroadcast.mockResolvedValue({ workspace_id: WS, broadcast_id: id(501) });
+    api.listBroadcasts.mockResolvedValue(list([item(2, { name: 'Other' })]));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete draft' }));
+    await waitFor(() =>
+      expect(screen.queryByRole('link', { name: 'Mine' })).not.toBeInTheDocument(),
+    );
+    expect(api.deleteBroadcast).toHaveBeenCalledWith(WS, id(501));
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Other' })).toBeInTheDocument();
   });
 
   it("an operator's row of a teammate's draft offers Duplicate only", async () => {

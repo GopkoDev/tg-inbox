@@ -17,6 +17,8 @@ export type Phase = 'idle' | 'loading' | 'ready' | 'error' | 'not_found';
 export type MoreStatus = 'idle' | 'loading' | 'error';
 
 export interface RecipientsState {
+  /** The current filter's first page: loading (skeleton rows), shown, or failed (Retry in the report). */
+  status: 'loading' | 'ready' | 'error';
   items: BroadcastRecipient[];
   hasNext: boolean;
   nextCursor: string | null;
@@ -36,18 +38,27 @@ interface ReportState {
   setFilter: (filter: RecipientState | null, guard: GuardFn) => Promise<void>;
   /** The next 50 recipients of the current filter (Show more). */
   showMore: (guard: GuardFn) => Promise<void>;
+  /** Reads the current filter's first page again (the report's Retry). */
+  retryRecipients: (guard: GuardFn) => Promise<void>;
   /** Re-reads on `report` / `status` of the open broadcast, `resync` and reconnects. */
   watch: (workspaceId: string, guard: GuardFn) => () => void;
   close: () => void;
 }
 
-const EMPTY: RecipientsState = { items: [], hasNext: false, nextCursor: null, more: 'idle' };
+const EMPTY: RecipientsState = {
+  status: 'loading',
+  items: [],
+  hasNext: false,
+  nextCursor: null,
+  more: 'idle',
+};
 
 const isGuardAnswer = (error: unknown) =>
   error instanceof ApiError && (error.status === 401 || error.status === 403);
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
 const recipientsOf = (page: BroadcastRecipientPage): RecipientsState => ({
+  status: 'ready',
   items: page.items,
   hasNext: page.has_next,
   nextCursor: page.next_cursor,
@@ -58,6 +69,16 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
   /** Counts every opening and filter change: late answers of an earlier one are dropped. */
   let epoch = 0;
   let reread: { key: string; run: () => Promise<void> } | null = null;
+  /** Counts every replacement of the recipients: a Show more answer for an older list is dropped. */
+  let listSeq = 0;
+  /** A re-read asked for while Show more was in flight runs after it. */
+  let rereadWaits = false;
+
+  /** Sets the recipients as a new list (not an appended page). */
+  const replaceRecipients = (recipients: RecipientsState, more: Partial<ReportState> = {}) => {
+    listSeq++;
+    set({ ...more, recipients });
+  };
 
   const shows = (workspaceId: string, broadcastId?: string) =>
     get().workspaceId === workspaceId && (!broadcastId || get().broadcastId === broadcastId);
@@ -75,6 +96,10 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
         run: serialRead(async () => {
           const opened = epoch;
           const { filter, recipients } = get();
+          if (recipients.more === 'loading') {
+            rereadWaits = true;
+            return;
+          }
           const pages = Math.max(1, Math.ceil(recipients.items.length / 50));
           try {
             const broadcast = await getBroadcast(workspaceId, broadcastId, { background: true });
@@ -90,11 +115,8 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
               items.push(...page.items);
             }
             if (opened !== epoch || !shows(workspaceId, broadcastId) || !page) return;
-            set({
-              status: 'ready',
-              broadcast,
-              recipients: { ...recipientsOf(page), items },
-            });
+            // A Show more started meanwhile continues the old list: it is dropped on answer.
+            replaceRecipients({ ...recipientsOf(page), items }, { status: 'ready', broadcast });
           } catch (error) {
             if (isGuardAnswer(error)) guard(error, workspaceId);
           }
@@ -124,13 +146,15 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
     guard: GuardFn,
   ) => {
     const opened = ++epoch;
+    replaceRecipients(EMPTY);
     try {
       const page = await listBroadcastRecipients(workspaceId, broadcastId, filterOf(filter), {});
-      if (opened === epoch) set({ recipients: recipientsOf(page) });
+      if (opened === epoch) replaceRecipients(recipientsOf(page));
     } catch (error) {
       if (opened !== epoch) return;
       if (isGuardAnswer(error)) guard(error, workspaceId);
-      set({ status: 'error' });
+      // The page stays; the report says it and offers Retry for this filter.
+      replaceRecipients({ ...EMPTY, status: 'error' });
     }
   };
 
@@ -144,6 +168,8 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
     async open(workspaceId, broadcastId, guard) {
       const opened = ++epoch;
       reread = null;
+      rereadWaits = false;
+      listSeq++;
       set({
         workspaceId,
         broadcastId,
@@ -157,7 +183,7 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
           getBroadcast(workspaceId, broadcastId, {}),
           listBroadcastRecipients(workspaceId, broadcastId, {}, {}),
         ]);
-        if (opened === epoch) set({ status: 'ready', broadcast, recipients: recipientsOf(page) });
+        if (opened === epoch) replaceRecipients(recipientsOf(page), { status: 'ready', broadcast });
       } catch (error) {
         if (opened !== epoch) return;
         if (isGuardAnswer(error)) guard(error, workspaceId);
@@ -167,7 +193,12 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
     async setFilter(filter, guard) {
       const { workspaceId, broadcastId } = get();
       if (!workspaceId || !broadcastId) return;
-      set({ filter, recipients: EMPTY });
+      set({ filter });
+      await readPage(workspaceId, broadcastId, filter, guard);
+    },
+    async retryRecipients(guard) {
+      const { workspaceId, broadcastId, filter } = get();
+      if (!workspaceId || !broadcastId) return;
       await readPage(workspaceId, broadcastId, filter, guard);
     },
     async showMore(guard) {
@@ -175,6 +206,7 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
       if (!workspaceId || !broadcastId || !recipients.nextCursor || recipients.more === 'loading')
         return;
       const opened = epoch;
+      const seq = listSeq;
       set({ recipients: { ...recipients, more: 'loading' } });
       try {
         const page = await listBroadcastRecipients(
@@ -183,14 +215,24 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
           { ...filterOf(filter), after: recipients.nextCursor },
           {},
         );
-        if (opened !== epoch) return;
+        if (opened !== epoch || seq !== listSeq) return;
+        const items = get().recipients.items;
+        const shown = new Set(items.map((r) => r.id));
         set({
-          recipients: { ...recipientsOf(page), items: [...get().recipients.items, ...page.items] },
+          recipients: {
+            ...recipientsOf(page),
+            items: [...items, ...page.items.filter((r) => !shown.has(r.id))],
+          },
         });
       } catch (error) {
-        if (opened !== epoch) return;
+        if (opened !== epoch || seq !== listSeq) return;
         if (isGuardAnswer(error)) guard(error, workspaceId);
         set({ recipients: { ...get().recipients, more: 'error' } });
+      } finally {
+        if (opened === epoch && rereadWaits && shows(workspaceId, broadcastId)) {
+          rereadWaits = false;
+          void rereadOf(workspaceId, broadcastId, guard)();
+        }
       }
     },
     watch(workspaceId, guard) {
@@ -208,6 +250,7 @@ export const useBroadcastReportStore = create<ReportState>()((set, get) => {
     close() {
       epoch++;
       reread = null;
+      rereadWaits = false;
       set({
         workspaceId: null,
         broadcastId: null,

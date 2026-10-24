@@ -266,6 +266,47 @@ describe('SCR-26 — the group picker (AC-04, AC-05)', () => {
     expect(await within(rowOf(IVAN)).findByText('In group ✓')).toBeInTheDocument();
   });
 
+  it('U4: a single add refused as too large: the footer says how many more can be added', async () => {
+    api.addBroadcastGroupContact.mockRejectedValue(
+      new ApiError(409, ErrorCode.BROADCAST_AUDIENCE_TOO_LARGE, 'too large', {
+        limit: 10_000,
+        audience_size: 10_000,
+        can_add: 0,
+      }),
+    );
+    await show();
+    fireEvent.click(await screen.findByRole('button', { name: 'Add Ivan' }));
+    expect(
+      await screen.findByText(
+        "A broadcast's audience can hold at most 10 000 contacts — no more can be added.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(rowOf(IVAN)).queryByText("Couldn't add")).toBeNull();
+  });
+
+  it('W15: after quick adds the newest matching count wins, even when an older one answers last', async () => {
+    await show();
+    await screen.findByRole('button', { name: 'Add all matching (119)' });
+    api.addBroadcastGroupContact.mockResolvedValue({
+      broadcast_id: DRAFT,
+      outcome: 'added',
+      group_size: 2,
+    });
+    let older!: (v: BroadcastGroupMatching) => void;
+    api.countBroadcastGroupMatching
+      .mockReturnValueOnce(new Promise((r) => (older = r)))
+      .mockResolvedValueOnce(matching({ to_add_count: 117 }));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Olena K.' }));
+    await waitFor(() => expect(api.countBroadcastGroupMatching).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Add Ivan' }));
+    await waitFor(() => expect(api.countBroadcastGroupMatching).toHaveBeenCalledTimes(3));
+    expect(
+      await screen.findByRole('button', { name: 'Add all matching (117)' }),
+    ).toBeInTheDocument();
+    await act(async () => older(matching({ to_add_count: 118 })));
+    expect(screen.getByRole('button', { name: 'Add all matching (117)' })).toBeInTheDocument();
+  });
+
   it('a contact that is gone: the page is read again and the picker says so', async () => {
     api.addBroadcastGroupContact.mockRejectedValue(
       new ApiError(404, ErrorCode.NOT_FOUND, 'Not found'),

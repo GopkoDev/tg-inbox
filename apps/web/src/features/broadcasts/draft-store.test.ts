@@ -37,7 +37,7 @@ vi.mock('@/shared/api/live-connection', () => ({
   },
 }));
 
-import { useBroadcastDraftStore } from './draft-store';
+import { useBroadcastDraftStore, type AudienceChoice } from './draft-store';
 
 const A = '0198f0c0-0000-7000-8000-000000000001';
 const B = '0198f0c0-0000-7000-8000-000000000002';
@@ -348,5 +348,196 @@ describe('broadcast draft store (SCR-25)', () => {
     expect(store().draft!.audience).toEqual({ kind: 'group', size: 1 });
     // Group writes stay outside the version: the next field save still carries version 1.
     expect(store().draft!.version).toBe(1);
+  });
+
+  it('W1: an edit while a stale save is shown is kept as mine and never sent', async () => {
+    await opened();
+    const theirs = draft(2, { text: 'Teammate text' });
+    api.saveBroadcastFields.mockRejectedValueOnce(
+      new ApiError(409, ErrorCode.BROADCAST_DRAFT_CHANGED, 'changed', { draft: theirs }),
+    );
+    store().editFields({ text: 'My text' }, guard);
+    await settle();
+    await settle();
+    store().editFields({ text: 'My text, longer' }, guard);
+    await settle();
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(1);
+    expect(store().stale).toMatchObject({ theirs, mine: { text: 'My text, longer' } });
+    expect(store().unsent).toEqual({});
+  });
+
+  it('W5: a save in flight across close / open never runs beside the next save', async () => {
+    await opened();
+    const first = deferred<BroadcastDraft>();
+    const second = deferred<BroadcastDraft>();
+    api.saveBroadcastFields
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise)
+      .mockResolvedValue(draft(4, { text: 'Three' }));
+    store().editFields({ text: 'One' }, guard);
+    await settle();
+    store().close();
+    api.getBroadcast.mockResolvedValue(draft(2, { text: 'One' }));
+    await store().open(A, BC, guard);
+    store().editFields({ text: 'Two' }, guard);
+    await settle();
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(2);
+    first.resolve(draft(2, { text: 'One' }));
+    await settle();
+    await settle();
+    store().editFields({ text: 'Three' }, guard);
+    await settle();
+    // The second save is still in flight: the third edit waits for its answer.
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(2);
+    second.resolve(draft(3, { text: 'Two' }));
+    await settle();
+    await settle();
+    expect(api.saveBroadcastFields).toHaveBeenCalledTimes(3);
+    expect(api.saveBroadcastFields).toHaveBeenLastCalledWith(A, BC, {
+      expected_version: 3,
+      text: 'Three',
+    });
+  });
+
+  it('W4: background re-reads run one at a time and never take the draft back to an older version', async () => {
+    await opened();
+    const read = deferred<BroadcastDraft>();
+    api.getBroadcast
+      .mockReturnValueOnce(read.promise)
+      .mockResolvedValue(draft(2, { text: 'Mine' }));
+    void store().reread(guard);
+    void store().reread(guard);
+    await settle();
+    expect(api.getBroadcast).toHaveBeenCalledTimes(1);
+    api.saveBroadcastFields.mockResolvedValueOnce(draft(2, { text: 'Mine' }));
+    store().editFields({ text: 'Mine' }, guard);
+    await settle();
+    await settle();
+    expect(store().draft!.version).toBe(2);
+    read.resolve(draft(1)); // started before the save committed
+    await settle();
+    await settle();
+    expect(store().draft).toMatchObject({ version: 2, text: 'Mine' });
+  });
+
+  const groupRow = (contactId: string) => ({
+    contact: {
+      id: contactId,
+      first_name: 'Zoe',
+      last_name: null,
+      username: null,
+      tags: [],
+      reach: 'reachable',
+    },
+    added_by: member,
+    added_at: '2026-10-20T10:00:00.000Z',
+  });
+  const groupPage = (ids: string[], next: string | null) => ({
+    workspace_id: A,
+    broadcast_id: BC,
+    size: ids.length,
+    items: ids.map(groupRow),
+    has_prev: false,
+    has_next: next !== null,
+    next_cursor: next,
+  });
+
+  it('W2: a group re-read while Show more is in flight waits for it; no row is shown twice', async () => {
+    await opened();
+    api.listBroadcastGroup.mockResolvedValueOnce(groupPage([C1], 'cursor-1'));
+    await store().loadGroup(guard);
+    const more = deferred<unknown>();
+    api.listBroadcastGroup.mockReturnValueOnce(more.promise);
+    const shown = store().showMoreGroup(guard);
+    await settle();
+    expect(store().group!.more).toBe('loading');
+    // C1 was removed elsewhere: the re-read's first page now starts with C2.
+    api.listBroadcastGroup.mockResolvedValue(groupPage([C2], null));
+    api.addBroadcastGroupContact.mockResolvedValueOnce({
+      broadcast_id: BC,
+      outcome: 'added',
+      group_size: 2,
+    });
+    await store().addContact(C2, guard);
+    await settle();
+    more.resolve(groupPage([C2], null));
+    await shown;
+    await settle();
+    await settle();
+    const ids = store().group!.items.map((r) => r.contact.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids).toEqual([C2]);
+    expect(store().group!.more).toBe('idle');
+  });
+
+  it('U8: a stale audience save keeps the rejected choice; Use mine sends it on their version', async () => {
+    await opened();
+    const theirs = draft(2, { text: 'Teammate text' });
+    api.saveBroadcastAudience.mockRejectedValueOnce(
+      new ApiError(409, ErrorCode.BROADCAST_DRAFT_CHANGED, 'changed', { draft: theirs }),
+    );
+    const choice: AudienceChoice = {
+      kind: 'tags',
+      mode: 'any',
+      tag_ids: [C1],
+      exclude_tag_ids: [],
+    };
+    store().saveAudience(choice, guard);
+    await settle();
+    await settle();
+    expect(store().stale).toMatchObject({ theirs, audience: choice });
+    api.saveBroadcastAudience.mockResolvedValueOnce(draft(3));
+    store().useMine(guard);
+    await settle();
+    await settle();
+    expect(api.saveBroadcastAudience).toHaveBeenLastCalledWith(A, BC, {
+      ...choice,
+      expected_version: 2,
+    });
+    expect(store().stale).toBeNull();
+  });
+
+  it('W12: a failed audience save keeps a newer queued choice, not the older one', async () => {
+    await opened();
+    const first = deferred<BroadcastDraft>();
+    api.saveBroadcastAudience.mockReturnValueOnce(first.promise);
+    const older: AudienceChoice = { kind: 'tags', mode: 'any', tag_ids: [C1], exclude_tag_ids: [] };
+    const newer: AudienceChoice = {
+      kind: 'tags',
+      mode: 'any',
+      tag_ids: [C1, C2],
+      exclude_tag_ids: [],
+    };
+    store().saveAudience(older, guard);
+    await settle();
+    store().saveAudience(newer, guard);
+    first.reject(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'boom'));
+    await settle();
+    await settle();
+    expect(store().save).toBe('failed');
+    api.saveBroadcastAudience.mockResolvedValueOnce(draft(2));
+    store().retry(guard);
+    await settle();
+    await settle();
+    expect(api.saveBroadcastAudience).toHaveBeenLastCalledWith(A, BC, {
+      ...newer,
+      expected_version: 1,
+    });
+  });
+
+  it('W10: BROADCAST_NOT_A_DRAFT whose re-read fails shows the load error, not a skeleton', async () => {
+    await opened();
+    api.saveBroadcastFields.mockRejectedValueOnce(
+      new ApiError(409, ErrorCode.BROADCAST_NOT_A_DRAFT, 'launched', {
+        broadcast_id: BC,
+        status: 'sending',
+      }),
+    );
+    api.getBroadcast.mockRejectedValue(new Error('down'));
+    store().editFields({ text: 'Late' }, guard);
+    await settle();
+    await settle();
+    await settle();
+    expect(store().status).toBe('error');
   });
 });

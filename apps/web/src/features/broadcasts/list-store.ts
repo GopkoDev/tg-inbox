@@ -18,6 +18,8 @@ interface BroadcastListState {
   load: (workspaceId: string, guard: GuardFn) => Promise<void>;
   /** Re-reads on every `broadcast.changed` of the workspace, `resync` and reconnects. */
   watch: (workspaceId: string, guard: GuardFn) => () => void;
+  /** A background re-read after an own change (a delete from the list); what is shown stays meanwhile. */
+  reread: (workspaceId: string, guard: GuardFn) => Promise<void>;
   clear: () => void;
 }
 
@@ -84,6 +86,10 @@ export const useBroadcastListStore = create<BroadcastListState>()((set, get) => 
         onInvalidFrame: () => here(workspaceId) && void rereadOf(workspaceId, guard)(),
         onClosed: () => undefined, // the shell and the next request decide
       });
+    },
+    reread(workspaceId, guard) {
+      if (!here(workspaceId)) return Promise.resolve();
+      return rereadOf(workspaceId, guard)();
     },
     clear() {
       epoch++;
