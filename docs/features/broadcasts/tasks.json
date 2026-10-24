@@ -841,7 +841,7 @@
         "apps/web/src/pages/BroadcastDetailPage.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t34-scr27-launch-confirmation.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T35",

@@ -47,12 +47,14 @@ const broadcastsApi = vi.hoisted(() => ({
   listBroadcasts: vi.fn(),
   getBroadcast: vi.fn(),
   listBroadcastRecipients: vi.fn(),
+  getLaunchConfirmation: vi.fn(),
 }));
 vi.mock('@/features/broadcasts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/broadcasts/api')>()),
   listBroadcasts: (...a: unknown[]) => broadcastsApi.listBroadcasts(...a),
   getBroadcast: (...a: unknown[]) => broadcastsApi.getBroadcast(...a),
   listBroadcastRecipients: (...a: unknown[]) => broadcastsApi.listBroadcastRecipients(...a),
+  getLaunchConfirmation: (...a: unknown[]) => broadcastsApi.getLaunchConfirmation(...a),
 }));
 
 import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
@@ -435,6 +437,12 @@ describe('broadcasts routes and crumbs (T30, SCR-15, SCR-24)', () => {
 
   it('/broadcasts/<id>/launch mounts the same broadcast page', async () => {
     broadcastsApi.getBroadcast.mockResolvedValue(draft());
+    // The confirmation (SCR-27, its own tests) is refused here, so the draft shows at its address.
+    broadcastsApi.getLaunchConfirmation.mockRejectedValue(
+      new ApiError(409, 'BROADCAST_NO_REACHABLE_CONTACT' as never, 'nobody', {
+        breakdown: { audience_size: 1, blocked_count: 1, never_wrote_count: 0, recipient_count: 0 },
+      }),
+    );
     renderAt('/w/w1/broadcasts/b1/launch');
     expect(await screen.findByTestId('broadcast-draft-view')).toBeInTheDocument();
     expect(within(crumbNav()).getByText('Spring prices')).toBeInTheDocument();

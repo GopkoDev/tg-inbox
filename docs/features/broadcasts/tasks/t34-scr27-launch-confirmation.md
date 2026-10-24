@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/LaunchConfirmDialog.tsx", "apps/w
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T34 — Build SCR-27, the LaunchConfirmDialog on the /launch address: the exact text, the count, who is left out and why, the risk warning, launch with the version and fingerprint, the re-ask on a changed draft or audience, and the operator redirect
@@ -130,12 +130,12 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `LaunchConfirmDialog` on `AlertDialog`: the confirmation text in a read-only `ScrollArea` box (`whitespace-pre-wrap`, no links or formatting), «Send to N contacts», `AudienceBreakdown`, the warning `Alert`, Cancel focused — `apps/web/src/features/broadcasts/LaunchConfirmDialog.tsx`
-- [ ] Confirm sends `expected_version` + `fingerprint` once (button disabled while pending, Esc ignored); `launched` / `already_launched` → `navigate(replace)` to the broadcast address — same file
-- [ ] `BROADCAST_AUDIENCE_CHANGED` → show `details.confirmation` with the notice and keep its version / fingerprint for the next confirm; `BROADCAST_DRAFT_CHANGED` → re-read `getLaunchConfirmation` with the teammate notice — same file
-- [ ] Refusals at confirm time as a destructive `Alert` with only Close (+ Open bot settings for the bot refusal, the next-launch time via `formatBotTime` / `formatBotDay`); network / `500` → «Couldn't send the broadcast. Nothing was sent.» — same file
-- [ ] Mount on `/w/:workspaceId/broadcasts/:broadcastId/launch` in the detail page: an owner reads the confirmation first and opens the dialog only on `200` (a refusal shows on the draft); an operator, or `403 OWNER_ONLY`, is replaced to the draft address with the owners-only note; Cancel returns to the draft with focus on Launch — `apps/web/src/pages/BroadcastDetailPage.tsx`
-- [ ] Testing Library tests for every SCR-27 state above, including a double click launching once and a phone layout smoke check — `apps/web/src/features/broadcasts/LaunchConfirmDialog.test.tsx`
+- [x] `LaunchConfirmDialog` on `AlertDialog`: the confirmation text in a read-only `ScrollArea` box (`whitespace-pre-wrap`, no links or formatting), «Send to N contacts», `AudienceBreakdown`, the warning `Alert`, Cancel focused — `apps/web/src/features/broadcasts/LaunchConfirmDialog.tsx`
+- [x] Confirm sends `expected_version` + `fingerprint` once (button disabled while pending, Esc ignored); `launched` / `already_launched` → `navigate(replace)` to the broadcast address — same file
+- [x] `BROADCAST_AUDIENCE_CHANGED` → show `details.confirmation` with the notice and keep its version / fingerprint for the next confirm; `BROADCAST_DRAFT_CHANGED` → re-read `getLaunchConfirmation` with the teammate notice — same file
+- [x] Refusals at confirm time as a destructive `Alert` with only Close (+ Open bot settings for the bot refusal, the next-launch time via `formatBotTime` / `formatBotDay`); network / `500` → «Couldn't send the broadcast. Nothing was sent.» — same file
+- [x] Mount on `/w/:workspaceId/broadcasts/:broadcastId/launch` in the detail page: an owner reads the confirmation first and opens the dialog only on `200` (a refusal shows on the draft); an operator, or `403 OWNER_ONLY`, is replaced to the draft address with the owners-only note; Cancel returns to the draft with focus on Launch — `apps/web/src/pages/BroadcastDetailPage.tsx`
+- [x] Testing Library tests for every SCR-27 state above, including a double click launching once and a phone layout smoke check — `apps/web/src/features/broadcasts/LaunchConfirmDialog.test.tsx`
 
 ## Edge cases
 
@@ -152,7 +152,17 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-27 state in screens.md: the text as plain text with line breaks, Send to 36 with the left-out lines and the warning, Launch sending the version and fingerprint once (a double click launches once), BROADCAST_AUDIENCE_CHANGED and BROADCAST_DRAFT_CHANGED re-asking with the current numbers, each pre-check refusal shown on the draft instead of the dialog, the cap refusal with the next launch time, and an operator on the /launch address replaced to the draft with the owners-only note.
-- [ ] A test proves the confirm body carries exactly the version and fingerprint of the confirmation shown (the initial one, or the one from `details.confirmation` after an asks-again), never a recomputed one.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every SCR-27 state in screens.md: the text as plain text with line breaks, Send to 36 with the left-out lines and the warning, Launch sending the version and fingerprint once (a double click launches once), BROADCAST_AUDIENCE_CHANGED and BROADCAST_DRAFT_CHANGED re-asking with the current numbers, each pre-check refusal shown on the draft instead of the dialog, the cap refusal with the next launch time, and an operator on the /launch address replaced to the draft with the owners-only note.
+- [x] A test proves the confirm body carries exactly the version and fingerprint of the confirmation shown (the initial one, or the one from `details.confirmation` after an asks-again), never a recomputed one.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T34): `LaunchConfirmDialog({ workspaceId, broadcastId, open, confirmation, onCancel, onLaunched, onOwnersOnly, returnFocus })` on `AlertDialog` (title «Send this broadcast?»): «This message goes to **N contacts** from your business bot:», the text in a bordered `ScrollArea` (`whitespace-pre-wrap`, rendered as a text node — no links, no markup), `AudienceBreakdown`, the warning `Alert`; Cancel focused on open. The confirm sends exactly the `version` + `fingerprint` of the confirmation shown (a ref blocks a second send while one is in flight); `BROADCAST_AUDIENCE_CHANGED` shows `details.confirmation` with its notice and keeps it for the next confirm; `BROADCAST_DRAFT_CHANGED` re-reads `getLaunchConfirmation` with the teammate notice; pre-check refusals at confirm time render the SCR-25 texts with only **Close** (the bot refusal keeps **Open bot settings**), `BROADCAST_TEXT_INVALID` «Write the text before launching»; 401 / 403 close it and go to the shell guard; `BROADCAST_NOT_A_DRAFT` counts as launched; anything else «Couldn't send the broadcast. Nothing was sent.» with the confirm enabled again. While the confirmation is read the dialog shows skeleton lines.
+- `implement` (T34): **deviation** — the refusal texts and their parsing moved from `BroadcastEditor.tsx` into a new `launch-refusal.tsx` (`launchRefusalOf`, `RefusalAlert`, `BOT_REFUSALS`) so SCR-25 and SCR-27 share one copy; the editor (outside files_hint) owns the `/launch` behaviour through a new `atLaunch` prop from `BroadcastDetailPage` (`useMatch`): once per arrival (`location.key`) an owner's page reads the confirmation and opens the dialog only on `200`; a refusal shows on the draft and the address is replaced with the draft's; an operator is replaced to the draft (owners-only note) without asking; `OWNER_ONLY` swaps Launch for the note. Launched / already launched re-opens the draft store (so SCR-28 shows even when the router keeps the page mounted) and replaces the address with the broadcast's; Cancel replaces it with the draft's and returns focus to **Launch** (dialog `onCloseAutoFocus`, plus `location.state.focusLaunch` for a remount).
+- `implement` (T34): `app/routes.test.tsx` «/launch mounts the same broadcast page» now mocks `getLaunchConfirmation` (a refusal, so the draft shows at its address) — setup only, its assertions are unchanged; before, the unmocked read left the new dialog open and hid the crumb from the accessibility tree.
+- `implement` (T34): `LaunchConfirmDialog` is not yet registered in `docs/design-system.md` — T40.
+- `implement` (T34): RED — `Unable to find role="alertdialog"` on every confirmation state, `Unable to find an element with the text: This audience has no reachable contact.` and the operator / OWNER_ONLY address assertions (GOOD red). Lint (`react-hooks/refs`, `set-state-in-effect`) shaped the editor's check into a promise callback keyed by the arrival.
+- `implement` (T34): gate — `pnpm lint` clean; full `pnpm test`: `e2e/contacts-load` merge timing and `e2e/inbox-flows` story 5 (a `deadlock detected` in the test helper's TRUNCATE between flows — concurrency, known story family) failed; both green re-run alone.
+

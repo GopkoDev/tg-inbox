@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router';
+import { useMatch, useParams } from 'react-router';
 import { BroadcastEditor } from '@/features/broadcasts/BroadcastEditor';
 import { BroadcastPage } from '@/features/broadcasts/BroadcastPage';
 import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
@@ -18,6 +18,8 @@ import { NotFoundCard } from './NotFoundPage';
 export function BroadcastDetailPage() {
   const { workspaceId = '', broadcastId } = useParams();
   const guard = useShellGuard();
+  /** The launch confirmation address (SCR-27 over the draft). */
+  const atLaunch = useMatch('/w/:workspaceId/broadcasts/:broadcastId/launch') !== null;
   const status = useBroadcastDraftStore((s) => (s.broadcastId === broadcastId ? s.status : 'idle'));
   const draft = useBroadcastDraftStore((s) => (s.broadcastId === broadcastId ? s.draft : null));
   const launched = useBroadcastDraftStore((s) =>
@@ -90,7 +92,12 @@ export function BroadcastDetailPage() {
     );
   if (status === 'ready' && draft)
     return (
-      <BroadcastEditor key={broadcastId} workspaceId={workspaceId} broadcastId={broadcastId} />
+      <BroadcastEditor
+        key={broadcastId}
+        workspaceId={workspaceId}
+        broadcastId={broadcastId}
+        atLaunch={atLaunch}
+      />
     );
   return (
     <div className="flex flex-col gap-4" data-testid="broadcast-skeleton">

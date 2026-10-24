@@ -6,13 +6,12 @@ import {
   checkBroadcastText,
   tidyBroadcastText,
   type BroadcastDraft,
-  type LaunchBreakdown,
+  type LaunchConfirmation,
 } from '@tg/shared';
 import { Loader2, MoreHorizontal } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import { useAuthStore } from '@/features/auth/store';
-import { formatBotTime } from '@/features/bot/settings/format';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
@@ -34,6 +33,8 @@ import { Textarea } from '@/shared/ui/textarea';
 import { createBroadcast, duplicateBroadcast, getLaunchConfirmation } from './api';
 import { AudienceBreakdown, formatCount } from './AudienceBreakdown';
 import { DeleteDraftDialog } from './DeleteDraftDialog';
+import { LaunchConfirmDialog } from './LaunchConfirmDialog';
+import { RefusalAlert, launchRefusalOf, type LaunchRefusal } from './launch-refusal';
 import { useBroadcastDraftStore, type DraftFieldsEdit } from './draft-store';
 import { SwitchAudienceDialog } from './SwitchAudienceDialog';
 import { TagAudience } from './TagAudience';
@@ -47,11 +48,6 @@ const OWNERS_ONLY = 'Only a business owner launches broadcasts.';
 const NOT_AUTHOR = 'A draft is deleted by its author or a business owner';
 const STALE =
   'A teammate changed this draft. Their version is shown; your edit is kept below to apply again.';
-const BOT_REFUSALS: Record<string, string> = {
-  not_connected: 'Launching needs a connected bot.',
-  needs_token: "Your bot's token stopped working — replace it to launch.",
-  taken_over: 'Your bot is connected elsewhere — reconnect it to launch.',
-};
 
 type Field = 'name' | 'text';
 
@@ -65,13 +61,6 @@ function textState(text: string, touched: boolean) {
   return { remaining, error: touched ? TEXT_ERROR : null };
 }
 
-type LaunchRefusal =
-  | { kind: 'bot'; state: string }
-  | { kind: 'too_large'; size: number }
-  | { kind: 'unreachable'; breakdown: LaunchBreakdown }
-  | { kind: 'limit'; next: string }
-  | { kind: 'duplicate_failed' };
-
 /**
  * SCR-25, the draft editor's frame and Message card (screens.md Decisions 3–7): name and text saved
  * as you go against the shown version through the draft store, the status line, the stale-save
@@ -83,9 +72,12 @@ export function BroadcastEditor({
   workspaceId,
   broadcastId,
   audienceControls,
+  atLaunch = false,
 }: {
   workspaceId: string;
   broadcastId?: string;
+  /** The `/launch` address (SCR-27 over the draft for an owner). */
+  atLaunch?: boolean;
   /** The hand-picked group's controls (T33); the tag audience is built in. */
   audienceControls?: ReactNode;
 }) {
@@ -116,6 +108,8 @@ export function BroadcastEditor({
   const [deleting, setDeleting] = useState(false);
   const [creating, setCreating] = useState(false);
   const timers = useRef<Partial<Record<Field, ReturnType<typeof setTimeout>>>>({});
+  const launchRef = useRef<HTMLButtonElement>(null);
+  const draftUrl = `/w/${workspaceId}/broadcasts/${broadcastId ?? ''}`;
   const textRef = useRef<HTMLTextAreaElement>(null);
 
   // A newly read draft fills the fields; a stale save shows the teammate's values (adjusted while rendering).
@@ -194,39 +188,96 @@ export function BroadcastEditor({
     timers.current[field] = setTimeout(() => commit(field, value), SAVE_PAUSE_MS);
   };
 
+  /**
+   * The launch pre-check (`getLaunchConfirmation`): the confirmation, or null when it was refused —
+   * the refusal then shows on the draft (SCR-25 refusal rows).
+   */
+  /** A refused pre-check shows on the draft (SCR-25 refusal rows). */
+  const refuse = (error: unknown) => {
+    const code = error instanceof ApiError ? error.code : null;
+    const refused = launchRefusalOf(error);
+    setRefusal(refused);
+    setNoText(false);
+    if (refused) return;
+    if (code === ErrorCode.BROADCAST_TEXT_INVALID) {
+      setNoText(true);
+      textRef.current?.focus();
+    } else if (code === ErrorCode.OWNER_ONLY) {
+      setOwnersOnly(true);
+    } else if (code === ErrorCode.BROADCAST_NOT_A_DRAFT && broadcastId) {
+      void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
+    } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+      void guard(error, workspaceId);
+    }
+  };
+
+  /** The launch pre-check (`getLaunchConfirmation`): the confirmation, or null when refused. */
+  const check = async (): Promise<LaunchConfirmation | null> => {
+    if (!broadcastId) return null;
+    try {
+      const confirmation = await getLaunchConfirmation(workspaceId, broadcastId);
+      setRefusal(null);
+      setNoText(false);
+      return confirmation;
+    } catch (error) {
+      refuse(error);
+      return null;
+    }
+  };
+
   const launch = async () => {
     if (!broadcastId) return;
     setLaunching(true);
-    setRefusal(null);
-    setNoText(false);
     try {
-      await getLaunchConfirmation(workspaceId, broadcastId);
-      void navigate(`/w/${workspaceId}/broadcasts/${broadcastId}/launch`);
-    } catch (error) {
-      const code = error instanceof ApiError ? error.code : null;
-      const details = (error instanceof ApiError ? error.details : undefined) as
-        Record<string, unknown> | undefined;
-      if (code === ErrorCode.BROADCAST_NEEDS_WORKING_BOT) {
-        setRefusal({ kind: 'bot', state: String(details?.bot_state) });
-      } else if (code === ErrorCode.BROADCAST_AUDIENCE_TOO_LARGE) {
-        setRefusal({ kind: 'too_large', size: Number(details?.audience_size) });
-      } else if (code === ErrorCode.BROADCAST_NO_REACHABLE_CONTACT) {
-        setRefusal({ kind: 'unreachable', breakdown: details?.breakdown as LaunchBreakdown });
-      } else if (code === ErrorCode.BROADCAST_LAUNCH_LIMIT_REACHED) {
-        setRefusal({ kind: 'limit', next: String(details?.next_launch_at) });
-      } else if (code === ErrorCode.BROADCAST_TEXT_INVALID) {
-        setNoText(true);
-        textRef.current?.focus();
-      } else if (code === ErrorCode.OWNER_ONLY) {
-        setOwnersOnly(true);
-      } else if (code === ErrorCode.BROADCAST_NOT_A_DRAFT) {
-        void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
-      } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-        void guard(error, workspaceId);
-      }
+      if (await check()) void navigate(`${draftUrl}/launch`);
     } finally {
       setLaunching(false);
     }
+  };
+
+  // SCR-27 at the /launch address: an owner reads the confirmation first and gets the dialog only
+  // on 200 (a refusal shows on the draft); an operator gets the draft with the owners-only note.
+  // One check per arrival at the address (`location.key`).
+  const location = useLocation();
+  const [checked, setChecked] = useState<{
+    at: string;
+    confirmation: LaunchConfirmation | null;
+    open: boolean;
+  } | null>(null);
+  const checkedAt = useRef<string | null>(null);
+  const toDraft = (state?: object) => void navigate(draftUrl, { replace: true, state });
+  const draftReady = draft !== null;
+  const here = checked?.at === location.key ? checked : null;
+  const confirming = atLaunch && role === 'owner' && draftReady && (here?.open ?? true);
+  useEffect(() => {
+    if (!atLaunch || !broadcastId || !draftReady || checkedAt.current === location.key) return;
+    checkedAt.current = location.key;
+    if (role !== 'owner') {
+      toDraft();
+      return;
+    }
+    const at = location.key;
+    getLaunchConfirmation(workspaceId, broadcastId).then(
+      (confirmation) => setChecked({ at, confirmation, open: true }),
+      (error: unknown) => {
+        refuse(error);
+        setChecked({ at, confirmation: null, open: false });
+        toDraft();
+      },
+    );
+    // runs once per arrival at the /launch address
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [atLaunch, broadcastId, draftReady, location.key]);
+
+  // Back from the confirmation: focus returns to Launch.
+  const focusLaunch = (location.state as { focusLaunch?: boolean } | null)?.focusLaunch === true;
+  useEffect(() => {
+    if (focusLaunch) launchRef.current?.focus();
+  }, [focusLaunch, location.key]);
+
+  const closeConfirmation = (state?: object) => {
+    setChecked({ at: location.key, confirmation: here?.confirmation ?? null, open: false });
+    toDraft(state);
   };
 
   const duplicate = async () => {
@@ -293,6 +344,7 @@ export function BroadcastEditor({
           <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
             {canLaunch ? (
               <Button
+                ref={launchRef}
                 type="button"
                 className="w-full sm:w-auto"
                 disabled={launching}
@@ -334,7 +386,7 @@ export function BroadcastEditor({
       </div>
       {!isNew && !canLaunch ? <p className="text-sm text-muted-foreground">{OWNERS_ONLY}</p> : null}
       {refusal ? (
-        <Refusal refusal={refusal} botSettingsHref={`/w/${workspaceId}/settings/bot`} />
+        <RefusalAlert refusal={refusal} botSettingsHref={`/w/${workspaceId}/settings/bot`} />
       ) : null}
       {stale ? (
         <Alert>
@@ -431,6 +483,25 @@ export function BroadcastEditor({
       </div>
 
       <SwitchAudienceDialog open={switching} onClose={() => setSwitching(false)} />
+      {broadcastId ? (
+        <LaunchConfirmDialog
+          workspaceId={workspaceId}
+          broadcastId={broadcastId}
+          open={confirming}
+          confirmation={here?.confirmation ?? null}
+          onCancel={() => closeConfirmation({ focusLaunch: true })}
+          onLaunched={() => {
+            closeConfirmation();
+            // The store learns the launch (SCR-28 «Sending») at the broadcast's own address.
+            void useBroadcastDraftStore.getState().open(workspaceId, broadcastId, guard);
+          }}
+          onOwnersOnly={() => {
+            setOwnersOnly(true);
+            closeConfirmation();
+          }}
+          returnFocus={() => launchRef.current?.focus()}
+        />
+      ) : null}
       <DeleteDraftDialog
         workspaceId={workspaceId}
         draft={
@@ -479,57 +550,4 @@ function SaveLine({
       {status === 'saving' ? 'Saving…' : 'Saved'}
     </span>
   );
-}
-
-function Refusal({
-  refusal,
-  botSettingsHref,
-}: {
-  refusal: LaunchRefusal;
-  botSettingsHref: string;
-}) {
-  switch (refusal.kind) {
-    case 'bot':
-      return (
-        <Alert variant="destructive">
-          <AlertDescription className="flex flex-wrap items-center justify-between gap-2">
-            {BOT_REFUSALS[refusal.state] ?? BOT_REFUSALS.not_connected}
-            <Button asChild size="sm" variant="outline">
-              <Link to={botSettingsHref}>Open bot settings</Link>
-            </Button>
-          </AlertDescription>
-        </Alert>
-      );
-    case 'too_large':
-      return (
-        <Alert>
-          <AlertDescription>
-            {`A broadcast's audience can hold at most ${formatCount(10_000)} contacts — this one holds ${formatCount(refusal.size)}.`}
-          </AlertDescription>
-        </Alert>
-      );
-    case 'unreachable':
-      return (
-        <Alert>
-          <AlertDescription className="flex flex-col gap-2">
-            <span>This audience has no reachable contact.</span>
-            <AudienceBreakdown breakdown={refusal.breakdown} />
-          </AlertDescription>
-        </Alert>
-      );
-    case 'limit':
-      return (
-        <Alert>
-          <AlertDescription>
-            {`A workspace can launch at most 10 broadcasts in 24 hours. The next launch is possible at ${formatBotTime(refusal.next)}.`}
-          </AlertDescription>
-        </Alert>
-      );
-    case 'duplicate_failed':
-      return (
-        <Alert variant="destructive">
-          <AlertDescription>Couldn&apos;t duplicate the broadcast</AlertDescription>
-        </Alert>
-      );
-  }
 }
