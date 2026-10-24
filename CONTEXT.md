@@ -1,6 +1,6 @@
 ---
 status: Living
-updated_at: '2026-10-23'
+updated_at: '2026-10-24'
 ---
 
 # Domain Context — tg-inbox
@@ -21,7 +21,7 @@ updated_at: '2026-10-23'
 - Broadcast item — a launched broadcast as it shows in one recipient's conversation thread: its text, its name and the business owner who launched it (still named after that owner is deactivated), placed at the time it was delivered, or marked not confirmed and placed at the time the send was made; it never changes the conversation's status, assignee, waiting-for-a-reply marker, anyone's unread state or pings. NOT a Reply (no member wrote it to this one customer and it does not answer them) and NOT a Message (it comes from the business, not from the end customer).
 - Business bot — the workspace's own Telegram bot, created by the business in BotFather and connected to the workspace by a business owner pasting its token; end customers write to it and it belongs to at most one workspace. NOT a platform-wide bot (tg-inbox has no shared bot; every workspace brings its own).
 - Business owner — a workspace member with the owner role: manages the workspace's team (invites, deactivates and reactivates operators and other business owners) and can do everything an operator can. NOT Platform admin (an owner manages only their own workspace).
-- Change signal — a small live notice («this conversation, item, bot or contact's tags changed») pushed to the open panel tabs of one workspace (inbox, contact profile), carrying ids only; the browser then re-reads what changed. NOT the change itself (it carries no text or content) and NOT a notification to the end customer.
+- Change signal — a small live notice («this conversation, item, bot, broadcast or contact's tags or blocked mark changed») pushed to the open panel tabs of one workspace (inbox, contact profile, Contacts list, broadcasts), carrying ids only; the browser then re-reads what changed. NOT the change itself (it carries no text or content) and NOT a notification to the end customer.
 - Client reply key — the id the browser gives a reply before sending it, so a repeated submit of the same reply finds it instead of creating a second one. NOT the reply's own id and NOT a Telegram message id.
 - Close snapshot — what a member's close was shown: the conversation's customer message counter plus the latest reply's id and state; the close is re-checked under the conversation row lock against it, and asks again when it no longer matches. NOT the state version (that guards the whole change, the snapshot only the close reasons).
 - Connect link — the single-use link, valid for 10 minutes and bound to one membership, that a member opens in Telegram to create their Telegram link; starting the bot through it is never captured as a customer message. NOT an Invitation (it joins nobody to a workspace) and NOT a business's own start link (those are captured as before).

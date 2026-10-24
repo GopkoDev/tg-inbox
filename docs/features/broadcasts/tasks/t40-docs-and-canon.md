@@ -9,8 +9,8 @@ files_hint: ["CLAUDE.md", "docs/architecture-map.md", "docs/design-system.md", "
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T40 — Update CLAUDE.md, the architecture map, the design-system canon and CONTEXT.md for the broadcasts module, its routes, tables, queues and signals, the new edges, contact_bot_reach and broadcast_items, and the new components
@@ -99,11 +99,11 @@ Internal — no API surface.
 
 ## Checklist
 
-- [ ] `CLAUDE.md` Layout: the `broadcasts` module (routes, four tables, three queues, `broadcast.changed`), `contact_bot_reach` under `contacts`, `broadcast_items` and the thread kind under `conversations`, `my_chat_member` / `sendBroadcastMessage` / the broadcast pacer under `bots`, the `buildDeps()` order, the new edges; a **Broadcasts** rule (owner-only launch / stop, lock order, at-most-once claim, codes); tenancy exceptions unchanged — `CLAUDE.md`
-- [ ] Architecture map: module inventory row, datastores, edges, queues, signals, the `broadcastIntegrity` queries, closest precedents, `reflects_commit` — `docs/architecture-map.md`
-- [ ] Design-system canon: register the fourteen new components and update the five extended rows (`pending` → registered) — `docs/design-system.md`
-- [ ] `CONTEXT.md`: confirm every broadcasts term used by the built screens is in the Glossary (Audience, Broadcast, Broadcast group, Broadcast item, Blocked the bot, Count breakdown, Draft author, Recipient list, Tag audience, …) and the invariant stands; add only what the build introduced — `CONTEXT.md`
-- [ ] `sad.md` §8 Error handling: add `BROADCAST_NOT_ENDED` (409, duplicate "did not reach" before the end) and name `OWNER_ONLY` for an operator's launch / stop as the contract fixed it (api F-2) — `docs/features/broadcasts/sad.md`
+- [x] `CLAUDE.md` Layout: the `broadcasts` module (routes, four tables, three queues, `broadcast.changed`), `contact_bot_reach` under `contacts`, `broadcast_items` and the thread kind under `conversations`, `my_chat_member` / `sendBroadcastMessage` / the broadcast pacer under `bots`, the `buildDeps()` order, the new edges; a **Broadcasts** rule (owner-only launch / stop, lock order, at-most-once claim, codes); tenancy exceptions unchanged — `CLAUDE.md`
+- [x] Architecture map: module inventory row, datastores, edges, queues, signals, the `broadcastIntegrity` queries, closest precedents, `reflects_commit` — `docs/architecture-map.md`
+- [x] Design-system canon: register the fourteen new components and update the five extended rows (`pending` → registered) — `docs/design-system.md`
+- [x] `CONTEXT.md`: confirm every broadcasts term used by the built screens is in the Glossary (Audience, Broadcast, Broadcast group, Broadcast item, Blocked the bot, Count breakdown, Draft author, Recipient list, Tag audience, …) and the invariant stands; add only what the build introduced — `CONTEXT.md`
+- [x] `sad.md` §8 Error handling: add `BROADCAST_NOT_ENDED` (409, duplicate "did not reach" before the end) and name `OWNER_ONLY` for an operator's launch / stop as the contract fixed it (api F-2) — `docs/features/broadcasts/sad.md`
 
 ## Edge cases
 
@@ -115,6 +115,14 @@ Internal — no API surface.
 
 ## Definition of Done
 
-- [ ] CLAUDE.md and the architecture map name the broadcasts module with its routes, four tables, three queues and the broadcast.changed signal, the edges broadcasts → {contacts, conversations, bots, workspaces} and inbox → broadcasts, contact_bot_reach under contacts and broadcast_items under conversations, with the tenancy exceptions unchanged; the design-system canon registers every new and extended component of screens.md; and sad.md §8 lists BROADCAST_NOT_ENDED (api flag F-2).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] CLAUDE.md and the architecture map name the broadcasts module with its routes, four tables, three queues and the broadcast.changed signal, the edges broadcasts → {contacts, conversations, bots, workspaces} and inbox → broadcasts, contact_bot_reach under contacts and broadcast_items under conversations, with the tenancy exceptions unchanged; the design-system canon registers every new and extended component of screens.md; and sad.md §8 lists BROADCAST_NOT_ENDED (api flag F-2).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T40): `CLAUDE.md` — Layout: `buildDeps()` order gains `broadcasts` (after `team` and the contacts reads; `inbox` reads `itemDetails` through a closure; `contacts.currentBot` and the `bots` block port late-bound), `buildApp()` gains the three broadcasts queues, `bots` / `conversations` / `contacts` / `inbox` entries gain `my_chat_member` + `sendBroadcastMessage` + the pacer, `broadcast_items` + thread kind, `contact_bot_reach` + `blocked_since`, the broadcast-item read; a `broadcasts` module entry with its 17 routes, workers and four tables; edges `broadcasts → {contacts, conversations, bots, workspaces}`, `inbox → broadcasts`. A **Broadcasts:** rule line (roles, version + fingerprint, cap, the chain and the at-most-once claim, pace + send pause, queues, lock order, signals, text rule, secrecy, codes, run book, no new tenancy exception), in the Contacts / Notifications style.
+- `implement` (T40): `docs/architecture-map.md` — module paragraph + edges (with broadcasts ADR-0001), the `bots`, `conversations`, `inbox`, `contacts` rows extended, a `broadcasts` row (routes, use cases, launch lock order, the chain, tables, `broadcastIntegrity.*`), `(future)` now only posts, wiring list, live signals (`broadcast.changed`, `contact.changed reach`, item type `broadcast`), the three queues under Datastores, the `features/broadcasts` UI precedent, tenancy (broadcasts added none), the one-process alert; `updated_at` 2026-10-24, `reflects_commit` b410e14.
+- `implement` (T40): `docs/design-system.md` — 15 new rows (the 14 of screens.md under their built names plus `TagAudience`, which T32 built as its own component; screens.md folds it into BroadcastEditor + the extended TagFilter) with `file:line`, states from the built code and copy; the five extended rows (AppShell, ThreadItemView, ContactsTable, ContactProfile, TagFilter) updated in place with fresh line numbers. **Deviation** (outside files_hint): `screens.md` §New components flips each `pending` to `registered (2026-10-24)` and adds the `TagAudience (built)` row, so the screens manifest and the canon agree.
+- `implement` (T40): `sad.md` §8 Error handling lists `BROADCAST_NOT_ENDED` (api F-2) and names `403 OWNER_ONLY` for an operator's confirmation / launch / stop (the existing `ForbiddenError` subclass, before any lookup) and `403 FORBIDDEN` for a teammate's draft delete. `CONTEXT.md`: every broadcasts term the screens use was already in the Glossary and the invariant stands; only *Change signal* widened (broadcast, blocked mark; Contacts list and broadcasts screens) — no SAD-only terms (fingerprint, link, claim, reach row) added.
+- `implement` (T40): docs-only, no RED (no executable behaviour); gate — `pnpm lint` clean (Prettier on the docs included); the final full `pnpm test` of this wave is recorded in the T28/T40 hand-off.
