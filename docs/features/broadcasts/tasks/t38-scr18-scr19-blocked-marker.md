@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/contacts/ContactsTable.tsx", "apps/web/src/f
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T38 — Show the blocked mark on Contacts (SCR-18) and the profile (SCR-19), re-read live on contact.changed reach
@@ -94,10 +94,10 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `ContactsTable`: the «Blocked the bot» `Badge` (`outline`, destructive text) after the name with the `title` «Blocked the bot since <day>», wrapping under the name below `md` — `apps/web/src/features/contacts/ContactsTable.tsx`
-- [ ] `ContactProfile`: the muted line under the facts with the badge and «since <day>», absent when null — `apps/web/src/features/contacts/ContactProfile.tsx`
-- [ ] `contacts` store: on `contact.changed { change: reach }` re-read the list's current page only when that contact is on it, and `getContact` when that profile is open; `tags` handling unchanged; nothing else becomes live — `apps/web/src/features/contacts/store.ts`
-- [ ] Tests: marker / no marker / no bot, phone wrap, profile line present / absent, the reach re-reads and the non-re-read for a contact off the page — `ContactsTable.test.tsx`, `ContactProfile.test.tsx`, `apps/web/src/features/contacts/store.test.ts`
+- [x] `ContactsTable`: the «Blocked the bot» `Badge` (`outline`, destructive text) after the name with the `title` «Blocked the bot since <day>», wrapping under the name below `md` — `apps/web/src/features/contacts/ContactsTable.tsx`
+- [x] `ContactProfile`: the muted line under the facts with the badge and «since <day>», absent when null — `apps/web/src/features/contacts/ContactProfile.tsx`
+- [x] `contacts` store: on `contact.changed { change: reach }` re-read the list's current page only when that contact is on it, and `getContact` when that profile is open; `tags` handling unchanged; nothing else becomes live — `apps/web/src/features/contacts/store.ts`
+- [x] Tests: marker / no marker / no bot, phone wrap, profile line present / absent, the reach re-reads and the non-re-read for a contact off the page — `ContactsTable.test.tsx`, `ContactProfile.test.tsx`, `apps/web/src/features/contacts/store.test.ts`
 
 ## Edge cases
 
@@ -112,6 +112,12 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library and store tests cover the SCR-18 and SCR-19 states screens.md adds: the Blocked the bot badge with its since title on a row, the profile line, no marker when blocked_since is null, the list re-reading its current page only when the changed contact is on it, the profile re-reading on its own contact, and nothing else on SCR-18 becoming live.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library and store tests cover the SCR-18 and SCR-19 states screens.md adds: the Blocked the bot badge with its since title on a row, the profile line, no marker when blocked_since is null, the list re-reading its current page only when the changed contact is on it, the profile re-reading on its own contact, and nothing else on SCR-18 becoming live.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T38): the row marker («Blocked the bot», `Badge` outline with destructive text, `title` «Blocked the bot since <day>») sits after the name in a `flex-wrap` line, so it wraps under the name on a phone; the profile shows a muted `blocked-line` under the facts. The day uses `formatFullDay` (contacts/format, «20 Oct 2026») rather than `formatBotDay`, which has no year.
+- `implement` (T38): `contact.changed { change: 'reach' }` re-reads the list only when the contact is among the shown rows, reading every page shown so far in the background (so Show-more rows stay), and re-reads `getContact` for that open profile only (no tag-history re-read); `tags` handling is unchanged, and the list still ignores `tags` / `tags.changed`. The store test's `row` helper gained an override argument (test scaffold only).
+- `implement` (T38): gate — full `pnpm test` failed only `e2e/contacts-load` (merge timing, known set; T38 is web-only). It failed again in a solo re-run right after the suite (load average ≈ 14) and passed on the next solo run. `pnpm lint` clean.

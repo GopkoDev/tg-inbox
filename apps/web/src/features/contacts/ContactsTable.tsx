@@ -25,7 +25,7 @@ import {
   withAddress,
   type ContactsAddress,
 } from './address';
-import { contactFullName, firstWroteText, languageName, lastWrote } from './format';
+import { contactFullName, firstWroteText, formatFullDay, languageName, lastWrote } from './format';
 import { useContactsStore } from './store';
 import { TagFilter } from './TagFilter';
 
@@ -64,12 +64,23 @@ function ContactRowView({ workspaceId, contact }: { workspaceId: string; contact
             <AvatarFallback>{initials(name)}</AvatarFallback>
           </Avatar>
           <div className="flex min-w-0 flex-col">
-            <Link
-              to={`/w/${workspaceId}/contacts/${contact.id}`}
-              className="truncate font-medium hover:underline"
-            >
-              {name}
-            </Link>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <Link
+                to={`/w/${workspaceId}/contacts/${contact.id}`}
+                className="truncate font-medium hover:underline"
+              >
+                {name}
+              </Link>
+              {contact.blocked_since ? (
+                <Badge
+                  variant="outline"
+                  className="text-destructive"
+                  title={`Blocked the bot since ${formatFullDay(contact.blocked_since)}`}
+                >
+                  Blocked the bot
+                </Badge>
+              ) : null}
+            </div>
             {contact.username ? (
               <span className="truncate text-xs text-muted-foreground">@{contact.username}</span>
             ) : (

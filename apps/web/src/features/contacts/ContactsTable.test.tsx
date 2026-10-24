@@ -36,6 +36,7 @@ vi.mock('@/shared/api/live-connection', () => ({
 }));
 
 import { formatBotDay, formatBotTime } from '@/features/bot/settings/format';
+import { formatFullDay } from './format';
 import { useContactsStore } from './store';
 import { useTagsStore } from '@/features/tags/store';
 import { ContactsPage } from '@/pages/ContactsPage';
@@ -608,5 +609,24 @@ describe('SCR-18 empty states and errors', () => {
     expect(where()).toBe(`/w/${WS}/contacts/${id(901)}`);
     fireEvent.click(screen.getByRole('button', { name: 'go-back' }));
     await waitFor(() => expect(where()).toBe(`/w/${WS}/contacts?q=ada`));
+  });
+});
+
+describe('SCR-18 blocked the bot (AC-14)', () => {
+  it('marks a row whose contact blocked the bot, with the day in the title; no marker otherwise', async () => {
+    const since = '2026-10-20T11:00:00.000Z';
+    api.listContacts.mockResolvedValue(page({ items: [row(1, { blocked_since: since }), row(2)] }));
+    renderTable();
+    await screen.findByText('2 contacts');
+    const [blocked, other] = rowsOf();
+    const badge = within(blocked!).getByText('Blocked the bot');
+    expect(badge).toHaveAttribute('title', `Blocked the bot since ${formatFullDay(since)}`);
+    expect(within(other!).queryByText('Blocked the bot')).toBeNull();
+  });
+
+  it('shows no marker at all when nothing is blocked (no bot)', async () => {
+    renderTable();
+    await screen.findByText('2 contacts');
+    expect(screen.queryByText('Blocked the bot')).toBeNull();
   });
 });

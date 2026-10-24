@@ -558,10 +558,61 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     if (open) void readConversation(workspaceId, open.contactId, guard, true);
   };
 
+  /**
+   * The list's shown rows re-read in place (every page shown so far, in the background): the
+   * "blocked the bot" marker is the list's only live field (screens.md SCR-18 live: reach). A
+   * failure keeps the rows shown.
+   */
+  const rereadListPages = async (workspaceId: string, guard: GuardFn) => {
+    const open = get().list;
+    if (!open || open.status !== 'ready') return;
+    const epoch = ++listEpoch;
+    const [q, mode, tagIds] = JSON.parse(open.key) as [string, TagFilterMode, string[]];
+    const shownCount = open.items.length;
+    const items: ContactRow[] = [];
+    try {
+      let after: string | null = null;
+      let page: Awaited<ReturnType<typeof listContacts>>;
+      do {
+        page = await listContacts(
+          workspaceId,
+          { q, mode, tag: tagIds, ...(after ? { after } : {}) },
+          BACKGROUND,
+        );
+        const seen = new Set(items.map((c) => c.id));
+        items.push(...page.items.filter((c) => !seen.has(c.id)));
+        after = page.has_next ? page.next_cursor : null;
+      } while (after && items.length < shownCount);
+      const now = get().list;
+      if (!here(workspaceId) || epoch !== listEpoch || now?.key !== open.key) return;
+      set({
+        list: {
+          ...now,
+          items,
+          hasNext: page.has_next,
+          nextCursor: page.next_cursor,
+          matchingCount: page.matching_count,
+          totalCount: page.total_count,
+          missingTagIds: page.missing_tag_ids,
+        },
+      });
+    } catch (error) {
+      if (here(workspaceId) && epoch === listEpoch) await guarded(error, workspaceId, guard);
+    }
+  };
+
   const onFrame = (workspaceId: string, guard: GuardFn, frame: LiveFrame) => {
     if (frame.workspace_id !== workspaceId || !here(workspaceId)) return;
     switch (frame.type) {
       case 'contact.changed':
+        if (frame.change === 'reach') {
+          // Only the marker changed: the list page holding the contact and its open profile.
+          if (get().list?.items.some((c) => c.id === frame.contact_id))
+            void rereadListPages(workspaceId, guard);
+          if (get().profile?.contactId === frame.contact_id)
+            void readContact(workspaceId, frame.contact_id, guard, 'profile', true);
+          return;
+        }
         rereadContactAndHistory(workspaceId, guard, frame.contact_id);
         return;
       case 'tags.changed':

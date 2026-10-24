@@ -932,7 +932,7 @@
         "apps/web/src/features/contacts/store.test.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t38-scr18-scr19-blocked-marker.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T39",
