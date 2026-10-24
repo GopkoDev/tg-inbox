@@ -1,3 +1,4 @@
+import type { BroadcastDraft } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
 import type { AudienceTagKind, StoredAudienceTag, TagMode } from '../domain/audience.js';
 import type { BroadcastStatus } from '../domain/broadcast.js';
@@ -151,6 +152,8 @@ export interface GroupRepo {
     at: Date,
     tx?: Executor,
   ): Promise<number>;
+  /** Deletes every row of the group (a switch to a tag audience); the number deleted. */
+  removeAll(workspaceId: string, broadcastId: string, tx: Executor): Promise<number>;
   /** Deletes one row by key; whether a row was deleted. */
   remove(
     workspaceId: string,
@@ -277,4 +280,52 @@ export interface RecipientRepo {
   ): Promise<string[]>;
   /** The delivered recipients' contact ids, sorted (the 48-hour blocked share). */
   deliveredContactIds(workspaceId: string, broadcastId: string): Promise<string[]>;
+}
+
+// ───────── use-case ports (sad.md §5) ─────────
+
+/** Runs `fn` in one database transaction; a throw rolls it back with its signals. */
+export type Transaction = <T>(fn: (tx: Executor) => Promise<T>) => Promise<T>;
+
+/** One `change` per writing transaction (contracts/events.md assumption 2). */
+export type BroadcastChange = 'draft' | 'group' | 'status' | 'report' | 'deleted';
+
+/** `broadcast.changed`, published in the writing transaction (ids only). */
+export interface BroadcastSignals {
+  broadcastChanged(
+    tx: Executor,
+    workspaceId: string,
+    broadcastId: string,
+    change: BroadcastChange,
+  ): Promise<void>;
+}
+
+/** What `broadcasts` asks the `contacts` app layer (sad.md §5, ADR-0004). */
+export interface ContactsApi {
+  /** The ids that are tags of the workspace, with their current names; others are left out. */
+  resolveTags(
+    workspaceId: string,
+    tagIds: readonly string[],
+  ): Promise<{ id: string; name: string }[]>;
+}
+
+/** What `broadcasts` asks the `workspaces` app layer. */
+export interface WorkspacesApi {
+  /**
+   * Joins `tx`: `FOR SHARE` on the memberships of `accountIds` (sad.md §8 lock order: before the
+   * broadcast row); returns the active accounts among them.
+   */
+  lockActiveMembers(
+    tx: Executor,
+    workspaceId: string,
+    accountIds: readonly string[],
+  ): Promise<string[]>;
+}
+
+/**
+ * The draft as the API answers it (with its audience and breakdown) — `reads` (T17) implements it,
+ * the composition root binds it; read after the writing transaction.
+ */
+export interface DraftView {
+  draftView(workspaceId: string, broadcastId: string): Promise<BroadcastDraft>;
 }

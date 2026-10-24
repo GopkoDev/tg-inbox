@@ -49,6 +49,15 @@ export function createGroupRepo(db: Db): GroupRepo {
       return rows.length;
     },
 
+    async removeAll(workspaceId, broadcastId, tx) {
+      const result = await tx
+        .deleteFrom('broadcast_group_contacts')
+        .where('workspace_id', '=', workspaceId)
+        .where('broadcast_id', '=', broadcastId)
+        .executeTakeFirst();
+      return Number(result.numDeletedRows);
+    },
+
     async remove(workspaceId, broadcastId, contactId, tx) {
       const result = await (tx ?? db)
         .deleteFrom('broadcast_group_contacts')

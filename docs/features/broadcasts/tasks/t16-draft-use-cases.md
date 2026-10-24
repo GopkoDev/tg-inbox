@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/ports.ts", "apps/api/src/modul
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T16 — Add the broadcasts draft use cases: ports, the broadcast.changed publisher, create, save name and text against the version, save the tag audience or switch the kind against the confirmed group size, and delete by the author or a business owner
@@ -149,12 +149,12 @@ No DB changes. The use cases write, through T14's repositories:
 
 ## Checklist
 
-- [ ] Declare the module's ports — repositories (T14, T15), `ContactsApi` (tag resolution, breakdown, reachable set, cards), `ConversationsApi`, `BotsApi` (`launchReadiness`, `sendBroadcastMessage`), `WorkspacesApi` (`lockActiveMembers`, display names), signals, clock, jobs — `apps/api/src/modules/broadcasts/app/ports.ts`
-- [ ] In-memory fakes for every port — `apps/api/src/modules/broadcasts/app/fakes.ts`
-- [ ] `publishBroadcastChanged(tx, { workspace_id, broadcast_id, change })` through `platform/realtime` (the coalescing for `report` lands in T22) — `apps/api/src/modules/broadcasts/infra/signals.ts`
-- [ ] RED: unit tests per branch (create, stale save, not a draft, invalid name / text, tag resolution, switch with and without the group size, delete by author / owner / other) — `apps/api/src/modules/broadcasts/app/drafts.test.ts`
-- [ ] `createDraft`, `saveFields`, `saveAudience`, `deleteDraft` using T5's rules (version, `mayDelete`) and T1's tidy / measure, each in one transaction with the §8 lock order — `apps/api/src/modules/broadcasts/app/drafts.ts`
-- [ ] Integration tests: two members saving at one version (the second gets `BROADCAST_DRAFT_CHANGED` with the first's text), a group add between them keeps the version, delete by a deactivated owner refused, one signal per recorded write — `apps/api/src/modules/broadcasts/app/drafts.int.test.ts`
+- [x] Declare the module's ports — repositories (T14, T15), `ContactsApi` (tag resolution, breakdown, reachable set, cards), `ConversationsApi`, `BotsApi` (`launchReadiness`, `sendBroadcastMessage`), `WorkspacesApi` (`lockActiveMembers`, display names), signals, clock, jobs — `apps/api/src/modules/broadcasts/app/ports.ts`
+- [x] In-memory fakes for every port — `apps/api/src/modules/broadcasts/app/fakes.ts`
+- [x] `publishBroadcastChanged(tx, { workspace_id, broadcast_id, change })` through `platform/realtime` (the coalescing for `report` lands in T22) — `apps/api/src/modules/broadcasts/infra/signals.ts`
+- [x] RED: unit tests per branch (create, stale save, not a draft, invalid name / text, tag resolution, switch with and without the group size, delete by author / owner / other) — `apps/api/src/modules/broadcasts/app/drafts.test.ts`
+- [x] `createDraft`, `saveFields`, `saveAudience`, `deleteDraft` using T5's rules (version, `mayDelete`) and T1's tidy / measure, each in one transaction with the §8 lock order — `apps/api/src/modules/broadcasts/app/drafts.ts`
+- [x] Integration tests: two members saving at one version (the second gets `BROADCAST_DRAFT_CHANGED` with the first's text), a group add between them keeps the version, delete by a deactivated owner refused, one signal per recorded write — `apps/api/src/modules/broadcasts/app/drafts.int.test.ts`
 
 ## Edge cases
 
@@ -172,6 +172,15 @@ No DB changes. The use cases write, through T14's repositories:
 
 ## Definition of Done
 
-- [ ] Unit and integration tests prove create starts a draft at version 1 with the member as author and last changer and needs no bot, a save at the shown version writes and raises the version, a stale save answers BROADCAST_DRAFT_CHANGED with the current draft, a save on a launched broadcast answers BROADCAST_NOT_A_DRAFT, an invalid name or text answers its code and keeps the last valid content, foreign tag ids answer TAG_NOT_FOUND, a switch from a group carries its confirmed size and a different size answers BROADCAST_GROUP_CHANGED, a delete by a non-author operator is FORBIDDEN and by the author or an active owner removes the draft, and each recorded write publishes one broadcast.changed (draft or deleted) in its transaction.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests prove create starts a draft at version 1 with the member as author and last changer and needs no bot, a save at the shown version writes and raises the version, a stale save answers BROADCAST_DRAFT_CHANGED with the current draft, a save on a launched broadcast answers BROADCAST_NOT_A_DRAFT, an invalid name or text answers its code and keeps the last valid content, foreign tag ids answer TAG_NOT_FOUND, a switch from a group carries its confirmed size and a different size answers BROADCAST_GROUP_CHANGED, a delete by a non-author operator is FORBIDDEN and by the author or an active owner removes the draft, and each recorded write publishes one broadcast.changed (draft or deleted) in its transaction.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+- `implement` (T16): `createDrafts` (`broadcasts/app/drafts.ts`): `createDraft`, `saveFields`, `saveAudience`, `deleteDraft(workspaceId, { accountId, role }, id)`. The role comes from the route's membership guard; inside the delete transaction the actor's membership is locked `FOR SHARE` first (`WorkspacesApi.lockActiveMembers`), then the broadcast row, so a deactivated owner is `FORBIDDEN`.
+- `implement` (T16): every use case answers the contract's `BroadcastDraft` through a new port `DraftView.draftView(workspaceId, id)`, read after the writing transaction; a stale save throws `BroadcastDraftChangedError(<that view>)`. **Hand-off → T17/T26:** `reads.getBroadcast` (draft branch) implements `DraftView`, `buildDeps()` binds it. The unit fake (`fakeDraftView`) and the int test use stand-ins with `reach: null`.
+- `implement` (T16): ports declared now are only what drafts use — `Transaction`, `BroadcastChange`, `BroadcastSignals`, `ContactsApi.resolveTags(workspaceId, ids) → {id, name}[]` (tag names at that moment), `WorkspacesApi.lockActiveMembers`, `DraftView`. The other module ports in the checklist (`BotsApi`, `ConversationsApi`, the audience reads, jobs) are left to T17–T22, which use them, rather than declared unused here. **Hand-off → T26:** `contacts` has no app-layer "tags by ids with names" read; the int test binds `resolveTags` through `tagAdmin.listTags` (≤ 100 tags per workspace), which T26 can reuse or replace with a dedicated contacts read.
+- `implement` (T16): `GroupRepo.removeAll(workspaceId, broadcastId, tx)` was added to T14's repository (`infra/group-repo.ts`, outside files_hint) for the switch from a group to a tag audience, with an isolation test in `group-repo.int.test.ts`.
+- `implement` (T16): order of checks — name / text / tag-shape validation (400) before any lock; tag ids resolved before the transaction (`TAG_NOT_FOUND` names the first missing id); then under the row lock: not found → not a draft → stale version → (switch from a non-empty group) `BROADCAST_GROUP_CHANGED` when `expected_group_size` (absent = 0) differs. `kind: group` on a group is checked for staleness first and then answers unchanged with no signal. A create with an explicit empty or blank `text` is refused like a save (`BROADCAST_TEXT_INVALID`); an absent `text` starts the draft with `''`.
+- `implement` (T16): RED was observed on the unit suite (`Cannot find module './drafts.js'`, then the 23 tests green); the integration tests were written right after GREEN and passed on their first run.
+- `implement` (T16): gate — full `pnpm test`: one failure, `inbox/infra/hub.test.ts` "runs a socket's presence calls in order" (a 30 ms wall-clock wait under load; not touched here), which passed 3/3 re-run alone; everything else green (285 files). `pnpm lint` clean.

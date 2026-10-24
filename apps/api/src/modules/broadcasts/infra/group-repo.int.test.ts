@@ -142,4 +142,18 @@ describe('broadcast group repository (ADR-0005)', () => {
     ).rejects.toThrow(/broadcast_group_contacts_contact_fkey/);
     expect(await repo.count(a.workspaceId, a.draftId)).toBe(0);
   });
+
+  it('removes every row of one group only, never another group or workspace (isolation)', async () => {
+    const { a, b } = await twoWorkspacesWithBroadcasts(db);
+    for (const contactId of a.contactIds) {
+      await repo.add(a.workspaceId, a.draftId, contactId, a.operatorAccountId, at(1));
+    }
+    await repo.add(b.workspaceId, b.draftId, b.taggedContactId, b.operatorAccountId, at(1));
+    // Another workspace's ids remove nothing.
+    expect(await inTx((tx) => repo.removeAll(b.workspaceId, a.draftId, tx))).toBe(0);
+    expect(await inTx((tx) => repo.removeAll(a.workspaceId, a.draftId, tx))).toBe(2);
+    expect(await repo.count(a.workspaceId, a.draftId)).toBe(0);
+    expect(await repo.count(a.workspaceId, a.launchedId)).toBe(2);
+    expect(await repo.count(b.workspaceId, b.draftId)).toBe(1);
+  });
 });

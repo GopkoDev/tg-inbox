@@ -396,7 +396,7 @@
         "apps/api/src/modules/broadcasts/infra/signals.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t16-draft-use-cases.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T17",
