@@ -289,7 +289,8 @@ describe('pasteToken — rotate (AC-17, AC-16, AC-16b)', () => {
     expect(await refusal(h.paste.pasteToken('ws-a', NEW_TOKEN, false))).toBeInstanceOf(
       TelegramUnavailableError,
     );
-    expect(h.bots.rows).toEqual([before]);
+    // Back to needing a token after the brief rotation: it stopped working again (AC-12).
+    expect(h.bots.rows).toEqual([{ ...before, stoppedWorkingAt: expect.any(Date) }]);
   });
 
   it('a stored token that cannot be decrypted → the new token is stored and the secret re-derived (ADR-0006)', async () => {

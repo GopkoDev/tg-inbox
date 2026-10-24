@@ -113,6 +113,11 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
             ...(patch.name !== undefined && { name: patch.name }),
             ...(patch.username !== undefined && { username: patch.username }),
             ...(patch.state !== undefined && { state: patch.state }),
+            // The moment the bot stopped working (AC-12): now, never the old exchange time a
+            // restoring patch carries; a row already needing a token keeps its moment.
+            ...(patch.state === 'needs_token' && {
+              needs_token_at: sql<Date>`CASE WHEN state = 'needs_token' THEN needs_token_at ELSE now() END`,
+            }),
             ...(patch.token !== undefined && { token_encrypted: cipher.encrypt(patch.token) }),
             ...(patch.webhookSecret !== undefined && {
               webhook_secret_hash: hashSecret(patch.webhookSecret),

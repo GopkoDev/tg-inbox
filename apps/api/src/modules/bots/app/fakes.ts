@@ -91,7 +91,9 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       ) {
         throw new Error('check violation: a live bot row needs token, secret and epoch');
       }
+      const wasNeedingToken = row.state === 'needs_token';
       Object.assign(row, patch);
+      if (patch.state === 'needs_token' && !wasNeedingToken) row.stoppedWorkingAt = new Date();
       if (patch.token !== undefined) delete row.undecryptable;
       return { ok: true };
     },

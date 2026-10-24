@@ -223,6 +223,18 @@ describe('bot repository', () => {
     });
   });
 
+  it('update to needs_token (a paste undone with an unreadable old token) also records when the bot stopped working (AC-12)', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    const before = Date.now();
+    expect((await repo.update(w, bot.id, { state: 'needs_token', lastCheckedAt: at(1) })).ok).toBe(
+      true,
+    );
+    const stopped = (await repo.findByWorkspace(w))?.stoppedWorkingAt;
+    // The moment it happened, not the old exchange time it carries.
+    expect(stopped?.getTime()).toBeGreaterThanOrEqual(before - 1000);
+  });
+
   it('setState with ifLastCheckedAt writes only when the row is unchanged since it was read', async () => {
     const w = await insertWorkspace(db);
     const { bot } = await insertBot(db, { workspaceId: w, lastCheckedAt: at(1) });
