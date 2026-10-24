@@ -15,7 +15,8 @@ export interface ContactReach {
   /**
    * A block (`blocked`) or unblock of the bot `telegramBotId` by a Telegram user, at Telegram's
    * time (an update) or our clock (a refused send). Applied only when not older than the newest
-   * fact; a Telegram user who is not a contact of the workspace (a member's linked account) is a
+   * fact; `at` is kept to the whole second, as Telegram's dates are, so a message of the same
+   * second as a refused send (our clock) still clears it (data-model assumption 11). A Telegram user who is not a contact of the workspace (a member's linked account) is a
    * no-op. Publishes `contact.changed { change: "reach" }` in its transaction only when the mark
    * changed. True when it did.
    */
@@ -31,8 +32,9 @@ export interface ContactReach {
 export function createContactReach(deps: ContactReachDeps): ContactReach {
   const { transaction, contacts, reach, signals } = deps;
   return {
-    recordBlockChange: (workspaceId, telegramBotId, telegramUserId, blocked, at) =>
+    recordBlockChange: (workspaceId, telegramBotId, telegramUserId, blocked, exactAt) =>
       transaction(async (tx) => {
+        const at = new Date(Math.floor(exactAt.getTime() / 1000) * 1000);
         const contactId = await contacts.idByTelegramUser(workspaceId, telegramUserId, tx);
         if (contactId === null) return false;
         const changed = await reach.applyBlockChange(

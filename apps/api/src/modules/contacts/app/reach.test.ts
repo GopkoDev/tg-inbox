@@ -52,6 +52,20 @@ describe('contacts reach (ADR-0002, AC-10, AC-14)', () => {
     expect(signals.log).toEqual([]);
   });
 
+  it('a refused send blocks at whole-second precision: a message of the same second (Telegram dates are whole seconds) clears it', async () => {
+    const { reach, contacts, contactReach } = setup();
+    const { contactId } = await contacts.upsertFromProfile('ws-a', profile(), at(10), BOT, tx);
+    // Our clock at 20.700 s; the customer unblocks and writes within that second (date 20 s).
+    const refusedAt = new Date(at(20).getTime() + 700);
+    expect(await contactReach.recordBlockChange('ws-a', BOT, 700101n, true, refusedAt)).toBe(true);
+    expect(reach.rows.find((r) => r.contactId === contactId)).toMatchObject({
+      blockedAt: at(20),
+      changedAt: at(20),
+    });
+    await contacts.upsertFromProfile('ws-a', profile(), at(20), BOT, tx);
+    expect(reach.rows.find((r) => r.contactId === contactId)?.blockedAt).toBeNull();
+  });
+
   it('a newer message clears a block and publishes contact.changed reach; an older one does not', async () => {
     const { signals, contacts, contactReach } = setup();
     const { contactId } = await contacts.upsertFromProfile('ws-a', profile(), at(10), BOT, tx);
