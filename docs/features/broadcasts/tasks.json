@@ -962,7 +962,7 @@
         "apps/web/e2e/support/world.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t39-browser-e2e.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T40",

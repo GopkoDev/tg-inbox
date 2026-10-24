@@ -9,8 +9,8 @@ files_hint: ["apps/web/e2e/broadcasts.spec.ts", "apps/web/e2e/support/world.ts"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T39 — Add browser end-to-end broadcasts flows against the real API: draft a tag audience, build a group, launch and follow the live report, stop, duplicate "did not reach", the broadcast item in the thread, the blocked marker, and the operator's missing launch
@@ -142,11 +142,11 @@ Drives the panel against the real API and the fake Bot API of `apps/web/e2e/supp
 
 ## Checklist
 
-- [ ] World helpers: seed tagged contacts with reach rows, post a private `my_chat_member` update, read the fake's sent messages — `apps/web/e2e/support/world.ts`
-- [ ] Operator: New broadcast, name and text (remaining length), tag audience "any of VIP" leaving out "Staff" with the breakdown; a second draft as a group via the picker (search, Add, Add all matching); no Launch, owners-only note; `/launch` address lands on the draft — `apps/web/e2e/broadcasts.spec.ts`
-- [ ] Owner: Launch → confirmation (text, Send to N, warning) → Launch; the report reaches Sent live; the recipient's inbox thread shows the broadcast item and the unread count does not move — same file
-- [ ] Owner: launch a slower broadcast, Stop with the waiting count, Stopped; Duplicate → "Only recipients it did not reach" opens a new draft with the stopped recipients — same file
-- [ ] Contacts: after a `my_chat_member` kicked update the row shows "Blocked the bot" without a reload; the profile shows the line — same file
+- [x] World helpers: seed tagged contacts with reach rows, post a private `my_chat_member` update, read the fake's sent messages — `apps/web/e2e/support/world.ts`
+- [x] Operator: New broadcast, name and text (remaining length), tag audience "any of VIP" leaving out "Staff" with the breakdown; a second draft as a group via the picker (search, Add, Add all matching); no Launch, owners-only note; `/launch` address lands on the draft — `apps/web/e2e/broadcasts.spec.ts`
+- [x] Owner: Launch → confirmation (text, Send to N, warning) → Launch; the report reaches Sent live; the recipient's inbox thread shows the broadcast item and the unread count does not move — same file
+- [x] Owner: launch a slower broadcast, Stop with the waiting count, Stopped; Duplicate → "Only recipients it did not reach" opens a new draft with the stopped recipients — same file
+- [x] Contacts: after a `my_chat_member` kicked update the row shows "Blocked the bot" without a reload; the profile shows the line — same file
 
 ## Edge cases
 
@@ -159,6 +159,13 @@ Drives the panel against the real API and the fake Bot API of `apps/web/e2e/supp
 
 ## Definition of Done
 
-- [ ] The browser flows pass locally and in CI with pnpm test:e2e: an operator drafts a tag audience and builds a group, an owner launches from the confirmation and watches the report reach sent live, an owner stops a second broadcast, duplicates it as "did not reach", the inbox thread shows the broadcast item without changing unread, Contacts shows the blocked marker after a my_chat_member block, and an operator sees no Launch or Stop.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] The browser flows pass locally and in CI with pnpm test:e2e: an operator drafts a tag audience and builds a group, an owner launches from the confirmation and watches the report reach sent live, an owner stops a second broadcast, duplicates it as "did not reach", the inbox thread shows the broadcast item without changing unread, Contacts shows the blocked marker after a my_chat_member block, and an operator sees no Launch or Stop.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T39): five browser flows in `apps/web/e2e/broadcasts.spec.ts` on the contacts harness (global setup with Testcontainers Postgres, the built SPA on the API origin, the fake Bot API, one worker, a truncate before each flow): (1) operator tag audience with breakdown 3 / 1 blocked / 0 never wrote / reaches 2, no Launch, the `/launch` link lands on the draft, the list live in the owner's tab, reopened as saved, a teammate's draft not deletable; (2) the hand-picked group with search + Add, Add all matching (3 of 4), the blocked marker, Remove; (3) owner launch from SCR-27 (text, Send to 3, left out 1, warning) → Sending → Sent live with totals and report rows, the list live in the operator's tab, one message per recipient, the closed conversation still closed with 1 unread after a reload, and the broadcast item in the thread (link, launching owner, text, no bubble); (4) a 12-recipient broadcast with 8 sends held 8 s at the fake: the operator sees no Stop, the owner stops it (waiting count, can't be undone) → Stopped live in both tabs, the held sends finish as delivered, Duplicate → "Only recipients it didn't reach" → a group draft of the stopped ones; (5) a `my_chat_member` kicked marks the Contacts row live, the profile line says since when, the block makes no message, and an unblock clears it live.
+- `implement` (T39): world helpers `customerBlocksBot` (a private `my_chat_member` with a strictly increasing date) and `draftBroadcast` (create over HTTP plus an optional "any of" tag audience).
+- `implement` (T39): **flow 5 found a T38 gap.** `ContactsTable` never subscribed to the live socket (only the profile called `watch`), so a `reach` frame never re-read the list. Fixed in `apps/web/src/features/contacts/ContactsTable.tsx` (a `watch` per workspace), with a unit RED first in `ContactsTable.test.tsx`; this is outside the files_hint, and the reason is recorded here. Nothing marks a conversation read (the source-scan test still passes).
+- `implement` (T39): gate — `pnpm --filter @tg/web test:e2e` 39/39; `pnpm lint` clean; full `pnpm test` 4408/4411. The three misses were timing checks under load: `e2e/contacts-load` merge and `broadcasts-load` 10 000 launch (both on the known list), and `bots/app/send-broadcast-message.int` pace window (26 > 25 in one 1 s window, the same class as the T28 pace finding). All three passed alone.

@@ -201,6 +201,13 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
   useEffect(() => () => useContactsStore.getState().clearList(), []);
+  // The "blocked the bot" marker is live: `contact.changed` reach re-reads the shown rows.
+  useEffect(
+    () => useContactsStore.getState().watch(workspaceId, guard),
+    // the shell's guard is stable per address
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [workspaceId],
+  );
 
   // A tag the workspace no longer has: left out of the address, and the page says so.
   const missing = list?.status === 'ready' ? list.missingTagIds : [];
