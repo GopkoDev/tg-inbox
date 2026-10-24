@@ -241,7 +241,10 @@ export interface TelegramGateway {
   ): Promise<SendOutcome>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
-  /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
+  /**
+   * Always `allowed_updates: message, edited_message, my_chat_member` (ADR-0003) and the configured
+   * `max_connections`.
+   */
   setWebhook(
     token: string,
     webhook: { url: string; secret: string; dropPending: boolean },
@@ -316,4 +319,19 @@ export type BotConnectedHook = (
 /** What `bots` calls on the contacts app layer. */
 export interface ContactsApi {
   countContacts(workspaceId: string): Promise<number>;
+}
+
+/**
+ * The contacts reach write `bots` calls when it learns a block (ADR-0003): a `my_chat_member`
+ * update (Telegram's time) or a send refused as blocked (our clock). A Telegram user who is not a
+ * contact is a no-op in `contacts`. Passed in by the composition root.
+ */
+export interface ContactsReach {
+  recordBlockChange(
+    workspaceId: string,
+    telegramBotId: bigint,
+    telegramUserId: bigint,
+    blocked: boolean,
+    at: Date,
+  ): Promise<unknown>;
 }

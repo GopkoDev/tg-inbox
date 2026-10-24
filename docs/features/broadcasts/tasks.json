@@ -247,7 +247,7 @@
         "apps/api/src/test/fake-telegram.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t10-bots-learn-blocks.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T11",

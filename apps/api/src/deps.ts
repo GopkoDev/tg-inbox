@@ -53,6 +53,7 @@ import { createBotMessageSender, createPingStarter } from './modules/notificatio
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
+import { createContactReach } from './modules/contacts/app/reach.js';
 import { createTagAdmin } from './modules/contacts/app/tag-admin.js';
 import { createTagWrites } from './modules/contacts/app/tags.js';
 import { createReachSignals, createTagSignals } from './modules/contacts/infra/tag-signals.js';
@@ -161,6 +162,13 @@ export function buildDeps(
     reach: createReachRepo(db),
     signals: createReachSignals(),
     clock,
+  });
+  // The contacts reach write `bots` calls when it learns a block (ADR-0003): bots -> contacts.
+  const contactReach = createContactReach({
+    transaction,
+    contacts: createContactRepo(db),
+    reach: createReachRepo(db),
+    signals: createReachSignals(),
   });
   const conversations = createConversations({
     transaction,
@@ -316,7 +324,13 @@ export function buildDeps(
   const bots = {
     settings: botSettings,
     markNeedsToken,
-    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken, clock }).sendText,
+    sendText: createSendText({
+      bots: botRepo,
+      telegram,
+      markNeedsToken,
+      clock,
+      reach: contactReach,
+    }).sendText,
     sendMemberMessage,
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
@@ -329,7 +343,12 @@ export function buildDeps(
     }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
-    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations, interceptor }),
+    acceptUpdate: createAcceptUpdate({
+      bots: botRepo,
+      conversations,
+      interceptor,
+      reach: contactReach,
+    }),
     healthCheck: createHealthCheck({
       bots: botRepo,
       telegram,

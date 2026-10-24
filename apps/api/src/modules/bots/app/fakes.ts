@@ -6,6 +6,7 @@ import type {
   BotRepo,
   BotSignals,
   ContactsApi,
+  ContactsReach,
   FileFetch,
   ConversationsApi,
   GetMeResult,
@@ -315,6 +316,41 @@ export function fakeInterceptor(): InboundInterceptor & {
       fake.calls.push(input);
       if (fake.fail) throw new Error('interceptor down');
       return fake.answer;
+    },
+  };
+  return fake;
+}
+
+/** Records `contacts.recordBlockChange` calls as `bots` makes them; `fail` makes it throw. */
+export function fakeContactsReach(): ContactsReach & {
+  changes: {
+    workspaceId: string;
+    telegramBotId: bigint;
+    telegramUserId: bigint;
+    blocked: boolean;
+    at: Date;
+  }[];
+  fail: boolean;
+} {
+  const fake = {
+    changes: [] as {
+      workspaceId: string;
+      telegramBotId: bigint;
+      telegramUserId: bigint;
+      blocked: boolean;
+      at: Date;
+    }[],
+    fail: false,
+    async recordBlockChange(
+      workspaceId: string,
+      telegramBotId: bigint,
+      telegramUserId: bigint,
+      blocked: boolean,
+      at: Date,
+    ) {
+      if (fake.fail) throw new Error('contacts down');
+      fake.changes.push({ workspaceId, telegramBotId, telegramUserId, blocked, at });
+      return true;
     },
   };
   return fake;

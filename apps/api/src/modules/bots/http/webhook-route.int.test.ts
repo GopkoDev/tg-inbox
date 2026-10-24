@@ -10,6 +10,7 @@ import {
   MESSAGE_KIND_FIXTURES,
   signedDelivery,
   telegramEdit,
+  telegramMyChatMember,
   telegramUpdate,
 } from '../../../test/fixtures/telegram.js';
 import { insertConnectLink, insertTelegramLink } from '../../../test/fixtures/notifications.js';
@@ -661,6 +662,117 @@ describe('POST /api/telegram/webhook/:botId (postgres)', () => {
       await noCustomerRows(b.workspaceId);
       expect((await deliver(b, start('ok', LINKED_USER))).statusCode).toBe(200);
       await noCustomerRows(b.workspaceId);
+    });
+  });
+
+  describe('my_chat_member: blocks and unblocks of the bot (ADR-0003, AC-14)', () => {
+    const CUSTOMER = 990001;
+    const reachOf = (workspaceId: string) =>
+      db
+        .selectFrom('contact_bot_reach')
+        .select(['telegram_bot_id', 'blocked_at'])
+        .where('workspace_id', '=', workspaceId)
+        .execute();
+    const pingsOf = async (workspaceId: string) =>
+      Number(
+        (
+          await db
+            .selectFrom('pings')
+            .select((eb) => eb.fn.countAll().as('n'))
+            .where('workspace_id', '=', workspaceId)
+            .executeTakeFirstOrThrow()
+        ).n,
+      );
+    const unreadOf = (workspaceId: string) =>
+      db
+        .selectFrom('conversations')
+        .selectAll()
+        .where('workspace_id', '=', workspaceId)
+        .executeTakeFirstOrThrow();
+    const blockUpdate = (status: string, n: number, fromId = CUSTOMER, chatType?: 'group') =>
+      telegramMyChatMember({
+        updateId: 500 + n,
+        fromId,
+        date: T_S + 100 + n,
+        status,
+        ...(chatType && { chatType }),
+      });
+
+    it('kicked marks the contact blocked for this bot at the update date; nothing else changes', async () => {
+      const b = await connectedBot();
+      await deliver(
+        b,
+        telegramUpdate({ updateId: 1, messageId: 1, date: T_S + 10, fromId: CUSTOMER, text: 'hi' }),
+      );
+      const before = await unreadOf(b.workspaceId);
+      const res = await deliver(b, blockUpdate('kicked', 1));
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toBe('');
+      expect(await reachOf(b.workspaceId)).toEqual([
+        { telegram_bot_id: String(b.bot.telegramBotId), blocked_at: new Date((T_S + 101) * 1000) },
+      ]);
+      // No message, no new conversation, the conversation row untouched, no ping.
+      expect(await counts(b.workspaceId)).toEqual({ contacts: 1, conversations: 1, messages: 1 });
+      expect(await unreadOf(b.workspaceId)).toEqual(before);
+      expect(await pingsOf(b.workspaceId)).toBe(0);
+      // A redelivery changes nothing.
+      expect((await deliver(b, blockUpdate('kicked', 1))).statusCode).toBe(200);
+      expect((await reachOf(b.workspaceId))[0]!.blocked_at).toEqual(new Date((T_S + 101) * 1000));
+    });
+
+    it('member clears the mark; an older kicked arriving later does not bring it back', async () => {
+      const b = await connectedBot();
+      await deliver(
+        b,
+        telegramUpdate({ updateId: 1, messageId: 1, date: T_S + 10, fromId: CUSTOMER, text: 'hi' }),
+      );
+      await deliver(b, blockUpdate('kicked', 1));
+      expect((await deliver(b, blockUpdate('member', 2))).statusCode).toBe(200);
+      expect((await reachOf(b.workspaceId))[0]!.blocked_at).toBeNull();
+      await deliver(b, blockUpdate('kicked', 0));
+      expect((await reachOf(b.workspaceId))[0]!.blocked_at).toBeNull();
+      expect(await counts(b.workspaceId)).toEqual({ contacts: 1, conversations: 1, messages: 1 });
+    });
+
+    it("a stranger's or a linked member's block changes nothing and creates no contact", async () => {
+      const b = await connectedBot();
+      const m = await insertMembership(db, b.workspaceId);
+      await insertTelegramLink(db, {
+        workspaceId: b.workspaceId,
+        accountId: m.accountId,
+        telegramBotId: b.bot.telegramBotId,
+        telegramUserId: 880009n,
+      });
+      expect((await deliver(b, blockUpdate('kicked', 1))).statusCode).toBe(200);
+      expect((await deliver(b, blockUpdate('kicked', 2, 880009))).statusCode).toBe(200);
+      expect(await reachOf(b.workspaceId)).toEqual([]);
+      expect(await counts(b.workspaceId)).toEqual({ contacts: 0, conversations: 0, messages: 0 });
+    });
+
+    it('a group my_chat_member is ignored with 200', async () => {
+      const b = await connectedBot();
+      await deliver(
+        b,
+        telegramUpdate({ updateId: 1, messageId: 1, date: T_S + 10, fromId: CUSTOMER, text: 'hi' }),
+      );
+      const res = await deliver(b, blockUpdate('kicked', 1, CUSTOMER, 'group'));
+      expect(res.statusCode).toBe(200);
+      expect((await reachOf(b.workspaceId))[0]!.blocked_at).toBeNull();
+    });
+
+    it('a wrong secret is 401 and records nothing', async () => {
+      const b = await connectedBot();
+      await deliver(
+        b,
+        telegramUpdate({ updateId: 1, messageId: 1, date: T_S + 10, fromId: CUSTOMER, text: 'hi' }),
+      );
+      const res = await signedDelivery(
+        app,
+        { id: b.auth.id, secret: 'wrong' },
+        blockUpdate('kicked', 1),
+      );
+      expect(res.statusCode).toBe(401);
+      expect((await reachOf(b.workspaceId))[0]!.blocked_at).toBeNull();
     });
   });
 });

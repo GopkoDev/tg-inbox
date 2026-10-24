@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/bots/infra/telegram-gateway.ts", "apps/api/sr
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T10 — Learn blocks in bots: allowed_updates gains my_chat_member, the classifier turns a private kicked / member update into a reach decision handled before the interceptor and capture, and a reply refused as blocked records the block
@@ -100,14 +100,14 @@ No DB changes (block changes are written to `contact_bot_reach` through `contact
 
 ## Checklist
 
-- [ ] Failing classifier tests first: private `kicked` / `member` → `{ type: 'reach', telegramUserId, blocked, at }`; group / channel chat or another status → ignored; malformed → ignored — `apps/api/src/modules/bots/domain/inbound.test.ts`
-- [ ] Add the `reach` decision (and its ignore reasons) to `classifyUpdate`, checked before `message` / `edited_message` — `apps/api/src/modules/bots/domain/inbound.ts`
-- [ ] Declare the `ContactsReach` port (`recordBlockChange(workspaceId, telegramBotId, telegramUserId, blocked, at)`) and its fake — `apps/api/src/modules/bots/app/ports.ts`, `apps/api/src/modules/bots/app/fakes.ts`
-- [ ] `acceptUpdate` routes a `reach` decision to the port with the authentic bot's `telegramBotId`, before the inbound interceptor and capture, and answers `200` — `apps/api/src/modules/bots/app/accept-update.ts`
-- [ ] `ALLOWED_UPDATES` = `message`, `edited_message`, `my_chat_member` — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
-- [ ] `sendText`: a `refused` / `blocked` answer also calls `recordBlockChange(…, blocked: true, at: clock.now())`; the reply outcome is unchanged — `apps/api/src/modules/bots/app/send-text.ts`
-- [ ] Fake Bot API: assert `setWebhook`'s `allowed_updates` and script a `403 bot was blocked by the user` for `sendMessage` — `apps/api/src/test/fake-telegram.ts`
-- [ ] Webhook integration test: a `kicked` update marks the contact, creates no message / conversation / unread / ping, never reaches the interceptor; `member` clears it; a stranger's update changes nothing
+- [x] Failing classifier tests first: private `kicked` / `member` → `{ type: 'reach', telegramUserId, blocked, at }`; group / channel chat or another status → ignored; malformed → ignored — `apps/api/src/modules/bots/domain/inbound.test.ts`
+- [x] Add the `reach` decision (and its ignore reasons) to `classifyUpdate`, checked before `message` / `edited_message` — `apps/api/src/modules/bots/domain/inbound.ts`
+- [x] Declare the `ContactsReach` port (`recordBlockChange(workspaceId, telegramBotId, telegramUserId, blocked, at)`) and its fake — `apps/api/src/modules/bots/app/ports.ts`, `apps/api/src/modules/bots/app/fakes.ts`
+- [x] `acceptUpdate` routes a `reach` decision to the port with the authentic bot's `telegramBotId`, before the inbound interceptor and capture, and answers `200` — `apps/api/src/modules/bots/app/accept-update.ts`
+- [x] `ALLOWED_UPDATES` = `message`, `edited_message`, `my_chat_member` — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
+- [x] `sendText`: a `refused` / `blocked` answer also calls `recordBlockChange(…, blocked: true, at: clock.now())`; the reply outcome is unchanged — `apps/api/src/modules/bots/app/send-text.ts`
+- [x] Fake Bot API: assert `setWebhook`'s `allowed_updates` and script a `403 bot was blocked by the user` for `sendMessage` — `apps/api/src/test/fake-telegram.ts`
+- [x] Webhook integration test: a `kicked` update marks the contact, creates no message / conversation / unread / ping, never reaches the interceptor; `member` clears it; a stranger's update changes nothing
 
 ## Edge cases
 
@@ -123,7 +123,15 @@ No DB changes (block changes are written to `contact_bot_reach` through `contact
 
 ## Definition of Done
 
-- [ ] Unit and webhook integration tests prove a private my_chat_member kicked update calls contacts.recordBlockChange(blocked, at = update date) and member clears it, that neither creates a message, conversation, unread change or ping nor reaches the inbound interceptor, that a non-private my_chat_member is ignored, that setWebhook registers message, edited_message and my_chat_member, and that sendText refused with "bot was blocked by the user" records the block for that bot.
-- [ ] A test proves the inbound interceptor (notifications' `/start tgi_…` consumer) is never called for a `my_chat_member` update.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and webhook integration tests prove a private my_chat_member kicked update calls contacts.recordBlockChange(blocked, at = update date) and member clears it, that neither creates a message, conversation, unread change or ping nor reaches the inbound interceptor, that a non-private my_chat_member is ignored, that setWebhook registers message, edited_message and my_chat_member, and that sendText refused with "bot was blocked by the user" records the block for that bot.
+- [x] A test proves the inbound interceptor (notifications' `/start tgi_…` consumer) is never called for a `my_chat_member` update.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+- `implement` (T10): `classifyUpdate` checks `my_chat_member` first and answers `{ type: 'reach', telegramUserId, blocked, at }` for a private `kicked` / `member`; a group / channel chat is `not_private`, any other status the new ignore reason `unsupported_status`, missing fields `malformed`. The capture epoch does not filter a block fact (the reach row's `changed_at` keeps the newest, ADR-0002).
+- `implement` (T10): the bots port is `ContactsReach` (`app/ports.ts`); `acceptUpdate` records the change before the interceptor and capture and answers the new outcome `reach` (logged with bot / workspace / update ids only, never the Telegram user id); a failing contacts write propagates (500 → Telegram redelivers).
+- `implement` (T10): `sendText` records a block for a `refused / blocked` answer with the chat id as the Telegram user id (private chats) and our clock; a failure of that write is swallowed so the reply outcome never changes (the delivery path must not see a throw after a send). `account_gone` / `chat_not_found` record nothing.
+- `implement` (T10): `buildDeps()` (outside files_hint) now builds `createContactReach` (T7) and passes it to `createAcceptUpdate` and `createSendText` as `reach` — the bots → contacts reach edge is live; T12 reuses it for broadcast sends. `accept-update.int.test.ts` passes the real `createContactReach` too.
+- `implement` (T10): the fake Bot API already scripts `403 Forbidden: bot was blocked by the user` (`SEND_ANSWERS.blocked`) and records `setWebhook` params, so `fake-telegram.ts` needed no change; its recorded `getWebhookInfoSet.allowed_updates` stays the old pair for T11 to use. The `telegramMyChatMember` fixture was added to `test/fixtures/telegram.ts`.
+- `implement` (T10): gate — full `pnpm test` green (283 files, 3959 tests); `pnpm lint` clean.

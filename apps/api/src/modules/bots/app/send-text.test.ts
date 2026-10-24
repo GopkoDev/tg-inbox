@@ -101,6 +101,44 @@ describe('sendText', () => {
   });
 });
 
+describe('sendText learns blocks (ADR-0003, AC-14)', () => {
+  it('a reply refused as blocked records a block of the chat for this bot at our clock; the outcome is unchanged', async () => {
+    const { h, sendText } = setup();
+    h.telegram.sendResult = { outcome: 'refused', reason: 'blocked' };
+    expect(await sendText.sendText(req)).toEqual({ outcome: 'refused', reason: 'blocked' });
+    expect(h.reach.changes).toEqual([
+      {
+        workspaceId: 'ws-a',
+        telegramBotId: 100001n,
+        telegramUserId: 700001n,
+        blocked: true,
+        at: h.clock.now(),
+      },
+    ]);
+  });
+
+  it.each([
+    { outcome: 'refused', reason: 'account_gone' },
+    { outcome: 'refused', reason: 'chat_not_found' },
+    { outcome: 'accepted', messageId: 5n, at: new Date() },
+    { outcome: 'not_accepted', retryAfterMs: 1000 },
+    { outcome: 'unknown' },
+    { outcome: 'bot_unauthorized' },
+  ] as const)('$outcome ($reason) records no block', async (outcome) => {
+    const { h, sendText } = setup();
+    h.telegram.sendResult = outcome;
+    await sendText.sendText(req);
+    expect(h.reach.changes).toEqual([]);
+  });
+
+  it('a failing block record never changes the reply outcome', async () => {
+    const { h, sendText } = setup();
+    h.telegram.sendResult = { outcome: 'refused', reason: 'blocked' };
+    h.reach.fail = true;
+    expect(await sendText.sendText(req)).toEqual({ outcome: 'refused', reason: 'blocked' });
+  });
+});
+
 describe('sendText and the send pause (ADR-0006)', () => {
   it('a 429 stores the pause as now + retry_after and returns the outcome unchanged', async () => {
     const { h, sendText } = setup();

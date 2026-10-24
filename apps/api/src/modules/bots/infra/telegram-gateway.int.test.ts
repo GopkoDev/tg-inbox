@@ -127,7 +127,7 @@ describe('Telegram gateway (against the fake Bot API)', () => {
             params: {
               url: OUR_URL,
               secret_token: SECRET,
-              allowed_updates: ['message', 'edited_message'],
+              allowed_updates: ['message', 'edited_message', 'my_chat_member'],
               max_connections: 7,
               drop_pending_updates: dropPending,
             },
