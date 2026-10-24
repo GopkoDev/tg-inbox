@@ -117,6 +117,12 @@ function classifySendError(err: unknown): SendOutcome {
 }
 
 /** Same webhook when scheme, host and path match, ignoring a trailing slash. */
+/** Whether a registered `allowed_updates` is exactly the current set (order aside). */
+function sameUpdates(registered: readonly string[]): boolean {
+  const set = new Set(registered);
+  return set.size === ALLOWED_UPDATES.length && ALLOWED_UPDATES.every((u) => set.has(u));
+}
+
 function sameUrl(a: string, b: string): boolean {
   try {
     const x = new URL(a);
@@ -276,7 +282,9 @@ export function createTelegramGateway({
       try {
         const info = await api(token).getWebhookInfo(timeout(timeoutMs));
         if (!info.url) return 'none';
-        if (sameUrl(info.url, ourUrl)) return 'ours';
+        if (sameUrl(info.url, ourUrl)) {
+          return sameUpdates(info.allowed_updates ?? []) ? 'ours' : 'ours_outdated';
+        }
         return underOurWebhookPath(info.url, ourUrl) ? 'stale' : 'foreign';
       } catch (err) {
         return isUnauthorized(err) ? 'unauthorized' : 'transient';

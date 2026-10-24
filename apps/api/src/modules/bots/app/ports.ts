@@ -166,7 +166,12 @@ export type GetMeResult =
  * `stale`: tg-inbox's own webhook path for another bot row id — left by a first connect whose
  * setWebhook reached Telegram after we gave up; not another service, so no takeover warning.
  */
-export type WebhookTarget = 'ours' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
+/**
+ * Where the bot's webhook points. `ours_outdated`: our URL, but registered with other allowed
+ * updates than the current set (a bot connected before `my_chat_member`, ADR-0003).
+ */
+export type WebhookTarget =
+  'ours' | 'ours_outdated' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
 
 /** Per-call timeout of `sendMessage` (sad.md §8): past it the answer is `unknown`. */
 export const SEND_TIMEOUT = 10_000;

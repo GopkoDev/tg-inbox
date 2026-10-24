@@ -355,6 +355,7 @@ export function buildDeps(
       clock,
       transaction,
       signals: botOwnerDeps.signals,
+      secrets,
       webhookBaseUrl,
     }),
   };

@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/bots/app/health-check.ts", "apps/api/src/modu
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T11 — Re-register outdated webhooks in the bots health check: a webhook that is ours but lacks my_chat_member is set again with the same URL and secret, keeping pending updates
@@ -78,10 +78,10 @@ Internal — no API surface.
 
 ## Checklist
 
-- [ ] Failing tests first against the fake Bot API: ours + outdated `allowed_updates` → one `setWebhook` with the same URL, secret and the full set, `drop_pending_updates` not set; ours + current set → no `setWebhook`; foreign / stale / none → no `setWebhook`, `taken_over` as today; a failing `setWebhook` → logged by code, outcome `transient` — `apps/api/src/modules/bots/app/health-check.test.ts`
-- [ ] Gateway: `getWebhook` also reports whether the registered `allowed_updates` equal `ALLOWED_UPDATES` (e.g. a new result `ours_outdated`), and a re-register call reusing the connect path's `setWebhook` with the derived secret — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
-- [ ] Health check: on `ours_outdated` re-register, then write `connected` as for `ours` — `apps/api/src/modules/bots/app/health-check.ts`
-- [ ] Keep `DUE_AFTER_MS` (3 min) unchanged; the expected set lives with `ALLOWED_UPDATES` only — `apps/api/src/modules/bots/domain/health.ts`
+- [x] Failing tests first against the fake Bot API: ours + outdated `allowed_updates` → one `setWebhook` with the same URL, secret and the full set, `drop_pending_updates` not set; ours + current set → no `setWebhook`; foreign / stale / none → no `setWebhook`, `taken_over` as today; a failing `setWebhook` → logged by code, outcome `transient` — `apps/api/src/modules/bots/app/health-check.test.ts`
+- [x] Gateway: `getWebhook` also reports whether the registered `allowed_updates` equal `ALLOWED_UPDATES` (e.g. a new result `ours_outdated`), and a re-register call reusing the connect path's `setWebhook` with the derived secret — `apps/api/src/modules/bots/infra/telegram-gateway.ts`
+- [x] Health check: on `ours_outdated` re-register, then write `connected` as for `ours` — `apps/api/src/modules/bots/app/health-check.ts`
+- [x] Keep `DUE_AFTER_MS` (3 min) unchanged; the expected set lives with `ALLOWED_UPDATES` only — `apps/api/src/modules/bots/domain/health.ts`
 
 ## Edge cases
 
@@ -95,6 +95,12 @@ Internal — no API surface.
 
 ## Definition of Done
 
-- [ ] Health-check tests against the fake Bot API prove an ours-but-outdated webhook is re-registered once with the same URL, secret and the full allowed updates without dropping pending updates, an up-to-date one is left alone, a taken-over webhook is not touched, and a failed re-registration is logged by code and retried by the next scheduled check.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Health-check tests against the fake Bot API prove an ours-but-outdated webhook is re-registered once with the same URL, secret and the full allowed updates without dropping pending updates, an up-to-date one is left alone, a taken-over webhook is not touched, and a failed re-registration is logged by code and retried by the next scheduled check.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+- `implement` (T11): `WebhookTarget` gains `ours_outdated` (our URL, registered `allowed_updates` not exactly the current set, order aside; an absent list counts as outdated). The health check then calls `setWebhook` with the same URL, `secrets.secretFor(botId, connectedAt)` and `dropPending: false`, and writes `connected` as for `ours`; a failed `setWebhook` returns `transient` (nothing written, the bot stays due, the jobs worker logs the outcome by code — no retry or DLQ). `createHealthCheck` takes `secrets` (wired in `buildDeps()` and in `jobs.int.test.ts`).
+- `implement` (T11): outside files_hint, `disconnect.ts` treats `ours_outdated` like `ours` (deletes the webhook), with a unit test — otherwise disconnecting a pre-feature bot would leave its webhook. Paste-token and reconnect need no change: they `setWebhook` anyway and only branch on `foreign` / `transient` / `unauthorized`.
+- `implement` (T11): the fake Bot API (`test/fake-telegram.ts`) gained `BotScript.allowedUpdates` (unset = today's three), answers it in `getWebhookInfo` and stores what `setWebhook` registers. The rollout story (`freshness.int.test.ts`) proves a pre-feature webhook is set again exactly once with the same URL and secret and left alone on the next check. `domain/health.ts` (`DUE_AFTER_MS`) is unchanged.
+- `implement` (T11): gate — full `pnpm test` failed only `e2e/contacts-load` merge timing and `inbox/http/changes` (p95 + 61 concurrent), the known set; both files passed re-run alone. `pnpm lint` clean.

@@ -15,6 +15,7 @@ import {
   registerBotJobs,
   SCHEDULE_HEALTH_CHECKS_QUEUE,
 } from './jobs.js';
+import { createWebhookSecrets } from './webhook-secret.js';
 import { createTokenCipher } from './token-cipher.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -39,6 +40,7 @@ describe('bots health-check jobs (pg-boss)', () => {
       clock: fixedClock(NOW),
       transaction: (fn) => db.transaction().execute(fn),
       signals: createBotSignals(),
+      secrets: createWebhookSecrets(testBotKey.key),
       webhookBaseUrl: 'https://inbox.example.test',
     });
     const recording = {

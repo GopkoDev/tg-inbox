@@ -59,7 +59,7 @@ export function createDisconnect(deps: DisconnectDeps): Disconnect {
         );
         if (target === 'transient') throw new TelegramUnavailableError();
         // `unauthorized`: the token is dead, nothing to remove; foreign / none: not ours.
-        if (target === 'ours') {
+        if (target === 'ours' || target === 'ours_outdated') {
           const deleted = await telegram.deleteWebhook(token, OWNER_ACTION_TIMEOUT);
           if (deleted === 'failed') throw new TelegramUnavailableError();
         }

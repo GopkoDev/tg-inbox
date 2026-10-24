@@ -73,6 +73,9 @@ export const RECORDED = {
 export type GetMeBehaviour = 'ok' | 'unauthorized' | 'server_error' | 'rate_limited' | 'hang';
 export type CallBehaviour = 'ok' | 'fail' | 'hang';
 
+/** What a webhook registered by today's code subscribes to (ADR-0003). */
+const CURRENT_ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member'];
+
 /** One scripted `sendMessage` answer — plain JSON so it crosses the control API. */
 export type SendAnswer =
   | { kind: 'ok'; messageId: number }
@@ -110,6 +113,11 @@ export interface BotScript {
   getMe?: GetMeBehaviour;
   /** URL the bot currently delivers to (another service's, or ours); '' / unset = no webhook. */
   webhookUrl?: string;
+  /**
+   * `allowed_updates` the webhook was registered with; unset = today's set (message,
+   * edited_message, my_chat_member). `setWebhook` stores what it is given.
+   */
+  allowedUpdates?: string[];
   getWebhookInfo?: CallBehaviour;
   setWebhook?: CallBehaviour;
   deleteWebhook?: CallBehaviour;
@@ -332,11 +340,18 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
         return send(res, 200, {
           ok: true,
           result: bot.webhookUrl
-            ? { ...RECORDED.getWebhookInfoSet.result, url: bot.webhookUrl }
+            ? {
+                ...RECORDED.getWebhookInfoSet.result,
+                url: bot.webhookUrl,
+                allowed_updates: bot.allowedUpdates ?? CURRENT_ALLOWED_UPDATES,
+              }
             : RECORDED.getWebhookInfoEmpty.result,
         });
       case 'setWebhook':
         bot.webhookUrl = String(params.url ?? '');
+        if (Array.isArray(params.allowed_updates)) {
+          bot.allowedUpdates = params.allowed_updates.map(String);
+        }
         return send(res, 200, RECORDED.setWebhook);
       case 'deleteWebhook':
         bot.webhookUrl = '';

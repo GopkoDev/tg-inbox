@@ -99,6 +99,24 @@ describe('Telegram gateway (against the fake Bot API)', () => {
       expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe(outcome);
     });
 
+    it('reports ours_outdated when our webhook lacks an allowed update (ADR-0003)', async () => {
+      fake
+        .bot(TOKEN)
+        .script({ webhookUrl: OUR_URL, allowedUpdates: ['message', 'edited_message'] });
+      expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours_outdated');
+      fake.bot(TOKEN).script({
+        webhookUrl: OUR_URL,
+        allowedUpdates: ['my_chat_member', 'message', 'edited_message'],
+      });
+      expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours');
+      // Another service's webhook stays foreign whatever it subscribes to.
+      fake.bot(TOKEN).script({
+        webhookUrl: 'https://other-service.example.test/hook',
+        allowedUpdates: ['message'],
+      });
+      expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('foreign');
+    });
+
     it('maps a rejected token to unauthorized and a failure or hang to transient', async () => {
       expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('unauthorized');
       fake.bot(TOKEN).script({ getWebhookInfo: 'fail' });

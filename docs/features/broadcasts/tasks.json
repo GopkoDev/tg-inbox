@@ -267,7 +267,7 @@
         "apps/api/src/modules/bots/infra/telegram-gateway.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t11-bots-health-check-reregister.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T12",
