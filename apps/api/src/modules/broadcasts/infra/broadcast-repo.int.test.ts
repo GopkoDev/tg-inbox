@@ -328,6 +328,69 @@ describe('broadcast repository (ADR-0005)', () => {
     });
   });
 
+  it('marks only a draft of its workspace launched with the frozen text, bot, breakdown and launcher (AC-06)', async () => {
+    const { a, b } = await twoWorkspacesWithBroadcasts(db);
+    const freeze = {
+      text: 'New prices from Monday.',
+      launchedByAccountId: a.ownerAccountId,
+      launchedAt: at(9),
+      telegramBotId: a.telegramBotId,
+      audienceSize: 38,
+      blockedCount: 2,
+      neverWroteCount: 0,
+      recipientCount: 36,
+    };
+    // A foreign id or a launched broadcast is not marked.
+    expect(await inTx((tx) => repo.markLaunched(b.workspaceId, a.draftId, freeze, tx))).toBe(false);
+    expect(await inTx((tx) => repo.markLaunched(a.workspaceId, a.launchedId, freeze, tx))).toBe(
+      false,
+    );
+    expect((await repo.find(a.workspaceId, a.draftId))!.status).toBe('draft');
+
+    expect(await inTx((tx) => repo.markLaunched(a.workspaceId, a.draftId, freeze, tx))).toBe(true);
+    expect(await repo.find(a.workspaceId, a.draftId)).toMatchObject({
+      status: 'sending',
+      text: 'New prices from Monday.',
+      launchedAt: at(9),
+      launchedByAccountId: a.ownerAccountId,
+      launchTelegramBotId: a.telegramBotId,
+      audienceSize: 38,
+      blockedCount: 2,
+      neverWroteCount: 0,
+      recipientCount: 36,
+      lastChangedByAccountId: a.ownerAccountId,
+      lastChangedAt: at(9),
+    });
+    expect(await inTx((tx) => repo.markLaunched(a.workspaceId, a.draftId, freeze, tx))).toBe(false);
+  });
+
+  it('the launch lock serialises launches of one workspace only (ADR-0006)', async () => {
+    const { a, b } = await twoWorkspacesWithBroadcasts(db);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => (locked = r));
+    const first = inTx(async (tx) => {
+      await repo.lockLaunches(a.workspaceId, tx);
+      locked();
+      await held;
+    });
+    await isLocked;
+    // Another workspace's launch lock is free.
+    await inTx((tx) => repo.lockLaunches(b.workspaceId, tx));
+    let secondDone = false;
+    const second = inTx(async (tx) => {
+      await repo.lockLaunches(a.workspaceId, tx);
+      secondDone = true;
+    });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(secondDone).toBe(false);
+    release();
+    await first;
+    await second;
+    expect(secondDone).toBe(true);
+  });
+
   it('deletes a draft with its tag and group rows; never a launched or foreign one', async () => {
     const { a, b } = await twoWorkspacesWithBroadcasts(db);
     await insertGroupContact(db, {

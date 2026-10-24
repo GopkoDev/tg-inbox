@@ -68,6 +68,18 @@ export interface DraftFields {
   tagMode?: TagMode | null;
 }
 
+/** What a launch freezes on the broadcast row (data-model.md assumption 5). */
+export interface LaunchFreeze {
+  text: string;
+  launchedByAccountId: string;
+  launchedAt: Date;
+  telegramBotId: bigint;
+  audienceSize: number;
+  blockedCount: number;
+  neverWroteCount: number;
+  recipientCount: number;
+}
+
 export interface BroadcastRepo {
   /** A new draft at version 1, last changed by its author at creation. */
   insertDraft(workspaceId: string, draft: NewDraft, tx?: Executor): Promise<BroadcastRecord>;
@@ -123,6 +135,21 @@ export interface BroadcastRepo {
     id: string,
     reason: Exclude<EndReason, 'stopped'>,
     at: Date,
+    tx: Executor,
+  ): Promise<boolean>;
+  /**
+   * The per-workspace launch lock: advisory `broadcast-launches:<ws>`, held until `tx` ends, so two
+   * launches of different drafts cannot both take the 10th slot (ADR-0006, sad.md §8 lock order).
+   */
+  lockLaunches(workspaceId: string, tx: Executor): Promise<void>;
+  /**
+   * `draft` → `sending` with the frozen text, Telegram bot id and confirmed breakdown, who launched
+   * it and when (also the last change); false when the row is not a draft (AC-06).
+   */
+  markLaunched(
+    workspaceId: string,
+    id: string,
+    launch: LaunchFreeze,
     tx: Executor,
   ): Promise<boolean>;
   /** Deletes a draft with its tag and group rows; false for a launched or unknown one. */
@@ -396,6 +423,11 @@ export interface BroadcastView {
 
 /** The broadcasts queues (contracts/events.md), enqueued inside the writing transaction. */
 export interface BroadcastJobs {
+  /**
+   * The next `broadcasts.send { workspace_id }` link (policy `stately`, `singletonKey` = workspace
+   * id), at once or after `startAfter`.
+   */
+  enqueueSendLink(tx: Executor, workspaceId: string, startAfter?: Date): Promise<void>;
   /** `broadcasts.measure-blocked-share`, `startAfter`, `singletonKey` = broadcast id (one per broadcast). */
   enqueueBlockedShare(
     tx: Executor,

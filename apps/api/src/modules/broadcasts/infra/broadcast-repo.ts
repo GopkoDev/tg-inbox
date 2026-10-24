@@ -1,4 +1,4 @@
-import type { Selectable } from 'kysely';
+import { sql, type Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import type { Broadcasts } from '../../../platform/db.types.gen.js';
 import type { TagMode } from '../domain/audience.js';
@@ -185,6 +185,35 @@ export function createBroadcastRepo(db: Db): BroadcastRepo {
         .orderBy('id', 'asc')
         .execute();
       return rows.map(toBroadcast);
+    },
+
+    async lockLaunches(workspaceId, tx) {
+      await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`broadcast-launches:${workspaceId}`}, 0))`.execute(
+        tx,
+      );
+    },
+
+    async markLaunched(workspaceId, id, l, tx) {
+      const result = await tx
+        .updateTable('broadcasts')
+        .set({
+          status: 'sending',
+          text: l.text,
+          launched_at: l.launchedAt,
+          launched_by_account_id: l.launchedByAccountId,
+          launch_telegram_bot_id: l.telegramBotId,
+          audience_size: l.audienceSize,
+          blocked_count: l.blockedCount,
+          never_wrote_count: l.neverWroteCount,
+          recipient_count: l.recipientCount,
+          last_changed_by_account_id: l.launchedByAccountId,
+          last_changed_at: l.launchedAt,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('status', '=', 'draft')
+        .executeTakeFirst();
+      return result.numUpdatedRows > 0n;
     },
 
     async deleteDraft(workspaceId, id, tx) {

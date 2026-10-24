@@ -498,7 +498,7 @@
         "apps/api/src/modules/broadcasts/app/ports.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t20-launch-transaction.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T21",

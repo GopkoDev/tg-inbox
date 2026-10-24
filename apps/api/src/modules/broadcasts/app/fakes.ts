@@ -144,6 +144,27 @@ export function fakeBroadcastRepo(s: FakeBroadcastStore): BroadcastRepo & { lock
       Object.assign(row, { status: 'sent', endedAt: at, endReason: reason });
       return true;
     },
+    async lockLaunches(workspaceId) {
+      locks.push(`launches:${workspaceId}`);
+    },
+    async markLaunched(workspaceId, id, l) {
+      const row = find(s, workspaceId, id);
+      if (!row || row.status !== 'draft') return false;
+      Object.assign(row, {
+        status: 'sending',
+        text: l.text,
+        launchedAt: l.launchedAt,
+        launchedByAccountId: l.launchedByAccountId,
+        launchTelegramBotId: l.telegramBotId,
+        audienceSize: l.audienceSize,
+        blockedCount: l.blockedCount,
+        neverWroteCount: l.neverWroteCount,
+        recipientCount: l.recipientCount,
+        lastChangedByAccountId: l.launchedByAccountId,
+        lastChangedAt: l.launchedAt,
+      });
+      return true;
+    },
     async deleteDraft(workspaceId, id) {
       const row = find(s, workspaceId, id);
       if (!row || row.status !== 'draft') return false;
@@ -600,11 +621,19 @@ export function fakeDraftView(s: FakeBroadcastStore): DraftView {
   };
 }
 
-/** `broadcasts.measure-blocked-share` jobs as `<ws>:<broadcast>@<iso>`, written into `jobs`. */
-export function fakeBroadcastJobs(): BroadcastJobs & { jobs: string[] } {
+/**
+ * `broadcasts.measure-blocked-share` jobs as `<ws>:<broadcast>@<iso>` in `jobs`; `broadcasts.send`
+ * links as `<ws>` or `<ws>@<iso>` in `links`.
+ */
+export function fakeBroadcastJobs(): BroadcastJobs & { jobs: string[]; links: string[] } {
   const jobs: string[] = [];
+  const links: string[] = [];
   return {
     jobs,
+    links,
+    async enqueueSendLink(_tx, workspaceId, startAfter) {
+      links.push(startAfter ? `${workspaceId}@${startAfter.toISOString()}` : workspaceId);
+    },
     async enqueueBlockedShare(_tx, workspaceId, broadcastId, startAfter) {
       jobs.push(`${workspaceId}:${broadcastId}@${startAfter.toISOString()}`);
     },

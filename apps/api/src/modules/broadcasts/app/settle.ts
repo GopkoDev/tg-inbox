@@ -17,7 +17,7 @@ export interface SettleDeps {
   broadcasts: Pick<BroadcastRepo, 'lockForUpdate' | 'markStopped' | 'markSent'>;
   recipients: Pick<RecipientRepo, 'settleWaiting' | 'hasWaitingOrInFlight' | 'totals'>;
   signals: BroadcastSignals;
-  jobs: BroadcastJobs;
+  jobs: Pick<BroadcastJobs, 'enqueueBlockedShare'>;
   clock: Clock;
   logger?: BroadcastLogger;
 }

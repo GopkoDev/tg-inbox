@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/launch.ts", "apps/api/src/modu
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T20 — Add the launch transaction: memberships FOR SHARE, the per-workspace launch lock and cap, the broadcast row, the bot and the audience re-checked against the confirmed version and fingerprint, then recipients frozen, the first broadcasts.send link queued and broadcast.changed status published
@@ -126,10 +126,10 @@ No DB changes. The launch writes, through T14 / T15:
 
 ## Checklist
 
-- [ ] Add `jobs.enqueueSendLink(tx, workspaceId)` (pg-boss `jobDb(tx)`) to the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
-- [ ] RED: unit tests for the order of checks (membership, already launched, version, T19's evaluation, fingerprint) — `apps/api/src/modules/broadcasts/app/launch.test.ts`
-- [ ] `launchBroadcast`: memberships `FOR SHARE` → `broadcast-launches:<ws>` → row `FOR NO KEY UPDATE` → `evaluateLaunch` (T19) → fingerprint compare → recipients by unnest in sorted order → freeze → job → signal; log after commit — `apps/api/src/modules/broadcasts/app/launch.ts`
-- [ ] Integration tests: two concurrent launches of one draft (one `launched`, one `already_launched`, one job); two drafts racing for the 10th slot; a retag after the confirmation with an equal count → `BROADCAST_AUDIENCE_CHANGED`; an owner deactivated in a racing transaction launches nothing; recipients equal the confirmed set — `apps/api/src/modules/broadcasts/app/launch.int.test.ts`
+- [x] Add `jobs.enqueueSendLink(tx, workspaceId)` (pg-boss `jobDb(tx)`) to the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
+- [x] RED: unit tests for the order of checks (membership, already launched, version, T19's evaluation, fingerprint) — `apps/api/src/modules/broadcasts/app/launch.test.ts`
+- [x] `launchBroadcast`: memberships `FOR SHARE` → `broadcast-launches:<ws>` → row `FOR NO KEY UPDATE` → `evaluateLaunch` (T19) → fingerprint compare → recipients by unnest in sorted order → freeze → job → signal; log after commit — `apps/api/src/modules/broadcasts/app/launch.ts`
+- [x] Integration tests: two concurrent launches of one draft (one `launched`, one `already_launched`, one job); two drafts racing for the 10th slot; a retag after the confirmation with an equal count → `BROADCAST_AUDIENCE_CHANGED`; an owner deactivated in a racing transaction launches nothing; recipients equal the confirmed set — `apps/api/src/modules/broadcasts/app/launch.int.test.ts`
 
 ## Edge cases
 
@@ -145,6 +145,14 @@ No DB changes. The launch writes, through T14 / T15:
 
 ## Definition of Done
 
-- [ ] Integration tests prove a launch at the confirmed version and fingerprint inserts exactly the confirmed recipients in fingerprint order, freezes the text, the tag names, the Telegram bot id and the breakdown, sets sending with launched_by and launched_at, queues one broadcasts.send link in the same transaction and publishes one broadcast.changed status; two concurrent launches of one draft launch once (the second answers already_launched), two launches racing for the 10th slot let one through, a retag between confirmation and launch with the same count answers BROADCAST_AUDIENCE_CHANGED, a changed text answers BROADCAST_DRAFT_CHANGED, and an owner deactivated before the commit launches nothing.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Integration tests prove a launch at the confirmed version and fingerprint inserts exactly the confirmed recipients in fingerprint order, freezes the text, the tag names, the Telegram bot id and the breakdown, sets sending with launched_by and launched_at, queues one broadcasts.send link in the same transaction and publishes one broadcast.changed status; two concurrent launches of one draft launch once (the second answers already_launched), two launches racing for the 10th slot let one through, a retag between confirmation and launch with the same count answers BROADCAST_AUDIENCE_CHANGED, a changed text answers BROADCAST_DRAFT_CHANGED, and an owner deactivated before the commit launches nothing.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T20): `createLaunchBroadcast` (`broadcasts/app/launch.ts`): `launchBroadcast(ws, { accountId, role }, id, { expected_version, fingerprint })`. Order: `OWNER_ONLY` by role (no lock) → in one transaction `lockActiveMembers` (`FOR SHARE`; not active → `ACCESS_REMOVED`) → `lockLaunches` (advisory `broadcast-launches:<ws>`) → row `FOR NO KEY UPDATE` (404) → not a draft → `already_launched` (no write, no job, no signal) → stale version → `BROADCAST_DRAFT_CHANGED` with `details.draft` read after the rollback → `evaluateLaunch(row, tx)` (T19's refusals unchanged) → fingerprint ≠ → `BROADCAST_AUDIENCE_CHANGED` with the current confirmation → recipients by `insertAll` (unnest) in the sorted reachable order, positions 1…n → tag rows rewritten to the names at launch, vanished tags' rows removed (`contacts.resolveTags`) → `markLaunched` (frozen trimmed text, Telegram bot id, breakdown, launcher, launched/last-changed at) → `jobs.enqueueSendLink(tx, ws)` → `broadcast.changed status`. After commit the `broadcast.launched` log (ids + counts only). The answer's broadcast comes from `views.broadcastView`.
+- `implement` (T20): new ports `BroadcastRepo.lockLaunches` / `markLaunched` (+ `LaunchFreeze`) and `BroadcastJobs.enqueueSendLink(tx, ws, startAfter?)`; implemented in `infra/broadcast-repo.ts` and the fakes (outside files_hint — the repository is where the SQL lives), with isolation + "only a draft" + lock-serialisation tests in `broadcast-repo.int.test.ts` (RED `TypeError: repo.markLaunched is not a function`). `settle.ts` now takes `Pick<BroadcastJobs, 'enqueueBlockedShare'>` so existing callers compile. **Hand-off → T24:** implement `enqueueSendLink` over pg-boss with `jobDb(tx)`; **→ T26:** bind `views = reads.getBroadcast`, `drafts = reads`, `contacts.resolveTags`, `preview = createLaunchPreview(...)`.
+- `implement` (T20): unit RED `Cannot find module './launch.js'` (GOOD red). Integration (`launch.int.test.ts`) written after GREEN, green on first run after fixing two test-side mistakes (fixture text must be stored trimmed — `broadcasts_text_check`; tag rows ordered by kind).
+- `implement` (T20): gate — `pnpm lint` clean; full `pnpm test`: 4250/4250 tests passed, one suite (`platform/realtime.int`) reported a Docker teardown error (HTTP 409 removing a still-running container) under load — green re-run alone; no containers left.
+
