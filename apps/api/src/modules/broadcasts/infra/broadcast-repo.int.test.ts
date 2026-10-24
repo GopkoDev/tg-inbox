@@ -275,6 +275,59 @@ describe('broadcast repository (ADR-0005)', () => {
     expect((await repo.sendingBroadcasts(b.workspaceId)).map((r) => r.id)).toEqual([b.launchedId]);
   });
 
+  it('ends only a sending broadcast: stopped by an owner, or sent with its end reason; never a foreign one', async () => {
+    const { a, b } = await twoWorkspacesWithBroadcasts(db);
+    // A foreign id ends nothing.
+    expect(
+      await inTx((tx) =>
+        repo.markStopped(a.workspaceId, b.launchedId, a.ownerAccountId, at(5), tx),
+      ),
+    ).toBe(false);
+    expect(
+      await inTx((tx) => repo.markSent(a.workspaceId, b.launchedId, 'completed', at(5), tx)),
+    ).toBe(false);
+    expect((await repo.find(b.workspaceId, b.launchedId))!.status).toBe('sending');
+    // A draft is never ended.
+    expect(
+      await inTx((tx) => repo.markSent(a.workspaceId, a.draftId, 'completed', at(5), tx)),
+    ).toBe(false);
+
+    expect(
+      await inTx((tx) =>
+        repo.markStopped(a.workspaceId, a.launchedId, a.ownerAccountId, at(6), tx),
+      ),
+    ).toBe(true);
+    expect(await repo.find(a.workspaceId, a.launchedId)).toMatchObject({
+      status: 'stopped',
+      stoppedAt: at(6),
+      stoppedByAccountId: a.ownerAccountId,
+      endedAt: at(6),
+      endReason: 'stopped',
+      lastChangedByAccountId: a.ownerAccountId,
+      lastChangedAt: at(6),
+    });
+    // A stopped broadcast is never stopped again, finished or aborted.
+    expect(
+      await inTx((tx) =>
+        repo.markStopped(a.workspaceId, a.launchedId, a.operatorAccountId, at(7), tx),
+      ),
+    ).toBe(false);
+    expect(
+      await inTx((tx) => repo.markSent(a.workspaceId, a.launchedId, 'text_refused', at(7), tx)),
+    ).toBe(false);
+
+    expect(
+      await inTx((tx) => repo.markSent(b.workspaceId, b.launchedId, 'bot_stopped', at(8), tx)),
+    ).toBe(true);
+    expect(await repo.find(b.workspaceId, b.launchedId)).toMatchObject({
+      status: 'sent',
+      endedAt: at(8),
+      endReason: 'bot_stopped',
+      stoppedAt: null,
+      stoppedByAccountId: null,
+    });
+  });
+
   it('deletes a draft with its tag and group rows; never a launched or foreign one', async () => {
     const { a, b } = await twoWorkspacesWithBroadcasts(db);
     await insertGroupContact(db, {

@@ -1,4 +1,4 @@
-import type { BroadcastDraft } from '@tg/shared';
+import type { Broadcast, BroadcastDraft } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
 import type { LaunchReadinessReads } from '../../bots/app/launch-readiness.js';
 import type {
@@ -106,6 +106,25 @@ export interface BroadcastRepo {
   tenthNewestLaunchedAt(workspaceId: string, tx?: Executor): Promise<Date | null>;
   /** The workspace's sending broadcasts, oldest launch first. */
   sendingBroadcasts(workspaceId: string, tx?: Executor): Promise<BroadcastRecord[]>;
+  /**
+   * `sending` → `stopped` by `actorAccountId` at `at` (stopped and ended at, end reason `stopped`,
+   * last change); false when the broadcast is not sending (AC-18).
+   */
+  markStopped(
+    workspaceId: string,
+    id: string,
+    actorAccountId: string,
+    at: Date,
+    tx: Executor,
+  ): Promise<boolean>;
+  /** `sending` → `sent` with its end time and reason; false when it is not sending (AC-11, AC-12). */
+  markSent(
+    workspaceId: string,
+    id: string,
+    reason: Exclude<EndReason, 'stopped'>,
+    at: Date,
+    tx: Executor,
+  ): Promise<boolean>;
   /** Deletes a draft with its tag and group rows; false for a launched or unknown one. */
   deleteDraft(workspaceId: string, id: string, tx: Executor): Promise<boolean>;
 }
@@ -368,4 +387,25 @@ export interface WorkspacesApi {
  */
 export interface DraftView {
   draftView(workspaceId: string, broadcastId: string): Promise<BroadcastDraft>;
+}
+
+/** Any broadcast as the API answers it (`reads.getBroadcast`), read after the writing transaction. */
+export interface BroadcastView {
+  broadcastView(workspaceId: string, broadcastId: string): Promise<Broadcast>;
+}
+
+/** The broadcasts queues (contracts/events.md), enqueued inside the writing transaction. */
+export interface BroadcastJobs {
+  /** `broadcasts.measure-blocked-share`, `startAfter`, `singletonKey` = broadcast id (one per broadcast). */
+  enqueueBlockedShare(
+    tx: Executor,
+    workspaceId: string,
+    broadcastId: string,
+    startAfter: Date,
+  ): Promise<void>;
+}
+
+/** Structured logs: ids, counts, states and reasons only (sad.md §8). */
+export interface BroadcastLogger {
+  info(obj: object, msg: string): void;
 }

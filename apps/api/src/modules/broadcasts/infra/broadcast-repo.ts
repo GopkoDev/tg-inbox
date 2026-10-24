@@ -111,6 +111,36 @@ export function createBroadcastRepo(db: Db): BroadcastRepo {
       return result.numUpdatedRows > 0n;
     },
 
+    async markStopped(workspaceId, id, actorAccountId, at, tx) {
+      const result = await tx
+        .updateTable('broadcasts')
+        .set({
+          status: 'stopped',
+          stopped_at: at,
+          stopped_by_account_id: actorAccountId,
+          ended_at: at,
+          end_reason: 'stopped',
+          last_changed_by_account_id: actorAccountId,
+          last_changed_at: at,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('status', '=', 'sending')
+        .executeTakeFirst();
+      return result.numUpdatedRows > 0n;
+    },
+
+    async markSent(workspaceId, id, reason, at, tx) {
+      const result = await tx
+        .updateTable('broadcasts')
+        .set({ status: 'sent', ended_at: at, end_reason: reason })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('status', '=', 'sending')
+        .executeTakeFirst();
+      return result.numUpdatedRows > 0n;
+    },
+
     async list(workspaceId) {
       const rows = await db
         .selectFrom('broadcasts')

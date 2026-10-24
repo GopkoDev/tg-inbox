@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/stop.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T21 — Add stop and the settling transaction: a business owner stops a sending broadcast (waiting → stopped), an abort fails the waiting recipients with text_refused or bot_stopped, a finish marks sent, and every ending queues the 48-hour blocked-share measure
@@ -120,12 +120,12 @@ No DB changes. Writes, through T14 / T15:
 
 ## Checklist
 
-- [ ] Add `jobs.enqueueBlockedShare(tx, ws, broadcastId, startAfter)` to the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
-- [ ] RED: unit tests for settle (stop, abort per reason, finish only with nothing waiting or sending, a stopped broadcast left alone) — `apps/api/src/modules/broadcasts/app/settle.test.ts`
-- [ ] `settle.ts`: `stopWaiting`, `abort`, `finishIfDone` under the broadcast row lock, using T6's end reasons, signal + job in the transaction, log after commit — `apps/api/src/modules/broadcasts/app/settle.ts`
-- [ ] RED: unit tests for `stopBroadcast` (operator, deactivated owner, unchanged cases) — `apps/api/src/modules/broadcasts/app/stop.test.ts`
-- [ ] `stopBroadcast`: memberships `FOR SHARE` → row → `stopWaiting` — `apps/api/src/modules/broadcasts/app/stop.ts`
-- [ ] Integration tests: a claim racing the stop (either the claim or the settle wins, never both); 1 200 settled + rest stopped on the AC-18 seed; stop after the last outcome → `unchanged`, status `sent`; one measure job per broadcast — `apps/api/src/modules/broadcasts/app/stop.int.test.ts`
+- [x] Add `jobs.enqueueBlockedShare(tx, ws, broadcastId, startAfter)` to the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
+- [x] RED: unit tests for settle (stop, abort per reason, finish only with nothing waiting or sending, a stopped broadcast left alone) — `apps/api/src/modules/broadcasts/app/settle.test.ts`
+- [x] `settle.ts`: `stopWaiting`, `abort`, `finishIfDone` under the broadcast row lock, using T6's end reasons, signal + job in the transaction, log after commit — `apps/api/src/modules/broadcasts/app/settle.ts`
+- [x] RED: unit tests for `stopBroadcast` (operator, deactivated owner, unchanged cases) — `apps/api/src/modules/broadcasts/app/stop.test.ts`
+- [x] `stopBroadcast`: memberships `FOR SHARE` → row → `stopWaiting` — `apps/api/src/modules/broadcasts/app/stop.ts`
+- [x] Integration tests: a claim racing the stop (either the claim or the settle wins, never both); 1 200 settled + rest stopped on the AC-18 seed; stop after the last outcome → `unchanged`, status `sent`; one measure job per broadcast — `apps/api/src/modules/broadcasts/app/stop.int.test.ts`
 
 ## Edge cases
 
@@ -141,6 +141,15 @@ No DB changes. Writes, through T14 / T15:
 
 ## Definition of Done
 
-- [ ] Unit and integration tests prove a stop by an operator is OWNER_ONLY, a stop by an owner marks every waiting recipient stopped and the broadcast stopped with who and when in one transaction while sending recipients keep their claim, a stop after the last outcome answers unchanged, an abort marks the waiting recipients failed with the plain reason and the broadcast sent with its end reason, a finish with nothing waiting or in flight marks it sent with completed, a stopped broadcast is never finished or aborted afterwards, and each ending publishes broadcast.changed status and queues broadcasts.measure-blocked-share 48 h later with the broadcast id as singleton key.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests prove a stop by an operator is OWNER_ONLY, a stop by an owner marks every waiting recipient stopped and the broadcast stopped with who and when in one transaction while sending recipients keep their claim, a stop after the last outcome answers unchanged, an abort marks the waiting recipients failed with the plain reason and the broadcast sent with its end reason, a finish with nothing waiting or in flight marks it sent with completed, a stopped broadcast is never finished or aborted afterwards, and each ending publishes broadcast.changed status and queues broadcasts.measure-blocked-share 48 h later with the broadcast id as singleton key.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T21): `createSettle` (`broadcasts/app/settle.ts`): `endInTx(tx, lockedRow, { kind: 'stop', actorAccountId } | { kind: 'abort', reason })`, `abort(ws, id, reason)`, `finishIfDone(ws, id)`, `logEnded(row, endReason)`. Each ending, in its transaction: settle waiting recipients in one update (`settleWaiting`), `markStopped` / `markSent`, `broadcast.changed { change: status }`, `jobs.enqueueBlockedShare(tx, ws, id, at + 48 h)`; after commit the `broadcast.ended` log (ids, end reason, totals by state, launch-to-finish ms — no text, no names). A row that is not `sending` (stopped meanwhile, ended, draft, foreign) is left alone.
+- `implement` (T21): `createStopBroadcast` (`app/stop.ts`): `OWNER_ONLY` by role → in one transaction `lockActiveMembers` (`FOR SHARE`; not active → `ACCESS_REMOVED`) → row `FOR NO KEY UPDATE` (404) → `endInTx(stop)`. Nothing waiting answers `unchanged` and then runs `finishIfDone`, so a stop after the last outcome leaves the broadcast `sent` / `completed`; a broadcast with only in-flight sends stays `sending` (the chain finishes it). The answer's `broadcast` comes from a new `BroadcastView` port. **Hand-off → T26:** bind `views.broadcastView = reads.getBroadcast`; the route passes the guard's role.
+- `implement` (T21): new ports `BroadcastJobs` (`enqueueBlockedShare`), `BroadcastView`, `BroadcastLogger`; `BroadcastRepo.markStopped` / `markSent` added to T14's repository (`infra/broadcast-repo.ts`, outside files_hint; RED `TypeError: repo.markStopped is not a function`, isolation + "only a sending broadcast" test in `broadcast-repo.int.test.ts`). **Hand-off → T24:** implement `BroadcastJobs` over pg-boss (`broadcasts.measure-blocked-share`, `startAfter`, `singletonKey` = broadcast id); the integration test here records the enqueue (exactly one per broadcast across stop + later abort / finish), the pg-boss singleton is T24's.
+- `implement` (T21): last change is set only by a stop (the owner); finish and abort keep the last change.
+- `implement` (T21): RED `Cannot find module './settle.js'` for both unit files (GOOD red); integration written after GREEN, green on first run (claim-vs-stop race over 5 rounds: exactly one side wins).
+- `implement` (T21): gate — full `pnpm test` green (297 files, 4146 tests); `pnpm lint` clean.

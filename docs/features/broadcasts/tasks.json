@@ -524,7 +524,7 @@
         "apps/api/src/modules/broadcasts/app/ports.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t21-stop-and-settle.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T22",

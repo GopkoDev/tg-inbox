@@ -6,6 +6,7 @@ import type {
   AudienceTagRow,
   BotsApi,
   BroadcastChange,
+  BroadcastJobs,
   BroadcastRecord,
   BroadcastRepo,
   BroadcastSignals,
@@ -122,6 +123,26 @@ export function fakeBroadcastRepo(s: FakeBroadcastStore): BroadcastRepo & { lock
         .filter((b) => b.workspaceId === workspaceId && b.status === 'sending')
         .sort((a, b) => a.launchedAt!.getTime() - b.launchedAt!.getTime())
         .map((b) => ({ ...b }));
+    },
+    async markStopped(workspaceId, id, actor, at) {
+      const row = find(s, workspaceId, id);
+      if (!row || row.status !== 'sending') return false;
+      Object.assign(row, {
+        status: 'stopped',
+        stoppedAt: at,
+        stoppedByAccountId: actor,
+        endedAt: at,
+        endReason: 'stopped',
+        lastChangedByAccountId: actor,
+        lastChangedAt: at,
+      });
+      return true;
+    },
+    async markSent(workspaceId, id, reason, at) {
+      const row = find(s, workspaceId, id);
+      if (!row || row.status !== 'sending') return false;
+      Object.assign(row, { status: 'sent', endedAt: at, endReason: reason });
+      return true;
     },
     async deleteDraft(workspaceId, id) {
       const row = find(s, workspaceId, id);
@@ -575,6 +596,17 @@ export function fakeDraftView(s: FakeBroadcastStore): DraftView {
           reach: null,
         },
       };
+    },
+  };
+}
+
+/** `broadcasts.measure-blocked-share` jobs as `<ws>:<broadcast>@<iso>`, written into `jobs`. */
+export function fakeBroadcastJobs(): BroadcastJobs & { jobs: string[] } {
+  const jobs: string[] = [];
+  return {
+    jobs,
+    async enqueueBlockedShare(_tx, workspaceId, broadcastId, startAfter) {
+      jobs.push(`${workspaceId}:${broadcastId}@${startAfter.toISOString()}`);
     },
   };
 }
