@@ -1,7 +1,12 @@
 import type { BroadcastDraft } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
 import type { LaunchReadinessReads } from '../../bots/app/launch-readiness.js';
-import type { AudienceBreakdown, AudienceSpec, ContactCard } from '../../contacts/app/ports.js';
+import type {
+  AudienceBreakdown,
+  AudienceSpec,
+  ContactCard,
+  ReachableContact,
+} from '../../contacts/app/ports.js';
 import type { AudienceTagKind, StoredAudienceTag, TagMode } from '../domain/audience.js';
 import type { BroadcastStatus } from '../domain/broadcast.js';
 import type {
@@ -304,7 +309,7 @@ export interface BroadcastSignals {
   ): Promise<void>;
 }
 
-export type { AudienceBreakdown, AudienceSpec, ContactCard };
+export type { AudienceBreakdown, AudienceSpec, ContactCard, ReachableContact };
 
 /** What `broadcasts` asks the `contacts` app layer (sad.md §5, ADR-0004). */
 export interface ContactsApi {
@@ -319,6 +324,13 @@ export interface ContactsApi {
     audience: AudienceSpec,
     telegramBotId: bigint | null,
   ): Promise<AudienceBreakdown>;
+  /** The reachable contacts for the bot, sorted by contact id, at most `limit` (10 001). */
+  reachableContacts(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    limit?: number,
+  ): Promise<ReachableContact[]>;
   /** The Contacts list's matching set for a search and a tag filter (gone tags left out), sorted. */
   matchingContactIds(
     workspaceId: string,

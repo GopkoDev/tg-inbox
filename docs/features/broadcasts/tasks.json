@@ -476,7 +476,7 @@
         "apps/api/src/modules/broadcasts/app/fakes.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t19-launch-confirmation.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T20",

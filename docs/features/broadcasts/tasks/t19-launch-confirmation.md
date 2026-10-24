@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/preview.ts", "apps/api/src/mod
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T19 — Add the launch confirmation read, which is also the pre-check: owner only, a working bot, a non-empty text, at most 10 000, at least one reachable contact and the 10-per-24-hours cap, answering the trimmed text, version, breakdown and fingerprint
@@ -123,10 +123,10 @@ No DB changes. Reads only: the draft row (`text`, `version`, `audience_kind`, `t
 
 ## Checklist
 
-- [ ] Add `BotsApi.launchReadiness(ws)` → `{ state, telegramBotId } | null` and `ContactsApi.reachableContacts(ws, audience, botId, limit 10 001)` to the ports and fakes — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
-- [ ] RED: unit tests for each refusal in order and the happy path (breakdown, fingerprint from T5) — `apps/api/src/modules/broadcasts/app/preview.test.ts`
-- [ ] `evaluateLaunch(ws, broadcast, readiness, now)` shared with T20 (text, bot, cap with `next_launch_at`, size, ≥ 1 reachable, breakdown, sorted ids, fingerprint) and `getLaunchConfirmation` on top of it — `apps/api/src/modules/broadcasts/app/preview.ts`
-- [ ] Integration tests: the AC-06 seed answers 36 with the fingerprint of the sorted ids; 10 launches in 24 h (one stopped) → 429 with the right `next_launch_at`; a group of 10 001 → too large; all blocked → no reachable — `apps/api/src/modules/broadcasts/app/preview.int.test.ts`
+- [x] Add `BotsApi.launchReadiness(ws)` → `{ state, telegramBotId } | null` and `ContactsApi.reachableContacts(ws, audience, botId, limit 10 001)` to the ports and fakes — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
+- [x] RED: unit tests for each refusal in order and the happy path (breakdown, fingerprint from T5) — `apps/api/src/modules/broadcasts/app/preview.test.ts`
+- [x] `evaluateLaunch(ws, broadcast, readiness, now)` shared with T20 (text, bot, cap with `next_launch_at`, size, ≥ 1 reachable, breakdown, sorted ids, fingerprint) and `getLaunchConfirmation` on top of it — `apps/api/src/modules/broadcasts/app/preview.ts`
+- [x] Integration tests: the AC-06 seed answers 36 with the fingerprint of the sorted ids; 10 launches in 24 h (one stopped) → 429 with the right `next_launch_at`; a group of 10 001 → too large; all blocked → no reachable — `apps/api/src/modules/broadcasts/app/preview.int.test.ts`
 
 ## Edge cases
 
@@ -142,6 +142,14 @@ No DB changes. Reads only: the draft row (`text`, `version`, `audience_kind`, `t
 
 ## Definition of Done
 
-- [ ] Unit and integration tests prove an operator gets OWNER_ONLY, no bot or a bot that is not connected answers BROADCAST_NEEDS_WORKING_BOT with the bot state, an empty text BROADCAST_TEXT_INVALID, an audience over 10 000 BROADCAST_AUDIENCE_TOO_LARGE, nobody reachable BROADCAST_NO_REACHABLE_CONTACT, an 11th launch in 24 h BROADCAST_LAUNCH_LIMIT_REACHED with next_launch_at = the 10th newest launch + 24 h, and otherwise the confirmation returns the text, the version, the breakdown (36 of 38 on the AC-06 seed) and the fingerprint of the sorted reachable ids.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests prove an operator gets OWNER_ONLY, no bot or a bot that is not connected answers BROADCAST_NEEDS_WORKING_BOT with the bot state, an empty text BROADCAST_TEXT_INVALID, an audience over 10 000 BROADCAST_AUDIENCE_TOO_LARGE, nobody reachable BROADCAST_NO_REACHABLE_CONTACT, an 11th launch in 24 h BROADCAST_LAUNCH_LIMIT_REACHED with next_launch_at = the 10th newest launch + 24 h, and otherwise the confirmation returns the text, the version, the breakdown (36 of 38 on the AC-06 seed) and the fingerprint of the sorted reachable ids.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T19): `createLaunchPreview` (`broadcasts/app/preview.ts`): `getLaunchConfirmation(ws, { accountId, role }, id)` and `evaluateLaunch(row, tx?) → { confirmation, reachable, telegramBotId }`. Order: `OWNER_ONLY` (role from the route guard) → 404 → `BROADCAST_NOT_A_DRAFT` → `BROADCAST_TEXT_INVALID` → `BROADCAST_NEEDS_WORKING_BOT` (no row / `disconnected` → `not_connected`) → `BROADCAST_LAUNCH_LIMIT_REACHED` → `BROADCAST_AUDIENCE_TOO_LARGE` → `BROADCAST_NO_REACHABLE_CONTACT`. **Hand-off → T20:** call `evaluateLaunch(lockedRow, tx)` inside the launch transaction (after the `broadcast-launches:<ws>` advisory lock); the tag / group reads and the cap counts take `tx`, the `contacts` / `bots` reads do not (their own connections).
+- `implement` (T19): `recipient_count` comes from the aggregate breakdown and the fingerprint from `reachableContacts(…, 10 001)` (sorted ids); both are read in one call sequence, so a write between them could let them differ — the launch (T20) re-checks the fingerprint, which catches it.
+- `implement` (T19): `next_launch_at` = `tenthNewestLaunchedAt` + 24 h, `Retry-After` = whole seconds until then (min 1). Ports: `ContactsApi.reachableContacts` (type `ReachableContact` from contacts' app ports). `BotsApi.launchReadiness` was already added by T17.
+- `implement` (T19): RED `Cannot find module './preview.js'` (GOOD red). Integration written after GREEN, green on first run.
+- `implement` (T19): gate — full `pnpm test`: only `e2e/contacts-load` merge timing failed (known); passed re-run alone. `pnpm lint` clean.

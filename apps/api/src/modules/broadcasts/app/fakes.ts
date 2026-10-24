@@ -305,6 +305,13 @@ export function fakeContactsApi(): ContactsApi & {
         .filter((id) => own(workspaceId).has(id))
         .map((id) => ({ id, name: own(workspaceId).get(id)! }));
     },
+    async reachableContacts(workspaceId, audience, telegramBotId, limit = 10_001) {
+      return members(workspaceId, audience)
+        .filter((c) => !c.blocked?.has(telegramBotId) && c.wroteTo?.includes(telegramBotId))
+        .map((c) => ({ id: c.id, telegramUserId: BigInt(`0x${c.id.slice(-8)}`) }))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+        .slice(0, limit);
+    },
     async matchingContactIds(workspaceId, filter) {
       const q = (filter.q ?? '').trim().toLowerCase();
       return members(workspaceId, {
