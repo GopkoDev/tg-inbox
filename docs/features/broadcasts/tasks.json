@@ -448,7 +448,7 @@
         "apps/api/src/modules/broadcasts/app/fakes.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t18-group-use-cases.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T19",

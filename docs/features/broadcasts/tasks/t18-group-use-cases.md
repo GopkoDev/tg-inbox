@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/group.ts", "apps/api/src/modul
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T18 — Add the broadcast group use cases: add one contact, count the matching contacts not yet in the group, add all matching as a whole or not at all, remove one, the group page with cards and breakdown, and the membership of a picker page
@@ -128,10 +128,10 @@ No DB changes. Writes and reads `broadcast_group_contacts` through T14:
 
 ## Checklist
 
-- [ ] Add `ContactsApi.matchingContactIds(ws, { q, mode, tagIds }, limit)` and `contactCards` with the current bot's `blocked_since` to the ports and fakes — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
-- [ ] RED: unit tests per branch (added, already there, not a draft, switched to tags, full at 10 000, bulk refused whole with the room left, remove absent, matching count) — `apps/api/src/modules/broadcasts/app/group.test.ts`
-- [ ] `addContact`, `removeContact`, `countMatching`, `addMatching`, `groupPage`, `membership` — each write under the broadcast row lock, version untouched, `last_changed_*` set, one `group` signal when written — `apps/api/src/modules/broadcasts/app/group.ts`
-- [ ] Integration tests: the AC-04 seed (1 in the group, 14 matching, 13 added, size 14), the AC-05 seed (9 990 + 50 refused, `can_add` 10), two members adding and removing at once both stand, a foreign contact id → not found — `apps/api/src/modules/broadcasts/app/group.int.test.ts`
+- [x] Add `ContactsApi.matchingContactIds(ws, { q, mode, tagIds }, limit)` and `contactCards` with the current bot's `blocked_since` to the ports and fakes — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
+- [x] RED: unit tests per branch (added, already there, not a draft, switched to tags, full at 10 000, bulk refused whole with the room left, remove absent, matching count) — `apps/api/src/modules/broadcasts/app/group.test.ts`
+- [x] `addContact`, `removeContact`, `countMatching`, `addMatching`, `groupPage`, `membership` — each write under the broadcast row lock, version untouched, `last_changed_*` set, one `group` signal when written — `apps/api/src/modules/broadcasts/app/group.ts`
+- [x] Integration tests: the AC-04 seed (1 in the group, 14 matching, 13 added, size 14), the AC-05 seed (9 990 + 50 refused, `can_add` 10), two members adding and removing at once both stand, a foreign contact id → not found — `apps/api/src/modules/broadcasts/app/group.int.test.ts`
 
 ## Edge cases
 
@@ -147,6 +147,16 @@ No DB changes. Writes and reads `broadcast_group_contacts` through T14:
 
 ## Definition of Done
 
-- [ ] Unit and integration tests on the AC-04 / AC-05 seeds prove adding a contact already there answers unchanged, a foreign contact is not found, a write on a launched broadcast answers BROADCAST_NOT_A_DRAFT and on a draft switched to tags BROADCAST_DRAFT_CHANGED, the matching count excludes group members and gives can_add, add-all-matching adds the current matches under the row lock and says how many (13 of 14), a bulk add past 10 000 is refused whole with BROADCAST_AUDIENCE_TOO_LARGE and the room left, a remove of an absent row answers unchanged, group writes never raise the version, and each written change publishes broadcast.changed group.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests on the AC-04 / AC-05 seeds prove adding a contact already there answers unchanged, a foreign contact is not found, a write on a launched broadcast answers BROADCAST_NOT_A_DRAFT and on a draft switched to tags BROADCAST_DRAFT_CHANGED, the matching count excludes group members and gives can_add, add-all-matching adds the current matches under the row lock and says how many (13 of 14), a bulk add past 10 000 is refused whole with BROADCAST_AUDIENCE_TOO_LARGE and the room left, a remove of an absent row answers unchanged, group writes never raise the version, and each written change publishes broadcast.changed group.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T18): `createBroadcastGroup` (`broadcasts/app/group.ts`): `addContact`, `removeContact`, `countMatching(ws, id, { q, mode, tagIds })`, `addMatching`, `groupPage(ws, id, after?)`, `membership`. Every write runs under `lockForUpdate` (404 → not a draft → for adds, a tag audience → `BROADCAST_DRAFT_CHANGED` with `views.draftView` read after the rolled-back transaction), `touch`es the last change (version kept) and publishes one `group` signal only when a row was written.
+- `implement` (T18): a foreign or unknown contact is detected before the transaction through `contactCards(ws, [id], null)` (empty → `NOT_FOUND`, the same 404 as an unknown broadcast), so the composite FK never surfaces as a 500. A remove of an absent row (never added, foreign, tag audience) answers `unchanged` with the current size.
+- `implement` (T18): `BROADCAST_AUDIENCE_TOO_LARGE` carries the **current** group size as `audience_size` (so `can_add` = room left: 9 990 → 10; a full group → 0), matching the existing error class.
+- `implement` (T18): `ContactsApi.matchingContactIds` has no `limit` (T8's contacts read takes none), so the confirmation loads the full matching set; with the 10 000 cap and pilot-scale workspaces this is bounded by the workspace's contacts. **Hand-off → T28** if the seeded timing shows it.
+- `implement` (T18): the group cursor (`added_at`, `contact_id`) is in `domain/cursor.ts`; `countMatching` answers for a launched broadcast too (it writes nothing; the contract lists no 409).
+- `implement` (T18): RED `Cannot find module './group.js'` (GOOD red; group.ts had been drafted early and was parked outside the tree until the RED was observed). Integration written after GREEN.
+- `implement` (T18): gate — full `pnpm test`: `group.int` AC-05 failed on a test bug (random Telegram ids colliding in the bulk seed; fixed with a counter), and `state-changes.int` (known concurrency flake); both files passed re-run alone twice. Lint clean for the task's files (the only `tsc` error was T19's uncommitted RED test).

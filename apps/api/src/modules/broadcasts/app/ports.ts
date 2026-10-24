@@ -319,6 +319,11 @@ export interface ContactsApi {
     audience: AudienceSpec,
     telegramBotId: bigint | null,
   ): Promise<AudienceBreakdown>;
+  /** The Contacts list's matching set for a search and a tag filter (gone tags left out), sorted. */
+  matchingContactIds(
+    workspaceId: string,
+    filter: { q?: string | null; mode: TagMode; tagIds: readonly string[] },
+  ): Promise<string[]>;
   /** Cards of the workspace's contacts among `contactIds`, in that order; others are left out. */
   contactCards(
     workspaceId: string,
