@@ -26,7 +26,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 5 | Assignment & statuses — conversations are open/closed and assigned to an operator | idea-brief.md §2 Problem | M | shipped → [`features/assignment-statuses`](features/assignment-statuses/spec.md) |
 | 6 | Operator notifications — in-web notifications, plus a Telegram ping from the bot when the operator is inactive on the web | idea-brief.md §6 Risks | M | shipped → [`features/operator-notifications`](features/operator-notifications/spec.md) |
 | 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | M | shipped → [`features/contacts`](features/contacts/spec.md) |
-| 8 | Broadcasts — a member drafts a message for an audience picked by contact tags or for a hand-picked broadcast group of contacts (added and removed while it is a draft) and a business owner launches it; once launched its recipients are frozen and it is read-only apart from a delivery report; throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation · roadmap.md § Decisions so far | L | building → [`features/broadcasts`](features/broadcasts/spec.md) |
+| 8 | Broadcasts — a member drafts a message for an audience picked by contact tags or for a hand-picked broadcast group of contacts (added and removed while it is a draft) and a business owner launches it; once launched its recipients are frozen and it is read-only apart from a delivery report; throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation · roadmap.md § Decisions so far | L | shipped → [`features/broadcasts`](features/broadcasts/spec.md) |
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
 | 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | idea |
 | 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
@@ -107,3 +107,4 @@ flowchart LR
 | 5 · Assignment & statuses | 2026-10-19 | [changelog](features/assignment-statuses/_ship/changelog.md) · PR pending |
 | 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · PR pending |
 | 7 · Contacts | 2026-10-19 | [changelog](features/contacts/_ship/changelog.md) · PR pending |
+| 8 · Broadcasts | 2026-10-24 | [changelog](features/broadcasts/_ship/changelog.md) · PR pending |
