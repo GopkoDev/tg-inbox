@@ -378,6 +378,15 @@ describe(
         // Turns: in the first half of the run both broadcasts are sending, neither waits.
         const half = sends.slice(0, 150);
         const firsts = half.filter((s) => s.text === 'First text').length;
+        log(
+          `send order, run ${attempt} (F/S in tens)`,
+          Array.from({ length: 30 }, (_, i) =>
+            sends
+              .slice(i * 10, i * 10 + 10)
+              .filter((x) => x.text === 'First text')
+              .length.toString(),
+          ).join(''),
+        );
         expect(firsts).toBeGreaterThanOrEqual(60);
         expect(150 - firsts).toBeGreaterThanOrEqual(60);
         expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
