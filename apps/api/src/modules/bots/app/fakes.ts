@@ -21,9 +21,11 @@ import type {
 } from './ports.js';
 
 /** A stored bot row of the fake repository, with the plain token and secret it would encrypt / hash. */
-export interface FakeBotRow extends Omit<BotRecord, 'sendPausedUntil'> {
+export interface FakeBotRow extends Omit<BotRecord, 'sendPausedUntil' | 'stoppedWorkingAt'> {
   /** Absent = not paused. */
   sendPausedUntil?: Date | null;
+  /** Absent = the token was never rejected. */
+  stoppedWorkingAt?: Date | null;
   token: string | null;
   webhookSecret: string | null;
   /** The stored token cannot be decrypted (the encryption key was lost or changed). */
@@ -46,7 +48,11 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
     delete copy.token;
     delete copy.webhookSecret;
     delete copy.undecryptable;
-    return { ...copy, sendPausedUntil: r.sendPausedUntil ?? null } as BotRecord;
+    return {
+      ...copy,
+      sendPausedUntil: r.sendPausedUntil ?? null,
+      stoppedWorkingAt: r.stoppedWorkingAt ?? null,
+    } as BotRecord;
   };
 
   return {
@@ -95,6 +101,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       const read = options?.ifLastCheckedAt;
       if (read !== undefined && row.lastCheckedAt?.getTime() !== read?.getTime()) return false;
       Object.assign(row, { state, lastCheckedAt: checkedAt }, options?.identity ?? {});
+      if (state === 'needs_token') row.stoppedWorkingAt = checkedAt;
       return true;
     },
     async clearOnDisconnect(workspaceId, botId, _tx, ifWritten) {

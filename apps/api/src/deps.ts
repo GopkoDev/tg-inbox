@@ -28,6 +28,7 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
+import { createSendPauses, withPauseNotes } from './modules/bots/app/send-pauses.js';
 import {
   BROADCAST_MESSAGES_PER_SECOND,
   createPacer,
@@ -238,7 +239,13 @@ export function buildDeps(
     },
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
-  const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
+  // Every stored send pause is also noted in process, so a broadcast send checks it right after
+  // its pacer slot without a database read (ADR-0008).
+  const sendPauses = createSendPauses();
+  const botRepo = withPauseNotes(
+    createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY)),
+    sendPauses,
+  );
   const telegram = createTelegramGateway({
     ...(config.TELEGRAM_API_ROOT && { apiRoot: config.TELEGRAM_API_ROOT }),
     maxConnections: config.TELEGRAM_WEBHOOK_MAX_CONNECTIONS,
@@ -372,6 +379,7 @@ export function buildDeps(
       clock,
       pacer: overrides.broadcastPacer ?? createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
       reach: contactReach,
+      pauses: sendPauses,
     }),
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,

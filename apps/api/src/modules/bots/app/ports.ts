@@ -28,6 +28,11 @@ export interface BotRecord {
   createdAt: Date;
   /** Bot sends to members are refused until then (ADR-0006); null or past: not paused. */
   sendPausedUntil: Date | null;
+  /**
+   * When the token was last rejected (the bot became `needs_token`); a rotation back to working
+   * keeps it. Broadcasts launched before it are not sent any more (AC-12).
+   */
+  stoppedWorkingAt: Date | null;
 }
 
 export interface NewBot {

@@ -5,6 +5,7 @@ import { createMarkNeedsToken } from './mark-needs-token.js';
 import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from './pacer.js';
 import { SEND_TIMEOUT, type BroadcastSendAnswer } from './ports.js';
 import { createSendBroadcastMessage } from './send-broadcast-message.js';
+import { createSendPauses, withPauseNotes } from './send-pauses.js';
 import type { FakeBotRow } from './fakes.js';
 
 const TEXT = '  Spring prices *bold* <b>x</b>\nfrom Monday.';
@@ -21,7 +22,14 @@ function setup(rows: FakeBotRow[] = [botRow()]) {
   const waits: string[] = [];
   const pacer = { wait: async (key: string) => void waits.push(key) };
   const markNeedsToken = createMarkNeedsToken(h);
-  const send = createSendBroadcastMessage({ ...h, markNeedsToken, pacer });
+  const pauses = createSendPauses();
+  const send = createSendBroadcastMessage({
+    ...h,
+    bots: withPauseNotes(h.bots, pauses),
+    pauses,
+    markNeedsToken,
+    pacer,
+  });
   return { h, send, waits };
 }
 const telegramCalls = (h: ReturnType<typeof createBotsHarness>) =>
@@ -71,21 +79,33 @@ describe('sendBroadcastMessage — refusals without a Telegram call (AC-10, AC-1
     expect(waits).toEqual([]);
   });
 
-  it('a pause stored while the send waited for its pacer slot holds it: paused, no Telegram call', async () => {
+  it('a pause stored by any send of the bot while this one waited for its pacer slot holds it, with no read between the slot and the call', async () => {
     const h = createBotsHarness([botRow()]);
-    // Another send of the bot gets a 429 while this one waits in the pacer.
+    const pauses = createSendPauses();
+    const bots = withPauseNotes(h.bots, pauses);
+    let reads = 0;
+    const findByWorkspace = bots.findByWorkspace;
+    bots.findByWorkspace = (...args) => {
+      reads += 1;
+      return findByWorkspace(...args);
+    };
+    // A reply (another sender on the same noted repo) gets a 429 while this one waits.
     const pacer = {
       wait: async () => {
-        h.bots.rows[0]!.sendPausedUntil = at(900);
+        await bots.pauseSends('ws-a', botRow().id, at(900));
       },
     };
     const send = createSendBroadcastMessage({
       ...h,
+      bots,
+      pauses,
       markNeedsToken: createMarkNeedsToken(h),
       pacer,
     });
     expect(await send.sendBroadcastMessage(req)).toEqual({ outcome: 'paused', until: at(900) });
     expect(telegramCalls(h)).toHaveLength(0);
+    // Only the read before the wait: nothing awaits between the pacer's release and Telegram.
+    expect(reads).toBe(1);
   });
 
   it('AC-12: the same bot connected again after the launch (it stopped working meanwhile) → bot_unavailable', async () => {
@@ -95,6 +115,18 @@ describe('sendBroadcastMessage — refusals without a Telegram call (AC-10, AC-1
     });
     expect(telegramCalls(h)).toHaveLength(0);
     // Connected before the launch and working since: sent.
+    expect((await send.sendBroadcastMessage({ ...req, launchedAt: at(400) })).outcome).toBe(
+      'delivered',
+    );
+  });
+
+  it('AC-12: a token lost after the launch and pasted again (same bot, epoch kept) → bot_unavailable', async () => {
+    const { h, send } = setup([botRow({ stoppedWorkingAt: at(300) })]);
+    expect(await send.sendBroadcastMessage({ ...req, launchedAt: at(200) })).toEqual({
+      outcome: 'bot_unavailable',
+    });
+    expect(telegramCalls(h)).toHaveLength(0);
+    // A token lost before the launch (and fixed before it) does not hold the send.
     expect((await send.sendBroadcastMessage({ ...req, launchedAt: at(400) })).outcome).toBe(
       'delivered',
     );

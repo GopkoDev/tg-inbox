@@ -65,6 +65,7 @@ describe('bot repository', () => {
       lastCheckedAt: at(0),
       createdAt: at(0),
       sendPausedUntil: null,
+      stoppedWorkingAt: null,
     });
     expect(
       JSON.stringify(found, (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v)),
@@ -206,6 +207,19 @@ describe('bot repository', () => {
       lastCheckedAt: at(5),
       name: 'New Name',
       username: 'new_name_bot',
+    });
+  });
+
+  it('setState to needs_token records when the bot stopped working; a later state keeps it (AC-12)', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toBeNull();
+    expect(await repo.setState(w, bot.id, 'needs_token', at(4))).toBe(true);
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(4));
+    expect(await repo.setState(w, bot.id, 'connected', at(6))).toBe(true);
+    expect(await repo.findByWorkspace(w)).toMatchObject({
+      state: 'connected',
+      stoppedWorkingAt: at(4),
     });
   });
 

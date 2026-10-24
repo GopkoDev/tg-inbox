@@ -56,9 +56,10 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   if (!o || o.k !== 't') return null;
   const positionAt = toDate(o.at);
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
-  if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
-  if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
-  // A broadcast item id reaches a `::uuid` cast: anything else is a crafted cursor (400).
+  // Reply, activity and broadcast item ids reach a `::uuid` cast: anything else is a crafted
+  // cursor (400), never a cast error.
+  if (o.kind === 'reply' && UUID.test(o.id)) return { positionAt, kind: 'reply', id: o.id };
+  if (o.kind === 'activity' && UUID.test(o.id)) return { positionAt, kind: 'activity', id: o.id };
   if (o.kind === 'broadcast' && UUID.test(o.id)) return { positionAt, kind: 'broadcast', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };

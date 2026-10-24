@@ -18,6 +18,7 @@ import { createTokenCipher } from '../infra/token-cipher.js';
 import { createMarkNeedsToken } from './mark-needs-token.js';
 import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from './pacer.js';
 import { createSendBroadcastMessage } from './send-broadcast-message.js';
+import { createSendPauses, withPauseNotes } from './send-pauses.js';
 import { createSendText } from './send-text.js';
 
 describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14, AC-15)', () => {
@@ -47,8 +48,10 @@ describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14,
       reach: createReachRepo(db),
       signals: createReachSignals(),
     });
+    const pauses = createSendPauses();
     send = createSendBroadcastMessage({
-      bots,
+      bots: withPauseNotes(bots, pauses),
+      pauses,
       telegram,
       markNeedsToken,
       clock: systemClock,

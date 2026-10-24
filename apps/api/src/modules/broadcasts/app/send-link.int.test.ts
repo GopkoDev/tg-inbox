@@ -11,6 +11,7 @@ import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js'
 import { createMarkNeedsToken } from '../../bots/app/mark-needs-token.js';
 import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from '../../bots/app/pacer.js';
 import { createSendBroadcastMessage } from '../../bots/app/send-broadcast-message.js';
+import { createSendPauses, withPauseNotes } from '../../bots/app/send-pauses.js';
 import { createBotRepo } from '../../bots/infra/bot-repo.js';
 import { createBotSignals } from '../../bots/infra/bot-signals.js';
 import { createTelegramGateway } from '../../bots/infra/telegram-gateway.js';
@@ -57,8 +58,10 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
       reach: createReachRepo(db),
       signals: createReachSignals(),
     });
+    const pauses = createSendPauses();
     const sender = createSendBroadcastMessage({
-      bots,
+      bots: withPauseNotes(bots, pauses),
+      pauses,
       telegram: createTelegramGateway({ apiRoot: fake.apiRoot, maxConnections: 5 }),
       markNeedsToken: createMarkNeedsToken({
         bots,
@@ -288,7 +291,14 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
     fake.bot(w.token).script({ sendMessage: [sendAnswers.textTooLong()] });
     await link.runSendLink(w.workspaceId);
     const rows = await recipientRows(w.workspaceId, x.id);
-    expect(rows[0]).toMatchObject({ state: 'failed', failure_reason: 'text_refused' });
+    // Up to 8 sends are in flight, so the refused one is whichever reached Telegram first.
+    expect(rows.filter((r) => r.failure_reason === 'text_refused').length).toBeGreaterThan(0);
+    expect(
+      rows.every(
+        (r) =>
+          r.state === 'delivered' || (r.state === 'failed' && r.failure_reason === 'text_refused'),
+      ),
+    ).toBe(true);
     expect(rows.some((r) => r.state === 'waiting' || r.state === 'sending')).toBe(false);
     expect(await statusOf(w.workspaceId, x.id)).toEqual({
       status: 'sent',

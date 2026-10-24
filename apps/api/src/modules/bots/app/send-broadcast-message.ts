@@ -1,6 +1,7 @@
 import type { Clock } from '../../../platform/clock.js';
 import type { MarkNeedsToken } from './mark-needs-token.js';
 import type { Pacer } from './pacer.js';
+import type { SendPauses } from './send-pauses.js';
 import {
   SEND_TIMEOUT,
   type BotRepo,
@@ -18,6 +19,8 @@ export interface SendBroadcastMessageDeps {
   pacer: Pacer;
   /** A send refused as blocked records the block (ADR-0003). */
   reach: ContactsReach;
+  /** The pauses this process stored for any send of a bot (read without a wait after the slot). */
+  pauses: SendPauses;
 }
 
 export interface SendBroadcastRequest {
@@ -56,13 +59,20 @@ export function createSendBroadcastMessage({
   clock,
   pacer,
   reach,
+  pauses,
 }: SendBroadcastMessageDeps): SendBroadcastMessage {
   return {
     async sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text, launchedAt }) {
       const bot = await bots.findByWorkspace(workspaceId);
       if (!bot || (bot.state !== 'connected' && bot.state !== 'taken_over')) return UNAVAILABLE;
       if (bot.telegramBotId !== telegramBotId) return { outcome: 'bot_changed' };
-      if (bot.connectedAt !== null && bot.connectedAt.getTime() > launchedAt.getTime()) {
+      // Stopped working since the launch — connected again, or its token lost and pasted again
+      // (a rotation keeps the epoch): nothing more of it is sent (AC-12).
+      const since = launchedAt.getTime();
+      if (
+        (bot.connectedAt !== null && bot.connectedAt.getTime() > since) ||
+        (bot.stoppedWorkingAt !== null && bot.stoppedWorkingAt.getTime() > since)
+      ) {
         return UNAVAILABLE;
       }
       if (bot.sendPausedUntil && bot.sendPausedUntil.getTime() > clock.now().getTime()) {
@@ -76,8 +86,9 @@ export function createSendBroadcastMessage({
         return UNAVAILABLE;
       }
       await pacer.wait(bot.id);
-      // A rate limit answered to any send of the bot while this one waited for its slot (AC-15).
-      const pausedUntil = (await bots.findByWorkspace(workspaceId))?.sendPausedUntil;
+      // A rate limit answered to any send of the bot while this one waited for its slot (AC-15),
+      // checked without awaiting: nothing may delay the call past its slot (ADR-0008).
+      const pausedUntil = pauses.until(bot.id);
       if (pausedUntil && pausedUntil.getTime() > clock.now().getTime()) {
         return { outcome: 'paused', until: pausedUntil };
       }

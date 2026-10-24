@@ -21,6 +21,7 @@ const PUBLIC_COLUMNS = [
   'last_checked_at',
   'created_at',
   'send_paused_until',
+  'needs_token_at',
 ] as const;
 
 type PublicRow = Pick<Selectable<Bots>, (typeof PUBLIC_COLUMNS)[number]>;
@@ -37,6 +38,7 @@ function toRecord(row: PublicRow): BotRecord {
     lastCheckedAt: row.last_checked_at,
     createdAt: row.created_at,
     sendPausedUntil: row.send_paused_until,
+    stoppedWorkingAt: row.needs_token_at,
   };
 }
 
@@ -141,6 +143,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         .set({
           state,
           last_checked_at: checkedAt,
+          ...(state === 'needs_token' && { needs_token_at: checkedAt }),
           ...(identity && { name: identity.name, username: identity.username }),
         })
         .where('workspace_id', '=', workspaceId)

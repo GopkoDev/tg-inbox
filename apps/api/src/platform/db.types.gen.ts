@@ -35,6 +35,7 @@ export interface Bots {
   id: string;
   last_checked_at: Timestamp | null;
   name: string;
+  needs_token_at: Timestamp | null;
   send_paused_until: Timestamp | null;
   state: string;
   telegram_bot_id: Int8;

@@ -711,6 +711,7 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'add_bots_needs_token_at',
         'create_broadcast_items',
         'create_broadcast_recipients',
         'create_broadcast_group_contacts',
@@ -1226,7 +1227,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 22; i++) {
+      for (let i = 0; i < 23; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -2416,6 +2417,42 @@ describe('broadcasts migrations 03-08 (tables)', () => {
       expect(await state()).toEqual({ tables: [], index: 0 });
       expect((await migrator.migrateToLatest()).error).toBeUndefined();
       expect(await state()).toEqual(full);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+describe('broadcasts migration 09 (bots.needs_token_at)', () => {
+  it('adds a nullable needs_token_at, reverts alone and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const column = async () =>
+        (
+          await sql<{ is_nullable: string; data_type: string }>`
+            SELECT is_nullable, data_type FROM information_schema.columns
+            WHERE table_name = 'bots' AND column_name = 'needs_token_at'`.execute(freshDb)
+        ).rows;
+      expect(await column()).toEqual([
+        { is_nullable: 'YES', data_type: 'timestamp with time zone' },
+      ]);
+      const down = await migrator.migrateDown();
+      expect(down.error).toBeUndefined();
+      expect(down.results?.[0]?.migrationName).toBe('1791681110020_add_bots_needs_token_at');
+      expect(await column()).toEqual([]);
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await column()).toHaveLength(1);
     } finally {
       await freshDb.destroy();
       await fresh.stop();

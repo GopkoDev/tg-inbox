@@ -71,7 +71,11 @@ describe('compareThreadPosition with activity (AC-09)', () => {
 
 describe('thread cursor', () => {
   it('round-trips an activity position', () => {
-    const p: ThreadPosition = { positionAt: t(5, 7), kind: 'activity', id: '0190a1b2-c3d4' };
+    const p: ThreadPosition = {
+      positionAt: t(5, 7),
+      kind: 'activity',
+      id: '0190a1b2-c3d4-7000-8000-000000000001',
+    };
     expect(decodeThreadCursor(encodeThreadCursor(p))).toEqual(p);
   });
 
@@ -83,10 +87,11 @@ describe('thread cursor', () => {
       kind: 'message',
       id: 42n,
     });
-    expect(decodeThreadCursor(old({ k: 't', at, kind: 'reply', id: 'r-1' }))).toEqual({
+    const replyId = '0199a000-0000-7000-8000-0000000000a1';
+    expect(decodeThreadCursor(old({ k: 't', at, kind: 'reply', id: replyId }))).toEqual({
       positionAt: t(5, 123),
       kind: 'reply',
-      id: 'r-1',
+      id: replyId,
     });
   });
 
@@ -95,6 +100,13 @@ describe('thread cursor', () => {
     const at = t(5).getTime();
     expect(decodeThreadCursor(enc({ k: 't', at, kind: 'note', id: 'x' }))).toBeNull();
     expect(decodeThreadCursor(enc({ k: 't', at, kind: 'activity', id: '' }))).toBeNull();
+  });
+
+  it('rejects reply and activity positions whose id is not a UUID (they reach a uuid cast too)', () => {
+    const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const at = t(5).getTime();
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'reply', id: 'r-1' }))).toBeNull();
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'activity', id: 'x' }))).toBeNull();
   });
 
   it('rejects a broadcast position whose id is not a UUID (a crafted cursor is a 400, never a cast error)', () => {
@@ -116,7 +128,11 @@ describe('thread cursor', () => {
   });
 
   it('round-trips a reply position with millisecond precision', () => {
-    const p: ThreadPosition = { positionAt: t(5, 123), kind: 'reply', id: 'abc-123' };
+    const p: ThreadPosition = {
+      positionAt: t(5, 123),
+      kind: 'reply',
+      id: '0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b',
+    };
     expect(decodeThreadCursor(encodeThreadCursor(p))).toEqual(p);
   });
 
@@ -197,11 +213,12 @@ describe('compareThreadPosition with broadcast items (ADR-0010, AC-16)', () => {
   });
 
   it('round-trips a broadcast cursor, and a cursor issued before broadcasts still decodes', () => {
+    const ACTIVITY_ID = '01900000-0000-7000-8000-0000000000aa';
     const p = broadcast(7, '01900000-0000-7000-8000-000000000001');
     expect(decodeThreadCursor(encodeThreadCursor(p))).toEqual(p);
     const old = Buffer.from(
-      JSON.stringify({ k: 't', at: t(7).getTime(), kind: 'activity', id: 'x' }),
+      JSON.stringify({ k: 't', at: t(7).getTime(), kind: 'activity', id: ACTIVITY_ID }),
     ).toString('base64url');
-    expect(decodeThreadCursor(old)).toEqual(activity(7, 'x'));
+    expect(decodeThreadCursor(old)).toEqual(activity(7, ACTIVITY_ID));
   });
 });
