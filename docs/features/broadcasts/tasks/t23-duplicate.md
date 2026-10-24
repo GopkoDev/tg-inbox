@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/duplicate.ts", "apps/api/src/m
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T23 — Add duplicate: any member copies any broadcast into a new draft named "Copy of …" within 80, a draft with its audience, a launched one as the same tags, all recipients or only the recipients it did not reach once ended
@@ -100,10 +100,10 @@ No DB changes. Writes a new `broadcasts` row (`status = 'draft'`, `version` 1, `
 
 ## Checklist
 
-- [ ] RED: unit tests for the choice-vs-source matrix, the copied set per choice (T6's fixable set), the copy name — `apps/api/src/modules/broadcasts/app/duplicate.test.ts`
-- [ ] `duplicateBroadcast(ws, actor, sourceId, { audience, includeNotConfirmed })` in one transaction: read the source (no lock needed beyond a consistent read), insert the draft, copy rows, publish `draft` — `apps/api/src/modules/broadcasts/app/duplicate.ts`
-- [ ] Repository helpers it needs from T15 (`allRecipientContacts`, `notReachedContacts(includeNotConfirmed)`) wired through the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
-- [ ] Integration tests on the AC-13 seed (33 delivered, 1 blocked, 2 `bot_stopped`): all recipients → group of 36; not reached → 2; with stopped and not-confirmed recipients added; still sending → `BROADCAST_NOT_ENDED`; an operator duplicates; the source unchanged — `apps/api/src/modules/broadcasts/app/duplicate.int.test.ts`
+- [x] RED: unit tests for the choice-vs-source matrix, the copied set per choice (T6's fixable set), the copy name — `apps/api/src/modules/broadcasts/app/duplicate.test.ts`
+- [x] `duplicateBroadcast(ws, actor, sourceId, { audience, includeNotConfirmed })` in one transaction: read the source (no lock needed beyond a consistent read), insert the draft, copy rows, publish `draft` — `apps/api/src/modules/broadcasts/app/duplicate.ts`
+- [x] Repository helpers it needs from T15 (`allRecipientContacts`, `notReachedContacts(includeNotConfirmed)`) wired through the ports — `apps/api/src/modules/broadcasts/app/ports.ts`
+- [x] Integration tests on the AC-13 seed (33 delivered, 1 blocked, 2 `bot_stopped`): all recipients → group of 36; not reached → 2; with stopped and not-confirmed recipients added; still sending → `BROADCAST_NOT_ENDED`; an operator duplicates; the source unchanged — `apps/api/src/modules/broadcasts/app/duplicate.int.test.ts`
 
 ## Edge cases
 
@@ -120,6 +120,13 @@ No DB changes. Writes a new `broadcasts` row (`status = 'draft'`, `version` 1, `
 
 ## Definition of Done
 
-- [ ] Unit and integration tests on the AC-13 seed prove a draft copy keeps the text and the 14-contact group, "all recipients" makes a group of all 36 with the blocked one counted unreachable, "only recipients it did not reach" gives the 2 bot_stopped failures (plus stopped recipients and, only with include_not_confirmed, not confirmed ones) and never delivered, blocked or account_gone, the same-tags copy keeps the frozen tags, a not-reached copy of a still-sending broadcast answers BROADCAST_NOT_ENDED, a choice that does not fit the source answers VALIDATION_ERROR, the copy's author is the member and the source is unchanged, and an operator can duplicate. Every duplicate works with no bot row and with a needs-token bot (test plan).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests on the AC-13 seed prove a draft copy keeps the text and the 14-contact group, "all recipients" makes a group of all 36 with the blocked one counted unreachable, "only recipients it did not reach" gives the 2 bot_stopped failures (plus stopped recipients and, only with include_not_confirmed, not confirmed ones) and never delivered, blocked or account_gone, the same-tags copy keeps the frozen tags, a not-reached copy of a still-sending broadcast answers BROADCAST_NOT_ENDED, a choice that does not fit the source answers VALIDATION_ERROR, the copy's author is the member and the source is unchanged, and an operator can duplicate. Every duplicate works with no bot row and with a needs-token bot (test plan).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T23): `createDuplicate` (`broadcasts/app/duplicate.ts`): `duplicateBroadcast(ws, actorAccountId, sourceId, { audience, include_not_confirmed? })`. The source is read without a lock (404 for a foreign id), the choice checked by the domain's `checkDuplicateChoice` (`VALIDATION_ERROR` `details.field: audience`, or `BROADCAST_NOT_ENDED`), then one transaction: the source's group ids / recipient sets read with `tx`, `insertDraft` (version 1, author = last changer = the member, `duplicateName`, same text), `audienceTags.copy` (draft tag audience or `same_tags`, the stored names — at launch for a launched source) or `groups.addMany` (added by the member), and one `draft` signal; the answer is `views.draftView` after the commit.
+- `implement` (T23): the checklist's repository helpers already existed from T15 (`allContactIds`, `notReachedContactIds(includeNotConfirmed)`); no port change was needed. "Did not reach" = fixable failures (`bot_stopped`, `text_refused`, `telegram_error`) + `stopped` (+ `not_confirmed` when asked); delivered, blocked, `account_gone`, `chat_not_found` never.
+- `implement` (T23): RED `Cannot find module './duplicate.js'` (GOOD red); integration (AC-13 seed: 36 → group of 36 with 1 blocked counted unreachable; 2 `bot_stopped`; + stopped / not confirmed; sending → `BROADCAST_NOT_ENDED`; operator author; source unchanged; needs-token bot and no bot row) written after GREEN, green on first run.
+- `implement` (T23): gate — full `pnpm test`: 3 failures, all in the known timing set (`e2e/contacts-load` merge, `notification-load` reply p95, `inbox/http/changes` p95); the three files passed re-run alone. `pnpm lint` clean.
