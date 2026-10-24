@@ -368,6 +368,18 @@ export function fakeAudienceQuery(
       for (const c of list) counts[kind(ws, c.id, bot)] += 1;
       return { audienceSize: list.length, reach: counts };
     },
+    async launchSet(ws, audience, bot, limit) {
+      calls.push(`launchSet:${limit}`);
+      const all = (await members(ws, audience)).sort((x, y) => (x.id < y.id ? -1 : 1));
+      return {
+        total: all.length,
+        rows: all.slice(0, limit).map((c) => ({
+          id: c.id,
+          telegramUserId: c.telegramUserId,
+          reach: kind(ws, c.id, bot),
+        })),
+      };
+    },
     async reachable(ws, audience, bot, limit) {
       calls.push(`reachable:${limit}`);
       return (await members(ws, audience))
@@ -485,6 +497,11 @@ export function fakeTagWritePorts(
     },
     async resolveIds(ws, ids) {
       return store.tags.filter((t) => t.workspaceId === ws && ids.includes(t.id)).map((t) => t.id);
+    },
+    async namesOf(ws, ids) {
+      return store.tags
+        .filter((t) => t.workspaceId === ws && ids.includes(t.id))
+        .map((t) => ({ id: t.id, name: t.name }));
     },
     async lockForKeyShare(ws, id) {
       events.push('lock:key-share');

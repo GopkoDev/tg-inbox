@@ -1,5 +1,11 @@
 import type { Clock } from '../../../platform/clock.js';
-import { LINK_MS, MAX_IN_FLIGHT, nextTurn } from '../domain/sending.js';
+import {
+  LINK_MS,
+  MAX_IN_FLIGHT,
+  STALE_IN_FLIGHT_WINDOW_MS,
+  TURNS_REFRESH_MS,
+  nextTurn,
+} from '../domain/sending.js';
 import {
   outcomeOf,
   type AbortReason,
@@ -24,7 +30,7 @@ import type { Settle } from './settle.js';
 
 export interface SendLinkDeps {
   transaction: Transaction;
-  broadcasts: Pick<BroadcastRepo, 'sendingBroadcasts' | 'lockForUpdate'>;
+  broadcasts: Pick<BroadcastRepo, 'sendingBroadcasts' | 'endedSince' | 'lockForUpdate'>;
   recipients: Pick<
     RecipientRepo,
     | 'resolveStaleInFlight'
@@ -99,10 +105,21 @@ export function createSendLink(deps: SendLinkDeps): SendLink {
       const order = sending.map((b) => b.id);
 
       // Only one link runs per workspace, so a recipient still `sending` was left by a dead link:
-      // not confirmed, with its item at its claim time (AC-11, AC-16).
-      if (order.length > 0) {
+      // not confirmed, with its item at its claim time (AC-11, AC-16). That includes broadcasts
+      // stopped or aborted since that link died (AC-18).
+      const ended = await broadcasts.endedSince(
+        workspaceId,
+        new Date(clock.now().getTime() - STALE_IN_FLIGHT_WINDOW_MS),
+      );
+      const staleScope = [...new Set([...order, ...ended])];
+      if (staleScope.length > 0) {
         summary.staleResolved = await transaction(async (tx) => {
-          const stale = await recipients.resolveStaleInFlight(workspaceId, order, clock.now(), tx);
+          const stale = await recipients.resolveStaleInFlight(
+            workspaceId,
+            staleScope,
+            clock.now(),
+            tx,
+          );
           for (const s of stale) {
             await conversations.recordBroadcastItem(tx, {
               workspaceId,
@@ -134,6 +151,7 @@ export function createSendLink(deps: SendLinkDeps): SendLink {
           telegramBotId: b.launchTelegramBotId!,
           chatId: r.telegramUserId,
           text: b.text,
+          launchedAt: b.launchedAt!,
         });
         const outcome = outcomeOf(toAnswer(answer));
         if ('record' in outcome) {
@@ -141,13 +159,14 @@ export function createSendLink(deps: SendLinkDeps): SendLink {
           await record(b.id, r, outcome.record, at, claimedAt);
           count(outcome.record.state);
         } else if ('requeue' in outcome) {
-          // Nothing was sent: back to waiting, and the link stops at the pause (AC-15).
-          await recipients.backToWaiting(workspaceId, r.id);
+          // Nothing was sent: the link stops claiming at the pause (AC-15), before the recipient
+          // is back to waiting, so this link never claims it again.
           const until =
             'until' in outcome.requeue
               ? outcome.requeue.until
               : new Date(clock.now().getTime() + outcome.requeue.retryAfterSeconds * 1000);
           if (pause.until === null || until > pause.until) pause.until = until;
+          await requeue(b.id, r);
           count('requeued');
         } else {
           done.add(b.id);
@@ -178,6 +197,28 @@ export function createSendLink(deps: SendLinkDeps): SendLink {
           }
           await reports.report(tx, workspaceId, broadcastId);
           await reports.flush(tx, workspaceId);
+        });
+      }
+
+      /**
+       * A rate limit: nothing was sent to `r`, so it waits again — under the row lock, so a
+       * broadcast stopped or aborted meanwhile settles it with its other waiting recipients' outcome
+       * instead of leaving it waiting on an ended broadcast (AC-18, AC-12).
+       */
+      async function requeue(broadcastId: string, r: RecipientRecord) {
+        await transaction(async (tx) => {
+          const row = await broadcasts.lockForUpdate(workspaceId, broadcastId, tx);
+          if (!(await recipients.backToWaiting(workspaceId, r.id, tx))) return;
+          if (row === null || row.status === 'sending') return;
+          const settlement =
+            row.status === 'stopped'
+              ? ({ state: 'stopped' } as const)
+              : ({
+                  state: 'failed',
+                  reason: row.endReason === 'bot_stopped' ? 'bot_stopped' : 'text_refused',
+                } as const);
+          await recipients.settleWaiting(workspaceId, broadcastId, settlement, clock.now(), tx);
+          await reports.report(tx, workspaceId, broadcastId);
         });
       }
 
@@ -216,42 +257,64 @@ export function createSendLink(deps: SendLinkDeps): SendLink {
         return null;
       };
 
+      /** A broadcast launched while the link runs joins the turns within a second (AC-15). */
+      let refreshedAt = clock.now().getTime();
+      async function joinNewlyLaunched() {
+        if (clock.now().getTime() - refreshedAt < TURNS_REFRESH_MS) return;
+        refreshedAt = clock.now().getTime();
+        for (const b of await broadcasts.sendingBroadcasts(workspaceId)) {
+          if (byId.has(b.id)) continue;
+          byId.set(b.id, b);
+          order.push(b.id);
+        }
+      }
+
       // Turns: the lowest waiting position of each sending broadcast, oldest launch first (AC-15).
       let lastServed: string | null = null;
-      while (failures.length === 0 && pause.until === null && clock.now().getTime() < deadline) {
-        if (inFlight.size >= MAX_IN_FLIGHT) {
-          await Promise.race(inFlight);
-          continue;
-        }
-        const id = pickTurn(lastServed);
-        if (id === null) break;
-        lastServed = id;
-        const b = byId.get(id)!;
-        const r = await recipients.nextWaiting(workspaceId, id);
-        if (r === null) {
-          done.add(id);
-          continue;
-        }
-        // The block mark at the turn decides (AC-11, AC-14).
-        if (await contacts.isBlocked(workspaceId, r.contactId, b.launchTelegramBotId!)) {
-          await record(id, r, { state: 'blocked' }, clock.now(), null);
-          count('blocked');
-          continue;
-        }
-        const claimedAt = clock.now();
-        // Committed before the send: a recipient is never sent twice (ADR-0007).
-        if (!(await recipients.claim(workspaceId, r.id, claimedAt))) continue;
-        summary.claimed += 1;
-        const p: Promise<void> = settleTurn(b, r, claimedAt)
-          .catch((error: unknown) => {
-            failures.push(error);
-          })
-          .finally(() => inFlight.delete(p));
-        inFlight.add(p);
+      try {
+        await turns();
+      } finally {
+        // A link never ends with sends of its own still in flight (ADR-0007): a retried link would
+        // otherwise resolve them as not confirmed while they are still answering.
+        await Promise.allSettled(inFlight);
       }
-      await Promise.all(inFlight);
       // A failed turn leaves its recipient `sending`; the retried link resolves it (ADR-0007).
       if (failures.length > 0) throw failures[0];
+
+      async function turns() {
+        while (failures.length === 0 && pause.until === null && clock.now().getTime() < deadline) {
+          if (inFlight.size >= MAX_IN_FLIGHT) {
+            await Promise.race(inFlight);
+            continue;
+          }
+          await joinNewlyLaunched();
+          const id = pickTurn(lastServed);
+          if (id === null) break;
+          lastServed = id;
+          const b = byId.get(id)!;
+          const r = await recipients.nextWaiting(workspaceId, id);
+          if (r === null) {
+            done.add(id);
+            continue;
+          }
+          // The block mark at the turn decides (AC-11, AC-14).
+          if (await contacts.isBlocked(workspaceId, r.contactId, b.launchTelegramBotId!)) {
+            await record(id, r, { state: 'blocked' }, clock.now(), null);
+            count('blocked');
+            continue;
+          }
+          const claimedAt = clock.now();
+          // Committed before the send: a recipient is never sent twice (ADR-0007).
+          if (!(await recipients.claim(workspaceId, r.id, claimedAt))) continue;
+          summary.claimed += 1;
+          const p: Promise<void> = settleTurn(b, r, claimedAt)
+            .catch((error: unknown) => {
+              failures.push(error);
+            })
+            .finally(() => inFlight.delete(p));
+          inFlight.add(p);
+        }
+      }
 
       for (const id of order) await settle.finishIfDone(workspaceId, id);
 

@@ -28,7 +28,11 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
-import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from './modules/bots/app/pacer.js';
+import {
+  BROADCAST_MESSAGES_PER_SECOND,
+  createPacer,
+  type Pacer,
+} from './modules/bots/app/pacer.js';
 import { createSendBroadcastMessage } from './modules/bots/app/send-broadcast-message.js';
 import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
 import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
@@ -116,7 +120,12 @@ import type { Jobs } from './platform/jobs.js';
  */
 export function buildDeps(
   config: Config,
-  overrides: { clock?: Clock; logger?: { info(obj: object, msg: string): void } } = {},
+  overrides: {
+    clock?: Clock;
+    logger?: { info(obj: object, msg: string): void };
+    /** The broadcast pacer (25 per second per bot); load tests pass one that records each start. */
+    broadcastPacer?: Pacer;
+  } = {},
 ) {
   const clock = overrides.clock ?? systemClock;
   const db = createDb(config.DATABASE_URL, {
@@ -361,7 +370,7 @@ export function buildDeps(
       telegram,
       markNeedsToken,
       clock,
-      pacer: createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
+      pacer: overrides.broadcastPacer ?? createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
       reach: contactReach,
     }),
     pingReadiness,
@@ -512,15 +521,10 @@ export function buildDeps(
     tags: createTagRepo(db),
   });
   const broadcastContacts: BroadcastContactsApi = {
-    // Tag names at this moment: the workspace has at most 100 tags (CLAUDE.md), read through the
-    // contacts tag admin's list.
-    resolveTags: async (workspaceId, tagIds) => {
-      const wanted = new Set(tagIds);
-      return (await tagAdmin.listTags(workspaceId)).items
-        .filter((t) => wanted.has(t.id))
-        .map((t) => ({ id: t.id, name: t.name }));
-    },
+    // Tag names at this moment; every audience read joins the caller's transaction when given one.
+    resolveTags: contactAudiences.tagNames,
     audienceBreakdown: contactAudiences.audienceBreakdown,
+    launchAudience: contactAudiences.launchAudience,
     reachableContacts: contactAudiences.reachableContacts,
     isBlocked: contactAudiences.isBlocked,
     matchingContactIds: contactAudiences.matchingContactIds,

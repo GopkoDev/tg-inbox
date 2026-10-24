@@ -13,6 +13,7 @@ import { buildApp } from '../app.js';
 import { buildDeps, type Deps } from '../deps.js';
 import { newId } from '../platform/ids.js';
 import { startJobs, type Jobs } from '../platform/jobs.js';
+import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from '../modules/bots/app/pacer.js';
 import { webhookUrl } from '../modules/bots/app/webhook-url.js';
 import {
   sendAnswers,
@@ -28,6 +29,7 @@ import { insertTelegramLink } from '../test/fixtures/notifications.js';
 import { signedDelivery, telegramMyChatMember } from '../test/fixtures/telegram.js';
 import { insertMembership, insertWorkspace } from '../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../test/postgres.js';
+import { mostInOneSecond, recordingPacer } from '../test/recording-pacer.js';
 import { integrityViolations } from './helpers.js';
 
 const ORIGIN = 'http://localhost:5173';
@@ -43,12 +45,6 @@ const STOP_EFFECT_MS = 2 * SECOND;
 const BLOCK_FRESHNESS_MS = 5 * SECOND;
 const REPORT_LIVE_P95_MS = 3 * SECOND;
 const OTHER_WORKSPACE_SLACK_MS = 1 * SECOND;
-/**
- * The fake records when a send *reaches* it, not when the sender started it: a few ms of transport
- * jitter between two sends 25 slots apart can bring the 26th arrival a hair inside one second of
- * the first although their starts were 1 000 ms apart (the same allowance as the bots pacer test).
- */
-const ARRIVAL_JITTER_MS = 10;
 
 /**
  * Broadcast sending at pilot scale (spec §6, test-plan "NFR validation (load)"), the single-run CI
@@ -69,6 +65,8 @@ describe(
     let app: FastifyInstance;
     let boss: Jobs;
     let nextUpdate = 1;
+    /** The app's broadcast pacer, recording each start per bot. */
+    const pacer = recordingPacer(createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }));
     const touched: string[] = [];
 
     beforeAll(async () => {
@@ -76,7 +74,7 @@ describe(
       fake = await startFakeTelegram();
       const config = { ...testConfig(database.url), TELEGRAM_API_ROOT: fake.apiRoot };
       deps = buildDeps(config);
-      app = await buildApp(config);
+      app = await buildApp(config, { broadcastPacer: pacer });
       await app.ready();
       // `deps.startPings` queues on this database; the app's workers run the sweep.
       boss = await startJobs(database.url);
@@ -292,17 +290,6 @@ describe(
           at: times[i]!,
         }));
     };
-    /** The most sends of `times` in any 1 s window (less the arrival jitter allowance). */
-    const maxPerSecond = (times: number[]) => {
-      const sorted = [...times].sort((a, b) => a - b);
-      let most = 0;
-      for (const [i, t] of sorted.entries()) {
-        let n = 0;
-        for (let j = i; j < sorted.length && sorted[j]! < t + SECOND - ARRIVAL_JITTER_MS; j++) n++;
-        most = Math.max(most, n);
-      }
-      return most;
-    };
     /** Sends a reply and times it from the request to the reply being accepted by Telegram. */
     async function timedReply(w: W, conversationId: string, text: string) {
       const started = performance.now();
@@ -347,58 +334,48 @@ describe(
     }
 
     it('two broadcasts of one bot sending together take turns and no 1 s window holds more than 25 of its sends (AC-15)', async () => {
-      /**
-       * One run: two broadcasts of 150 sending together, Telegram answering after 50 ms. The fake
-       * shares the test's event loop, so a stall on a loaded machine bunches the recorded arrivals;
-       * like the other timing checks here, the budget holds when one of up to three runs meets it
-       * (a pacer above 25 per second exceeds it in every run).
-       */
-      async function run(attempt: number) {
-        const w = await seed({
-          name: `Pace Flowers ${attempt}`,
-          reachable: 300,
-          tags: [
-            { name: 'P1', from: 1, to: 150 },
-            { name: 'P2', from: 151, to: 300 },
-          ],
-        });
-        w.script({ sendMessage: Array.from({ length: 300 }, () => sendAnswers.hang(50)) });
-        const one = await tagDraft(w, 'First', { mode: 'any', tags: ['P1'] });
-        const two = await tagDraft(w, 'Second', { mode: 'any', tags: ['P2'] });
-        await launch(w, await confirmation(w, one.id));
-        await launch(w, await confirmation(w, two.id));
-        const a = await settled(w, one.id, 60 * SECOND);
-        const b = await settled(w, two.id, 60 * SECOND);
-        expect(a.totals.delivered).toBe(150);
-        expect(b.totals.delivered).toBe(150);
+      // Two broadcasts of 150 sending together, Telegram answering after 50 ms.
+      const w = await seed({
+        name: 'Pace Flowers',
+        reachable: 300,
+        tags: [
+          { name: 'P1', from: 1, to: 150 },
+          { name: 'P2', from: 151, to: 300 },
+        ],
+      });
+      w.script({ sendMessage: Array.from({ length: 300 }, () => sendAnswers.hang(50)) });
+      const one = await tagDraft(w, 'First', { mode: 'any', tags: ['P1'] });
+      const two = await tagDraft(w, 'Second', { mode: 'any', tags: ['P2'] });
+      await launch(w, await confirmation(w, one.id));
+      await launch(w, await confirmation(w, two.id));
+      const a = await settled(w, one.id, 60 * SECOND);
+      const b = await settled(w, two.id, 60 * SECOND);
+      expect(a.totals.delivered).toBe(150);
+      expect(b.totals.delivered).toBe(150);
 
-        const sends = sendsOf(w.token);
-        expect(sends).toHaveLength(300);
-        expect(new Set(sends.map((s) => s.chat)).size).toBe(300);
-        // Turns: in the first half of the run both broadcasts are sending, neither waits.
-        const half = sends.slice(0, 150);
-        const firsts = half.filter((s) => s.text === 'First text').length;
-        log(
-          `send order, run ${attempt} (F/S in tens)`,
-          Array.from({ length: 30 }, (_, i) =>
-            sends
-              .slice(i * 10, i * 10 + 10)
-              .filter((x) => x.text === 'First text')
-              .length.toString(),
-          ).join(''),
-        );
-        expect(firsts).toBeGreaterThanOrEqual(60);
-        expect(150 - firsts).toBeGreaterThanOrEqual(60);
-        expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
-        return maxPerSecond(sends.map((s) => s.at));
-      }
-      const seen: number[] = [];
-      for (let attempt = 1; attempt <= 3; attempt++) {
-        seen.push(await run(attempt));
-        if (seen.at(-1)! <= PACE_PER_SECOND) break;
-      }
-      log('most broadcast sends of one bot in a 1 s window (per run)', seen.join(' / '));
-      expect(Math.min(...seen)).toBeLessThanOrEqual(PACE_PER_SECOND);
+      const sends = sendsOf(w.token);
+      expect(sends).toHaveLength(300);
+      expect(new Set(sends.map((s) => s.chat)).size).toBe(300);
+      log(
+        'send order (F/S in tens)',
+        Array.from({ length: 30 }, (_, i) =>
+          sends
+            .slice(i * 10, i * 10 + 10)
+            .filter((x) => x.text === 'First text')
+            .length.toString(),
+        ).join(''),
+      );
+      // Turns: in the first half of the run both broadcasts are sending, neither waits.
+      const firsts = sends.slice(0, 150).filter((s) => s.text === 'First text').length;
+      expect(firsts).toBeGreaterThanOrEqual(60);
+      expect(150 - firsts).toBeGreaterThanOrEqual(60);
+      expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
+      // The ceiling, on every run: the starts the pacer released for this bot.
+      const starts = pacer.starts(w.hook.id);
+      expect(starts).toHaveLength(300);
+      const most = mostInOneSecond(starts);
+      log('most broadcast sends of one bot in a 1 s window', most);
+      expect(most).toBeLessThanOrEqual(PACE_PER_SECOND);
     });
 
     it('1 000 recipients with a 150 ms answer all have an outcome within 90 s; replies meanwhile keep p95 ≤ 2 s; the report re-read shows an outcome within 3 s; another workspace’s replies and pings stay within 1 s of their idle p95 (AC-11, AC-15)', async () => {

@@ -68,9 +68,9 @@ export function createGroupRepo(db: Db): GroupRepo {
       return result.numDeletedRows > 0n;
     },
 
-    async membership(workspaceId, broadcastId, contactIds) {
+    async membership(workspaceId, broadcastId, contactIds, tx) {
       if (contactIds.length === 0) return [];
-      const rows = await ofGroup(db, workspaceId, broadcastId)
+      const rows = await ofGroup(tx ?? db, workspaceId, broadcastId)
         .select('contact_id')
         .where('contact_id', 'in', [...contactIds])
         .execute();

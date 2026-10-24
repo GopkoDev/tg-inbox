@@ -5,6 +5,7 @@ import { sendAnswers, startFakeTelegram, type FakeTelegram } from '../../../test
 import { insertBot, testBotKey, type InsertedBot } from '../../../test/fixtures/bots.js';
 import { insertContact } from '../../../test/fixtures/contacts.js';
 import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
+import { mostInOneSecond, recordingPacer } from '../../../test/recording-pacer.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createContactReach } from '../../contacts/app/reach.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
@@ -25,6 +26,7 @@ describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14,
   let fake: FakeTelegram;
   let send: ReturnType<typeof createSendBroadcastMessage>;
   let sendText: ReturnType<typeof createSendText>;
+  const pacer = recordingPacer(createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }));
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -50,7 +52,7 @@ describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14,
       telegram,
       markNeedsToken,
       clock: systemClock,
-      pacer: createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
+      pacer,
       reach,
     });
     sendText = createSendText({ bots, telegram, markNeedsToken, clock: systemClock, reach });
@@ -74,6 +76,7 @@ describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14,
     telegramBotId: b.bot.telegramBotId,
     chatId,
     text: 'Spring prices',
+    launchedAt: new Date(),
   });
 
   it("two workspaces' bots never cross: each send goes through its own token only", async () => {
@@ -104,17 +107,11 @@ describe('sendBroadcastMessage against the fake Bot API (Postgres; AC-08, AC-14,
     expect(reply.outcome).toBe('accepted');
     expect(replyMs).toBeLessThan(400);
     expect(outcomes.every((o) => o.outcome === 'delivered')).toBe(true);
-    const times = fake.sendTimes(b.token);
-    expect(times).toHaveLength(41);
-    const broadcastTimes = fake
-      .calls(b.token)
-      .map((c, i) => ({ c, at: times[i]! }))
-      .filter(({ c }) => c.params.text === 'Spring prices')
-      .map(({ at }) => at);
-    for (const [i, t] of broadcastTimes.entries()) {
-      // Small scheduler jitter aside, a window of one second never holds more than 25 starts.
-      expect(broadcastTimes.filter((x, j) => j >= i && x < t + 990).length).toBeLessThanOrEqual(25);
-    }
+    expect(fake.sendTimes(b.token)).toHaveLength(41);
+    // The starts the pacer released: 40 ms apart at least, so no 1 s window holds more than 25.
+    const starts = pacer.starts(b.bot.id);
+    expect(starts).toHaveLength(40);
+    expect(mostInOneSecond(starts)).toBeLessThanOrEqual(25);
   });
 
   it('a 429 stores send_paused_until; the next send answers paused with no Telegram call', async () => {

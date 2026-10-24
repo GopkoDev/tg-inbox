@@ -4,6 +4,8 @@ import {
   type AudienceQuery,
   type AudienceSpec,
   type ContactCard,
+  type Executor,
+  type LaunchAudience,
   type ReachableContact,
   type TagFilterMode,
   type TagRepo,
@@ -14,7 +16,7 @@ export const REACHABLE_LIMIT = 10_001;
 
 export interface ContactAudiencesDeps {
   audiences: AudienceQuery;
-  tags: Pick<TagRepo, 'resolveIds'>;
+  tags: Pick<TagRepo, 'resolveIds' | 'namesOf'>;
 }
 
 /**
@@ -34,12 +36,29 @@ export interface ContactAudiences {
     telegramBotId: bigint,
     limit?: number,
   ): Promise<ReachableContact[]>;
+  /**
+   * The breakdown and the reachable contacts from one statement, so the count and the set always
+   * agree (AC-06); joins the caller's transaction when given one.
+   */
+  launchAudience(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    tx?: Executor,
+  ): Promise<LaunchAudience>;
   /** The ids that are (still) tags of the workspace. */
-  existingTags(workspaceId: string, tagIds: readonly string[]): Promise<string[]>;
+  existingTags(workspaceId: string, tagIds: readonly string[], tx?: Executor): Promise<string[]>;
+  /** The given ids that are tags of the workspace, with their current names. */
+  tagNames(
+    workspaceId: string,
+    tagIds: readonly string[],
+    tx?: Executor,
+  ): Promise<{ id: string; name: string }[]>;
   /** The Contacts list's matching set for a search and a tag filter, sorted by id. */
   matchingContactIds(
     workspaceId: string,
     filter: { q?: string | null; mode: TagFilterMode; tagIds: readonly string[] },
+    tx?: Executor,
   ): Promise<string[]>;
   contactCards(
     workspaceId: string,
@@ -55,22 +74,28 @@ export function createContactAudiences({
   audiences,
   tags,
 }: ContactAudiencesDeps): ContactAudiences {
-  const existing = async (workspaceId: string, ids: readonly string[]) => {
+  const existing = async (workspaceId: string, ids: readonly string[], tx?: Executor) => {
     const requested = [...new Set(ids)];
     if (requested.length === 0) return [];
-    const found = new Set(await tags.resolveIds(workspaceId, requested));
+    const found = new Set(await tags.resolveIds(workspaceId, requested, tx));
     return requested.filter((id) => found.has(id));
   };
 
   /** Tags that are gone are left out of the evaluation; a group's ids are deduplicated. */
-  const resolved = async (workspaceId: string, audience: AudienceSpec): Promise<AudienceSpec> =>
+  const resolved = async (
+    workspaceId: string,
+    audience: AudienceSpec,
+    tx?: Executor,
+  ): Promise<AudienceSpec> =>
     audience.kind === 'ids'
       ? { kind: 'ids', contactIds: [...new Set(audience.contactIds)] }
       : {
           kind: 'tags',
           mode: audience.mode,
-          include: audience.mode === 'none' ? [] : await existing(workspaceId, audience.include),
-          exclude: audience.mode === 'none' ? [] : await existing(workspaceId, audience.exclude),
+          include:
+            audience.mode === 'none' ? [] : await existing(workspaceId, audience.include, tx),
+          exclude:
+            audience.mode === 'none' ? [] : await existing(workspaceId, audience.exclude, tx),
         };
 
   const isEmptyGroup = (audience: AudienceSpec) =>
@@ -94,15 +119,51 @@ export function createContactAudiences({
       );
     },
 
+    async launchAudience(workspaceId, audience, telegramBotId, tx) {
+      if (isEmptyGroup(audience))
+        return { audienceSize: 0, reach: { ...EMPTY_REACH }, reachable: [] };
+      const set = await audiences.launchSet(
+        workspaceId,
+        await resolved(workspaceId, audience, tx),
+        telegramBotId,
+        REACHABLE_LIMIT,
+        tx,
+      );
+      if (set.total > set.rows.length)
+        return { audienceSize: set.total, reach: null, reachable: [] };
+      const reach = { ...EMPTY_REACH };
+      for (const r of set.rows) reach[r.reach] += 1;
+      return {
+        audienceSize: set.total,
+        reach,
+        reachable: set.rows
+          .filter((r) => r.reach === 'reachable')
+          .map((r) => ({ id: r.id, telegramUserId: r.telegramUserId })),
+      };
+    },
+
     existingTags: existing,
 
-    async matchingContactIds(workspaceId, filter) {
-      const tagIds = filter.mode === 'none' ? [] : await existing(workspaceId, filter.tagIds);
-      return audiences.matchingIds(workspaceId, {
-        q: normalizeSearchQuery(filter.q ?? ''),
-        mode: filter.mode,
-        tagIds,
-      });
+    async tagNames(workspaceId, tagIds, tx) {
+      const requested = [...new Set(tagIds)];
+      if (requested.length === 0) return [];
+      const names = new Map(
+        (await tags.namesOf(workspaceId, requested, tx)).map((t) => [t.id, t.name]),
+      );
+      return requested.flatMap((id) => (names.has(id) ? [{ id, name: names.get(id)! }] : []));
+    },
+
+    async matchingContactIds(workspaceId, filter, tx) {
+      const tagIds = filter.mode === 'none' ? [] : await existing(workspaceId, filter.tagIds, tx);
+      return audiences.matchingIds(
+        workspaceId,
+        {
+          q: normalizeSearchQuery(filter.q ?? ''),
+          mode: filter.mode,
+          tagIds,
+        },
+        tx,
+      );
     },
 
     async contactCards(workspaceId, contactIds, telegramBotId) {

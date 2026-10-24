@@ -210,6 +210,36 @@ describe('contacts audience evaluation (ADR-0004)', () => {
     });
   });
 
+  describe('launchAudience (AC-06, AC-05)', () => {
+    it('counts exactly the reachable set it returns, in one statement, inside a transaction', async () => {
+      const got = await db
+        .transaction()
+        .execute((tx) => audiences.launchAudience(a.workspaceId, vipNotStaff(), BOT, tx));
+      expect(got.audienceSize).toBe(38);
+      expect(got.reach).toEqual({ blocked: 2, neverWrote: 0, reachable: 36 });
+      expect(got.reachable.map((r) => r.id)).toEqual(a.c.slice(4, 40).sort());
+      expect(got.reachable).toEqual(
+        await audiences.reachableContacts(a.workspaceId, vipNotStaff(), BOT),
+      );
+    });
+
+    it('never sees another workspace (the same ids and Telegram bot id)', async () => {
+      const got = await audiences.launchAudience(
+        a.workspaceId,
+        { kind: 'ids', contactIds: [...audienceIds(), ...b.c] },
+        BOT,
+      );
+      expect(got.audienceSize).toBe(38);
+      expect(got.reachable.map((r) => r.id)).toEqual(a.c.slice(4, 40).sort());
+    });
+
+    it('names tags of the workspace only', async () => {
+      expect(await audiences.tagNames(a.workspaceId, [a.vip, b.vip])).toEqual([
+        { id: a.vip, name: 'VIP' },
+      ]);
+    });
+  });
+
   describe('existingTags (AC-01)', () => {
     it('drops ids that are not (or no longer) tags of the workspace', async () => {
       const gone = await insertTag(db, {

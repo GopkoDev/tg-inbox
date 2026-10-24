@@ -38,11 +38,12 @@ import { buildDeps } from './deps.js';
 /** Largest client frame the live socket accepts; bigger frames close it with 1009. */
 const LIVE_TRANSPORT_MAX_BYTES = 8 * 1024;
 import type { Clock } from './platform/clock.js';
+import type { Pacer } from './modules/bots/app/pacer.js';
 
 /** Composition root: builds every dependency and registers every module plugin. */
 export async function buildApp(
   config: Config,
-  overrides: { clock?: Clock; logStream?: DestinationStream } = {},
+  overrides: { clock?: Clock; logStream?: DestinationStream; broadcastPacer?: Pacer } = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: loggerOptions(config, overrides.logStream), frameworkErrors });
   app.setValidatorCompiler(validatorCompiler);

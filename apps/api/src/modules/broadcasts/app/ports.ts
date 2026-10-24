@@ -7,6 +7,7 @@ import type {
   AudienceBreakdown,
   AudienceSpec,
   ContactCard,
+  LaunchAudience,
   ReachableContact,
 } from '../../contacts/app/ports.js';
 import type { AudienceTagKind, StoredAudienceTag, TagMode } from '../domain/audience.js';
@@ -120,6 +121,8 @@ export interface BroadcastRepo {
   tenthNewestLaunchedAt(workspaceId: string, tx?: Executor): Promise<Date | null>;
   /** The workspace's sending broadcasts, oldest launch first. */
   sendingBroadcasts(workspaceId: string, tx?: Executor): Promise<BroadcastRecord[]>;
+  /** Ids of the workspace's broadcasts that ended (stopped or sent) at or after `since`. */
+  endedSince(workspaceId: string, since: Date, tx?: Executor): Promise<string[]>;
   /**
    * `sending` → `stopped` by `actorAccountId` at `at` (stopped and ended at, end reason `stopped`,
    * last change); false when the broadcast is not sending (AC-18).
@@ -221,6 +224,7 @@ export interface GroupRepo {
     workspaceId: string,
     broadcastId: string,
     contactIds: readonly string[],
+    tx?: Executor,
   ): Promise<string[]>;
   count(workspaceId: string, broadcastId: string, tx?: Executor): Promise<number>;
   /** Every contact id of the group, sorted. */
@@ -357,7 +361,7 @@ export interface BroadcastSignals {
   ): Promise<void>;
 }
 
-export type { AudienceBreakdown, AudienceSpec, ContactCard, ReachableContact };
+export type { AudienceBreakdown, AudienceSpec, ContactCard, LaunchAudience, ReachableContact };
 
 /** What `broadcasts` asks the `contacts` app layer (sad.md §5, ADR-0004). */
 export interface ContactsApi {
@@ -365,6 +369,7 @@ export interface ContactsApi {
   resolveTags(
     workspaceId: string,
     tagIds: readonly string[],
+    tx?: Executor,
   ): Promise<{ id: string; name: string }[]>;
   /** The audience's size and, for a Telegram bot, blocked / never wrote / reachable (ADR-0004). */
   audienceBreakdown(
@@ -372,6 +377,17 @@ export interface ContactsApi {
     audience: AudienceSpec,
     telegramBotId: bigint | null,
   ): Promise<AudienceBreakdown>;
+  /**
+   * The launch's audience in one statement (AC-06): its size, and — when within the limit — the
+   * blocked / never wrote / reachable split and exactly the reachable contacts it counts, sorted
+   * by contact id. Joins the launch transaction.
+   */
+  launchAudience(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    tx?: Executor,
+  ): Promise<LaunchAudience>;
   /** The reachable contacts for the bot, sorted by contact id, at most `limit` (10 001). */
   reachableContacts(
     workspaceId: string,
@@ -385,6 +401,7 @@ export interface ContactsApi {
   matchingContactIds(
     workspaceId: string,
     filter: { q?: string | null; mode: TagMode; tagIds: readonly string[] },
+    tx?: Executor,
   ): Promise<string[]>;
   /** Cards of the workspace's contacts among `contactIds`, in that order; others are left out. */
   contactCards(
@@ -409,6 +426,7 @@ export interface BroadcastSender {
     telegramBotId: bigint;
     chatId: bigint;
     text: string;
+    launchedAt: Date;
   }): Promise<BroadcastSendOutcome>;
 }
 

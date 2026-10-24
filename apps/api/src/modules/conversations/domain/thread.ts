@@ -39,6 +39,8 @@ function decode(cursor: string): Record<string, unknown> | null {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function toDate(ms: unknown): Date | null {
   if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
   const d = new Date(ms);
@@ -56,7 +58,8 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
   if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
   if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
-  if (o.kind === 'broadcast') return { positionAt, kind: 'broadcast', id: o.id };
+  // A broadcast item id reaches a `::uuid` cast: anything else is a crafted cursor (400).
+  if (o.kind === 'broadcast' && UUID.test(o.id)) return { positionAt, kind: 'broadcast', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };
   }

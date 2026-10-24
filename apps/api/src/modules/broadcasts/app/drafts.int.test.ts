@@ -230,7 +230,7 @@ describe('draft use cases (Postgres; AC-01, AC-03, AC-07, AC-09)', () => {
     const other = await insertMembership(deps.db, a.workspaceId, { role: 'operator' });
     await expect(
       drafts.deleteDraft(a.workspaceId, { accountId: gone.accountId, role: 'owner' }, d.id),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'ACCESS_REMOVED' });
     await expect(
       drafts.deleteDraft(a.workspaceId, { accountId: other.accountId, role: 'operator' }, d.id),
     ).rejects.toMatchObject({ code: 'FORBIDDEN' });

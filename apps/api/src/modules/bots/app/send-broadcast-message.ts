@@ -28,6 +28,11 @@ export interface SendBroadcastRequest {
   chatId: bigint;
   /** Sent exactly as given (already trimmed at save), as plain text. */
   text: string;
+  /**
+   * When the broadcast was launched: a bot connected again since (after a disconnect or a lost
+   * token) stopped working meanwhile, so nothing more of it is sent (AC-12).
+   */
+  launchedAt: Date;
 }
 
 export interface SendBroadcastMessage {
@@ -53,10 +58,13 @@ export function createSendBroadcastMessage({
   reach,
 }: SendBroadcastMessageDeps): SendBroadcastMessage {
   return {
-    async sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text }) {
+    async sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text, launchedAt }) {
       const bot = await bots.findByWorkspace(workspaceId);
       if (!bot || (bot.state !== 'connected' && bot.state !== 'taken_over')) return UNAVAILABLE;
       if (bot.telegramBotId !== telegramBotId) return { outcome: 'bot_changed' };
+      if (bot.connectedAt !== null && bot.connectedAt.getTime() > launchedAt.getTime()) {
+        return UNAVAILABLE;
+      }
       if (bot.sendPausedUntil && bot.sendPausedUntil.getTime() > clock.now().getTime()) {
         return { outcome: 'paused', until: bot.sendPausedUntil };
       }
@@ -68,6 +76,11 @@ export function createSendBroadcastMessage({
         return UNAVAILABLE;
       }
       await pacer.wait(bot.id);
+      // A rate limit answered to any send of the bot while this one waited for its slot (AC-15).
+      const pausedUntil = (await bots.findByWorkspace(workspaceId))?.sendPausedUntil;
+      if (pausedUntil && pausedUntil.getTime() > clock.now().getTime()) {
+        return { outcome: 'paused', until: pausedUntil };
+      }
       const sent = await telegram.sendBroadcast(found.token, chatId, text, SEND_TIMEOUT);
       switch (sent.outcome) {
         case 'accepted':

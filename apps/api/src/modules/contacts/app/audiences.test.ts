@@ -19,6 +19,11 @@ async function setup() {
           .filter((t) => t.workspaceId === ws && ids.includes(t.id))
           .map((t) => t.id);
       },
+      async namesOf(ws, ids) {
+        return store.tags
+          .filter((t) => t.workspaceId === ws && ids.includes(t.id))
+          .map((t) => ({ id: t.id, name: t.name }));
+      },
     },
   });
   let n = 0;

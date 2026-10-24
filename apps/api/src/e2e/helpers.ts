@@ -497,6 +497,19 @@ export const broadcastIntegrity = {
       .where('i.workspace_id', '=', workspaceId)
       .where('r.state', 'is distinct from', sql<string>`i.state`)
       .execute(),
+
+  /** 9. Recipients still waiting on a broadcast that ended (stopped or sent): never settled (AC-18). */
+  waitingOnEnded: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcast_recipients as r')
+      .innerJoin('broadcasts as b', (j) =>
+        j.onRef('b.workspace_id', '=', 'r.workspace_id').onRef('b.id', '=', 'r.broadcast_id'),
+      )
+      .select('r.id')
+      .where('r.workspace_id', '=', workspaceId)
+      .where('r.state', '=', 'waiting')
+      .where('b.status', 'in', ['sent', 'stopped'])
+      .execute(),
 };
 
 /** Every integrity query for each workspace: every list must be empty. `asOf` is the test clock's now. */
@@ -552,6 +565,7 @@ export async function integrityViolations(
     note('links-across-workspaces', workspaceId, await c.linksAcrossWorkspaces(db, workspaceId));
     note('links-without-history', workspaceId, await c.linksWithoutHistory(db, workspaceId));
     const b = broadcastIntegrity;
+    note('broadcast-waiting-on-ended', workspaceId, await b.waitingOnEnded(db, workspaceId));
     note(
       'broadcast-sending-without-link',
       workspaceId,

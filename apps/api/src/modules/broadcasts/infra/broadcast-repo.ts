@@ -187,6 +187,17 @@ export function createBroadcastRepo(db: Db): BroadcastRepo {
       return rows.map(toBroadcast);
     },
 
+    async endedSince(workspaceId, since, tx) {
+      const rows = await (tx ?? db)
+        .selectFrom('broadcasts')
+        .select('id')
+        .where('workspace_id', '=', workspaceId)
+        .where('status', 'in', ['sent', 'stopped'])
+        .where('ended_at', '>=', since)
+        .execute();
+      return rows.map((r) => r.id);
+    },
+
     async lockLaunches(workspaceId, tx) {
       await sql`SELECT pg_advisory_xact_lock(hashtextextended(${`broadcast-launches:${workspaceId}`}, 0))`.execute(
         tx,

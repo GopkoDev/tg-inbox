@@ -97,6 +97,18 @@ describe('thread cursor', () => {
     expect(decodeThreadCursor(enc({ k: 't', at, kind: 'activity', id: '' }))).toBeNull();
   });
 
+  it('rejects a broadcast position whose id is not a UUID (a crafted cursor is a 400, never a cast error)', () => {
+    const enc = (o: object) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const at = t(5).getTime();
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'broadcast', id: 'x' }))).toBeNull();
+    const id = '0199a000-0000-7000-8000-000000000001';
+    expect(decodeThreadCursor(enc({ k: 't', at, kind: 'broadcast', id }))).toEqual({
+      positionAt: t(5),
+      kind: 'broadcast',
+      id,
+    });
+  });
+
   it('round-trips a message position', () => {
     const c = encodeThreadCursor(msg(5, 123456789012n));
     const back = decodeThreadCursor(c);

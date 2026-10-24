@@ -130,6 +130,17 @@ export function fakeBroadcastRepo(s: FakeBroadcastStore): BroadcastRepo & { lock
         .sort((a, b) => a.launchedAt!.getTime() - b.launchedAt!.getTime())
         .map((b) => ({ ...b }));
     },
+    async endedSince(workspaceId, since) {
+      return s.broadcasts
+        .filter(
+          (b) =>
+            b.workspaceId === workspaceId &&
+            (b.status === 'sent' || b.status === 'stopped') &&
+            b.endedAt !== null &&
+            b.endedAt.getTime() >= since.getTime(),
+        )
+        .map((b) => b.id);
+    },
     async markStopped(workspaceId, id, actor, at) {
       const row = find(s, workspaceId, id);
       if (!row || row.status !== 'sending') return false;
@@ -352,6 +363,24 @@ export function fakeContactsApi(): ContactsApi & {
       return tagIds
         .filter((id) => own(workspaceId).has(id))
         .map((id) => ({ id, name: own(workspaceId).get(id)! }));
+    },
+    async launchAudience(workspaceId, audience, telegramBotId) {
+      const found = members(workspaceId, audience);
+      const reachable = found
+        .filter((c) => !c.blocked?.has(telegramBotId) && c.wroteTo?.includes(telegramBotId))
+        .map((c) => ({ id: c.id, telegramUserId: BigInt(`0x${c.id.slice(-8)}`) }))
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      if (found.length > 10_000) return { audienceSize: found.length, reach: null, reachable: [] };
+      const blocked = found.filter((c) => c.blocked?.has(telegramBotId)).length;
+      return {
+        audienceSize: found.length,
+        reach: {
+          blocked,
+          neverWrote: found.length - blocked - reachable.length,
+          reachable: reachable.length,
+        },
+        reachable,
+      };
     },
     async reachableContacts(workspaceId, audience, telegramBotId, limit = 10_001) {
       return members(workspaceId, audience)

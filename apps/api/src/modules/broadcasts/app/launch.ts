@@ -76,6 +76,7 @@ export function createLaunchBroadcast(deps: LaunchBroadcastDeps): LaunchBroadcas
         await contacts.resolveTags(
           row.workspaceId,
           stored.map((t) => t.tagId),
+          tx,
         )
       ).map((t) => [t.id, t.name]),
     );

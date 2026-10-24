@@ -65,6 +65,18 @@ describe('report coalescing (events.md assumption 3)', () => {
     expect(c.shouldPublish('a', 2000)).toBe(true);
     expect(c.flushDue(5000)).toEqual([]);
   });
+  it('forgets a broadcast once its second has passed with nothing owed, so memory stays bounded', () => {
+    const c = new ReportCoalescer();
+    c.shouldPublish('a', 0);
+    c.shouldPublish('b', 0);
+    c.shouldPublish('b', 10);
+    expect(c.flushDue(1000)).toEqual(['b']);
+    expect(c.tracked()).toEqual(['b']);
+    expect(c.flushDue(2000)).toEqual([]);
+    expect(c.tracked()).toEqual([]);
+    // Forgotten means free to publish at once, as after any quiet second.
+    expect(c.shouldPublish('a', 2001)).toBe(true);
+  });
   it('pending lists the broadcasts that still owe a publish', () => {
     const c = new ReportCoalescer();
     c.shouldPublish('a', 0);

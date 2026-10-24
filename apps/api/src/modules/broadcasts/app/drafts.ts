@@ -11,6 +11,7 @@ import {
 } from '@tg/shared';
 import type { Clock } from '../../../platform/clock.js';
 import {
+  AccessRemovedError,
   BroadcastDraftChangedError,
   BroadcastGroupChangedError,
   BroadcastNameInvalidError,
@@ -266,14 +267,15 @@ export function createDrafts(deps: DraftsDeps): Drafts {
       await transaction(async (tx) => {
         // Lock order (sad.md §8): the membership FOR SHARE, then the broadcast row.
         const active = await workspaces.lockActiveMembers(tx, workspaceId, [actor.accountId]);
+        if (!active.includes(actor.accountId)) {
+          throw new AccessRemovedError('Your access to this workspace was removed');
+        }
         const row = await lockDraft(tx, workspaceId, broadcastId);
-        const allowed =
-          active.includes(actor.accountId) &&
-          canDelete({
-            role: actor.role,
-            accountId: actor.accountId,
-            authorId: row.authorAccountId,
-          });
+        const allowed = canDelete({
+          role: actor.role,
+          accountId: actor.accountId,
+          authorId: row.authorAccountId,
+        });
         if (!allowed) {
           throw new ForbiddenError('A draft is deleted by its author or a business owner.');
         }

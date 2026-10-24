@@ -7,6 +7,14 @@ export const START_SPACING_MS = 1000 / PACE_PER_SECOND;
 export const MAX_IN_FLIGHT = 8;
 /** One link of the chain runs at most this long, then queues its successor. */
 export const LINK_MS = 20_000;
+/** A link re-reads the sending broadcasts this often, so a new launch joins the turns (AC-15). */
+export const TURNS_REFRESH_MS = 1_000;
+/**
+ * A link resolves recipients left in flight by a dead link on broadcasts still sending and on
+ * those ended this recently: a stop or abort can land between the dead link and its retry, which
+ * comes within the job's retries and the dead-letter restart (minutes).
+ */
+export const STALE_IN_FLIGHT_WINDOW_MS = 3_600_000;
 /** A send with no answer after this is not confirmed. */
 export const SEND_TIMEOUT_MS = 10_000;
 /** `broadcast.changed report` at most once per second per broadcast. */
@@ -54,6 +62,10 @@ export class ReportCoalescer {
       const last = this.lastAt.get(id) ?? -Infinity;
       if (now - last >= this.windowMs) due.push(id);
     }
+    // A broadcast quiet for a whole second owes nothing and needs no memory: forget it.
+    for (const [id, last] of this.lastAt) {
+      if (!this.owed.has(id) && now - last >= this.windowMs) this.lastAt.delete(id);
+    }
     for (const id of due) {
       this.owed.delete(id);
       this.lastAt.set(id, now);
@@ -69,6 +81,11 @@ export class ReportCoalescer {
       wait = Math.max(wait, last + this.windowMs - now);
     }
     return wait;
+  }
+
+  /** The broadcasts the coalescer still remembers (tests: memory stays bounded). */
+  tracked(): string[] {
+    return [...this.lastAt.keys()];
   }
 
   /** The broadcasts that still owe a publish (for the link's final flush). */

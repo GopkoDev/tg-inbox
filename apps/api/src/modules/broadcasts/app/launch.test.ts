@@ -18,7 +18,13 @@ import {
   type FakeContact,
 } from './fakes.js';
 import { createLaunchBroadcast } from './launch.js';
-import type { AudienceTagRow, BroadcastRecord, BroadcastView } from './ports.js';
+import type {
+  AudienceTagRow,
+  BroadcastRecord,
+  BroadcastView,
+  Executor,
+  Transaction,
+} from './ports.js';
 import { createLaunchPreview } from './preview.js';
 
 const NOW = new Date('2026-10-23T12:00:00Z');
@@ -59,8 +65,20 @@ function setup() {
       return { id: b.id, status: b.status } as never;
     },
   };
+  // The launch transaction's executor while it runs (null outside it).
+  let currentTx: Executor | null = null;
+  const base = fakeBroadcastTransaction(store);
+  const transaction: Transaction = (fn) =>
+    base(async (tx) => {
+      currentTx = tx;
+      try {
+        return await fn(tx);
+      } finally {
+        currentTx = null;
+      }
+    });
   const launch = createLaunchBroadcast({
-    transaction: fakeBroadcastTransaction(store),
+    transaction,
     broadcasts,
     audienceTags,
     recipients: fakeRecipientRepo(store),
@@ -137,6 +155,7 @@ function setup() {
 
   return {
     store,
+    currentTx: () => currentTx,
     contacts,
     bots,
     workspaces,
@@ -225,6 +244,55 @@ describe('launchBroadcast (AC-06, AC-08, AC-09)', () => {
         msg: 'broadcast.launched',
       },
     ]);
+  });
+
+  it('AC-06: inside its transaction the launch reads contacts and bots on that transaction, never on a second connection', async () => {
+    const h = setup();
+    vipAudience(h);
+    const d = h.vipDraft();
+    const c = await h.preview.getLaunchConfirmation(WS, owner, d.id);
+    const onOtherConnection: string[] = [];
+    for (const api of [h.contacts, h.bots] as unknown as Record<string, unknown>[]) {
+      for (const [name, fn] of Object.entries(api)) {
+        if (typeof fn !== 'function') continue;
+        api[name] = (...args: unknown[]) => {
+          const tx = h.currentTx();
+          if (tx !== null && !args.includes(tx)) onOtherConnection.push(name);
+          return (fn as (...a: unknown[]) => unknown)(...args);
+        };
+      }
+    }
+    expect(
+      (
+        await h.launch.launchBroadcast(WS, owner, d.id, {
+          expected_version: c.version,
+          fingerprint: c.fingerprint,
+        })
+      ).outcome,
+    ).toBe('launched');
+    expect(onOtherConnection).toEqual([]);
+  });
+
+  it('AC-06: the confirmation counts exactly the set it fingerprints, even when a block lands while it reads', async () => {
+    const h = setup();
+    const ids = vipAudience(h);
+    const d = h.vipDraft();
+    // A refused send marks one reachable contact blocked right after the first audience read.
+    const breakdown = h.contacts.audienceBreakdown;
+    let landed = false;
+    h.contacts.audienceBreakdown = async (...args) => {
+      const answer = await breakdown(...args);
+      if (!landed) {
+        landed = true;
+        const c = h.contacts.contacts.get(WS)!.find((x) => x.id === ids[0])!;
+        c.blocked = new Map([[BOT, NOW]]);
+      }
+      return answer;
+    };
+    const c = await h.preview.getLaunchConfirmation(WS, owner, d.id);
+    const counted = c.breakdown.recipient_count === 3 ? ids : ids.slice(1);
+    expect(c.breakdown.recipient_count).toBe(counted.length);
+    expect(c.fingerprint).toBe(audienceFingerprint(counted));
   });
 
   it('takes the locks in order: the membership FOR SHARE, the launch lock, then the broadcast row', async () => {

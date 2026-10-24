@@ -8,7 +8,13 @@ import { createSendBroadcastMessage } from './send-broadcast-message.js';
 import type { FakeBotRow } from './fakes.js';
 
 const TEXT = '  Spring prices *bold* <b>x</b>\nfrom Monday.';
-const req = { workspaceId: 'ws-a', telegramBotId: 100001n, chatId: 700001n, text: TEXT };
+const req = {
+  workspaceId: 'ws-a',
+  telegramBotId: 100001n,
+  chatId: 700001n,
+  text: TEXT,
+  launchedAt: at(0),
+};
 
 function setup(rows: FakeBotRow[] = [botRow()]) {
   const h = createBotsHarness(rows);
@@ -63,6 +69,35 @@ describe('sendBroadcastMessage — refusals without a Telegram call (AC-10, AC-1
     expect(await send.sendBroadcastMessage(req)).toEqual({ outcome: 'bot_unavailable' });
     expect(telegramCalls(h)).toHaveLength(0);
     expect(waits).toEqual([]);
+  });
+
+  it('a pause stored while the send waited for its pacer slot holds it: paused, no Telegram call', async () => {
+    const h = createBotsHarness([botRow()]);
+    // Another send of the bot gets a 429 while this one waits in the pacer.
+    const pacer = {
+      wait: async () => {
+        h.bots.rows[0]!.sendPausedUntil = at(900);
+      },
+    };
+    const send = createSendBroadcastMessage({
+      ...h,
+      markNeedsToken: createMarkNeedsToken(h),
+      pacer,
+    });
+    expect(await send.sendBroadcastMessage(req)).toEqual({ outcome: 'paused', until: at(900) });
+    expect(telegramCalls(h)).toHaveLength(0);
+  });
+
+  it('AC-12: the same bot connected again after the launch (it stopped working meanwhile) → bot_unavailable', async () => {
+    const { h, send } = setup([botRow({ connectedAt: at(300) })]);
+    expect(await send.sendBroadcastMessage({ ...req, launchedAt: at(200) })).toEqual({
+      outcome: 'bot_unavailable',
+    });
+    expect(telegramCalls(h)).toHaveLength(0);
+    // Connected before the launch and working since: sent.
+    expect((await send.sendBroadcastMessage({ ...req, launchedAt: at(400) })).outcome).toBe(
+      'delivered',
+    );
   });
 
   it('another Telegram bot than the launch one → bot_changed', async () => {

@@ -185,6 +185,12 @@ export interface TagRepo {
   countFor(workspaceId: string, tagId: string, tx?: Executor): Promise<number>;
   /** The ids that are tags of the workspace; the others are dropped. */
   resolveIds(workspaceId: string, ids: readonly string[], tx?: Executor): Promise<string[]>;
+  /** The ids that are tags of the workspace, with their current names. */
+  namesOf(
+    workspaceId: string,
+    ids: readonly string[],
+    tx?: Executor,
+  ): Promise<{ id: string; name: string }[]>;
   /** Step 4: the tag row `FOR KEY SHARE`, or null when it is not (or no longer) a tag of the workspace. */
   lockForKeyShare(workspaceId: string, tagId: string, tx: Executor): Promise<TagRecord | null>;
   /** Step 2 (owner): the rows `FOR UPDATE` in id order; ids that are not tags of the workspace are dropped. */
@@ -399,6 +405,19 @@ export interface ReachableContact {
   telegramUserId: bigint;
 }
 
+export interface LaunchSetRow extends ReachableContact {
+  reach: 'blocked' | 'neverWrote' | 'reachable';
+}
+
+/** An audience evaluated for a launch: the breakdown and exactly the reachable contacts it counts. */
+export interface LaunchAudience {
+  audienceSize: number;
+  /** Null when the audience is over the limit (only its size is known then). */
+  reach: { blocked: number; neverWrote: number; reachable: number } | null;
+  /** Sorted by contact id (the fingerprint's and the positions' order). */
+  reachable: ReachableContact[];
+}
+
 /** A contact as a group row and the report show it. */
 export interface ContactCard {
   id: string;
@@ -424,8 +443,19 @@ export interface AudienceQuery {
     telegramBotId: bigint,
     limit: number,
   ): Promise<ReachableContact[]>;
+  /**
+   * The whole audience for a launch in one statement (one snapshot, AC-06): `total` is its size
+   * and `rows` its first `limit` contacts by id, each with its reach for the Telegram bot.
+   */
+  launchSet(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    limit: number,
+    tx?: Executor,
+  ): Promise<{ total: number; rows: LaunchSetRow[] }>;
   /** Ids of the contacts matching the search and the tag filter, sorted. */
-  matchingIds(workspaceId: string, filter: ContactListFilter): Promise<string[]>;
+  matchingIds(workspaceId: string, filter: ContactListFilter, tx?: Executor): Promise<string[]>;
   /** Cards of the given ids of the workspace, in the given order; foreign or unknown ids are left out. */
   cards(
     workspaceId: string,

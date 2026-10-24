@@ -1,6 +1,6 @@
 import { sql } from 'kysely';
 import type { Db } from '../../../platform/db.js';
-import type { AudienceQuery, AudienceSpec } from '../app/ports.js';
+import type { AudienceQuery, AudienceSpec, LaunchSetRow } from '../app/ports.js';
 import { createContactTagRepo } from './contact-tag-repo.js';
 import { filteredContacts, uuidArray } from './contact-list-query.js';
 
@@ -86,8 +86,30 @@ export function createAudienceQuery(db: Db): AudienceQuery {
       return rows.map((r) => ({ id: r.id, telegramUserId: BigInt(r.telegram_user_id) }));
     },
 
-    async matchingIds(workspaceId, filter) {
-      const rows = await filteredContacts(db, workspaceId, filter)
+    async launchSet(workspaceId, audience, telegramBotId, limit, tx) {
+      const rows = await withReach(tx ?? db, workspaceId, audience, telegramBotId)
+        .select([
+          'c.id',
+          'c.telegram_user_id',
+          sql<string>`CASE WHEN r.blocked_at IS NOT NULL THEN 'blocked'
+            WHEN r.wrote_at IS NULL THEN 'neverWrote' ELSE 'reachable' END`.as('reach'),
+          sql<string>`count(*) OVER ()`.as('total'),
+        ])
+        .orderBy('c.id')
+        .limit(limit)
+        .execute();
+      return {
+        total: rows.length === 0 ? 0 : Number(rows[0]!.total),
+        rows: rows.map((r) => ({
+          id: r.id,
+          telegramUserId: BigInt(r.telegram_user_id),
+          reach: r.reach as LaunchSetRow['reach'],
+        })),
+      };
+    },
+
+    async matchingIds(workspaceId, filter, tx) {
+      const rows = await filteredContacts(tx ?? db, workspaceId, filter)
         .select('c.id')
         .orderBy('c.id')
         .execute();

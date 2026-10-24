@@ -147,12 +147,16 @@ export function createBroadcastGroup(deps: BroadcastGroupDeps): BroadcastGroup {
       throw new ValidationError(NO_TAGS_WITH_TAGS, { field });
   }
 
-  const matching = (workspaceId: string, f: MatchingFilter) =>
-    contacts.matchingContactIds(workspaceId, {
-      q: f.q ?? null,
-      mode: f.mode,
-      tagIds: f.mode === 'none' ? [] : f.tagIds,
-    });
+  const matching = (workspaceId: string, f: MatchingFilter, tx?: Executor) =>
+    contacts.matchingContactIds(
+      workspaceId,
+      {
+        q: f.q ?? null,
+        mode: f.mode,
+        tagIds: f.mode === 'none' ? [] : f.tagIds,
+      },
+      tx,
+    );
 
   async function refs(workspaceId: string, accountIds: readonly string[]) {
     const unique = [...new Set(accountIds)];
@@ -173,7 +177,7 @@ export function createBroadcastGroup(deps: BroadcastGroupDeps): BroadcastGroup {
       if (card === undefined) throw new NotFoundError('Not found.');
       return groupWrite(workspaceId, broadcastId, async (tx) => {
         const size = await groups.count(workspaceId, broadcastId, tx);
-        const there = await groups.membership(workspaceId, broadcastId, [contactId]);
+        const there = await groups.membership(workspaceId, broadcastId, [contactId], tx);
         if (there.length > 0) {
           return { broadcast_id: broadcastId, outcome: 'unchanged' as const, group_size: size };
         }
@@ -225,11 +229,15 @@ export function createBroadcastGroup(deps: BroadcastGroupDeps): BroadcastGroup {
       return groupWrite(workspaceId, broadcastId, async (tx) => {
         // The matches now, under the row lock, minus the group rows (AC-04).
         const group = new Set(await groups.ids(workspaceId, broadcastId, tx));
-        const ids = await matching(workspaceId, {
-          q: input.q ?? null,
-          mode: input.mode,
-          tagIds: input.tag_ids,
-        });
+        const ids = await matching(
+          workspaceId,
+          {
+            q: input.q ?? null,
+            mode: input.mode,
+            tagIds: input.tag_ids,
+          },
+          tx,
+        );
         const toAdd = ids.filter((id) => !group.has(id));
         if (!fitsAudience(group.size, toAdd.length)) {
           throw new BroadcastAudienceTooLargeError(group.size);

@@ -351,13 +351,13 @@ describe('deleteDraft (AC-07, AC-08, AC-09)', () => {
     expect(h.store.signals).toHaveLength(1);
   });
 
-  it('a deactivated owner is FORBIDDEN', async () => {
+  it('AC-08: a member deactivated mid-request is ACCESS_REMOVED (openapi deleteBroadcast 403)', async () => {
     const h = setup();
     const d = await h.create();
     h.workspaces.active.delete(`${WS}:${OWNER}`);
     await expect(
       h.drafts.deleteDraft(WS, { accountId: OWNER, role: 'owner' }, d.id),
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    ).rejects.toMatchObject({ code: 'ACCESS_REMOVED' });
     expect(h.store.broadcasts).toHaveLength(1);
   });
 
@@ -368,6 +368,8 @@ describe('deleteDraft (AC-07, AC-08, AC-09)', () => {
     await expect(
       h.drafts.deleteDraft(WS, { accountId: OWNER, role: 'owner' }, d.id),
     ).rejects.toMatchObject({ code: 'BROADCAST_NOT_A_DRAFT' });
+    // An active member of another workspace asking for this id there: not found.
+    h.workspaces.active.add(`${OTHER_WS}:${OWNER}`);
     await expect(
       h.drafts.deleteDraft(OTHER_WS, { accountId: OWNER, role: 'owner' }, d.id),
     ).rejects.toMatchObject({ code: 'NOT_FOUND' });

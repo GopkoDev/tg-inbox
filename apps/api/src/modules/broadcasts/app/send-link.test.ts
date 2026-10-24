@@ -123,6 +123,9 @@ function setup() {
   return {
     store,
     clock,
+    transaction,
+    broadcasts,
+    settle,
     contacts,
     bots,
     conversations,
@@ -151,6 +154,7 @@ describe('runSendLink (AC-08, AC-11, AC-12, AC-14, AC-15, AC-16, AC-17)', () => 
         telegramBotId: BOT,
         chatId: r.telegramUserId,
         text: 'New prices from Monday.',
+        launchedAt: T0,
       })),
     );
     expect(h.statesOf(row.id)).toEqual(['delivered', 'delivered', 'delivered']);
@@ -190,6 +194,101 @@ describe('runSendLink (AC-08, AC-11, AC-12, AC-14, AC-15, AC-16, AC-17)', () => 
     ]);
     expect(h.rowOf(a.row.id).status).toBe('sent');
     expect(h.rowOf(b.row.id).status).toBe('sent');
+  });
+
+  it('AC-15: a broadcast launched while a link runs takes turns in that link, not after the older one ends', async () => {
+    const h = setup();
+    const a = h.broadcast(Array<RecipientState>(20).fill('waiting'), {
+      launchedAt: new Date(T0.getTime() - 60_000),
+    });
+    h.bots.advanceOnSend = 200;
+    let b: ReturnType<typeof h.broadcast> | null = null;
+    const send = h.bots.sendBroadcastMessage;
+    h.bots.sendBroadcastMessage = async (request) => {
+      // Launched (committed) once the link has made two sends.
+      if (h.bots.sends.length === 2 && b === null) {
+        b = h.broadcast(['waiting', 'waiting'], { launchedAt: h.clock.now() });
+      }
+      return send(request);
+    };
+    await h.link.runSendLink(WS);
+    const chats = h.bots.sends.map((s) => s.chatId);
+    const lastOfA = chats.lastIndexOf(a.rows.at(-1)!.telegramUserId);
+    const firstOfB = chats.indexOf(b!.rows[0]!.telegramUserId);
+    expect(firstOfB).toBeGreaterThan(-1);
+    expect(firstOfB).toBeLessThan(lastOfA);
+    expect(h.rowOf(b!.row.id).status).toBe('sent');
+  });
+
+  it('AC-18: a rate-limit answer that lands after a stop settles its recipient as stopped, never back to waiting', async () => {
+    const h = setup();
+    const { row, rows } = h.broadcast(Array<RecipientState>(10).fill('waiting'));
+    h.bots.script.set(rows[0]!.telegramUserId, {
+      outcome: 'rate_limited',
+      retryAfter: new Date(T0.getTime() + 30_000),
+    });
+    h.bots.holdAll = true;
+    const running = h.link.runSendLink(WS);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(h.bots.sends).toHaveLength(8);
+    // The owner stops while eight sends are in flight: the two waiting ones are stopped.
+    await h.transaction(async (tx) => {
+      const locked = await h.broadcasts.lockForUpdate(WS, row.id, tx);
+      expect(await h.settle.endInTx(tx, locked!, { kind: 'stop', actorAccountId: OWNER })).toBe(
+        true,
+      );
+    });
+    h.bots.release();
+    await running;
+    expect(h.rowOf(row.id).status).toBe('stopped');
+    expect(h.statesOf(row.id)[0]).toBe('stopped');
+    expect(h.recipientsOf(row.id)[0]!.claimedAt).toBeNull();
+    expect(h.statesOf(row.id)).not.toContain('waiting');
+  });
+
+  it('AC-16, AC-18: a recipient left sending by a dead link is resolved even when its broadcast was stopped before the next link', async () => {
+    const h = setup();
+    const { row, rows } = h.broadcast(['sending', 'waiting']);
+    Object.assign(row, {
+      status: 'stopped',
+      stoppedAt: T0,
+      stoppedByAccountId: OWNER,
+      endedAt: T0,
+    });
+    Object.assign(rows[1]!, { state: 'stopped', outcomeAt: T0 });
+    await h.link.runSendLink(WS);
+    expect(h.statesOf(row.id)).toEqual(['not_confirmed', 'stopped']);
+    expect(h.conversations.items).toEqual([
+      expect.objectContaining({
+        contactId: rows[0]!.contactId,
+        state: 'not_confirmed',
+        positionAt: rows[0]!.claimedAt,
+      }),
+    ]);
+    expect(h.bots.sends).toEqual([]);
+  });
+
+  it('ADR-0007: a failing turn read fails the link only after its in-flight sends settled', async () => {
+    const h = setup();
+    const { row } = h.broadcast(Array<RecipientState>(5).fill('waiting'));
+    h.bots.holdAll = true;
+    let calls = 0;
+    const isBlocked = h.contacts.isBlocked;
+    h.contacts.isBlocked = async (...args) => {
+      calls += 1;
+      if (calls === 3) throw new Error('pool timeout');
+      return isBlocked(...args);
+    };
+    const running = h.link.runSendLink(WS);
+    let failed = false;
+    running.catch(() => {
+      failed = true;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(failed).toBe(false);
+    h.bots.release();
+    await expect(running).rejects.toThrow('pool timeout');
+    expect(h.statesOf(row.id).slice(0, 2)).toEqual(['delivered', 'delivered']);
   });
 
   it('AC-11, AC-14: a recipient blocked at their turn gets blocked with no send and no item; one blocked only for another bot is sent', async () => {

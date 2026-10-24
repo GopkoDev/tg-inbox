@@ -50,6 +50,7 @@ export function createReportSignals(signals: BroadcastSignals, clock: Clock): Re
       for (const id of c.flushDue(clock.now().getTime())) {
         await signals.broadcastChanged(tx, workspaceId, id, 'report');
       }
+      if (c.tracked().length === 0) byWorkspace.delete(workspaceId);
     },
     msUntilDue(workspaceId, now) {
       return byWorkspace.get(workspaceId)?.msUntilDue(now.getTime()) ?? 0;

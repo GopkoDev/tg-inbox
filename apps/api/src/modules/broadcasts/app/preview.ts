@@ -28,7 +28,7 @@ export interface LaunchPreviewDeps {
   broadcasts: Pick<BroadcastRepo, 'find' | 'launchesSince' | 'tenthNewestLaunchedAt'>;
   audienceTags: Pick<AudienceTagRepo, 'list'>;
   groups: Pick<GroupRepo, 'ids'>;
-  contacts: Pick<ContactsApi, 'audienceBreakdown' | 'reachableContacts'>;
+  contacts: Pick<ContactsApi, 'launchAudience'>;
   bots: BotsApi;
   clock: Clock;
 }
@@ -58,8 +58,6 @@ export interface LaunchPreview {
 
 export const LAUNCH_LIMIT = 10;
 const DAY_MS = 24 * 3_600_000;
-/** 10 000 + 1: the extra row would prove "over the limit". */
-const REACHABLE_LIMIT = 10_001;
 
 export function createLaunchPreview(deps: LaunchPreviewDeps): LaunchPreview {
   const { broadcasts, audienceTags, groups, contacts, bots, clock } = deps;
@@ -96,7 +94,7 @@ export function createLaunchPreview(deps: LaunchPreviewDeps): LaunchPreview {
     const text = checkBroadcastText(row.text);
     if (!text.ok) throw new BroadcastTextInvalidError(broadcastTextLength(row.text));
 
-    const bot = await bots.launchReadiness(row.workspaceId);
+    const bot = await bots.launchReadiness(row.workspaceId, tx);
     if (bot === null || bot.state === 'disconnected') {
       throw new BroadcastNeedsWorkingBotError('not_connected');
     }
@@ -105,25 +103,20 @@ export function createLaunchPreview(deps: LaunchPreviewDeps): LaunchPreview {
     await checkCap(row.workspaceId, tx);
 
     const audience = await audienceOf(row, tx);
-    const counted = await contacts.audienceBreakdown(row.workspaceId, audience, bot.telegramBotId);
-    if (!checkAudienceSize(counted.audienceSize).ok) {
+    // One statement: the count shown and the set fingerprinted always agree (AC-06).
+    const counted = await contacts.launchAudience(row.workspaceId, audience, bot.telegramBotId, tx);
+    if (!checkAudienceSize(counted.audienceSize).ok || counted.reach === null) {
       throw new BroadcastAudienceTooLargeError(counted.audienceSize);
     }
-    const reach = counted.reach ?? { blocked: 0, neverWrote: 0, reachable: 0 };
+    const reachable = counted.reachable;
     const breakdown = {
       audience_size: counted.audienceSize,
-      blocked_count: reach.blocked,
-      never_wrote_count: reach.neverWrote,
-      recipient_count: reach.reachable,
+      blocked_count: counted.reach.blocked,
+      never_wrote_count: counted.reach.neverWrote,
+      recipient_count: reachable.length,
     };
     if (breakdown.recipient_count === 0) throw new BroadcastNoReachableContactError(breakdown);
 
-    const reachable = await contacts.reachableContacts(
-      row.workspaceId,
-      audience,
-      bot.telegramBotId,
-      REACHABLE_LIMIT,
-    );
     return {
       confirmation: {
         broadcast_id: row.id,
