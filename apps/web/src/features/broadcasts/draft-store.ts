@@ -84,6 +84,8 @@ interface DraftStoreState {
   useMine: (guard: GuardFn) => void;
   keepTheirs: () => void;
   loadGroup: (guard: GuardFn) => Promise<void>;
+  /** Reads the held draft again in the background (its breakdown after group changes). */
+  reread: (guard: GuardFn) => Promise<void>;
   showMoreGroup: (guard: GuardFn) => Promise<void>;
   addContact: (contactId: string, guard: GuardFn) => Promise<BroadcastGroupChange | null>;
   removeContact: (contactId: string, guard: GuardFn) => Promise<BroadcastGroupChange | null>;
@@ -373,6 +375,23 @@ export const useBroadcastDraftStore = create<DraftStoreState>()((set, get) => {
       set({ stale: null });
     },
     loadGroup: (guard) => readGroup(guard, false),
+    async reread(guard) {
+      const { workspaceId, broadcastId, status } = get();
+      if (!workspaceId || !broadcastId || status !== 'ready') return;
+      const opened = epoch;
+      try {
+        const b = await getBroadcast(workspaceId, broadcastId, { background: true });
+        if (opened !== epoch) return;
+        if (b.status !== 'draft') set({ status: 'launched', launched: b });
+        // A save in flight or queued answers with the newer draft itself.
+        else if (!saving && !pendingAudience && Object.keys(get().unsent).length === 0)
+          set({ draft: b });
+      } catch (error) {
+        if (opened !== epoch) return;
+        if (isNotFound(error)) set({ status: 'not_found' });
+        else if (isGuardAnswer(error)) guard(error, workspaceId);
+      }
+    },
     async showMoreGroup(guard) {
       const { workspaceId, broadcastId, group } = get();
       if (!workspaceId || !broadcastId || !group?.nextCursor || group.more === 'loading') return;

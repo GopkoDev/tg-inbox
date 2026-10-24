@@ -32,6 +32,7 @@ import { RadioGroup, RadioGroupItem } from '@/shared/ui/radio-group';
 import { Textarea } from '@/shared/ui/textarea';
 import { createBroadcast, duplicateBroadcast, getLaunchConfirmation } from './api';
 import { AudienceBreakdown, formatCount } from './AudienceBreakdown';
+import { BroadcastGroupList } from './BroadcastGroupList';
 import { DeleteDraftDialog } from './DeleteDraftDialog';
 import { LaunchConfirmDialog } from './LaunchConfirmDialog';
 import { RefusalAlert, launchRefusalOf, type LaunchRefusal } from './launch-refusal';
@@ -78,7 +79,7 @@ export function BroadcastEditor({
   broadcastId?: string;
   /** The `/launch` address (SCR-27 over the draft for an owner). */
   atLaunch?: boolean;
-  /** The hand-picked group's controls (T33); the tag audience is built in. */
+  /** Replaces the hand-picked group's controls (BroadcastGroupList with SCR-26 by default). */
   audienceControls?: ReactNode;
 }) {
   const navigate = useNavigate();
@@ -473,7 +474,9 @@ export function BroadcastEditor({
                 {audienceKind === 'tags' ? (
                   <TagAudience workspaceId={workspaceId} />
                 ) : (
-                  audienceControls
+                  (audienceControls ?? (
+                    <BroadcastGroupList workspaceId={workspaceId} broadcastId={draft.id} />
+                  ))
                 )}
                 <AudienceBreakdown breakdown={draft.breakdown} botSettingsHref={botSettingsHref} />
               </>
