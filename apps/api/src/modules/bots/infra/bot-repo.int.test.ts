@@ -237,6 +237,10 @@ describe('bot repository', () => {
     ).toBe(true);
     // The app's moment it happened, not the old exchange time the patch carries.
     expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));
+    // A needs_token patch without the moment is a programming error, never a silent gap.
+    await expect(repo.update(w, bot.id, { state: 'needs_token' })).rejects.toThrow(
+      'stoppedWorkingAt',
+    );
     // A row already needing a token keeps its own moment.
     await repo.update(w, bot.id, { state: 'needs_token', stoppedWorkingAt: at(12) });
     expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));

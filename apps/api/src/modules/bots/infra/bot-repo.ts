@@ -106,6 +106,9 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
     },
 
     async update(workspaceId, botId, patch, tx, ifRead) {
+      if (patch.state === 'needs_token' && patch.stoppedWorkingAt === undefined) {
+        throw new Error('a needs_token patch carries stoppedWorkingAt (AC-12)');
+      }
       try {
         const result = await (tx ?? db)
           .updateTable('bots')
@@ -115,10 +118,9 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
             ...(patch.state !== undefined && { state: patch.state }),
             // The moment the bot stopped working (AC-12), from the app's clock — never the old
             // exchange time a restoring patch carries; a row already needing a token keeps its own.
-            ...(patch.state === 'needs_token' &&
-              patch.stoppedWorkingAt !== undefined && {
-                needs_token_at: sql<Date>`CASE WHEN state = 'needs_token' THEN needs_token_at ELSE ${patch.stoppedWorkingAt}::timestamptz END`,
-              }),
+            ...(patch.state === 'needs_token' && {
+              needs_token_at: sql<Date>`CASE WHEN state = 'needs_token' THEN needs_token_at ELSE ${patch.stoppedWorkingAt}::timestamptz END`,
+            }),
             ...(patch.token !== undefined && { token_encrypted: cipher.encrypt(patch.token) }),
             ...(patch.webhookSecret !== undefined && {
               webhook_secret_hash: hashSecret(patch.webhookSecret),

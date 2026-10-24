@@ -91,6 +91,9 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       ) {
         throw new Error('check violation: a live bot row needs token, secret and epoch');
       }
+      if (patch.state === 'needs_token' && patch.stoppedWorkingAt === undefined) {
+        throw new Error('a needs_token patch carries stoppedWorkingAt (AC-12)');
+      }
       const wasNeedingToken = row.state === 'needs_token';
       const fields: Partial<FakeBotRow> = { ...patch };
       delete fields.stoppedWorkingAt;
