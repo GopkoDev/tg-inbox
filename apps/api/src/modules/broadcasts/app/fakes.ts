@@ -1,16 +1,23 @@
 import type { BroadcastDraft } from '@tg/shared';
+import { isNotReached, type RecipientState } from '../domain/recipient.js';
 import type {
+  AudienceSpec,
   AudienceTagRepo,
   AudienceTagRow,
+  BotsApi,
   BroadcastChange,
   BroadcastRecord,
   BroadcastRepo,
   BroadcastSignals,
+  ContactCard,
   ContactsApi,
   DraftView,
   Executor,
   GroupRepo,
   GroupRow,
+  RecipientRecord,
+  RecipientRepo,
+  RecipientTotals,
   Transaction,
   WorkspacesApi,
 } from './ports.js';
@@ -20,8 +27,9 @@ export function fakeBroadcastStore() {
   const broadcasts: BroadcastRecord[] = [];
   const tags: (AudienceTagRow & { workspaceId: string; broadcastId: string })[] = [];
   const group: (GroupRow & { workspaceId: string; broadcastId: string })[] = [];
+  const recipients: (RecipientRecord & { workspaceId: string })[] = [];
   const signals: string[] = [];
-  return { broadcasts, tags, group, signals };
+  return { broadcasts, tags, group, recipients, signals };
 }
 export type FakeBroadcastStore = ReturnType<typeof fakeBroadcastStore>;
 
@@ -232,6 +240,7 @@ export function fakeBroadcastTransaction(s: FakeBroadcastStore): Transaction {
       broadcasts: s.broadcasts.map((b) => ({ ...b })),
       tags: s.tags.map((t) => ({ ...t })),
       group: s.group.map((g) => ({ ...g })),
+      recipients: s.recipients.map((r) => ({ ...r })),
       signals: [...s.signals],
     };
     try {
@@ -240,34 +249,273 @@ export function fakeBroadcastTransaction(s: FakeBroadcastStore): Transaction {
       s.broadcasts.splice(0, s.broadcasts.length, ...snapshot.broadcasts);
       s.tags.splice(0, s.tags.length, ...snapshot.tags);
       s.group.splice(0, s.group.length, ...snapshot.group);
+      s.recipients.splice(0, s.recipients.length, ...snapshot.recipients);
       s.signals.splice(0, s.signals.length, ...snapshot.signals);
       throw e;
     }
   };
 }
 
-/** The workspace's tags (`contacts`): `tags` is (workspace → id → current name). */
-export function fakeContactsApi(): ContactsApi & { tags: Map<string, Map<string, string>> } {
+/** A contact as the `contacts` fake holds it: its tags and its reach per Telegram bot. */
+export interface FakeContact {
+  id: string;
+  firstName: string;
+  tagIds: string[];
+  /** Telegram bot ids it wrote to. */
+  wroteTo?: bigint[];
+  /** Telegram bot id → when it blocked that bot. */
+  blocked?: Map<bigint, Date>;
+}
+
+/**
+ * The workspace's tags and contacts (`contacts`): `tags` is (workspace → id → current name),
+ * `contacts` (workspace → contacts). The audience follows the Contacts filter's rules: a gone tag is
+ * left out, "any" / "all" of the chosen tags (none chosen = everyone), "none" = no tags, and a
+ * contact with any left-out tag is never counted; partitioned blocked, never wrote, reachable.
+ */
+export function fakeContactsApi(): ContactsApi & {
+  tags: Map<string, Map<string, string>>;
+  contacts: Map<string, FakeContact[]>;
+} {
   const tags = new Map<string, Map<string, string>>();
+  const contacts = new Map<string, FakeContact[]>();
+  const own = (ws: string) => tags.get(ws) ?? new Map<string, string>();
+  const members = (ws: string, audience: AudienceSpec): FakeContact[] => {
+    const all = contacts.get(ws) ?? [];
+    if (audience.kind === 'ids') {
+      const ids = new Set(audience.contactIds);
+      return all.filter((c) => ids.has(c.id));
+    }
+    const include = audience.include.filter((id) => own(ws).has(id));
+    const exclude = audience.exclude.filter((id) => own(ws).has(id));
+    return all.filter((c) => {
+      if (c.tagIds.some((t) => exclude.includes(t))) return false;
+      if (audience.mode === 'none') return c.tagIds.length === 0;
+      if (include.length === 0) return true;
+      return audience.mode === 'any'
+        ? include.some((t) => c.tagIds.includes(t))
+        : include.every((t) => c.tagIds.includes(t));
+    });
+  };
   return {
     tags,
+    contacts,
     async resolveTags(workspaceId, tagIds) {
-      const own = tags.get(workspaceId) ?? new Map<string, string>();
-      return tagIds.filter((id) => own.has(id)).map((id) => ({ id, name: own.get(id)! }));
+      return tagIds
+        .filter((id) => own(workspaceId).has(id))
+        .map((id) => ({ id, name: own(workspaceId).get(id)! }));
+    },
+    async audienceBreakdown(workspaceId, audience, telegramBotId) {
+      const found = members(workspaceId, audience);
+      if (telegramBotId === null) return { audienceSize: found.length, reach: null };
+      const blocked = found.filter((c) => c.blocked?.has(telegramBotId)).length;
+      const reachable = found.filter(
+        (c) => !c.blocked?.has(telegramBotId) && c.wroteTo?.includes(telegramBotId),
+      ).length;
+      return {
+        audienceSize: found.length,
+        reach: { blocked, neverWrote: found.length - blocked - reachable, reachable },
+      };
+    },
+    async contactCards(workspaceId, contactIds, telegramBotId): Promise<ContactCard[]> {
+      const all = contacts.get(workspaceId) ?? [];
+      return contactIds.flatMap((id) => {
+        const c = all.find((x) => x.id === id);
+        if (!c) return [];
+        return [
+          {
+            id: c.id,
+            firstName: c.firstName,
+            lastName: null,
+            username: null,
+            tags: c.tagIds
+              .filter((t) => own(workspaceId).has(t))
+              .map((t) => ({ id: t, name: own(workspaceId).get(t)! })),
+            blockedSince: telegramBotId === null ? null : (c.blocked?.get(telegramBotId) ?? null),
+          },
+        ];
+      });
     },
   };
 }
 
 /** `workspaces.lockActiveMembers`: `active` holds `<ws>:<account>`; `locks` logs each call. */
-export function fakeWorkspacesApi(): WorkspacesApi & { active: Set<string>; locks: string[] } {
+export function fakeWorkspacesApi(): WorkspacesApi & {
+  active: Set<string>;
+  locks: string[];
+  names: Map<string, string>;
+} {
   const active = new Set<string>();
   const locks: string[] = [];
+  /** `<ws>:<account>` → display name; kept after a deactivation (only `active` changes). */
+  const names = new Map<string, string>();
   return {
     active,
     locks,
+    names,
     async lockActiveMembers(_tx, workspaceId, accountIds) {
       locks.push(`members:${accountIds.join(',')}`);
       return accountIds.filter((a) => active.has(`${workspaceId}:${a}`));
+    },
+    async displayNames(workspaceId, accountIds) {
+      return new Map(
+        accountIds.flatMap((a) => {
+          const name = names.get(`${workspaceId}:${a}`);
+          return name === undefined ? [] : [[a, name] as [string, string]];
+        }),
+      );
+    },
+  };
+}
+
+/** `bots.launchReadiness`: the workspace's bot row, or none. */
+export function fakeBotsApi(): BotsApi & {
+  bots: Map<
+    string,
+    { state: 'connected' | 'needs_token' | 'taken_over' | 'disconnected'; telegramBotId: bigint }
+  >;
+} {
+  const bots = new Map<
+    string,
+    { state: 'connected' | 'needs_token' | 'taken_over' | 'disconnected'; telegramBotId: bigint }
+  >();
+  return {
+    bots,
+    async launchReadiness(workspaceId) {
+      const bot = bots.get(workspaceId);
+      return bot ? { ...bot } : null;
+    },
+  };
+}
+
+const ALL_STATES: readonly RecipientState[] = [
+  'waiting',
+  'sending',
+  'delivered',
+  'blocked',
+  'failed',
+  'not_confirmed',
+  'stopped',
+];
+
+/** `RecipientRepo` over the store, with the SQL's state guards. */
+export function fakeRecipientRepo(s: FakeBroadcastStore): RecipientRepo {
+  const of = (ws: string, broadcastId: string) =>
+    s.recipients
+      .filter((r) => r.workspaceId === ws && r.broadcastId === broadcastId)
+      .sort((a, b) => a.position - b.position);
+  const one = (ws: string, id: string) =>
+    s.recipients.find((r) => r.workspaceId === ws && r.id === id);
+  const strip = (r: RecipientRecord & { workspaceId: string }): RecipientRecord => {
+    const copy: Partial<typeof r> = { ...r };
+    delete copy.workspaceId;
+    return copy as RecipientRecord;
+  };
+  const contactIds = (rows: RecipientRecord[]) => rows.map((r) => r.contactId).sort();
+  return {
+    async insertAll(workspaceId, broadcastId, rows) {
+      s.recipients.push(
+        ...rows.map((r) => ({
+          ...r,
+          workspaceId,
+          broadcastId,
+          state: 'waiting' as const,
+          failureReason: null,
+          claimedAt: null,
+          outcomeAt: null,
+          telegramMessageId: null,
+        })),
+      );
+    },
+    async claim(workspaceId, id, at) {
+      const r = one(workspaceId, id);
+      if (!r || r.state !== 'waiting') return false;
+      r.state = 'sending';
+      r.claimedAt = at;
+      return true;
+    },
+    async recordOutcome(workspaceId, id, outcome, at) {
+      const r = one(workspaceId, id);
+      if (!r) return false;
+      if (!(r.state === 'sending' || (r.state === 'waiting' && outcome.state === 'blocked'))) {
+        return false;
+      }
+      r.state = outcome.state;
+      r.failureReason = outcome.state === 'failed' ? outcome.reason : null;
+      r.telegramMessageId = outcome.state === 'delivered' ? outcome.telegramMessageId : null;
+      r.outcomeAt = at;
+      return true;
+    },
+    async backToWaiting(workspaceId, id) {
+      const r = one(workspaceId, id);
+      if (!r || r.state !== 'sending') return false;
+      r.state = 'waiting';
+      r.claimedAt = null;
+      return true;
+    },
+    async resolveStaleInFlight(workspaceId, broadcastIds, at) {
+      return s.recipients
+        .filter(
+          (r) =>
+            r.workspaceId === workspaceId &&
+            broadcastIds.includes(r.broadcastId) &&
+            r.state === 'sending',
+        )
+        .map((r) => {
+          r.state = 'not_confirmed';
+          r.outcomeAt = at;
+          return {
+            id: r.id,
+            broadcastId: r.broadcastId,
+            contactId: r.contactId,
+            claimedAt: r.claimedAt!,
+          };
+        });
+    },
+    async settleWaiting(workspaceId, broadcastId, settlement, at) {
+      const waiting = of(workspaceId, broadcastId).filter((r) => r.state === 'waiting');
+      for (const r of waiting) {
+        r.state = settlement.state;
+        r.failureReason = settlement.state === 'failed' ? settlement.reason : null;
+        r.outcomeAt = at;
+      }
+      return waiting.length;
+    },
+    async totals(workspaceId, broadcastId) {
+      const totals = Object.fromEntries(ALL_STATES.map((st) => [st, 0])) as RecipientTotals;
+      for (const r of of(workspaceId, broadcastId)) totals[r.state] += 1;
+      return totals;
+    },
+    async page(workspaceId, broadcastId, q, limit) {
+      const rows = of(workspaceId, broadcastId).filter(
+        (r) =>
+          (q.after === undefined || r.position > q.after) &&
+          (q.state === undefined || r.state === q.state),
+      );
+      return { rows: rows.slice(0, limit).map(strip), hasNext: rows.length > limit };
+    },
+    async nextWaiting(workspaceId, broadcastId) {
+      const r = of(workspaceId, broadcastId).find((x) => x.state === 'waiting');
+      return r ? strip(r) : null;
+    },
+    async hasWaitingOrInFlight(workspaceId, broadcastId) {
+      return of(workspaceId, broadcastId).some(
+        (r) => r.state === 'waiting' || r.state === 'sending',
+      );
+    },
+    async allContactIds(workspaceId, broadcastId) {
+      return contactIds(of(workspaceId, broadcastId));
+    },
+    async notReachedContactIds(workspaceId, broadcastId, includeNotConfirmed) {
+      return contactIds(
+        of(workspaceId, broadcastId).filter((r) => isNotReached(r, includeNotConfirmed)),
+      );
+    },
+    async notReachedCount(workspaceId, broadcastId) {
+      return of(workspaceId, broadcastId).filter((r) => isNotReached(r, false)).length;
+    },
+    async deliveredContactIds(workspaceId, broadcastId) {
+      return contactIds(of(workspaceId, broadcastId).filter((r) => r.state === 'delivered'));
     },
   };
 }

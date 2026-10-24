@@ -1,5 +1,7 @@
 import type { BroadcastDraft } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
+import type { LaunchReadinessReads } from '../../bots/app/launch-readiness.js';
+import type { AudienceBreakdown, AudienceSpec, ContactCard } from '../../contacts/app/ports.js';
 import type { AudienceTagKind, StoredAudienceTag, TagMode } from '../domain/audience.js';
 import type { BroadcastStatus } from '../domain/broadcast.js';
 import type {
@@ -278,6 +280,8 @@ export interface RecipientRepo {
     includeNotConfirmed: boolean,
     tx?: Executor,
   ): Promise<string[]>;
+  /** How many recipients it did not reach: the fixable failures plus stopped (api flag F-5). */
+  notReachedCount(workspaceId: string, broadcastId: string): Promise<number>;
   /** The delivered recipients' contact ids, sorted (the 48-hour blocked share). */
   deliveredContactIds(workspaceId: string, broadcastId: string): Promise<string[]>;
 }
@@ -300,6 +304,8 @@ export interface BroadcastSignals {
   ): Promise<void>;
 }
 
+export type { AudienceBreakdown, AudienceSpec, ContactCard };
+
 /** What `broadcasts` asks the `contacts` app layer (sad.md §5, ADR-0004). */
 export interface ContactsApi {
   /** The ids that are tags of the workspace, with their current names; others are left out. */
@@ -307,7 +313,22 @@ export interface ContactsApi {
     workspaceId: string,
     tagIds: readonly string[],
   ): Promise<{ id: string; name: string }[]>;
+  /** The audience's size and, for a Telegram bot, blocked / never wrote / reachable (ADR-0004). */
+  audienceBreakdown(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint | null,
+  ): Promise<AudienceBreakdown>;
+  /** Cards of the workspace's contacts among `contactIds`, in that order; others are left out. */
+  contactCards(
+    workspaceId: string,
+    contactIds: readonly string[],
+    telegramBotId: bigint | null,
+  ): Promise<ContactCard[]>;
 }
+
+/** What `broadcasts` asks the `bots` app layer: the bot row's state and Telegram bot id, or null. */
+export type BotsApi = LaunchReadinessReads;
 
 /** What `broadcasts` asks the `workspaces` app layer. */
 export interface WorkspacesApi {
@@ -320,6 +341,8 @@ export interface WorkspacesApi {
     workspaceId: string,
     accountIds: readonly string[],
   ): Promise<string[]>;
+  /** Display names of the workspace's accounts among `accountIds`, deactivated members included. */
+  displayNames(workspaceId: string, accountIds: readonly string[]): Promise<Map<string, string>>;
 }
 
 /**

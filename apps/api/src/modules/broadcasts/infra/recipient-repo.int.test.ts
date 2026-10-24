@@ -362,6 +362,7 @@ describe('broadcast recipient repository (ADR-0007, ADR-0009)', () => {
       idsWhere((r) => r.state === 'delivered'),
     );
     expect(await repo.allContactIds(a.workspaceId, broadcastId)).toEqual(idsWhere(() => true));
+    expect(await repo.notReachedCount(a.workspaceId, broadcastId)).toBe(idsWhere(fixable).length);
   });
 
   it('is scoped by workspace: a foreign id reads nothing and changes nothing', async () => {
@@ -386,8 +387,14 @@ describe('broadcast recipient repository (ADR-0007, ADR-0009)', () => {
     expect(await repo.hasWaitingOrInFlight(a.workspaceId, b.launchedId)).toBe(false);
     expect(await repo.allContactIds(a.workspaceId, b.launchedId)).toEqual([]);
     expect(await repo.notReachedContactIds(a.workspaceId, b.launchedId, true)).toEqual([]);
+    expect(await repo.notReachedCount(a.workspaceId, b.launchedId)).toBe(0);
     expect(await repo.deliveredContactIds(a.workspaceId, b.launchedId)).toEqual([]);
     expect(await repo.totals(b.workspaceId, b.launchedId)).toMatchObject({ waiting: 2 });
+    await inTx((tx) =>
+      repo.settleWaiting(b.workspaceId, b.launchedId, { state: 'stopped' }, at(1), tx),
+    );
+    expect(await repo.notReachedCount(b.workspaceId, b.launchedId)).toBe(2);
+    expect(await repo.notReachedCount(a.workspaceId, b.launchedId)).toBe(0);
     // A recipient naming a contact of another workspace is refused by the composite foreign key.
     await expect(
       inTx((tx) =>

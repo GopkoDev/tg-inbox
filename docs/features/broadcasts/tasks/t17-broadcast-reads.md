@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/reads.ts", "apps/api/src/modul
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T17 — Add the broadcasts reads: the list with each draft's audience size, one broadcast as a draft with its breakdown for the current bot or as a launched broadcast with its frozen audience and totals, the recipients page, and itemDetails for the inbox thread
@@ -138,10 +138,10 @@ No DB changes. Reads, through T14 / T15 and `contacts`:
 
 ## Checklist
 
-- [ ] Add the read ports this needs — `ContactsApi.audienceBreakdown`, `existingTags`, `contactCards`; `BotsApi.launchReadiness` (current Telegram bot id or none); `WorkspacesApi` display names incl. deactivated — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
-- [ ] RED: unit tests for the draft view (tags kept / dropped, no-bot `reach: null`, not-working bot still counted), the launched view (frozen breakdown, totals), the list's audience sizes — `apps/api/src/modules/broadcasts/app/reads.test.ts`
-- [ ] `listBroadcasts`, `getBroadcast`, `listRecipients` (50, position keyset, optional state), `itemDetails` — `apps/api/src/modules/broadcasts/app/reads.ts`
-- [ ] Integration tests on seeds: the AC-01 tag audience (38 / 2 / 0 / 36), a launched broadcast's totals summing to `recipient_count`, a deactivated launcher still named, foreign id → not found — `apps/api/src/modules/broadcasts/app/reads.int.test.ts`
+- [x] Add the read ports this needs — `ContactsApi.audienceBreakdown`, `existingTags`, `contactCards`; `BotsApi.launchReadiness` (current Telegram bot id or none); `WorkspacesApi` display names incl. deactivated — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
+- [x] RED: unit tests for the draft view (tags kept / dropped, no-bot `reach: null`, not-working bot still counted), the launched view (frozen breakdown, totals), the list's audience sizes — `apps/api/src/modules/broadcasts/app/reads.test.ts`
+- [x] `listBroadcasts`, `getBroadcast`, `listRecipients` (50, position keyset, optional state), `itemDetails` — `apps/api/src/modules/broadcasts/app/reads.ts`
+- [x] Integration tests on seeds: the AC-01 tag audience (38 / 2 / 0 / 36), a launched broadcast's totals summing to `recipient_count`, a deactivated launcher still named, foreign id → not found — `apps/api/src/modules/broadcasts/app/reads.int.test.ts`
 
 ## Edge cases
 
@@ -158,6 +158,17 @@ No DB changes. Reads, through T14 / T15 and `contacts`:
 
 ## Definition of Done
 
-- [ ] Unit and integration tests prove the list returns drafts and launched broadcasts together by last change with a draft's live audience size and a launched one's frozen size, a draft read carries the breakdown for the current Telegram bot (size only with no bot) and the dropped-tag notice, a launched read carries the audience as defined at launch, who launched and stopped it, the totals by outcome and not_reached_count (fixable failures plus stopped, api flag F-5), the recipients page follows position 50 at a time with an optional outcome filter, itemDetails names the launching owner even when deactivated, and a foreign broadcast id is not found.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit and integration tests prove the list returns drafts and launched broadcasts together by last change with a draft's live audience size and a launched one's frozen size, a draft read carries the breakdown for the current Telegram bot (size only with no bot) and the dropped-tag notice, a launched read carries the audience as defined at launch, who launched and stopped it, the totals by outcome and not_reached_count (fixable failures plus stopped, api flag F-5), the recipients page follows position 50 at a time with an optional outcome filter, itemDetails names the launching owner even when deactivated, and a foreign broadcast id is not found.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T17): `createBroadcastReads` (`broadcasts/app/reads.ts`): `listBroadcasts`, `getBroadcast`, `listRecipients(ws, id, { state?, after? })`, `itemDetails(ws, ids) → { broadcast_id, broadcast_name, text, launched_by }[]` (launched broadcasts only, first-seen order, foreign / draft ids left out), and `draftView` (the `DraftView` port of T16; a launched id → `NOT_FOUND`). **Hand-off → T26:** bind `views: reads` for `createDrafts`.
+- `implement` (T17): ports added — `ContactsApi.audienceBreakdown` + `contactCards` (types imported from `contacts/app/ports.ts`), `BotsApi = LaunchReadinessReads` (bots app layer), `WorkspacesApi.displayNames` (deactivated members kept), `RecipientRepo.notReachedCount`. Kept tag names come from `resolveTags` (current names); the checklist's `existingTags` was not needed.
+- `implement` (T17): `RecipientRepo.notReachedCount` (fixable failures + stopped, `notReachedStates(false)`) was added to T15's repository (`infra/recipient-repo.ts`, outside files_hint) so the report does not load up to 10 000 ids per refetch; RED `TypeError: repo.notReachedCount is not a function`, with an isolation assertion in `recipient-repo.int.test.ts`.
+- `implement` (T17): the recipients cursor lives in a new pure `broadcasts/domain/cursor.ts` (base64url JSON, bound to the `state` filter; a cursor of another filter or a malformed one → `VALIDATION_ERROR`).
+- `implement` (T17): `AudienceTagRepo.list` orders `kind` alphabetically (exclude first), contrary to T14's note; the reads order chosen tags before left-out ones (stable) for `tags` and `dropped_tags`, so the repository was left as is.
+- `implement` (T17): fakes gained a recipient store + full `fakeRecipientRepo`, `fakeContactsApi.contacts` (Contacts filter rules, reach per bot, cards), `fakeBotsApi`, `fakeWorkspacesApi.names`.
+- `implement` (T17): RED `Failed to load url ./reads.js` (unit), GOOD red; integration written after GREEN — first run failed only on the tag order above.
+- `implement` (T17): gate — full `pnpm test`: 4 failures, all in the known timing set (`e2e/contacts-load` merge, `inbox-flows` story 4b, `notification-load` reply p95, `inbox/http/changes` p95); the four files passed re-run alone (45/45). `pnpm lint` clean.

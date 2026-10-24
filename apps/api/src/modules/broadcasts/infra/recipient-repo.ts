@@ -43,6 +43,24 @@ export function createRecipientRepo(db: Db): RecipientRepo {
       .where('workspace_id', '=', workspaceId)
       .where('broadcast_id', '=', broadcastId);
 
+  const recipientsWhere = (
+    ex: Db,
+    workspaceId: string,
+    broadcastId: string,
+    states: readonly RecipientState[],
+    failedReasons: readonly FailureReason[],
+  ) =>
+    ofBroadcast(ex, workspaceId, broadcastId).where((eb) => {
+      const parts = [];
+      if (states.length > 0) parts.push(eb('state', 'in', [...states]));
+      if (failedReasons.length > 0) {
+        parts.push(
+          eb.and([eb('state', '=', 'failed'), eb('failure_reason', 'in', [...failedReasons])]),
+        );
+      }
+      return eb.or(parts);
+    });
+
   const contactIdsWhere = async (
     ex: Db,
     workspaceId: string,
@@ -50,18 +68,8 @@ export function createRecipientRepo(db: Db): RecipientRepo {
     states: readonly RecipientState[],
     failedReasons: readonly FailureReason[],
   ) => {
-    const rows = await ofBroadcast(ex, workspaceId, broadcastId)
+    const rows = await recipientsWhere(ex, workspaceId, broadcastId, states, failedReasons)
       .select('contact_id')
-      .where((eb) => {
-        const parts = [];
-        if (states.length > 0) parts.push(eb('state', 'in', [...states]));
-        if (failedReasons.length > 0) {
-          parts.push(
-            eb.and([eb('state', '=', 'failed'), eb('failure_reason', 'in', [...failedReasons])]),
-          );
-        }
-        return eb.or(parts);
-      })
       .orderBy('contact_id')
       .execute();
     return rows.map((r) => r.contact_id);
@@ -210,6 +218,14 @@ export function createRecipientRepo(db: Db): RecipientRepo {
     notReachedContactIds(workspaceId, broadcastId, includeNotConfirmed, tx) {
       const { states, failedReasons } = notReachedStates(includeNotConfirmed);
       return contactIdsWhere(tx ?? db, workspaceId, broadcastId, states, failedReasons);
+    },
+
+    async notReachedCount(workspaceId, broadcastId) {
+      const { states, failedReasons } = notReachedStates(false);
+      const row = await recipientsWhere(db, workspaceId, broadcastId, states, failedReasons)
+        .select((eb) => eb.fn.countAll<string>().as('n'))
+        .executeTakeFirstOrThrow();
+      return Number(row.n);
     },
 
     deliveredContactIds(workspaceId, broadcastId) {
