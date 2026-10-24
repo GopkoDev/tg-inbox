@@ -104,7 +104,7 @@ flowchart LR
 | 3 · Bot connection & inbound capture | 2026-10-12 | [changelog](features/bot-connection/_ship/changelog.md) · [PR #2](https://github.com/GopkoDev/tg-inbox/pull/2) |
 | 12 · UI redesign | 2026-10-18 | [changelog](features/ui-redesign/_ship/changelog.md) · [PR #3](https://github.com/GopkoDev/tg-inbox/pull/3) |
 | 4 · Shared web inbox | 2026-10-18 | [changelog](features/shared-inbox/_ship/changelog.md) · [PR #4](https://github.com/GopkoDev/tg-inbox/pull/4) |
-| 5 · Assignment & statuses | 2026-10-19 | [changelog](features/assignment-statuses/_ship/changelog.md) · PR pending |
-| 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · PR pending |
-| 7 · Contacts | 2026-10-19 | [changelog](features/contacts/_ship/changelog.md) · PR pending |
-| 8 · Broadcasts | 2026-10-24 | [changelog](features/broadcasts/_ship/changelog.md) · PR pending |
+| 5 · Assignment & statuses | 2026-10-19 | [changelog](features/assignment-statuses/_ship/changelog.md) · [PR #5](https://github.com/GopkoDev/tg-inbox/pull/5) |
+| 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · [PR #6](https://github.com/GopkoDev/tg-inbox/pull/6) |
+| 7 · Contacts | 2026-10-19 | [changelog](features/contacts/_ship/changelog.md) · [PR #7](https://github.com/GopkoDev/tg-inbox/pull/7) |
+| 8 · Broadcasts | 2026-10-24 | [changelog](features/broadcasts/_ship/changelog.md) · [PR #8](https://github.com/GopkoDev/tg-inbox/pull/8) |
