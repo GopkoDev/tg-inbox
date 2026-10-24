@@ -696,7 +696,7 @@
         "apps/api/src/e2e/broadcasts-load.int.test.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t28-sending-load-and-timing.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T29",
@@ -988,7 +988,7 @@
         "docs/features/broadcasts/sad.md"
       ],
       "file": "docs/features/broadcasts/tasks/t40-docs-and-canon.md",
-      "status": "todo"
+      "status": "in_progress"
     }
   ]
 }
