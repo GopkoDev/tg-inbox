@@ -35,7 +35,14 @@ import { createSendMemberMessage } from './modules/bots/app/send-member-message.
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createLaunchReadiness } from './modules/bots/app/launch-readiness.js';
 import { createMeasureBlockedShare } from './modules/broadcasts/app/blocked-share.js';
+import { createDrafts } from './modules/broadcasts/app/drafts.js';
+import { createDuplicate } from './modules/broadcasts/app/duplicate.js';
+import { createBroadcastGroup } from './modules/broadcasts/app/group.js';
+import { createLaunchBroadcast } from './modules/broadcasts/app/launch.js';
+import type { ContactsApi as BroadcastContactsApi } from './modules/broadcasts/app/ports.js';
+import { createLaunchPreview } from './modules/broadcasts/app/preview.js';
 import { createBroadcastReads } from './modules/broadcasts/app/reads.js';
+import { createStopBroadcast } from './modules/broadcasts/app/stop.js';
 import { createSendLink } from './modules/broadcasts/app/send-link.js';
 import { createSettle } from './modules/broadcasts/app/settle.js';
 import { createBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
@@ -495,39 +502,113 @@ export function buildDeps(
   });
   // --- end contacts reads ---
 
-  // --- broadcasts: the reads `inbox` shows broadcast items with (inbox -> broadcasts, ADR-0010);
-  // `inbox` is built above and calls it only per request. The rest of the module
-  // (registerBroadcasts) is wired with its routes. ---
+  // --- broadcasts: built after team (sad.md §5); calls the app layers of contacts (audiences,
+  // tag names, the block mark), conversations (broadcast items), bots (launch readiness, the
+  // broadcast sender) and workspaces (membership locks, display names). Nothing calls it back
+  // except `inbox` (itemDetails, through a per-request closure above) and its own workers. The
+  // pg-boss queue starts after `buildDeps()`, so the jobs port is late-bound (`bindBroadcastJobs`).
   const contactAudiences = createContactAudiences({
     audiences: createAudienceQuery(db),
     tags: createTagRepo(db),
   });
-  const broadcastReads = createBroadcastReads({
-    broadcasts: createBroadcastRepo(db),
-    audienceTags: createAudienceTagRepo(db),
-    groups: createGroupRepo(db),
-    recipients: createRecipientRepo(db),
-    contacts: {
-      resolveTags: async (workspaceId, tagIds) => {
-        const wanted = new Set(tagIds);
-        return (await tagAdmin.listTags(workspaceId)).items
-          .filter((t) => wanted.has(t.id))
-          .map((t) => ({ id: t.id, name: t.name }));
-      },
-      audienceBreakdown: contactAudiences.audienceBreakdown,
-      contactCards: contactAudiences.contactCards,
+  const broadcastContacts: BroadcastContactsApi = {
+    // Tag names at this moment: the workspace has at most 100 tags (CLAUDE.md), read through the
+    // contacts tag admin's list.
+    resolveTags: async (workspaceId, tagIds) => {
+      const wanted = new Set(tagIds);
+      return (await tagAdmin.listTags(workspaceId)).items
+        .filter((t) => wanted.has(t.id))
+        .map((t) => ({ id: t.id, name: t.name }));
     },
-    bots: createLaunchReadiness({ bots: botRepo }),
-    workspaces: { displayNames: workspaceAccess.displayNames },
-  });
-  // --- end broadcasts reads ---
-
-  // --- broadcasts: the sending chain (ADR-0007) and the 48-hour blocked share; the pg-boss queue
-  // starts after `buildDeps()`, so the jobs port is late-bound (`bindBroadcastJobs`). ---
+    audienceBreakdown: contactAudiences.audienceBreakdown,
+    reachableContacts: contactAudiences.reachableContacts,
+    isBlocked: contactAudiences.isBlocked,
+    matchingContactIds: contactAudiences.matchingContactIds,
+    contactCards: contactAudiences.contactCards,
+  };
+  const broadcastWorkspaces = {
+    // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+    lockActiveMembers: (tx: unknown, workspaceId: string, accountIds: readonly string[]) =>
+      workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, [...accountIds]),
+    displayNames: workspaceAccess.displayNames,
+  };
+  const launchReadiness = createLaunchReadiness({ bots: botRepo });
   const broadcastRepo = createBroadcastRepo(db);
+  const audienceTagRepo = createAudienceTagRepo(db);
+  const groupRepo = createGroupRepo(db);
   const recipientRepo = createRecipientRepo(db);
   const broadcastJobs = createBroadcastJobs();
   const broadcastSignals = createBroadcastSignals();
+  const broadcastLogger = overrides.logger && { logger: overrides.logger };
+  const broadcastReads = createBroadcastReads({
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    workspaces: broadcastWorkspaces,
+  });
+  // Every use case answers through the reads, after its writing transaction.
+  const broadcastViews = {
+    draftView: broadcastReads.draftView,
+    broadcastView: broadcastReads.getBroadcast,
+  };
+  const broadcastDrafts = createDrafts({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    workspaces: broadcastWorkspaces,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const broadcastGroup = createBroadcastGroup({
+    transaction,
+    broadcasts: broadcastRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    workspaces: broadcastWorkspaces,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const broadcastDuplicate = createDuplicate({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    recipients: recipientRepo,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const launchPreview = createLaunchPreview({
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    clock,
+  });
+  const launchBroadcast = createLaunchBroadcast({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    workspaces: broadcastWorkspaces,
+    preview: launchPreview,
+    signals: broadcastSignals,
+    jobs: broadcastJobs,
+    views: broadcastViews,
+    drafts: broadcastViews,
+    clock,
+    ...broadcastLogger,
+  });
   const settle = createSettle({
     transaction,
     broadcasts: broadcastRepo,
@@ -535,13 +616,21 @@ export function buildDeps(
     signals: broadcastSignals,
     jobs: broadcastJobs,
     clock,
-    ...(overrides.logger && { logger: overrides.logger }),
+    ...broadcastLogger,
   });
+  const stopBroadcast = createStopBroadcast({
+    transaction,
+    broadcasts: broadcastRepo,
+    workspaces: broadcastWorkspaces,
+    settle,
+    views: broadcastViews,
+  });
+  // The sending chain (ADR-0007): one link per `broadcasts.send` job of a workspace.
   const sendLink = createSendLink({
     transaction,
     broadcasts: broadcastRepo,
     recipients: recipientRepo,
-    contacts: { isBlocked: contactAudiences.isBlocked },
+    contacts: broadcastContacts,
     bots: bots.broadcastSender,
     conversations: broadcastItems,
     settle,
@@ -549,15 +638,15 @@ export function buildDeps(
     reports: createReportSignals(broadcastSignals, clock),
     jobs: broadcastJobs,
     clock,
-    ...(overrides.logger && { logger: overrides.logger }),
+    ...broadcastLogger,
   });
   const measureBlockedShare = createMeasureBlockedShare({
     broadcasts: broadcastRepo,
     recipients: recipientRepo,
-    contacts: { audienceBreakdown: contactAudiences.audienceBreakdown },
+    contacts: broadcastContacts,
     logger: overrides.logger ?? { info() {} },
   });
-  // --- end broadcasts sending ---
+  // --- end broadcasts dependencies ---
 
   return {
     config,
@@ -594,6 +683,16 @@ export function buildDeps(
     bindNotificationJobs: (boss: Jobs) => {
       botMessages.bind(boss);
       pingStarter.bind(boss);
+    },
+    /** The broadcasts use cases behind `registerBroadcasts`. */
+    broadcasts: {
+      reads: broadcastReads,
+      drafts: broadcastDrafts,
+      group: broadcastGroup,
+      duplicate: broadcastDuplicate,
+      preview: launchPreview,
+      launch: launchBroadcast,
+      stop: stopBroadcast,
     },
     /** One link of a workspace's broadcasts sending chain (the `broadcasts.send` worker). */
     sendLink,

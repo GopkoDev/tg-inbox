@@ -651,7 +651,7 @@
         "apps/api/src/app.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t26-register-broadcasts-routes.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T27",

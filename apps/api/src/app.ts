@@ -7,6 +7,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerContacts } from './modules/contacts/http/routes.js';
+import { registerBroadcasts } from './modules/broadcasts/http/routes.js';
 import { createBroadcastQueues, registerBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
 import { createDeliver } from './modules/inbox/app/deliver.js';
@@ -229,6 +230,15 @@ export async function buildApp(
         reads: deps.contactReads,
         writes: deps.tagWrites,
         admin: deps.tagAdmin,
+        access: workspaceAccess,
+        authenticate,
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerBroadcasts(api, {
+        ...deps.broadcasts,
         access: workspaceAccess,
         authenticate,
       }),
