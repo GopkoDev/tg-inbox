@@ -38,6 +38,7 @@ describe('change state: the refusal echoes what the row lock checked (postgres)'
       username: 'olena',
       languageCode: 'uk',
     },
+    telegramBotId: 9402n,
     raw: { message_id: Number(messageId), text: `m${messageId}` },
   });
 

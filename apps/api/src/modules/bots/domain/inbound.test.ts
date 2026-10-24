@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { telegramEdit, telegramUpdate } from '../../../test/fixtures/telegram.js';
+import {
+  telegramEdit,
+  telegramMyChatMember,
+  telegramUpdate,
+} from '../../../test/fixtures/telegram.js';
 import { classifyUpdate, detectKind } from './inbound.js';
 
 const DATE = 1791712800; // unix seconds
@@ -297,5 +301,97 @@ describe('detectKind', () => {
 
   it('falls back to other', () => {
     expect(detectKind({ giveaway: {} })).toBe('other');
+  });
+});
+
+describe('classifyUpdate — my_chat_member blocks (ADR-0003, AC-14)', () => {
+  const member = (o: Partial<Parameters<typeof telegramMyChatMember>[0]> = {}) =>
+    telegramMyChatMember({
+      updateId: 900010,
+      fromId: 700001,
+      date: DATE + 30,
+      status: 'kicked',
+      ...o,
+    });
+
+  it('a private kicked is a block of the sender at the update date', () => {
+    expect(classifyUpdate(member(), opts)).toEqual({
+      type: 'reach',
+      telegramUserId: 700001n,
+      blocked: true,
+      at: new Date((DATE + 30) * 1000),
+    });
+  });
+
+  it('a private member is an unblock', () => {
+    expect(classifyUpdate(member({ status: 'member' }), opts)).toEqual({
+      type: 'reach',
+      telegramUserId: 700001n,
+      blocked: false,
+      at: new Date((DATE + 30) * 1000),
+    });
+  });
+
+  it('is a reach fact even when dated before the capture epoch (the newest fact wins later)', () => {
+    expect(classifyUpdate(member({ date: DATE - 3600 }), opts)).toMatchObject({
+      type: 'reach',
+      blocked: true,
+    });
+  });
+
+  it.each(['group', 'supergroup', 'channel'] as const)('ignores a %s chat', (chatType) => {
+    expect(classifyUpdate(member({ chatType }), opts)).toEqual({
+      type: 'ignore',
+      reason: 'not_private',
+    });
+  });
+
+  it.each(['administrator', 'left', 'restricted', 'creator'])('ignores the status %s', (status) => {
+    expect(classifyUpdate(member({ status }), opts)).toEqual({
+      type: 'ignore',
+      reason: 'unsupported_status',
+    });
+  });
+
+  it.each([
+    [
+      'no chat',
+      {
+        update_id: 1,
+        my_chat_member: { date: DATE, from: { id: 1 }, new_chat_member: { status: 'kicked' } },
+      },
+    ],
+    [
+      'no sender',
+      {
+        update_id: 1,
+        my_chat_member: {
+          date: DATE,
+          chat: { id: 1, type: 'private' },
+          new_chat_member: { status: 'kicked' },
+        },
+      },
+    ],
+    [
+      'no date',
+      {
+        update_id: 1,
+        my_chat_member: {
+          chat: { id: 1, type: 'private' },
+          from: { id: 1 },
+          new_chat_member: { status: 'kicked' },
+        },
+      },
+    ],
+    [
+      'no new member',
+      {
+        update_id: 1,
+        my_chat_member: { date: DATE, chat: { id: 1, type: 'private' }, from: { id: 1 } },
+      },
+    ],
+    ['a non-object', { update_id: 1, my_chat_member: 'x' }],
+  ])('ignores %s as malformed', (_name, body) => {
+    expect(classifyUpdate(body, opts)).toEqual({ type: 'ignore', reason: 'malformed' });
   });
 });

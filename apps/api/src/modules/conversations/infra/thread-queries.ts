@@ -1,6 +1,12 @@
 import { sql, type Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
-import type { ConversationActivities, Messages, Replies } from '../../../platform/db.types.gen.js';
+import type {
+  BroadcastItems,
+  ConversationActivities,
+  Messages,
+  Replies,
+} from '../../../platform/db.types.gen.js';
+import { toBroadcastItem } from './broadcast-item-repo.js';
 import { isMessageKind, type MessageKind } from '../domain/message.js';
 import { mediaFileOf, projectMessage } from '../domain/projection.js';
 import { compareThreadPosition, type ThreadPosition } from '../domain/thread.js';
@@ -78,6 +84,12 @@ const replyEntry = (row: ReplyRow): ThreadEntry => ({
   reply: toReply(row),
 });
 
+const broadcastEntry = (row: Selectable<BroadcastItems>): ThreadEntry => ({
+  type: 'broadcast',
+  position: { positionAt: row.position_at, kind: 'broadcast', id: row.id },
+  broadcastItem: toBroadcastItem(row),
+});
+
 const activityEntry = (row: ActivityRow): ThreadEntry => ({
   type: 'activity',
   position: { positionAt: row.position_at, kind: 'activity', id: row.id },
@@ -85,9 +97,9 @@ const activityEntry = (row: ActivityRow): ThreadEntry => ({
 });
 
 /**
- * Keyset conditions of "strictly before / after the cursor" on each half of the union. Within the same
- * instant a message precedes a reply and a reply precedes an activity entry (compareThreadPosition),
- * so the halves differ at that instant.
+ * Keyset conditions of "strictly before / after the cursor" on each part of the union. Within the
+ * same instant a message precedes a reply, a reply an activity entry and an activity entry a
+ * broadcast item (compareThreadPosition), so the parts differ at that instant.
  */
 function messageCondition(c: ThreadPosition, dir: 'before' | 'after') {
   if (c.kind === 'message') {
@@ -104,8 +116,8 @@ function replyCondition(c: ThreadPosition, dir: 'before' | 'after') {
     const op = dir === 'before' ? sql`<` : sql`>`;
     return sql<boolean>`(position_at, id) ${op} (${c.positionAt}::timestamptz, ${c.id}::uuid)`;
   }
-  if (c.kind === 'activity') {
-    // a reply precedes an activity entry of the same instant
+  if (c.kind === 'activity' || c.kind === 'broadcast') {
+    // a reply precedes an activity entry and a broadcast item of the same instant
     return dir === 'before'
       ? sql<boolean>`position_at <= ${c.positionAt}::timestamptz`
       : sql<boolean>`position_at > ${c.positionAt}::timestamptz`;
@@ -120,7 +132,24 @@ function activityCondition(c: ThreadPosition, dir: 'before' | 'after') {
     const op = dir === 'before' ? sql`<` : sql`>`;
     return sql<boolean>`(position_at, id) ${op} (${c.positionAt}::timestamptz, ${c.id}::uuid)`;
   }
+  if (c.kind === 'broadcast') {
+    // an activity entry precedes a broadcast item of the same instant
+    return dir === 'before'
+      ? sql<boolean>`position_at <= ${c.positionAt}::timestamptz`
+      : sql<boolean>`position_at > ${c.positionAt}::timestamptz`;
+  }
   // an activity entry follows a message and a reply of the same instant
+  return dir === 'before'
+    ? sql<boolean>`position_at < ${c.positionAt}::timestamptz`
+    : sql<boolean>`position_at >= ${c.positionAt}::timestamptz`;
+}
+
+function broadcastCondition(c: ThreadPosition, dir: 'before' | 'after') {
+  if (c.kind === 'broadcast') {
+    const op = dir === 'before' ? sql`<` : sql`>`;
+    return sql<boolean>`(position_at, id) ${op} (${c.positionAt}::timestamptz, ${c.id}::uuid)`;
+  }
+  // a broadcast item follows every other kind of the same instant (ADR-0010)
   return dir === 'before'
     ? sql<boolean>`position_at < ${c.positionAt}::timestamptz`
     : sql<boolean>`position_at >= ${c.positionAt}::timestamptz`;
@@ -171,11 +200,18 @@ export function createThreadQueries(db: Db): ThreadReads {
             .selectAll()
             .where('workspace_id', '=', workspaceId)
             .where('conversation_id', '=', conversationId);
+          // The fourth keyset part (ADR-0010) on broadcast_items_conversation_position_at_idx.
+          let broadcastItems = trx
+            .selectFrom('broadcast_items')
+            .selectAll()
+            .where('workspace_id', '=', workspaceId)
+            .where('conversation_id', '=', conversationId);
           if (cursor) {
             const dir = newer ? 'after' : 'before';
             messages = messages.where(messageCondition(cursor, dir));
             replies = replies.where(replyCondition(cursor, dir));
             activities = activities.where(activityCondition(cursor, dir));
+            broadcastItems = broadcastItems.where(broadcastCondition(cursor, dir));
           }
           const order = newer ? 'asc' : 'desc';
           const newestReply = trx
@@ -187,7 +223,7 @@ export function createThreadQueries(db: Db): ThreadReads {
             .orderBy('id', 'desc')
             .limit(1)
             .executeTakeFirst();
-          const [messageRows, replyRows, activityRows, newest] = await Promise.all([
+          const [messageRows, replyRows, activityRows, broadcastRows, newest] = await Promise.all([
             messages
               .orderBy('sent_at', order)
               .orderBy('telegram_message_id', order)
@@ -195,6 +231,7 @@ export function createThreadQueries(db: Db): ThreadReads {
               .execute(),
             replies.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
             activities.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
+            broadcastItems.orderBy('position_at', order).orderBy('id', order).limit(take).execute(),
             newestReply,
           ]);
 
@@ -202,6 +239,7 @@ export function createThreadQueries(db: Db): ThreadReads {
             ...messageRows.map(messageEntry),
             ...replyRows.map(replyEntry),
             ...activityRows.map(activityEntry),
+            ...broadcastRows.map(broadcastEntry),
           ].sort((a, b) =>
             newer
               ? compareThreadPosition(a.position, b.position)

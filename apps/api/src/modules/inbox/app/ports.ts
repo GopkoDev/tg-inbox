@@ -1,5 +1,7 @@
 import type { ConversationSummary, InboxBotStatus } from '@tg/shared';
+import type { BroadcastReads } from '../../broadcasts/app/reads.js';
 import type { Contacts } from '../../contacts/app/contacts.js';
+import type { BroadcastItems } from '../../conversations/app/broadcast-items.js';
 import type { InboxReads } from '../../conversations/app/inbox-reads.js';
 import type { Executor } from '../../conversations/app/ports.js';
 import type { StateChanges } from '../../conversations/app/state-changes.js';
@@ -14,6 +16,10 @@ export interface InboxReadsDeps {
     activeMembers(workspaceId: string): Promise<{ accountId: string; displayName: string }[]>;
   };
   bots: { inboxBotStatus(workspaceId: string): Promise<InboxBotStatus> };
+  /** The thread's broadcast items: name, text and launching owner (ADR-0010, AC-16). */
+  broadcasts: Pick<BroadcastReads, 'itemDetails'>;
+  /** One broadcast item of a conversation (`conversations`, ADR-0010). */
+  broadcastItems: Pick<BroadcastItems, 'getBroadcastItem'>;
   clock: Clock;
 }
 

@@ -1,4 +1,5 @@
 import type { TagFilterMode, TagWithCount } from '@tg/shared';
+import type { ReactNode } from 'react';
 import type { TagsStatus } from '@/features/tags/store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
@@ -10,6 +11,13 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import type { ContactsAddress } from './address';
 
 type Value = Pick<ContactsAddress, 'mode' | 'tagIds'>;
+
+/** A labelled filter (a draft's Send to) reads «Send to · Any of 2» (screens.md Decision 6). */
+function labelledButton(label: string, { mode, tagIds }: Value): string {
+  if (mode === 'none') return `${label} · No tags`;
+  if (tagIds.length === 0) return label;
+  return `${label} · ${mode === 'all' ? 'All' : 'Any'} of ${tagIds.length}`;
+}
 
 function buttonLabel({ mode, tagIds }: Value): string {
   if (mode === 'none') return 'No tags';
@@ -23,6 +31,8 @@ function buttonLabel({ mode, tagIds }: Value): string {
  * (any of / all of / no tags) and one checkbox per workspace tag with its contact count. «No tags»
  * is a mode of its own: it clears the chosen tags and disables the checkboxes. While the tag store
  * loads it shows row skeletons, and when it failed an error with Retry — never «No tags yet».
+ * Driven only by `mode` / `tagIds` / `onChange`: the Contacts list binds them to its address, a
+ * broadcast draft (SCR-25 Send to) to the draft, with a `label` and the tags left out disabled.
  */
 export function TagFilter({
   tags,
@@ -31,6 +41,10 @@ export function TagFilter({
   mode,
   tagIds,
   onChange,
+  label,
+  disabledTagIds = [],
+  adornment,
+  triggerClassName,
 }: {
   tags: TagWithCount[];
   /** The tag store's status: the list is known only when `ready`. */
@@ -39,6 +53,13 @@ export function TagFilter({
   mode: TagFilterMode;
   tagIds: string[];
   onChange: (next: Value) => void;
+  /** Names the button («Send to»); the Contacts list leaves it out. */
+  label?: string;
+  /** Tags that cannot be chosen here (left out of a draft's audience). */
+  disabledTagIds?: readonly string[];
+  /** Shown after the button text (a saving spinner). */
+  adornment?: ReactNode;
+  triggerClassName?: string;
 }) {
   const ready = status === 'ready';
   // «Any of» / «All of» need tags; they also show while the tags are unknown, and the mode the
@@ -59,8 +80,9 @@ export function TagFilter({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" variant="outline">
-          {buttonLabel({ mode, tagIds })}
+        <Button type="button" variant="outline" className={triggerClassName}>
+          {label ? labelledButton(label, { mode, tagIds }) : buttonLabel({ mode, tagIds })}
+          {adornment}
         </Button>
       </PopoverTrigger>
       <PopoverContent
@@ -104,21 +126,24 @@ export function TagFilter({
           <p className="text-sm text-muted-foreground">No tags yet — tags are added on a contact</p>
         ) : (
           <div className="flex max-h-64 flex-col gap-2 overflow-y-auto border-t pt-3">
-            {tags.map((tag) => (
-              <Label
-                key={tag.id}
-                className="flex items-center gap-2 font-normal aria-disabled:opacity-50"
-                aria-disabled={mode === 'none'}
-              >
-                <Checkbox
-                  checked={tagIds.includes(tag.id)}
-                  disabled={mode === 'none'}
-                  onCheckedChange={(v) => toggle(tag.id, v === true)}
-                />
-                <span className="min-w-0 flex-1 truncate">{tag.name}</span>
-                <span className="text-xs text-muted-foreground">{tag.contact_count}</span>
-              </Label>
-            ))}
+            {tags.map((tag) => {
+              const disabled = mode === 'none' || disabledTagIds.includes(tag.id);
+              return (
+                <Label
+                  key={tag.id}
+                  className="flex items-center gap-2 font-normal aria-disabled:opacity-50"
+                  aria-disabled={disabled}
+                >
+                  <Checkbox
+                    checked={tagIds.includes(tag.id)}
+                    disabled={disabled}
+                    onCheckedChange={(v) => toggle(tag.id, v === true)}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{tag.name}</span>
+                  <span className="text-xs text-muted-foreground">{tag.contact_count}</span>
+                </Label>
+              );
+            })}
           </div>
         )}
       </PopoverContent>

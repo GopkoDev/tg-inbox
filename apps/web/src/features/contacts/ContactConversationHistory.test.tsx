@@ -75,6 +75,7 @@ const contact: ContactProfileDto = {
   language_code: 'uk',
   first_wrote_at: at(0),
   last_wrote_at: at(5),
+  blocked_since: null,
   tags: [],
 };
 const summary = (over: Partial<ConversationSummary> = {}): ConversationSummary => ({

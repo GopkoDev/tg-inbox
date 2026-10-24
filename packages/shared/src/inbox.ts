@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BROADCAST_TEXT_MAX, broadcastTextLength } from './broadcast-text.js';
 
 const DateTime = z.iso.datetime({ offset: true });
 const Id = z.uuid();
@@ -215,10 +216,34 @@ export const ThreadActivity = z
   });
 export type ThreadActivity = z.infer<typeof ThreadActivity>;
 
+/**
+ * One broadcast item (`broadcast_items`, ADR-0010) enriched with the broadcast's name, text and
+ * launching owner. Never unread, never `last_item`, never a conversation state change (AC-16).
+ */
+export const ThreadBroadcastItem = z.strictObject({
+  type: z.literal('broadcast'),
+  id: Id,
+  workspace_id: Id,
+  conversation_id: Id,
+  broadcast_id: Id,
+  broadcast_name: z.string().min(1),
+  text: z
+    .string()
+    .min(1)
+    .refine((t) => broadcastTextLength(t) <= BROADCAST_TEXT_MAX, {
+      message: `at most ${BROADCAST_TEXT_MAX} UTF-16 code units`,
+    }),
+  launched_by: MemberRef,
+  state: z.enum(['delivered', 'not_confirmed']),
+  position_at: DateTime,
+});
+export type ThreadBroadcastItem = z.infer<typeof ThreadBroadcastItem>;
+
 export const ThreadItem = z.discriminatedUnion('type', [
   ThreadMessage,
   ThreadReply,
   ThreadActivity,
+  ThreadBroadcastItem,
 ]);
 export type ThreadItem = z.infer<typeof ThreadItem>;
 
@@ -448,7 +473,9 @@ export const ConversationChangedFrame = z
     ...frameBase,
     type: z.literal('conversation.changed'),
     conversation_id: Id,
-    item: z.object({ type: z.enum(['message', 'reply', 'activity']), id: Id }).nullable(),
+    item: z
+      .object({ type: z.enum(['message', 'reply', 'activity', 'broadcast']), id: Id })
+      .nullable(),
     change: z.enum(['created', 'edited', 'state', 'read']),
   })
   .refine((f) => f.item !== null || f.change === 'read', {
@@ -457,6 +484,10 @@ export const ConversationChangedFrame = z
   })
   .refine((f) => f.item?.type !== 'activity' || f.change === 'created', {
     message: 'an activity entry is immutable: only created',
+    path: ['change'],
+  })
+  .refine((f) => f.item?.type !== 'broadcast' || f.change === 'created', {
+    message: 'a broadcast item is immutable: only created',
     path: ['change'],
   });
 
@@ -469,12 +500,23 @@ export const TelegramLinkChangedFrame = z.object({
   type: z.literal('telegram_link.changed'),
 });
 
-/** One contact's tags changed; ids and a change kind only, to every socket of the workspace (events.md). */
+/**
+ * One contact's tags or blocked mark (`reach`) changed; ids and a change kind only, to every socket
+ * of the workspace (events.md).
+ */
 export const ContactChangedFrame = z.object({
   ...frameBase,
   type: z.literal('contact.changed'),
   contact_id: Id,
-  change: z.enum(['tags']),
+  change: z.enum(['tags', 'reach']),
+});
+
+/** A broadcast of the workspace changed; ids and a change kind only, to every socket (events.md). */
+export const BroadcastChangedFrame = z.object({
+  ...frameBase,
+  type: z.literal('broadcast.changed'),
+  broadcast_id: Id,
+  change: z.enum(['draft', 'group', 'status', 'report', 'deleted']),
 });
 
 /** The workspace's tag list changed (a tag was created, renamed, merged or deleted). */
@@ -487,6 +529,7 @@ export const LiveFrame = z.discriminatedUnion('type', [
   TelegramLinkChangedFrame,
   ContactChangedFrame,
   TagsChangedFrame,
+  BroadcastChangedFrame,
 ]);
 export type LiveFrame = z.infer<typeof LiveFrame>;
 

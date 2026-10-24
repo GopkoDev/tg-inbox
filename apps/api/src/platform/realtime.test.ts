@@ -80,6 +80,44 @@ describe('realtime signal schema', () => {
     expect(realtimeSignalSchema.safeParse({ ...tags, v: 2 }).success).toBe(false);
   });
 
+  it('accepts broadcast.changed with ids and one of the five change kinds only', () => {
+    const broadcast = {
+      type: 'broadcast.changed',
+      v: 1,
+      workspace_id: ws,
+      broadcast_id: newId(),
+      change: 'report',
+    };
+    for (const change of ['draft', 'group', 'status', 'report', 'deleted']) {
+      expect(realtimeSignalSchema.safeParse({ ...broadcast, change }).success).toBe(true);
+    }
+    expect(Buffer.byteLength(JSON.stringify(broadcast))).toBeLessThan(MAX_SIGNAL_BYTES);
+    expect(realtimeSignalSchema.safeParse({ ...broadcast, change: 'renamed' }).success).toBe(false);
+    expect(realtimeSignalSchema.safeParse({ ...broadcast, broadcast_id: undefined }).success).toBe(
+      false,
+    );
+  });
+
+  it('accepts contact.changed reach and a broadcast item only as created', () => {
+    expect(
+      realtimeSignalSchema.safeParse({
+        type: 'contact.changed',
+        v: 1,
+        workspace_id: ws,
+        contact_id: newId(),
+        change: 'reach',
+      }).success,
+    ).toBe(true);
+    const broadcastItem = { ...changed, item: { type: 'broadcast', id: newId() } };
+    expect(realtimeSignalSchema.safeParse(broadcastItem).success).toBe(true);
+    expect(realtimeSignalSchema.safeParse({ ...broadcastItem, change: 'edited' }).success).toBe(
+      false,
+    );
+    expect(realtimeSignalSchema.safeParse({ ...broadcastItem, change: 'state' }).success).toBe(
+      false,
+    );
+  });
+
   it('requires account_id for a read change', () => {
     expect(realtimeSignalSchema.safeParse({ ...changed, item: null, change: 'read' }).success).toBe(
       false,

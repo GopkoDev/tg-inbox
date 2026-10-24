@@ -37,7 +37,7 @@ const answer = (workspace_id: string, count: number) => ({ workspace_id, count }
 const changed = (
   workspace_id: string,
   change: 'created' | 'edited' | 'state' | 'read',
-  item: { type: 'message' | 'reply' | 'activity'; id: string } | null,
+  item: { type: 'message' | 'reply' | 'activity' | 'broadcast'; id: string } | null,
 ): LiveFrame => ({
   v: 1,
   workspace_id,
@@ -109,6 +109,29 @@ describe('attention store (AC-01, ADR-0008)', () => {
     subscriber().onFrame(changed(A, 'edited', { type: 'message', id: M1 }));
     subscriber().onFrame({ v: 1, workspace_id: A, type: 'bot.changed' });
     subscriber().onFrame({ v: 1, workspace_id: A, type: 'telegram_link.changed' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(api.getAttentionCount).not.toHaveBeenCalled();
+  });
+
+  it('a broadcast item and the broadcast frames do not refetch (ADR-0010)', async () => {
+    useAttentionStore.getState().start(A, guard);
+    await flush();
+    api.getAttentionCount.mockClear();
+    subscriber().onFrame(changed(A, 'created', { type: 'broadcast', id: M1 }));
+    subscriber().onFrame({
+      v: 1,
+      workspace_id: A,
+      type: 'broadcast.changed',
+      broadcast_id: M1,
+      change: 'status',
+    } as LiveFrame);
+    subscriber().onFrame({
+      v: 1,
+      workspace_id: A,
+      type: 'contact.changed',
+      contact_id: M1,
+      change: 'reach',
+    } as LiveFrame);
     await vi.advanceTimersByTimeAsync(1000);
     expect(api.getAttentionCount).not.toHaveBeenCalled();
   });

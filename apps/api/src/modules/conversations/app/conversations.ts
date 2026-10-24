@@ -25,6 +25,8 @@ export interface InboundMessage {
   /** Telegram's `date`. */
   sentAt: Date;
   sender: ContactProfile;
+  /** The Telegram id of the bot that received the message: the contact "wrote" to it (ADR-0002). */
+  telegramBotId: bigint;
   /** Telegram's message object, stored for its media references. */
   raw: Record<string, unknown>;
 }
@@ -80,7 +82,13 @@ export function createConversations(deps: ConversationsDeps): Conversations {
     captureInbound(workspaceId, m) {
       const now = clock.now();
       return transaction(async (tx) => {
-        const { contactId } = await contacts.upsertFromProfile(workspaceId, m.sender, m.sentAt, tx);
+        const { contactId } = await contacts.upsertFromProfile(
+          workspaceId,
+          m.sender,
+          m.sentAt,
+          m.telegramBotId,
+          tx,
+        );
         const { conversationId } = await conversations.upsert(
           workspaceId,
           { contactId, telegramChatId: m.chatId },

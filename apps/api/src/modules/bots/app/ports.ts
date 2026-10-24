@@ -28,6 +28,11 @@ export interface BotRecord {
   createdAt: Date;
   /** Bot sends to members are refused until then (ADR-0006); null or past: not paused. */
   sendPausedUntil: Date | null;
+  /**
+   * When the token was last rejected (the bot became `needs_token`); a rotation back to working
+   * keeps it. Broadcasts launched before it are not sent any more (AC-12).
+   */
+  stoppedWorkingAt: Date | null;
 }
 
 export interface NewBot {
@@ -50,7 +55,13 @@ export type BotPatch = Partial<
     NewBot,
     'name' | 'username' | 'state' | 'token' | 'webhookSecret' | 'connectedAt' | 'lastCheckedAt'
   >
->;
+> & {
+  /**
+   * With `state: 'needs_token'`: the app's time the bot stopped working (AC-12), stored unless the
+   * row already needed a token.
+   */
+  stoppedWorkingAt?: Date;
+};
 
 export type BotWriteResult =
   | { ok: true }
@@ -166,7 +177,12 @@ export type GetMeResult =
  * `stale`: tg-inbox's own webhook path for another bot row id — left by a first connect whose
  * setWebhook reached Telegram after we gave up; not another service, so no takeover warning.
  */
-export type WebhookTarget = 'ours' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
+/**
+ * Where the bot's webhook points. `ours_outdated`: our URL, but registered with other allowed
+ * updates than the current set (a bot connected before `my_chat_member`, ADR-0003).
+ */
+export type WebhookTarget =
+  'ours' | 'ours_outdated' | 'stale' | 'foreign' | 'none' | 'unauthorized' | 'transient';
 
 /** Per-call timeout of `sendMessage` (sad.md §8): past it the answer is `unknown`. */
 export const SEND_TIMEOUT = 10_000;
@@ -196,6 +212,41 @@ export type MemberMessageOutcome =
   | { outcome: 'bot_unavailable' }
   | { outcome: 'transient' }
   | { outcome: 'unknown' };
+
+/**
+ * A broadcast `sendMessage` answer as the gateway classifies it (ADR-0008, sad.md §11): `400`s
+ * naming the chat ("chat not found", "user not found", `PEER_ID_INVALID`) are the recipient's;
+ * any other `400` is the text's. `error`: Telegram answered with another failure, or the request
+ * was never written; `unknown`: no answer after the write (it may have been delivered).
+ */
+export type BroadcastSendAnswer =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'blocked' }
+  | { outcome: 'account_gone' }
+  | { outcome: 'chat_not_found' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'rate_limited'; retryAfterMs?: number }
+  | { outcome: 'error' }
+  | { outcome: 'unknown' };
+
+/** What `broadcasts` gets back from `sendBroadcastMessage` (sad.md §5, flow 12). */
+export type BroadcastSendOutcome =
+  | { outcome: 'delivered'; messageId: bigint; at: Date }
+  | { outcome: 'blocked' }
+  | { outcome: 'account_gone' }
+  | { outcome: 'chat_not_found' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'telegram_error' }
+  /** A 429: the pause is stored; nothing was sent. */
+  | { outcome: 'rate_limited'; retryAfter: Date }
+  /** The bot's send pause runs: not called. */
+  | { outcome: 'paused'; until: Date }
+  /** No bot, or not `connected` / `taken_over`, or its token was rejected. */
+  | { outcome: 'bot_unavailable' }
+  /** The workspace's bot is no longer the Telegram bot of the launch. */
+  | { outcome: 'bot_changed' }
+  | { outcome: 'not_confirmed' };
 
 /** `getFile` timeout (sad.md §8). */
 export const GET_FILE_TIMEOUT = 5000;
@@ -239,9 +290,22 @@ export interface TelegramGateway {
     timeoutMs: number,
     options?: { disableLinkPreview?: boolean },
   ): Promise<SendOutcome>;
+  /**
+   * A broadcast's plain text (no `parse_mode`, link previews at Telegram's default). Never throws;
+   * never repeated here. The answer carries no text, chat id or token.
+   */
+  sendBroadcast(
+    token: string,
+    chatId: bigint,
+    text: string,
+    timeoutMs: number,
+  ): Promise<BroadcastSendAnswer>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
-  /** Always `allowed_updates: message, edited_message` and the configured `max_connections`. */
+  /**
+   * Always `allowed_updates: message, edited_message, my_chat_member` (ADR-0003) and the configured
+   * `max_connections`.
+   */
   setWebhook(
     token: string,
     webhook: { url: string; secret: string; dropPending: boolean },
@@ -264,10 +328,13 @@ export interface BotSignals {
 
 /** What `bots` calls on the conversations app layer (sad.md §5, cross-module app-layer calls). */
 export interface ConversationsApi {
-  /** Contact, conversation and message in one transaction; a redelivery is `already_present`. */
+  /**
+   * Contact (with its "wrote" mark for the receiving Telegram bot), conversation and message in
+   * one transaction; a redelivery is `already_present`.
+   */
   captureInbound(
     workspaceId: string,
-    message: NormalisedMessage,
+    message: NormalisedMessage & { telegramBotId: bigint },
   ): Promise<'captured' | 'already_present'>;
   /** Replaces the text only when the edit is later; nothing for an uncaptured message (AC-10). */
   applyEdit(
@@ -313,4 +380,19 @@ export type BotConnectedHook = (
 /** What `bots` calls on the contacts app layer. */
 export interface ContactsApi {
   countContacts(workspaceId: string): Promise<number>;
+}
+
+/**
+ * The contacts reach write `bots` calls when it learns a block (ADR-0003): a `my_chat_member`
+ * update (Telegram's time) or a send refused as blocked (our clock). A Telegram user who is not a
+ * contact is a no-op in `contacts`. Passed in by the composition root.
+ */
+export interface ContactsReach {
+  recordBlockChange(
+    workspaceId: string,
+    telegramBotId: bigint,
+    telegramUserId: bigint,
+    blocked: boolean,
+    at: Date,
+  ): Promise<unknown>;
 }

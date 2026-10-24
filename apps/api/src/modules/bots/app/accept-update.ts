@@ -1,5 +1,11 @@
 import { classifyUpdate, detectKind, type IgnoreReason } from '../domain/inbound.js';
-import type { BotRecord, BotRepo, ConversationsApi, InboundInterceptor } from './ports.js';
+import type {
+  BotRecord,
+  BotRepo,
+  ContactsReach,
+  ConversationsApi,
+  InboundInterceptor,
+} from './ports.js';
 
 /** pino-compatible: the webhook route passes its request logger. */
 export interface CaptureLog {
@@ -13,6 +19,8 @@ export type AcceptOutcome =
   | 'edited'
   /** A connect-link start or a linked member's message: not a customer message, nothing captured. */
   | 'consumed'
+  /** A private block or unblock of the bot (`my_chat_member`), recorded in contacts (ADR-0003). */
+  | 'reach'
   | `ignored:${IgnoreReason}`;
 
 export interface AcceptUpdateDeps {
@@ -20,6 +28,8 @@ export interface AcceptUpdateDeps {
   conversations: Pick<ConversationsApi, 'captureInbound' | 'applyEdit'>;
   /** Asked before anything is captured (ADR-0003). */
   interceptor: InboundInterceptor;
+  /** Where a block or unblock of the bot is recorded (contacts, ADR-0003). */
+  reach: ContactsReach;
 }
 
 /** A bot whose webhook secret matched: the only way the webhook learns a workspace id. */
@@ -63,6 +73,7 @@ export function createAcceptUpdate({
   bots,
   conversations,
   interceptor,
+  reach,
 }: AcceptUpdateDeps): AcceptUpdate {
   const authenticate: AcceptUpdate['authenticate'] = async (botId, secret, log) => {
     // Controlled exception *bot by webhook id*: scoped by possession of the secret.
@@ -88,6 +99,19 @@ export function createAcceptUpdate({
       log.info({ ...ids, outcome: 'ignored', reason: decision.reason }, 'telegram update ignored');
       return `ignored:${decision.reason}`;
     }
+    // A block or unblock is never a message: recorded before the interceptor and capture, so it
+    // makes no conversation, unread change or ping. Logged without the Telegram user id.
+    if (decision.type === 'reach') {
+      await reach.recordBlockChange(
+        bot.workspaceId,
+        bot.telegramBotId,
+        decision.telegramUserId,
+        decision.blocked,
+        decision.at,
+      );
+      log.info({ ...ids, outcome: 'reach' }, 'telegram reach change handled');
+      return 'reach';
+    }
     // A connect-link start or a linked member's message is not a customer message (AC-04, AC-11).
     // Logged by outcome only: no sender id, text or token.
     const consumed =
@@ -108,7 +132,10 @@ export function createAcceptUpdate({
       log.info({ ...ids, outcome: 'edited', edit: result }, 'telegram edit handled');
       return 'edited';
     }
-    const outcome = await conversations.captureInbound(bot.workspaceId, decision.message);
+    const outcome = await conversations.captureInbound(bot.workspaceId, {
+      ...decision.message,
+      telegramBotId: bot.telegramBotId,
+    });
     log.info({ ...ids, outcome }, 'telegram update captured');
     return outcome;
   };

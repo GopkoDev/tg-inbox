@@ -28,10 +28,34 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
-import { createPacer } from './modules/bots/app/pacer.js';
+import { createSendPauses, withPauseNotes } from './modules/bots/app/send-pauses.js';
+import {
+  BROADCAST_MESSAGES_PER_SECOND,
+  createPacer,
+  type Pacer,
+} from './modules/bots/app/pacer.js';
+import { createSendBroadcastMessage } from './modules/bots/app/send-broadcast-message.js';
 import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
 import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
+import { createLaunchReadiness } from './modules/bots/app/launch-readiness.js';
+import { createMeasureBlockedShare } from './modules/broadcasts/app/blocked-share.js';
+import { createDrafts } from './modules/broadcasts/app/drafts.js';
+import { createDuplicate } from './modules/broadcasts/app/duplicate.js';
+import { createBroadcastGroup } from './modules/broadcasts/app/group.js';
+import { createLaunchBroadcast } from './modules/broadcasts/app/launch.js';
+import type { ContactsApi as BroadcastContactsApi } from './modules/broadcasts/app/ports.js';
+import { createLaunchPreview } from './modules/broadcasts/app/preview.js';
+import { createBroadcastReads } from './modules/broadcasts/app/reads.js';
+import { createStopBroadcast } from './modules/broadcasts/app/stop.js';
+import { createSendLink } from './modules/broadcasts/app/send-link.js';
+import { createSettle } from './modules/broadcasts/app/settle.js';
+import { createBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
+import { createBroadcastSignals, createReportSignals } from './modules/broadcasts/infra/signals.js';
+import { createAudienceTagRepo } from './modules/broadcasts/infra/audience-tag-repo.js';
+import { createBroadcastRepo } from './modules/broadcasts/infra/broadcast-repo.js';
+import { createGroupRepo } from './modules/broadcasts/infra/group-repo.js';
+import { createRecipientRepo } from './modules/broadcasts/infra/recipient-repo.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
@@ -53,15 +77,21 @@ import { createBotMessageSender, createPingStarter } from './modules/notificatio
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
+import { createContactAudiences } from './modules/contacts/app/audiences.js';
+import { createContactReach } from './modules/contacts/app/reach.js';
+import { createAudienceQuery } from './modules/contacts/infra/audience-query.js';
 import { createTagAdmin } from './modules/contacts/app/tag-admin.js';
 import { createTagWrites } from './modules/contacts/app/tags.js';
-import { createTagSignals } from './modules/contacts/infra/tag-signals.js';
+import { createReachSignals, createTagSignals } from './modules/contacts/infra/tag-signals.js';
 import { createContactListQuery } from './modules/contacts/infra/contact-list-query.js';
 import { createContactRepo } from './modules/contacts/infra/contact-repo.js';
+import { createReachRepo } from './modules/contacts/infra/reach-repo.js';
 import { createContactTagRepo } from './modules/contacts/infra/contact-tag-repo.js';
 import { createTagHistoryRepo } from './modules/contacts/infra/tag-history-repo.js';
 import { createTagRepo } from './modules/contacts/infra/tag-repo.js';
+import { createBroadcastItems } from './modules/conversations/app/broadcast-items.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
+import { createBroadcastItemRepo } from './modules/conversations/infra/broadcast-item-repo.js';
 import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
 import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
@@ -91,7 +121,12 @@ import type { Jobs } from './platform/jobs.js';
  */
 export function buildDeps(
   config: Config,
-  overrides: { clock?: Clock; logger?: { info(obj: object, msg: string): void } } = {},
+  overrides: {
+    clock?: Clock;
+    logger?: { info(obj: object, msg: string): void };
+    /** The broadcast pacer (25 per second per bot); load tests pass one that records each start. */
+    broadcastPacer?: Pacer;
+  } = {},
 ) {
   const clock = overrides.clock ?? systemClock;
   const db = createDb(config.DATABASE_URL, {
@@ -155,7 +190,19 @@ export function buildDeps(
 
   // --- contacts → conversations → bots (one-way: bots → conversations → contacts, bots → contacts) ---
   const transaction = <T>(fn: (tx: typeof db) => Promise<T>) => db.transaction().execute(fn);
-  const contacts = createContacts({ repo: createContactRepo(db), clock });
+  const contacts = createContacts({
+    repo: createContactRepo(db),
+    reach: createReachRepo(db),
+    signals: createReachSignals(),
+    clock,
+  });
+  // The contacts reach write `bots` calls when it learns a block (ADR-0003): bots -> contacts.
+  const contactReach = createContactReach({
+    transaction,
+    contacts: createContactRepo(db),
+    reach: createReachRepo(db),
+    signals: createReachSignals(),
+  });
   const conversations = createConversations({
     transaction,
     conversations: createConversationRepo(db),
@@ -192,7 +239,13 @@ export function buildDeps(
     },
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
-  const botRepo = createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY));
+  // Every stored send pause is also noted in process, so a broadcast send checks it right after
+  // its pacer slot without a database read (ADR-0008).
+  const sendPauses = createSendPauses();
+  const botRepo = withPauseNotes(
+    createBotRepo(db, createTokenCipher(config.BOT_TOKEN_ENCRYPTION_KEY)),
+    sendPauses,
+  );
   const telegram = createTelegramGateway({
     ...(config.TELEGRAM_API_ROOT && { apiRoot: config.TELEGRAM_API_ROOT }),
     maxConnections: config.TELEGRAM_WEBHOOK_MAX_CONNECTIONS,
@@ -310,8 +363,24 @@ export function buildDeps(
   const bots = {
     settings: botSettings,
     markNeedsToken,
-    sendText: createSendText({ bots: botRepo, telegram, markNeedsToken, clock }).sendText,
+    sendText: createSendText({
+      bots: botRepo,
+      telegram,
+      markNeedsToken,
+      clock,
+      reach: contactReach,
+    }).sendText,
     sendMemberMessage,
+    // Broadcast sends: their own pacer (25 per second per bot), so replies never queue behind them.
+    broadcastSender: createSendBroadcastMessage({
+      bots: botRepo,
+      telegram,
+      markNeedsToken,
+      clock,
+      pacer: overrides.broadcastPacer ?? createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
+      reach: contactReach,
+      pauses: sendPauses,
+    }),
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus,
@@ -323,13 +392,19 @@ export function buildDeps(
     }),
     reconnect: createReconnect(botOwnerDeps),
     disconnect: createDisconnect({ ...botOwnerDeps, conversations }),
-    acceptUpdate: createAcceptUpdate({ bots: botRepo, conversations, interceptor }),
+    acceptUpdate: createAcceptUpdate({
+      bots: botRepo,
+      conversations,
+      interceptor,
+      reach: contactReach,
+    }),
     healthCheck: createHealthCheck({
       bots: botRepo,
       telegram,
       clock,
       transaction,
       signals: botOwnerDeps.signals,
+      secrets,
       webhookBaseUrl,
     }),
   };
@@ -348,7 +423,13 @@ export function buildDeps(
     activities: createActivityRepo(db),
   });
 
-  // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
+  // --- inbox: calls the app layers of conversations, contacts, bots, workspaces and broadcasts ---
+  // A broadcast item in the thread: one row of `conversations` (ADR-0010).
+  const broadcastItems = createBroadcastItems({
+    items: createBroadcastItemRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
   const inboxConversations = createInboxReads({
     transaction,
     lists: createListQueries(db),
@@ -362,6 +443,9 @@ export function buildDeps(
     contacts,
     workspaces: workspaceAccess,
     bots: bots.inboxStatus,
+    // `broadcastReads` is built after the contacts reads below (its tag names come from them).
+    broadcasts: { itemDetails: (workspaceId, ids) => broadcastReads.itemDetails(workspaceId, ids) },
+    broadcastItems,
     clock,
   });
   // Assign / unassign: memberships FOR SHARE, then the conversation row (sad.md §8 lock order).
@@ -403,6 +487,14 @@ export function buildDeps(
     contactTags: contactTagRepo,
     tagHistory: tagHistoryRepo,
     workspaces: workspaceAccess,
+    // The contacts -> bots runtime edge (ADR-0002): the current Telegram bot, read through the
+    // bots core's app layer; whose blocked marks the list and the profile show.
+    currentBot: {
+      currentBot: async (workspaceId) => {
+        const bot = await pingReadiness(workspaceId);
+        return bot === null ? null : { telegramBotId: bot.telegramBotId };
+      },
+    },
   });
   const tagSignals = createTagSignals();
   const tagWrites = createTagWrites({
@@ -426,6 +518,147 @@ export function buildDeps(
     ...(overrides.logger && { logger: overrides.logger }),
   });
   // --- end contacts reads ---
+
+  // --- broadcasts: built after team (sad.md §5); calls the app layers of contacts (audiences,
+  // tag names, the block mark), conversations (broadcast items), bots (launch readiness, the
+  // broadcast sender) and workspaces (membership locks, display names). Nothing calls it back
+  // except `inbox` (itemDetails, through a per-request closure above) and its own workers. The
+  // pg-boss queue starts after `buildDeps()`, so the jobs port is late-bound (`bindBroadcastJobs`).
+  const contactAudiences = createContactAudiences({
+    audiences: createAudienceQuery(db),
+    tags: createTagRepo(db),
+  });
+  const broadcastContacts: BroadcastContactsApi = {
+    // Tag names at this moment; every audience read joins the caller's transaction when given one.
+    resolveTags: contactAudiences.tagNames,
+    audienceBreakdown: contactAudiences.audienceBreakdown,
+    launchAudience: contactAudiences.launchAudience,
+    reachableContacts: contactAudiences.reachableContacts,
+    isBlocked: contactAudiences.isBlocked,
+    matchingContactIds: contactAudiences.matchingContactIds,
+    contactCards: contactAudiences.contactCards,
+  };
+  const broadcastWorkspaces = {
+    // `transaction` always hands out a Kysely transaction; the port types it as the shared executor.
+    lockActiveMembers: (tx: unknown, workspaceId: string, accountIds: readonly string[]) =>
+      workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, [...accountIds]),
+    displayNames: workspaceAccess.displayNames,
+  };
+  const launchReadiness = createLaunchReadiness({ bots: botRepo });
+  const broadcastRepo = createBroadcastRepo(db);
+  const audienceTagRepo = createAudienceTagRepo(db);
+  const groupRepo = createGroupRepo(db);
+  const recipientRepo = createRecipientRepo(db);
+  const broadcastJobs = createBroadcastJobs();
+  const broadcastSignals = createBroadcastSignals();
+  const broadcastLogger = overrides.logger && { logger: overrides.logger };
+  const broadcastReads = createBroadcastReads({
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    workspaces: broadcastWorkspaces,
+  });
+  // Every use case answers through the reads, after its writing transaction.
+  const broadcastViews = {
+    draftView: broadcastReads.draftView,
+    broadcastView: broadcastReads.getBroadcast,
+  };
+  const broadcastDrafts = createDrafts({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    workspaces: broadcastWorkspaces,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const broadcastGroup = createBroadcastGroup({
+    transaction,
+    broadcasts: broadcastRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    workspaces: broadcastWorkspaces,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const broadcastDuplicate = createDuplicate({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    recipients: recipientRepo,
+    signals: broadcastSignals,
+    views: broadcastViews,
+    clock,
+  });
+  const launchPreview = createLaunchPreview({
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    groups: groupRepo,
+    contacts: broadcastContacts,
+    bots: launchReadiness,
+    clock,
+  });
+  const launchBroadcast = createLaunchBroadcast({
+    transaction,
+    broadcasts: broadcastRepo,
+    audienceTags: audienceTagRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    workspaces: broadcastWorkspaces,
+    preview: launchPreview,
+    signals: broadcastSignals,
+    jobs: broadcastJobs,
+    views: broadcastViews,
+    drafts: broadcastViews,
+    clock,
+    ...broadcastLogger,
+  });
+  const settle = createSettle({
+    transaction,
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    signals: broadcastSignals,
+    jobs: broadcastJobs,
+    clock,
+    ...broadcastLogger,
+  });
+  const stopBroadcast = createStopBroadcast({
+    transaction,
+    broadcasts: broadcastRepo,
+    workspaces: broadcastWorkspaces,
+    settle,
+    views: broadcastViews,
+  });
+  // The sending chain (ADR-0007): one link per `broadcasts.send` job of a workspace.
+  const sendLink = createSendLink({
+    transaction,
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    bots: bots.broadcastSender,
+    conversations: broadcastItems,
+    settle,
+    // One coalescer per process: its last publish time must survive between links.
+    reports: createReportSignals(broadcastSignals, clock),
+    jobs: broadcastJobs,
+    clock,
+    ...broadcastLogger,
+  });
+  const measureBlockedShare = createMeasureBlockedShare({
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    contacts: broadcastContacts,
+    logger: overrides.logger ?? { info() {} },
+  });
+  // --- end broadcasts dependencies ---
 
   return {
     config,
@@ -463,6 +696,22 @@ export function buildDeps(
       botMessages.bind(boss);
       pingStarter.bind(boss);
     },
+    /** The broadcasts use cases behind `registerBroadcasts`. */
+    broadcasts: {
+      reads: broadcastReads,
+      drafts: broadcastDrafts,
+      group: broadcastGroup,
+      duplicate: broadcastDuplicate,
+      preview: launchPreview,
+      launch: launchBroadcast,
+      stop: stopBroadcast,
+    },
+    /** One link of a workspace's broadcasts sending chain (the `broadcasts.send` worker). */
+    sendLink,
+    /** The 48-hour blocked share (the `broadcasts.measure-blocked-share` worker). */
+    measureBlockedShare,
+    /** Binds the started job queue to the broadcasts jobs (the queue starts after `buildDeps()`). */
+    bindBroadcastJobs: (boss: Jobs) => broadcastJobs.bind(boss),
     inboxReads,
     inboxMedia,
     changeState,

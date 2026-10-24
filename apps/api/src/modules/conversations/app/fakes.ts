@@ -5,6 +5,9 @@ import type {
   ActivityRepo,
   ActivitySignal,
   ActivityView,
+  BroadcastItemRepo,
+  BroadcastItemSignal,
+  BroadcastItemView,
   ConversationRepo,
   ConversationSignals,
   Executor,
@@ -249,7 +252,9 @@ export function fakeConversationSignals(): ConversationSignals & {
   read: Array<ReadSignal & { tx: Executor }>;
   replies: Array<ReplySignal & { tx: Executor }>;
   activities: Array<ActivitySignal & { tx: Executor }>;
+  broadcastItems: Array<BroadcastItemSignal & { tx: Executor }>;
 } {
+  const broadcastItems: Array<BroadcastItemSignal & { tx: Executor }> = [];
   const activities: Array<ActivitySignal & { tx: Executor }> = [];
   const replies: Array<ReplySignal & { tx: Executor }> = [];
   const sent: Array<MessageSignal & { tx: Executor }> = [];
@@ -259,6 +264,10 @@ export function fakeConversationSignals(): ConversationSignals & {
     read,
     replies,
     activities,
+    broadcastItems,
+    async broadcastItemChanged(tx, signal) {
+      broadcastItems.push({ ...signal, tx });
+    },
     async activityChanged(tx, signal) {
       activities.push({ ...signal, tx });
     },
@@ -530,6 +539,58 @@ export function fakeReplyRepo(o: {
             (!olderThan || a.startedAt < olderThan),
         )
         .map((a) => ({ id: a.id, replyId: a.replyId }));
+    },
+  };
+}
+
+/**
+ * In-memory BroadcastItemRepo; `conversations` maps `<workspace>:<contact>` to the contact's
+ * conversation id, like `conversations_contact_id_key`.
+ */
+export function fakeBroadcastItemRepo(): BroadcastItemRepo & {
+  rows: Array<BroadcastItemView & { workspaceId: string }>;
+  conversations: Map<string, string>;
+} {
+  const rows: Array<BroadcastItemView & { workspaceId: string }> = [];
+  const conversations = new Map<string, string>();
+  return {
+    rows,
+    conversations,
+    async insert(item) {
+      const conversationId = conversations.get(`${item.workspaceId}:${item.contactId}`);
+      if (conversationId === undefined) return null;
+      if (
+        rows.some((r) => r.broadcastId === item.broadcastId && r.conversationId === conversationId)
+      ) {
+        throw new Error('duplicate key value violates broadcast_items_broadcast_conversation_key');
+      }
+      rows.push({
+        id: item.id,
+        workspaceId: item.workspaceId,
+        conversationId,
+        broadcastId: item.broadcastId,
+        state: item.state,
+        positionAt: item.positionAt,
+        telegramMessageId: item.telegramMessageId,
+        createdAt: item.createdAt,
+      });
+      return { conversationId };
+    },
+    async byId(workspaceId, conversationId, itemId) {
+      const row = rows.find(
+        (r) =>
+          r.workspaceId === workspaceId && r.conversationId === conversationId && r.id === itemId,
+      );
+      if (!row) return null;
+      return {
+        id: row.id,
+        conversationId: row.conversationId,
+        broadcastId: row.broadcastId,
+        state: row.state,
+        positionAt: row.positionAt,
+        telegramMessageId: row.telegramMessageId,
+        createdAt: row.createdAt,
+      };
     },
   };
 }

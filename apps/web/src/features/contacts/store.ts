@@ -15,6 +15,7 @@ import { ApiError } from '@/shared/api/client';
 import { subscribeLive } from '@/shared/api/live-connection';
 import { byPosition, upsertItem } from '@/features/inbox/store';
 import { listThreadItems } from '@/features/inbox/api-source';
+import { serialRead } from '@/shared/lib/serial-read';
 import { getContact, getContactConversation, listContactTagHistory, listContacts } from './api';
 
 // The profile's conversation uses the inbox *reads* only: summary + thread pages. This store never
@@ -200,6 +201,10 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
    */
   const contactOrder = { profile: readOrder(), header: readOrder() };
   const historyOrder = readOrder();
+  /** The list's reach re-reads: one in flight and one queued, per workspace. */
+  let reachReread: { workspaceId: string; run: () => Promise<void> } | null = null;
+  /** A reach re-read asked for while Show more was in flight runs after it. */
+  let reachWaits = false;
   let historyMoreSeq = 0;
   const summaryOrder = readOrder();
   const itemsOrder = readOrder();
@@ -558,10 +563,77 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     if (open) void readConversation(workspaceId, open.contactId, guard, true);
   };
 
+  /**
+   * The list's shown rows re-read in place (every page shown so far, in the background): the
+   * "blocked the bot" marker is the list's only live field (screens.md SCR-18 live: reach). A
+   * failure keeps the rows shown. It never cancels another list read: a Show more in flight goes
+   * first and the re-read runs after it; any list read started meanwhile drops this answer.
+   */
+  const rereadListPages = async (workspaceId: string, guard: GuardFn) => {
+    const open = get().list;
+    if (!open || open.status !== 'ready') return;
+    if (open.more === 'loading') {
+      reachWaits = true;
+      return;
+    }
+    const epoch = listEpoch;
+    const [q, mode, tagIds] = JSON.parse(open.key) as [string, TagFilterMode, string[]];
+    const shownCount = open.items.length;
+    const items: ContactRow[] = [];
+    try {
+      let after: string | null = null;
+      let page: Awaited<ReturnType<typeof listContacts>>;
+      do {
+        page = await listContacts(
+          workspaceId,
+          { q, mode, tag: tagIds, ...(after ? { after } : {}) },
+          BACKGROUND,
+        );
+        const seen = new Set(items.map((c) => c.id));
+        items.push(...page.items.filter((c) => !seen.has(c.id)));
+        after = page.has_next ? page.next_cursor : null;
+      } while (after && items.length < shownCount);
+      const now = get().list;
+      if (!here(workspaceId) || now?.key !== open.key) return;
+      if (epoch !== listEpoch) {
+        // A Show more started meanwhile: read again once it has answered.
+        if (now.more === 'loading') reachWaits = true;
+        return;
+      }
+      set({
+        list: {
+          ...now,
+          items,
+          hasNext: page.has_next,
+          nextCursor: page.next_cursor,
+          matchingCount: page.matching_count,
+          totalCount: page.total_count,
+          missingTagIds: page.missing_tag_ids,
+        },
+      });
+    } catch (error) {
+      if (here(workspaceId) && epoch === listEpoch) await guarded(error, workspaceId, guard);
+    }
+  };
+
+  const rereadReach = (workspaceId: string, guard: GuardFn) => {
+    if (reachReread?.workspaceId !== workspaceId)
+      reachReread = { workspaceId, run: serialRead(() => rereadListPages(workspaceId, guard)) };
+    return reachReread.run();
+  };
+
   const onFrame = (workspaceId: string, guard: GuardFn, frame: LiveFrame) => {
     if (frame.workspace_id !== workspaceId || !here(workspaceId)) return;
     switch (frame.type) {
       case 'contact.changed':
+        if (frame.change === 'reach') {
+          // Only the marker changed: the list page holding the contact and its open profile.
+          if (get().list?.items.some((c) => c.id === frame.contact_id))
+            void rereadReach(workspaceId, guard);
+          if (get().profile?.contactId === frame.contact_id)
+            void readContact(workspaceId, frame.contact_id, guard, 'profile', true);
+          return;
+        }
         rereadContactAndHistory(workspaceId, guard, frame.contact_id);
         return;
       case 'tags.changed':
@@ -633,6 +705,10 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
       await readList(workspaceId, { q: query[0], mode: query[1], tagIds: query[2] }, guard, {
         after: open.nextCursor,
       });
+      if (reachWaits && here(workspaceId)) {
+        reachWaits = false;
+        void rereadReach(workspaceId, guard);
+      }
     },
     clearList() {
       listEpoch++;
@@ -782,6 +858,8 @@ export const useContactsStore = create<ContactsState>()((set, get) => {
     },
     clear() {
       listEpoch++;
+      reachReread = null;
+      reachWaits = false;
       profileEpoch++;
       headerEpoch++;
       set({

@@ -6,6 +6,7 @@ import type {
   InboxBotStatus,
   LiveFrame,
   ThreadActivity,
+  ThreadBroadcastItem,
   ThreadItem,
   ThreadMessage,
   ThreadPage,
@@ -300,8 +301,12 @@ function itemKey(item: ThreadItem): string {
   return item.type === 'message' ? item.sent_at : item.position_at;
 }
 /** Thread order: send time for a message, position for a reply or entry, then id. */
+/** At an equal time a broadcast item comes after every other kind (ADR-0010). */
+const lastAtItsTime = (item: ThreadItem) => (item.type === 'broadcast' ? 1 : 0);
 export const byPosition = (a: ThreadItem, b: ThreadItem) =>
-  (itemKey(a) ?? '').localeCompare(itemKey(b) ?? '') || a.id.localeCompare(b.id);
+  (itemKey(a) ?? '').localeCompare(itemKey(b) ?? '') ||
+  lastAtItsTime(a) - lastAtItsTime(b) ||
+  a.id.localeCompare(b.id);
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
 export function upsertItem(items: ThreadItem[], item: ThreadItem): ThreadItem[] {
@@ -741,7 +746,10 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       applySummary(workspaceId, row);
     });
 
-  const mergeItem = (workspaceId: string, item: ThreadMessage | ThreadReply | ThreadActivity) => {
+  const mergeItem = (
+    workspaceId: string,
+    item: ThreadMessage | ThreadReply | ThreadActivity | ThreadBroadcastItem,
+  ) => {
     const open = get().thread;
     if (!open || item.workspace_id !== workspaceId || open.conversationId !== item.conversation_id)
       return;
@@ -762,11 +770,23 @@ export const useInboxStore = create<InboxState>()((set, get) => {
   const refetchItem = (
     workspaceId: string,
     conversationId: string,
-    item: { type: 'message' | 'reply' | 'activity'; id: string },
+    item: { type: 'message' | 'reply' | 'activity' | 'broadcast'; id: string },
     markRead: boolean,
   ) =>
     coalesce(`item:${item.id}`, async () => {
       const startedAt = epoch;
+      if (item.type === 'broadcast') {
+        // Immutable, never unread: shown once, with no mark-read (ADR-0010).
+        if (get().thread?.items.some((i) => i.id === item.id)) return;
+        const entry = await source.getThreadBroadcastItem(
+          workspaceId,
+          conversationId,
+          item.id,
+          BACKGROUND,
+        );
+        if (current(workspaceId, startedAt)) mergeItem(workspaceId, entry);
+        return;
+      }
       if (item.type === 'activity') {
         // An entry is immutable: one already shown needs no second read.
         if (get().thread?.items.some((i) => i.id === item.id)) return;
@@ -815,10 +835,24 @@ export const useInboxStore = create<InboxState>()((set, get) => {
       case 'contact.changed':
       case 'tags.changed':
         return; // the tag control and the contacts screens subscribe to these; nothing here yet
+      case 'broadcast.changed':
+        return; // the broadcasts screens subscribe to it; the inbox has nothing to refresh
       case 'conversation.changed': {
         const { conversation_id: conversationId, item, change } = frame;
         const open = get().thread?.conversationId === conversationId;
-        if (item && open) refetchItem(workspaceId, conversationId, item, change === 'created');
+        // A broadcast item never touches the row, unread or read state (ADR-0010): only an open
+        // thread of that conversation reads it.
+        if (item?.type === 'broadcast') {
+          if (open) refetchItem(workspaceId, conversationId, item, false);
+          return;
+        }
+        if (item && open)
+          refetchItem(
+            workspaceId,
+            conversationId,
+            { type: item.type, id: item.id },
+            change === 'created',
+          );
         const row = get().conversations.find((c) => c.id === conversationId);
         const rowChanges =
           change === 'read' ||

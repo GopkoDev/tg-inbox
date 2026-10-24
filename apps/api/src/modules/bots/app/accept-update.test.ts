@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { telegramEdit, telegramUpdate } from '../../../test/fixtures/telegram.js';
+import {
+  telegramEdit,
+  telegramMyChatMember,
+  telegramUpdate,
+} from '../../../test/fixtures/telegram.js';
 import { createAcceptUpdate, type CaptureLog } from './accept-update.js';
-import { fakeBotRepo, fakeConversationsApi, fakeInterceptor } from './fakes.js';
+import { fakeBotRepo, fakeContactsReach, fakeConversationsApi, fakeInterceptor } from './fakes.js';
 import { at, botRow } from './harness.js';
 
 const BOT = botRow().id;
@@ -16,8 +20,9 @@ function setup(rows = [botRow()]) {
   const lines: { fields: Record<string, unknown>; msg: string }[] = [];
   const log: CaptureLog = { info: (fields, msg) => lines.push({ fields, msg }) };
   const interceptor = fakeInterceptor();
-  const accept = createAcceptUpdate({ bots, conversations, interceptor });
-  return { bots, conversations, interceptor, lines, log, accept };
+  const reach = fakeContactsReach();
+  const accept = createAcceptUpdate({ bots, conversations, interceptor, reach });
+  return { bots, conversations, interceptor, reach, lines, log, accept };
 }
 
 const update = (o: Partial<Parameters<typeof telegramUpdate>[0]> = {}) =>
@@ -32,6 +37,12 @@ describe('acceptUpdate', () => {
       workspaceId: 'ws-a',
       message: { kind: 'text', body: 'Hi', chatId: 700001n, messageId: 42n },
     });
+  });
+
+  it('hands capture the Telegram id of the bot the message came to (ADR-0002)', async () => {
+    const h = setup();
+    await h.accept.acceptUpdate(BOT, SECRET, update(), h.log);
+    expect(h.conversations.captured[0]!.message.telegramBotId).toBe(100001n);
   });
 
   it('a redelivery is already_present (AC-11)', async () => {
@@ -208,5 +219,72 @@ describe('acceptUpdate', () => {
       await expect(h.accept.acceptUpdate(BOT, SECRET, update(), h.log)).rejects.toThrow();
       expect(h.conversations.captured).toHaveLength(0);
     });
+  });
+});
+
+describe('acceptUpdate — my_chat_member blocks (ADR-0003, AC-14)', () => {
+  const blockUpdate = (status: string, o: { chatType?: 'private' | 'group' } = {}) =>
+    telegramMyChatMember({ updateId: 900020, fromId: 700001, date: EPOCH_S + 30, status, ...o });
+
+  it('a private kicked records a block for this bot, before the interceptor and capture', async () => {
+    const h = setup();
+    expect(await h.accept.acceptUpdate(BOT, SECRET, blockUpdate('kicked'), h.log)).toBe('reach');
+    expect(h.reach.changes).toEqual([
+      {
+        workspaceId: 'ws-a',
+        telegramBotId: 100001n,
+        telegramUserId: 700001n,
+        blocked: true,
+        at: new Date((EPOCH_S + 30) * 1000),
+      },
+    ]);
+    // Never a message: no interceptor call, no capture, no edit.
+    expect(h.interceptor.calls).toEqual([]);
+    expect(h.conversations.captured).toEqual([]);
+    expect(h.conversations.edits).toEqual([]);
+  });
+
+  it('a private member records an unblock', async () => {
+    const h = setup();
+    expect(await h.accept.acceptUpdate(BOT, SECRET, blockUpdate('member'), h.log)).toBe('reach');
+    expect(h.reach.changes).toMatchObject([{ blocked: false, telegramUserId: 700001n }]);
+    expect(h.interceptor.calls).toEqual([]);
+  });
+
+  it('a group my_chat_member is ignored and records nothing', async () => {
+    const h = setup();
+    expect(
+      await h.accept.acceptUpdate(BOT, SECRET, blockUpdate('kicked', { chatType: 'group' }), h.log),
+    ).toBe('ignored:not_private');
+    expect(h.reach.changes).toEqual([]);
+    expect(h.interceptor.calls).toEqual([]);
+  });
+
+  it('logs ids and the outcome only — never the user id', async () => {
+    const h = setup();
+    await h.accept.acceptUpdate(BOT, SECRET, blockUpdate('kicked'), h.log);
+    const line = JSON.stringify(h.lines.at(-1));
+    expect(h.lines.at(-1)!.fields).toMatchObject({
+      botId: BOT,
+      workspaceId: 'ws-a',
+      outcome: 'reach',
+    });
+    expect(line).not.toContain('700001');
+  });
+
+  it('a wrong secret records nothing', async () => {
+    const h = setup();
+    expect(await h.accept.acceptUpdate(BOT, 'wrong', blockUpdate('kicked'), h.log)).toBe(
+      'unauthorized',
+    );
+    expect(h.reach.changes).toEqual([]);
+  });
+
+  it('a failing contacts write propagates (Telegram redelivers)', async () => {
+    const h = setup();
+    h.reach.fail = true;
+    await expect(
+      h.accept.acceptUpdate(BOT, SECRET, blockUpdate('kicked'), h.log),
+    ).rejects.toThrow();
   });
 });

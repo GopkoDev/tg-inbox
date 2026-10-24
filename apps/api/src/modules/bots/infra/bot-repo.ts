@@ -21,6 +21,7 @@ const PUBLIC_COLUMNS = [
   'last_checked_at',
   'created_at',
   'send_paused_until',
+  'needs_token_at',
 ] as const;
 
 type PublicRow = Pick<Selectable<Bots>, (typeof PUBLIC_COLUMNS)[number]>;
@@ -37,6 +38,7 @@ function toRecord(row: PublicRow): BotRecord {
     lastCheckedAt: row.last_checked_at,
     createdAt: row.created_at,
     sendPausedUntil: row.send_paused_until,
+    stoppedWorkingAt: row.needs_token_at,
   };
 }
 
@@ -104,6 +106,9 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
     },
 
     async update(workspaceId, botId, patch, tx, ifRead) {
+      if (patch.state === 'needs_token' && patch.stoppedWorkingAt === undefined) {
+        throw new Error('a needs_token patch carries stoppedWorkingAt (AC-12)');
+      }
       try {
         const result = await (tx ?? db)
           .updateTable('bots')
@@ -111,6 +116,11 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
             ...(patch.name !== undefined && { name: patch.name }),
             ...(patch.username !== undefined && { username: patch.username }),
             ...(patch.state !== undefined && { state: patch.state }),
+            // The moment the bot stopped working (AC-12), from the app's clock — never the old
+            // exchange time a restoring patch carries; a row already needing a token keeps its own.
+            ...(patch.state === 'needs_token' && {
+              needs_token_at: sql<Date>`CASE WHEN state = 'needs_token' THEN needs_token_at ELSE ${patch.stoppedWorkingAt}::timestamptz END`,
+            }),
             ...(patch.token !== undefined && { token_encrypted: cipher.encrypt(patch.token) }),
             ...(patch.webhookSecret !== undefined && {
               webhook_secret_hash: hashSecret(patch.webhookSecret),
@@ -141,6 +151,7 @@ export function createBotRepo(db: Db, cipher: TokenCipher): BotRepo {
         .set({
           state,
           last_checked_at: checkedAt,
+          ...(state === 'needs_token' && { needs_token_at: checkedAt }),
           ...(identity && { name: identity.name, username: identity.username }),
         })
         .where('workspace_id', '=', workspaceId)

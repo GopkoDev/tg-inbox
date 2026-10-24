@@ -6,6 +6,8 @@ import type {
   BotRepo,
   BotSignals,
   ContactsApi,
+  BroadcastSendAnswer,
+  ContactsReach,
   FileFetch,
   ConversationsApi,
   GetMeResult,
@@ -19,9 +21,11 @@ import type {
 } from './ports.js';
 
 /** A stored bot row of the fake repository, with the plain token and secret it would encrypt / hash. */
-export interface FakeBotRow extends Omit<BotRecord, 'sendPausedUntil'> {
+export interface FakeBotRow extends Omit<BotRecord, 'sendPausedUntil' | 'stoppedWorkingAt'> {
   /** Absent = not paused. */
   sendPausedUntil?: Date | null;
+  /** Absent = the token was never rejected. */
+  stoppedWorkingAt?: Date | null;
   token: string | null;
   webhookSecret: string | null;
   /** The stored token cannot be decrypted (the encryption key was lost or changed). */
@@ -44,7 +48,11 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
     delete copy.token;
     delete copy.webhookSecret;
     delete copy.undecryptable;
-    return { ...copy, sendPausedUntil: r.sendPausedUntil ?? null } as BotRecord;
+    return {
+      ...copy,
+      sendPausedUntil: r.sendPausedUntil ?? null,
+      stoppedWorkingAt: r.stoppedWorkingAt ?? null,
+    } as BotRecord;
   };
 
   return {
@@ -83,7 +91,16 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       ) {
         throw new Error('check violation: a live bot row needs token, secret and epoch');
       }
-      Object.assign(row, patch);
+      if (patch.state === 'needs_token' && patch.stoppedWorkingAt === undefined) {
+        throw new Error('a needs_token patch carries stoppedWorkingAt (AC-12)');
+      }
+      const wasNeedingToken = row.state === 'needs_token';
+      const fields: Partial<FakeBotRow> = { ...patch };
+      delete fields.stoppedWorkingAt;
+      Object.assign(row, fields);
+      if (patch.state === 'needs_token' && !wasNeedingToken && patch.stoppedWorkingAt) {
+        row.stoppedWorkingAt = patch.stoppedWorkingAt;
+      }
       if (patch.token !== undefined) delete row.undecryptable;
       return { ok: true };
     },
@@ -93,6 +110,7 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
       const read = options?.ifLastCheckedAt;
       if (read !== undefined && row.lastCheckedAt?.getTime() !== read?.getTime()) return false;
       Object.assign(row, { state, lastCheckedAt: checkedAt }, options?.identity ?? {});
+      if (state === 'needs_token') row.stoppedWorkingAt = checkedAt;
       return true;
     },
     async clearOnDisconnect(workspaceId, botId, _tx, ifWritten) {
@@ -144,7 +162,14 @@ export function fakeBotRepo(): BotRepo & { rows: FakeBotRow[] } {
 }
 
 export interface GatewayCall {
-  method: 'getMe' | 'getWebhook' | 'setWebhook' | 'deleteWebhook' | 'sendText' | 'openFile';
+  method:
+    | 'getMe'
+    | 'getWebhook'
+    | 'setWebhook'
+    | 'deleteWebhook'
+    | 'sendText'
+    | 'sendBroadcast'
+    | 'openFile';
   token: string;
   timeoutMs: number;
   webhook?: { url: string; secret: string; dropPending: boolean };
@@ -164,6 +189,7 @@ export function fakeGateway(): TelegramGateway & {
   setResult: 'ok' | 'failed';
   deleteResult: 'ok' | 'failed';
   sendResult: SendOutcome;
+  broadcastResult: BroadcastSendAnswer;
   fileResult: FileFetch;
 } {
   const fake = {
@@ -178,6 +204,7 @@ export function fakeGateway(): TelegramGateway & {
     setResult: 'ok' as 'ok' | 'failed',
     deleteResult: 'ok' as 'ok' | 'failed',
     sendResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as SendOutcome,
+    broadcastResult: { outcome: 'accepted', messageId: 1n, at: new Date(0) } as BroadcastSendAnswer,
     fileResult: { outcome: 'gone' } as FileFetch,
     async openFile(token: string, fileReference: string, range: string | undefined) {
       fake.calls.push({ method: 'openFile', token, timeoutMs: 0, fileReference, range });
@@ -199,6 +226,10 @@ export function fakeGateway(): TelegramGateway & {
         ...(options ? { options } : {}),
       });
       return fake.sendResult;
+    },
+    async sendBroadcast(token: string, chatId: bigint, text: string, timeoutMs: number) {
+      fake.calls.push({ method: 'sendBroadcast', token, timeoutMs, chatId, text });
+      return fake.broadcastResult;
     },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });
@@ -257,23 +288,26 @@ export function fakeBotSignals(): BotSignals & { published: string[] } {
   };
 }
 
+/** A captured message as `bots` hands it over: with the receiving bot's Telegram id. */
+type CapturedMessage = NormalisedMessage & { telegramBotId: bigint };
+
 /** Scriptable conversations / contacts app layers as `bots` sees them. */
 export function fakeConversationsApi(): ConversationsApi & {
   last: Map<string, Date>;
   withConversations: Set<string>;
-  captured: { workspaceId: string; message: NormalisedMessage }[];
+  captured: { workspaceId: string; message: CapturedMessage }[];
   edits: { workspaceId: string; edit: NormalisedEdit }[];
   editOutcome: 'applied' | 'not_later' | 'not_found';
 } {
   const fake = {
     last: new Map<string, Date>(),
     withConversations: new Set<string>(),
-    captured: [] as { workspaceId: string; message: NormalisedMessage }[],
+    captured: [] as { workspaceId: string; message: CapturedMessage }[],
     edits: [] as { workspaceId: string; edit: NormalisedEdit }[],
     editOutcome: 'applied' as 'applied' | 'not_later' | 'not_found',
     lastMessageReceivedAt: async (w: string) => fake.last.get(w) ?? null,
     hasConversations: async (w: string) => fake.withConversations.has(w),
-    async captureInbound(workspaceId: string, message: NormalisedMessage) {
+    async captureInbound(workspaceId: string, message: CapturedMessage) {
       const seen = fake.captured.some(
         (c) =>
           c.workspaceId === workspaceId &&
@@ -312,6 +346,41 @@ export function fakeInterceptor(): InboundInterceptor & {
       fake.calls.push(input);
       if (fake.fail) throw new Error('interceptor down');
       return fake.answer;
+    },
+  };
+  return fake;
+}
+
+/** Records `contacts.recordBlockChange` calls as `bots` makes them; `fail` makes it throw. */
+export function fakeContactsReach(): ContactsReach & {
+  changes: {
+    workspaceId: string;
+    telegramBotId: bigint;
+    telegramUserId: bigint;
+    blocked: boolean;
+    at: Date;
+  }[];
+  fail: boolean;
+} {
+  const fake = {
+    changes: [] as {
+      workspaceId: string;
+      telegramBotId: bigint;
+      telegramUserId: bigint;
+      blocked: boolean;
+      at: Date;
+    }[],
+    fail: false,
+    async recordBlockChange(
+      workspaceId: string,
+      telegramBotId: bigint,
+      telegramUserId: bigint,
+      blocked: boolean,
+      at: Date,
+    ) {
+      if (fake.fail) throw new Error('contacts down');
+      fake.changes.push({ workspaceId, telegramBotId, telegramUserId, blocked, at });
+      return true;
     },
   };
   return fake;

@@ -42,6 +42,7 @@ function setup(rows: FakeBotRow[] = [row()]) {
     bots,
     telegram,
     clock,
+    secrets: { secretFor: (botId, connectedAt) => `secret-${botId}-${connectedAt.getTime()}` },
     webhookBaseUrl: BASE,
     transaction: fakeBotTransaction(bots, signals),
     signals,
@@ -218,4 +219,43 @@ describe('checkOne publishes bot.changed on a state change only (AC-13, AC-14)',
     await skipped.health.checkOne('ws-a', row().id);
     expect([...transient.signals.published, ...skipped.signals.published]).toEqual([]);
   });
+});
+
+describe('checkOne — outdated allowed updates (ADR-0003, flow 17)', () => {
+  it('ours but outdated → setWebhook once with the same URL and secret, pending kept, then connected', async () => {
+    const { bots, telegram, health } = setup([row()]);
+    telegram.webhook = 'ours_outdated';
+    expect(await health.checkOne('ws-a', row().id)).toBe('connected');
+    expect(telegram.calls.map((c) => c.method)).toEqual(['getMe', 'getWebhook', 'setWebhook']);
+    expect(telegram.calls[2]).toMatchObject({
+      token: '100001:SECRET',
+      timeoutMs: HEALTH_CHECK_TIMEOUT,
+      webhook: {
+        url: `${BASE}/api/telegram/webhook/${row().id}`,
+        secret: `secret-${row().id}-${at(0).getTime()}`,
+        dropPending: false,
+      },
+    });
+    expect(bots.rows[0]).toMatchObject({ state: 'connected', lastCheckedAt: at(600) });
+  });
+
+  it('a failed re-registration writes nothing (transient): the next scheduled check tries again', async () => {
+    const { bots, telegram, health, signals } = setup([row()]);
+    telegram.webhook = 'ours_outdated';
+    telegram.setResult = 'failed';
+    expect(await health.checkOne('ws-a', row().id)).toBe('transient');
+    expect(bots.rows[0]).toMatchObject({ state: 'connected', lastCheckedAt: at(0) });
+    expect(signals.published).toEqual([]);
+    expect(await health.scheduleChecks()).toEqual([{ botId: row().id, workspaceId: 'ws-a' }]);
+  });
+
+  it.each(['ours', 'foreign', 'stale', 'none', 'unauthorized'] as const)(
+    'webhook %s → never setWebhook',
+    async (target) => {
+      const { telegram, health } = setup([row()]);
+      telegram.webhook = target;
+      await health.checkOne('ws-a', row().id);
+      expect(telegram.calls.map((c) => c.method)).not.toContain('setWebhook');
+    },
+  );
 });

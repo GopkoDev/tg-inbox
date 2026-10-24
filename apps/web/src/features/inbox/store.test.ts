@@ -1841,3 +1841,44 @@ describe('inbox store: list retry (W7) and coalesced resync (W8)', () => {
     expect(api.listConversations).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('inbox store: broadcast frames (T4, ADR-0010)', () => {
+  it('a broadcast item frame refetches no row, no thread item and marks nothing read', async () => {
+    await useInboxStore.getState().enter(A);
+    await useInboxStore.getState().openThread(A, C1);
+    await flush();
+    api.listConversations.mockClear();
+    api.getConversation.mockClear();
+    sockets[0]!.handlers.onFrame(changed(A, C1, 'created', { type: 'broadcast', id: id(900) }));
+    await flush();
+    expect(api.getConversation).not.toHaveBeenCalled();
+    expect(api.listConversations).not.toHaveBeenCalled();
+    expect(api.getThreadMessage).not.toHaveBeenCalled();
+    expect(api.getThreadReply).not.toHaveBeenCalled();
+    expect(api.getThreadActivity).not.toHaveBeenCalled();
+    expect(api.markConversationRead).not.toHaveBeenCalled();
+  });
+
+  it('broadcast.changed and contact.changed reach pass through unhandled', async () => {
+    await useInboxStore.getState().enter(A);
+    await flush();
+    api.listConversations.mockClear();
+    sockets[0]!.handlers.onFrame({
+      v: 1,
+      workspace_id: A,
+      type: 'broadcast.changed',
+      broadcast_id: id(901),
+      change: 'report',
+    });
+    sockets[0]!.handlers.onFrame({
+      v: 1,
+      workspace_id: A,
+      type: 'contact.changed',
+      contact_id: id(902),
+      change: 'reach',
+    });
+    await flush();
+    expect(api.listConversations).not.toHaveBeenCalled();
+    expect(api.getConversation).not.toHaveBeenCalled();
+  });
+});

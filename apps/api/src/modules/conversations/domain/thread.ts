@@ -3,14 +3,16 @@ import { createHash } from 'node:crypto';
 export type ThreadPosition =
   | { positionAt: Date; kind: 'message'; id: bigint }
   | { positionAt: Date; kind: 'reply'; id: string }
-  | { positionAt: Date; kind: 'activity'; id: string };
+  | { positionAt: Date; kind: 'activity'; id: string }
+  | { positionAt: Date; kind: 'broadcast'; id: string };
 
 export interface ListPosition {
   lastActivityAt: Date;
   id: string;
 }
 
-const KIND_ORDER = { message: 0, reply: 1, activity: 2 } as const;
+/** At equal positions: message < reply < activity < broadcast item (ADR-0010). */
+const KIND_ORDER = { message: 0, reply: 1, activity: 2, broadcast: 3 } as const;
 
 export function compareThreadPosition(a: ThreadPosition, b: ThreadPosition): number {
   const dt = a.positionAt.getTime() - b.positionAt.getTime();
@@ -37,6 +39,8 @@ function decode(cursor: string): Record<string, unknown> | null {
   }
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function toDate(ms: unknown): Date | null {
   if (typeof ms !== 'number' || !Number.isFinite(ms)) return null;
   const d = new Date(ms);
@@ -52,8 +56,11 @@ export function decodeThreadCursor(cursor: string): ThreadPosition | null {
   if (!o || o.k !== 't') return null;
   const positionAt = toDate(o.at);
   if (!positionAt || typeof o.id !== 'string' || o.id === '') return null;
-  if (o.kind === 'reply') return { positionAt, kind: 'reply', id: o.id };
-  if (o.kind === 'activity') return { positionAt, kind: 'activity', id: o.id };
+  // Reply, activity and broadcast item ids reach a `::uuid` cast: anything else is a crafted
+  // cursor (400), never a cast error.
+  if (o.kind === 'reply' && UUID.test(o.id)) return { positionAt, kind: 'reply', id: o.id };
+  if (o.kind === 'activity' && UUID.test(o.id)) return { positionAt, kind: 'activity', id: o.id };
+  if (o.kind === 'broadcast' && UUID.test(o.id)) return { positionAt, kind: 'broadcast', id: o.id };
   if (o.kind === 'message' && /^\d+$/.test(o.id)) {
     return { positionAt, kind: 'message', id: BigInt(o.id) };
   }

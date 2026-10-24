@@ -7,6 +7,8 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerContacts } from './modules/contacts/http/routes.js';
+import { registerBroadcasts } from './modules/broadcasts/http/routes.js';
+import { createBroadcastQueues, registerBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
 import { createDeliver } from './modules/inbox/app/deliver.js';
 import { createSendReply } from './modules/inbox/app/send-reply.js';
@@ -36,11 +38,12 @@ import { buildDeps } from './deps.js';
 /** Largest client frame the live socket accepts; bigger frames close it with 1009. */
 const LIVE_TRANSPORT_MAX_BYTES = 8 * 1024;
 import type { Clock } from './platform/clock.js';
+import type { Pacer } from './modules/bots/app/pacer.js';
 
 /** Composition root: builds every dependency and registers every module plugin. */
 export async function buildApp(
   config: Config,
-  overrides: { clock?: Clock; logStream?: DestinationStream } = {},
+  overrides: { clock?: Clock; logStream?: DestinationStream; broadcastPacer?: Pacer } = {},
 ): Promise<FastifyInstance> {
   const app = Fastify({ logger: loggerOptions(config, overrides.logStream), frameworkErrors });
   app.setValidatorCompiler(validatorCompiler);
@@ -111,6 +114,14 @@ export async function buildApp(
     sendPings: deps.sendPings,
     workspacesWithLiveLink: deps.workspacesWithLiveLink,
     startPings: deps.startPings,
+    logger: app.log,
+    clock: deps.clock,
+  });
+  deps.bindBroadcastJobs(jobs);
+  await createBroadcastQueues(jobs);
+  await registerBroadcastJobs(jobs, {
+    sendLink: deps.sendLink,
+    measure: deps.measureBlockedShare,
     logger: app.log,
     clock: deps.clock,
   });
@@ -220,6 +231,15 @@ export async function buildApp(
         reads: deps.contactReads,
         writes: deps.tagWrites,
         admin: deps.tagAdmin,
+        access: workspaceAccess,
+        authenticate,
+      }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) =>
+      registerBroadcasts(api, {
+        ...deps.broadcasts,
         access: workspaceAccess,
         authenticate,
       }),

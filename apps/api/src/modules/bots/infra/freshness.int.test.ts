@@ -145,4 +145,35 @@ describe('health-check freshness over a simulated hour (QG-3b, AC-15, AC-16, AC-
   function db() {
     return deps.db;
   }
+
+  it('rollout: a webhook registered before my_chat_member is set again once by the next due check (flow 17)', async () => {
+    clock.set(T0);
+    const b = await insertBot(db(), {
+      workspaceId: await insertWorkspace(db()),
+      lastCheckedAt: new Date(T0.getTime() - 3 * MINUTE),
+    });
+    fake
+      .bot(b.token)
+      .script({ webhookUrl: ours(b), allowedUpdates: ['message', 'edited_message'] });
+    await deps.bots.healthCheck.checkOne(b.bot.workspaceId, b.bot.id);
+    const sets = () => fake.calls(b.token).filter((c) => c.method === 'setWebhook');
+    expect(sets()).toEqual([
+      {
+        token: b.token,
+        method: 'setWebhook',
+        params: {
+          url: ours(b),
+          secret_token: b.webhookSecret,
+          allowed_updates: ['message', 'edited_message', 'my_chat_member'],
+          max_connections: expect.any(Number),
+          drop_pending_updates: false,
+        },
+      },
+    ]);
+    expect((await rowOf(b)).state).toBe('connected');
+    // Up to date now: the next check leaves it alone.
+    clock.advance(3 * MINUTE);
+    await deps.bots.healthCheck.checkOne(b.bot.workspaceId, b.bot.id);
+    expect(sets()).toHaveLength(1);
+  });
 });

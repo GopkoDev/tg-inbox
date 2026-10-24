@@ -3,7 +3,7 @@
  * Please do not edit it manually.
  */
 
-import type { ColumnType } from 'kysely';
+import type { ColumnType } from "kysely";
 
 export type Int8 = ColumnType<string, bigint | number | string, bigint | number | string>;
 
@@ -35,12 +35,80 @@ export interface Bots {
   id: string;
   last_checked_at: Timestamp | null;
   name: string;
+  needs_token_at: Timestamp | null;
   send_paused_until: Timestamp | null;
   state: string;
   telegram_bot_id: Int8;
   token_encrypted: Buffer | null;
   username: string;
   webhook_secret_hash: Buffer | null;
+  workspace_id: string;
+}
+
+export interface BroadcastAudienceTags {
+  broadcast_id: string;
+  kind: string;
+  tag_id: string;
+  tag_name: string;
+  workspace_id: string;
+}
+
+export interface BroadcastGroupContacts {
+  added_at: Timestamp;
+  added_by_account_id: string;
+  broadcast_id: string;
+  contact_id: string;
+  workspace_id: string;
+}
+
+export interface BroadcastItems {
+  broadcast_id: string;
+  conversation_id: string;
+  created_at: Timestamp;
+  id: string;
+  position_at: Timestamp;
+  state: string;
+  telegram_message_id: Int8 | null;
+  workspace_id: string;
+}
+
+export interface BroadcastRecipients {
+  broadcast_id: string;
+  claimed_at: Timestamp | null;
+  contact_id: string;
+  failure_reason: string | null;
+  id: string;
+  outcome_at: Timestamp | null;
+  position: number;
+  state: string;
+  telegram_message_id: Int8 | null;
+  telegram_user_id: Int8;
+  workspace_id: string;
+}
+
+export interface Broadcasts {
+  audience_kind: string;
+  audience_size: number | null;
+  author_account_id: string;
+  blocked_count: number | null;
+  created_at: Timestamp;
+  end_reason: string | null;
+  ended_at: Timestamp | null;
+  id: string;
+  last_changed_at: Timestamp;
+  last_changed_by_account_id: string;
+  launch_telegram_bot_id: Int8 | null;
+  launched_at: Timestamp | null;
+  launched_by_account_id: string | null;
+  name: string;
+  never_wrote_count: number | null;
+  recipient_count: number | null;
+  status: string;
+  stopped_at: Timestamp | null;
+  stopped_by_account_id: string | null;
+  tag_mode: string | null;
+  text: string;
+  version: number;
   workspace_id: string;
 }
 
@@ -53,6 +121,15 @@ export interface ConnectLinks {
   token_hash: Buffer;
   used_at: Timestamp | null;
   workspace_id: string;
+}
+
+export interface ContactBotReach {
+  blocked_at: Timestamp | null;
+  changed_at: Timestamp;
+  contact_id: string;
+  telegram_bot_id: Int8;
+  workspace_id: string;
+  wrote_at: Timestamp | null;
 }
 
 export interface Contacts {
@@ -281,7 +358,13 @@ export interface Workspaces {
 export interface DB {
   accounts: Accounts;
   bots: Bots;
+  broadcast_audience_tags: BroadcastAudienceTags;
+  broadcast_group_contacts: BroadcastGroupContacts;
+  broadcast_items: BroadcastItems;
+  broadcast_recipients: BroadcastRecipients;
+  broadcasts: Broadcasts;
   connect_links: ConnectLinks;
+  contact_bot_reach: ContactBotReach;
   contact_tag_history: ContactTagHistory;
   contact_tags: ContactTags;
   contacts: Contacts;
