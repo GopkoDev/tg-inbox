@@ -28,12 +28,18 @@ import { createBotSignals } from './modules/bots/infra/bot-signals.js';
 import { createMarkNeedsToken } from './modules/bots/app/mark-needs-token.js';
 import { createOpenMedia } from './modules/bots/app/open-media.js';
 import { createSendText } from './modules/bots/app/send-text.js';
-import { createPacer } from './modules/bots/app/pacer.js';
+import { BROADCAST_MESSAGES_PER_SECOND, createPacer } from './modules/bots/app/pacer.js';
+import { createSendBroadcastMessage } from './modules/bots/app/send-broadcast-message.js';
 import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
 import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createLaunchReadiness } from './modules/bots/app/launch-readiness.js';
+import { createMeasureBlockedShare } from './modules/broadcasts/app/blocked-share.js';
 import { createBroadcastReads } from './modules/broadcasts/app/reads.js';
+import { createSendLink } from './modules/broadcasts/app/send-link.js';
+import { createSettle } from './modules/broadcasts/app/settle.js';
+import { createBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
+import { createBroadcastSignals, createReportSignals } from './modules/broadcasts/infra/signals.js';
 import { createAudienceTagRepo } from './modules/broadcasts/infra/audience-tag-repo.js';
 import { createBroadcastRepo } from './modules/broadcasts/infra/broadcast-repo.js';
 import { createGroupRepo } from './modules/broadcasts/infra/group-repo.js';
@@ -342,6 +348,15 @@ export function buildDeps(
       reach: contactReach,
     }).sendText,
     sendMemberMessage,
+    // Broadcast sends: their own pacer (25 per second per bot), so replies never queue behind them.
+    broadcastSender: createSendBroadcastMessage({
+      bots: botRepo,
+      telegram,
+      markNeedsToken,
+      clock,
+      pacer: createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }),
+      reach: contactReach,
+    }),
     pingReadiness,
     openMedia: createOpenMedia({ bots: botRepo, telegram, markNeedsToken }).openMedia,
     inboxStatus,
@@ -507,6 +522,43 @@ export function buildDeps(
   });
   // --- end broadcasts reads ---
 
+  // --- broadcasts: the sending chain (ADR-0007) and the 48-hour blocked share; the pg-boss queue
+  // starts after `buildDeps()`, so the jobs port is late-bound (`bindBroadcastJobs`). ---
+  const broadcastRepo = createBroadcastRepo(db);
+  const recipientRepo = createRecipientRepo(db);
+  const broadcastJobs = createBroadcastJobs();
+  const broadcastSignals = createBroadcastSignals();
+  const settle = createSettle({
+    transaction,
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    signals: broadcastSignals,
+    jobs: broadcastJobs,
+    clock,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
+  const sendLink = createSendLink({
+    transaction,
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    contacts: { isBlocked: contactAudiences.isBlocked },
+    bots: bots.broadcastSender,
+    conversations: broadcastItems,
+    settle,
+    // One coalescer per process: its last publish time must survive between links.
+    reports: createReportSignals(broadcastSignals, clock),
+    jobs: broadcastJobs,
+    clock,
+    ...(overrides.logger && { logger: overrides.logger }),
+  });
+  const measureBlockedShare = createMeasureBlockedShare({
+    broadcasts: broadcastRepo,
+    recipients: recipientRepo,
+    contacts: { audienceBreakdown: contactAudiences.audienceBreakdown },
+    logger: overrides.logger ?? { info() {} },
+  });
+  // --- end broadcasts sending ---
+
   return {
     config,
     clock,
@@ -543,6 +595,12 @@ export function buildDeps(
       botMessages.bind(boss);
       pingStarter.bind(boss);
     },
+    /** One link of a workspace's broadcasts sending chain (the `broadcasts.send` worker). */
+    sendLink,
+    /** The 48-hour blocked share (the `broadcasts.measure-blocked-share` worker). */
+    measureBlockedShare,
+    /** Binds the started job queue to the broadcasts jobs (the queue starts after `buildDeps()`). */
+    bindBroadcastJobs: (boss: Jobs) => broadcastJobs.bind(boss),
     inboxReads,
     inboxMedia,
     changeState,

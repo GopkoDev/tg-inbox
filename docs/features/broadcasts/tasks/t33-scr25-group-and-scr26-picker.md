@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/BroadcastGroupList.tsx", "apps/we
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "in_progress"
+step: "GREEN"
 ---
 
 # T33 — Build the broadcast group on SCR-25 and SCR-26: BroadcastGroupList with tags, blocked markers and Remove, and GroupPicker over the Contacts read with membership marks, Add, and the two-step Add all matching

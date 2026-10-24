@@ -601,7 +601,7 @@
         "apps/api/src/app.ts"
       ],
       "file": "docs/features/broadcasts/tasks/t24-queues-and-workers.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T25",
@@ -819,7 +819,7 @@
         "apps/web/src/features/broadcasts/BroadcastEditor.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t33-scr25-group-and-scr26-picker.md",
-      "status": "todo"
+      "status": "in_progress"
     },
     {
       "id": "T34",
