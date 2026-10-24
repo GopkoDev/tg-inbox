@@ -351,6 +351,154 @@ export const contactIntegrity = {
       .execute(),
 };
 
+/** A recipient's id carries its creation time (UUIDv7, ms); the launch makes them right after `launched_at`. */
+const RECIPIENT_CREATED_AT = sql<Date>`to_timestamp(('x' || substr(replace(r.id::text, '-', ''), 1, 12))::bit(48)::bigint / 1000.0)`;
+/** Slack for the launch's own work between `launched_at` and the ids it mints (a bulk insert, ms). */
+const LAUNCH_SLACK = sql`interval '1 second'`;
+
+/**
+ * Integrity queries of broadcasts (sad.md §8 run book, test-plan §NFR checks, data-model audit).
+ * Ops queries, not repository reads; each is scoped to one workspace and returns offending ids.
+ */
+export const broadcastIntegrity = {
+  /** 1. Recipients still `sending` while no `broadcasts.send` link of their workspace is queued or running. */
+  sendingWithoutLink: async (db: Deps['db'], workspaceId: string) => {
+    const { rows } = await sql<{
+      queue: string | null;
+    }>`select to_regclass('pgboss.job')::text as queue`.execute(db);
+    const linkAlive =
+      rows[0]?.queue == null
+        ? sql<boolean>`false`
+        : sql<boolean>`exists (select 1 from pgboss.job j
+            where j.name = 'broadcasts.send' and j.singleton_key = r.workspace_id::text
+              and j.state in ('created', 'retry', 'active'))`;
+    return db
+      .selectFrom('broadcast_recipients as r')
+      .select('r.id')
+      .where('r.workspace_id', '=', workspaceId)
+      .where('r.state', '=', 'sending')
+      .where(sql<boolean>`not ${linkAlive}`)
+      .execute();
+  },
+
+  /** 2. Recipients with more than one broadcast item (the unique key forbids it; a smoke check). */
+  recipientsWithTwoItems: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcast_recipients as r')
+      .innerJoin('conversations as c', (j) =>
+        j.onRef('c.workspace_id', '=', 'r.workspace_id').onRef('c.contact_id', '=', 'r.contact_id'),
+      )
+      .innerJoin('broadcast_items as i', (j) =>
+        j
+          .onRef('i.workspace_id', '=', 'r.workspace_id')
+          .onRef('i.broadcast_id', '=', 'r.broadcast_id')
+          .onRef('i.conversation_id', '=', 'c.id'),
+      )
+      .select('r.id')
+      .where('r.workspace_id', '=', workspaceId)
+      .groupBy('r.id')
+      .having((eb) => eb.fn.countAll(), '>', 1)
+      .execute(),
+
+  /** 3. Launched broadcasts holding a recipient created after the launch (by the id's time). */
+  recipientsAfterLaunch: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcast_recipients as r')
+      .innerJoin('broadcasts as b', (j) =>
+        j.onRef('b.workspace_id', '=', 'r.workspace_id').onRef('b.id', '=', 'r.broadcast_id'),
+      )
+      .select('b.id')
+      .distinct()
+      .where('r.workspace_id', '=', workspaceId)
+      .where(sql<boolean>`${RECIPIENT_CREATED_AT} > b.launched_at + ${LAUNCH_SLACK}`)
+      .execute(),
+
+  /** 4. More than 10 launches of the workspace in any 24 hours (returns the 11th launch onwards). */
+  launchesOverCap: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcasts as b')
+      .select('b.id')
+      .where('b.workspace_id', '=', workspaceId)
+      .where('b.launched_at', 'is not', null)
+      .where(
+        sql<boolean>`(select count(*) from broadcasts o
+          where o.workspace_id = b.workspace_id and o.launched_at is not null
+            and o.launched_at > b.launched_at - interval '24 hours'
+            and o.launched_at <= b.launched_at) > 10`,
+      )
+      .execute(),
+
+  /** 5. Launched broadcasts whose frozen `recipient_count` differs from their recipient rows. */
+  recipientCountMismatch: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcasts as b')
+      .select('b.id')
+      .where('b.workspace_id', '=', workspaceId)
+      .where('b.status', '!=', 'draft')
+      .where(
+        sql<boolean>`b.recipient_count is distinct from (select count(*)::int from broadcast_recipients r
+          where r.workspace_id = b.workspace_id and r.broadcast_id = b.id)`,
+      )
+      .execute(),
+
+  /** 6. Recipients or group rows whose contact belongs to another workspace (the composite keys forbid it). */
+  contactsAcrossWorkspaces: async (db: Deps['db'], workspaceId: string) => [
+    ...(await db
+      .selectFrom('broadcast_recipients as r')
+      .leftJoin('contacts as c', 'c.id', 'r.contact_id')
+      .select('r.id')
+      .where('r.workspace_id', '=', workspaceId)
+      .where('c.workspace_id', 'is distinct from', workspaceId)
+      .execute()),
+    ...(await db
+      .selectFrom('broadcast_group_contacts as g')
+      .leftJoin('contacts as c', 'c.id', 'g.contact_id')
+      .select('g.contact_id as id')
+      .where('g.workspace_id', '=', workspaceId)
+      .where('c.workspace_id', 'is distinct from', workspaceId)
+      .execute()),
+  ],
+
+  /**
+   * 7. Delivered or not confirmed recipients with no broadcast item of their broadcast on their
+   * contact's conversation (joined through `conversations_contact_id_key`).
+   */
+  outcomesWithoutItem: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcast_recipients as r')
+      .select('r.id')
+      .where('r.workspace_id', '=', workspaceId)
+      .where('r.state', 'in', ['delivered', 'not_confirmed'])
+      .where(
+        sql<boolean>`not exists (select 1 from conversations c
+          join broadcast_items i on i.workspace_id = c.workspace_id and i.conversation_id = c.id
+          where c.workspace_id = r.workspace_id and c.contact_id = r.contact_id
+            and i.broadcast_id = r.broadcast_id)`,
+      )
+      .execute(),
+
+  /**
+   * 8. Broadcast items that do not match their recipient's outcome: no recipient, or one that is
+   * not delivered / not confirmed, or in the other of the two states (AC-16).
+   */
+  itemsWithoutOutcome: (db: Deps['db'], workspaceId: string) =>
+    db
+      .selectFrom('broadcast_items as i')
+      .innerJoin('conversations as c', (j) =>
+        j.onRef('c.workspace_id', '=', 'i.workspace_id').onRef('c.id', '=', 'i.conversation_id'),
+      )
+      .leftJoin('broadcast_recipients as r', (j) =>
+        j
+          .onRef('r.workspace_id', '=', 'i.workspace_id')
+          .onRef('r.broadcast_id', '=', 'i.broadcast_id')
+          .onRef('r.contact_id', '=', 'c.contact_id'),
+      )
+      .select('i.id')
+      .where('i.workspace_id', '=', workspaceId)
+      .where('r.state', 'is distinct from', sql<string>`i.state`)
+      .execute(),
+};
+
 /** Every integrity query for each workspace: every list must be empty. `asOf` is the test clock's now. */
 export async function integrityViolations(
   db: Deps['db'],
@@ -403,6 +551,43 @@ export async function integrityViolations(
     note('contacts-over-tag-limit', workspaceId, await c.contactsOverTagLimit(db, workspaceId));
     note('links-across-workspaces', workspaceId, await c.linksAcrossWorkspaces(db, workspaceId));
     note('links-without-history', workspaceId, await c.linksWithoutHistory(db, workspaceId));
+    const b = broadcastIntegrity;
+    note(
+      'broadcast-sending-without-link',
+      workspaceId,
+      await b.sendingWithoutLink(db, workspaceId),
+    );
+    note(
+      'broadcast-recipient-with-two-items',
+      workspaceId,
+      await b.recipientsWithTwoItems(db, workspaceId),
+    );
+    note(
+      'broadcast-recipients-after-launch',
+      workspaceId,
+      await b.recipientsAfterLaunch(db, workspaceId),
+    );
+    note('broadcast-launches-over-cap', workspaceId, await b.launchesOverCap(db, workspaceId));
+    note(
+      'broadcast-recipient-count-mismatch',
+      workspaceId,
+      await b.recipientCountMismatch(db, workspaceId),
+    );
+    note(
+      'broadcast-contacts-across-workspaces',
+      workspaceId,
+      await b.contactsAcrossWorkspaces(db, workspaceId),
+    );
+    note(
+      'broadcast-outcomes-without-item',
+      workspaceId,
+      await b.outcomesWithoutItem(db, workspaceId),
+    );
+    note(
+      'broadcast-items-without-outcome',
+      workspaceId,
+      await b.itemsWithoutOutcome(db, workspaceId),
+    );
   }
   return found;
 }
