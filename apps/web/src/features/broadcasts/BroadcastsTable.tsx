@@ -1,10 +1,11 @@
 import { Loader2, MoreHorizontal, TriangleAlert } from 'lucide-react';
-import type { BroadcastListItem, BroadcastStatus } from '@tg/shared';
+import type { BroadcastListItem, BroadcastStatus, LaunchedBroadcast } from '@tg/shared';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router';
 import { useAuthStore } from '@/features/auth/store';
 import { relativeTime } from '@/features/inbox/relative-time';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
 import { Badge } from '@/shared/ui/badge';
@@ -18,7 +19,8 @@ import {
 } from '@/shared/ui/dropdown-menu';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
-import { duplicateBroadcast } from './api';
+import { duplicateBroadcast, getBroadcast } from './api';
+import { DuplicateBroadcastDialog } from './DuplicateBroadcastDialog';
 import { useBroadcastListStore } from './list-store';
 
 const HIDDEN_ON_PHONE = 'hidden md:table-cell';
@@ -85,7 +87,7 @@ function LastChange({ item }: { item: BroadcastListItem }) {
 }
 
 interface RowActions {
-  /** A launched broadcast's Duplicate opens SCR-30 (T36). Without it, a launched row has no Duplicate. */
+  /** Replaces a launched row's own SCR-30 opener (the table reads the broadcast and opens it). */
   onDuplicateLaunched?: ((item: BroadcastListItem) => void) | undefined;
   /** Delete opens SCR-31 (T31). Without it, no row offers Delete. */
   onDelete?: ((item: BroadcastListItem) => void) | undefined;
@@ -107,7 +109,6 @@ function RowView({
   duplicating: boolean;
 }) {
   const draft = item.status === 'draft';
-  const canDuplicate = draft || actions.onDuplicateLaunched !== undefined;
   const canDelete = draft && mayDelete && actions.onDelete !== undefined;
   return (
     <TableRow>
@@ -143,41 +144,38 @@ function RowView({
         <LastChange item={item} />
       </TableCell>
       <TableCell className="w-10 text-right">
-        {canDuplicate || canDelete ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Actions for ${item.name}`}
-                disabled={duplicating}
-              >
-                {duplicating ? (
-                  <Loader2 className="animate-spin" aria-hidden />
-                ) : (
-                  <MoreHorizontal aria-hidden />
-                )}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {canDuplicate ? (
-                <DropdownMenuItem
-                  onSelect={() =>
-                    draft ? onDuplicateDraft(item) : actions.onDuplicateLaunched?.(item)
-                  }
-                >
-                  Duplicate
-                </DropdownMenuItem>
-              ) : null}
-              {canDelete ? (
-                <DropdownMenuItem variant="destructive" onSelect={() => actions.onDelete?.(item)}>
-                  Delete
-                </DropdownMenuItem>
-              ) : null}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+        {/* Every member may duplicate any broadcast (AC-07). */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label={`Actions for ${item.name}`}
+              disabled={duplicating}
+            >
+              {duplicating ? (
+                <Loader2 className="animate-spin" aria-hidden />
+              ) : (
+                <MoreHorizontal aria-hidden />
+              )}
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem
+              onSelect={() =>
+                draft ? onDuplicateDraft(item) : actions.onDuplicateLaunched?.(item)
+              }
+            >
+              Duplicate
+            </DropdownMenuItem>
+            {canDelete ? (
+              <DropdownMenuItem variant="destructive" onSelect={() => actions.onDelete?.(item)}>
+                Delete
+              </DropdownMenuItem>
+            ) : null}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </TableCell>
     </TableRow>
   );
@@ -224,6 +222,8 @@ export function BroadcastsTable({
   const items = useBroadcastListStore((s) => (s.workspaceId === workspaceId ? s.items : []));
   const [duplicating, setDuplicating] = useState<string | null>(null);
   const [duplicateFailed, setDuplicateFailed] = useState(false);
+  /** The launched broadcast SCR-30 is open for (read when its row's Duplicate is chosen). */
+  const [copying, setCopying] = useState<LaunchedBroadcast | null>(null);
 
   useEffect(() => {
     const store = useBroadcastListStore.getState();
@@ -243,6 +243,21 @@ export function BroadcastsTable({
     duplicateBroadcast(workspaceId, item.id, { audience: 'same', include_not_confirmed: false })
       .then((copy) => void navigate(`/w/${workspaceId}/broadcasts/${copy.id}`))
       .catch(() => setDuplicateFailed(true))
+      .finally(() => setDuplicating(null));
+  };
+
+  const duplicateLaunched = (item: BroadcastListItem) => {
+    setDuplicateFailed(false);
+    setDuplicating(item.id);
+    getBroadcast(workspaceId, item.id)
+      .then((b) => {
+        if (b.status !== 'draft') setCopying(b);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          void guard(error, workspaceId);
+        } else setDuplicateFailed(true);
+      })
       .finally(() => setDuplicating(null));
   };
 
@@ -283,6 +298,11 @@ export function BroadcastsTable({
           <AlertDescription>Couldn&apos;t duplicate the broadcast</AlertDescription>
         </Alert>
       ) : null}
+      <DuplicateBroadcastDialog
+        workspaceId={workspaceId}
+        broadcast={copying}
+        onClose={() => setCopying(null)}
+      />
       <Card className="py-0">
         <Table aria-label="Broadcasts">
           <TableHeader>
@@ -306,7 +326,10 @@ export function BroadcastsTable({
                   workspaceId={workspaceId}
                   item={item}
                   mayDelete={role === 'owner' || item.author.account_id === me}
-                  actions={{ onDuplicateLaunched, onDelete }}
+                  actions={{
+                    onDuplicateLaunched: onDuplicateLaunched ?? duplicateLaunched,
+                    onDelete,
+                  }}
                   onDuplicateDraft={duplicateDraft}
                   duplicating={duplicating === item.id}
                 />

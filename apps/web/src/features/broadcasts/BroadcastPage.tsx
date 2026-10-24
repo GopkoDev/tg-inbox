@@ -8,8 +8,10 @@ import { useShellGuard } from '@/shared/ui/app-shell-context';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { audienceText } from './audience-text';
 import { AudienceBreakdown } from './AudienceBreakdown';
 import { BroadcastReport } from './BroadcastReport';
+import { DuplicateBroadcastDialog } from './DuplicateBroadcastDialog';
 import { StatusBadge } from './BroadcastsTable';
 import { useBroadcastReportStore } from './report-store';
 import { StopBroadcastDialog } from './StopBroadcastDialog';
@@ -25,19 +27,6 @@ const ENDED_EARLY: Record<string, { alert: string; note: string }> = {
   },
 };
 
-/** The audience as it was defined at launch, with the tag names then. */
-function audienceText(audience: LaunchedBroadcast['audience']): string {
-  if (audience.kind === 'group') return 'Hand-picked group';
-  if (audience.mode === 'none') return 'Contacts with no tags';
-  const chosen = audience.tags.filter((t) => t.kind === 'include').map((t) => t.name);
-  const left = audience.tags.filter((t) => t.kind === 'exclude').map((t) => t.name);
-  const base =
-    chosen.length === 0
-      ? 'Every contact'
-      : `${audience.mode === 'all' ? 'All of' : 'Any of'} ${chosen.join(', ')}`;
-  return left.length > 0 ? `${base} · leaving out ${left.join(', ')}` : base;
-}
-
 function whenLine(b: LaunchedBroadcast): string {
   if (b.status === 'stopped' && b.stopped_by && b.stopped_at) {
     return `Stopped by ${b.stopped_by.display_name} · ${formatBotTime(b.stopped_at)}`;
@@ -49,7 +38,7 @@ function whenLine(b: LaunchedBroadcast): string {
 /**
  * SCR-28, the read-only broadcast page (AC-11, AC-12, AC-18): the message, the audience as defined
  * with the frozen breakdown, the live delivery report, and Stop for a business owner while it sends
- * (SCR-29). Duplicate (SCR-30) shows when the host passes its opener.
+ * (SCR-29), and Duplicate (SCR-30) for any member.
  */
 export function BroadcastPage({
   workspaceId,
@@ -61,7 +50,7 @@ export function BroadcastPage({
   broadcastId: string;
   /** A one-line notice above the page (e.g. launched while the draft was open). */
   notice?: ReactNode;
-  /** Opens SCR-30 (T36). */
+  /** Replaces the page's own SCR-30 opener (tests, another host). */
   onDuplicate?: () => void;
 }) {
   const guard = useShellGuard();
@@ -73,6 +62,7 @@ export function BroadcastPage({
     s.broadcastId === broadcastId ? s.broadcast : null,
   );
   const [stopping, setStopping] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
   const [ownersOnly, setOwnersOnly] = useState(false);
   const [unchanged, setUnchanged] = useState(false);
 
@@ -126,6 +116,7 @@ export function BroadcastPage({
     );
 
   const b = broadcast;
+  const openDuplicate = onDuplicate ?? (() => setDuplicating(true));
   const early = b.status === 'sent' && b.end_reason ? ENDED_EARLY[b.end_reason] : undefined;
   const canStop = role === 'owner' && !ownersOnly && b.status === 'sending';
 
@@ -137,11 +128,9 @@ export function BroadcastPage({
         <StatusBadge status={b.status} />
         {early ? <span className="text-sm text-muted-foreground">{early.note}</span> : null}
         <div className="flex w-full flex-wrap gap-2 sm:ml-auto sm:w-auto">
-          {onDuplicate ? (
-            <Button type="button" variant="outline" onClick={onDuplicate}>
-              Duplicate
-            </Button>
-          ) : null}
+          <Button type="button" variant="outline" onClick={openDuplicate}>
+            Duplicate
+          </Button>
           {canStop ? (
             <Button
               type="button"
@@ -174,11 +163,9 @@ export function BroadcastPage({
               You can duplicate it, fix the text or the bot, and send the copy to the recipients it
               did not reach.
             </span>
-            {onDuplicate ? (
-              <Button type="button" size="sm" className="self-start" onClick={onDuplicate}>
-                Duplicate
-              </Button>
-            ) : null}
+            <Button type="button" size="sm" className="self-start" onClick={openDuplicate}>
+              Duplicate
+            </Button>
           </AlertDescription>
         </Alert>
       ) : null}
@@ -204,6 +191,11 @@ export function BroadcastPage({
         </Card>
       </div>
       <BroadcastReport workspaceId={workspaceId} totals={b.totals} />
+      <DuplicateBroadcastDialog
+        workspaceId={workspaceId}
+        broadcast={duplicating ? b : null}
+        onClose={() => setDuplicating(false)}
+      />
       <StopBroadcastDialog
         workspaceId={workspaceId}
         broadcastId={broadcastId}

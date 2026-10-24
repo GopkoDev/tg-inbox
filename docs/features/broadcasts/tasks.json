@@ -888,7 +888,7 @@
         "apps/web/src/features/broadcasts/BroadcastPage.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t36-scr30-duplicate-dialog.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T37",

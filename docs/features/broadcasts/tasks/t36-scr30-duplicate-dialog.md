@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/DuplicateBroadcastDialog.tsx", "a
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T36 — Build SCR-30, the DuplicateBroadcastDialog from the list, the draft and the broadcast page: the audience choice with per-option counts, "did not reach" disabled until the broadcast ends, and the not-confirmed warning
@@ -97,11 +97,11 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `DuplicateBroadcastDialog` (`Dialog`): the three options with per-option text and counts, `same_tags` only for a tag audience (preselected then; `all_recipients` preselected for a group), `not_reached` disabled while `status: sending` with its reason — `apps/web/src/features/broadcasts/DuplicateBroadcastDialog.tsx`
-- [ ] The not-confirmed `Checkbox` + warning when `totals.not_confirmed` > 0 and `not_reached` is chosen; checked → `include_not_confirmed: true` — same file
-- [ ] Creating state; `201` → close and navigate to the copy's editor; `409 BROADCAST_NOT_ENDED` → disable the option with the notice; `400` / `500` → «Couldn't create the copy» — same file
-- [ ] Openers: Duplicate on SCR-28 and on launched rows of SCR-24 open the dialog; Duplicate on a draft (SCR-25, draft rows of SCR-24) posts `audience: same` at once and opens the copy — `BroadcastPage.tsx`, `BroadcastsTable.tsx`, `BroadcastEditor.tsx`
-- [ ] Testing Library tests for every SCR-30 state above — `apps/web/src/features/broadcasts/DuplicateBroadcastDialog.test.tsx`
+- [x] `DuplicateBroadcastDialog` (`Dialog`): the three options with per-option text and counts, `same_tags` only for a tag audience (preselected then; `all_recipients` preselected for a group), `not_reached` disabled while `status: sending` with its reason — `apps/web/src/features/broadcasts/DuplicateBroadcastDialog.tsx`
+- [x] The not-confirmed `Checkbox` + warning when `totals.not_confirmed` > 0 and `not_reached` is chosen; checked → `include_not_confirmed: true` — same file
+- [x] Creating state; `201` → close and navigate to the copy's editor; `409 BROADCAST_NOT_ENDED` → disable the option with the notice; `400` / `500` → «Couldn't create the copy» — same file
+- [x] Openers: Duplicate on SCR-28 and on launched rows of SCR-24 open the dialog; Duplicate on a draft (SCR-25, draft rows of SCR-24) posts `audience: same` at once and opens the copy — `BroadcastPage.tsx`, `BroadcastsTable.tsx`, `BroadcastEditor.tsx`
+- [x] Testing Library tests for every SCR-30 state above — `apps/web/src/features/broadcasts/DuplicateBroadcastDialog.test.tsx`
 
 ## Edge cases
 
@@ -116,6 +116,16 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-30 state in screens.md: a draft duplicated at once, a launched broadcast offering same tags (tag audiences only), all recipients and did not reach with their counts, did not reach disabled while sending, the not-confirmed checkbox and its warning sent as include_not_confirmed, BROADCAST_NOT_ENDED shown in place, and the new draft opened after 201.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every SCR-30 state in screens.md: a draft duplicated at once, a launched broadcast offering same tags (tag audiences only), all recipients and did not reach with their counts, did not reach disabled while sending, the not-confirmed checkbox and its warning sent as include_not_confirmed, BROADCAST_NOT_ENDED shown in place, and the new draft opened after 201.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T36): `DuplicateBroadcastDialog({ workspaceId, broadcast: LaunchedBroadcast | null, onClose })` on `Dialog` (title «Duplicate “Spring prices”»): a `RadioGroup` «Who should the copy go to?» — **The same tags** (tag audiences only, preselected then; the audience text as SCR-28 shows it + «— counted again when you launch»), **All recipients** (`launch_breakdown.recipient_count`; preselected for a group), **Only recipients it didn't reach** (`not_reached_count`; disabled with «Available once the broadcast has ended» while `status: sending`); under the third, when chosen and `totals.not_confirmed` > 0, the opt-in `Checkbox` with «They may already have received it.» (unchecked; checked → `include_not_confirmed: true`). Create draft: spinner + disabled buttons; `201` closes and opens the copy; `BROADCAST_NOT_ENDED` disables the option, puts the choice back to the default and shows the notice; 401 / 403 close it and go to the shell guard; anything else «Couldn't create the copy».
+- `implement` (T36): openers — `BroadcastPage` now always shows Duplicate (title row and the ended-early alert) and owns the dialog for the broadcast shown (`onDuplicate` stays as an override); `BroadcastsTable` reads a launched row's broadcast (`getBroadcast`, the row's spinner) and opens the dialog (`onDuplicateLaunched` stays as an override; a failed read shows «Couldn't duplicate the broadcast»). Every row now has Duplicate (any member, any broadcast — AC-07). A draft is still duplicated at once with `audience: same` from SCR-25 and from draft rows (T30 / T31, unchanged).
+- `implement` (T36): `audienceText` moved from `BroadcastPage.tsx` into a new `audience-text.ts` (the dialog and the page share it; the page imports the dialog, so it could not stay there without a cycle).
+- `implement` (T36): `DuplicateBroadcastDialog` is not yet registered in `docs/design-system.md` — T40.
+- `implement` (T36): RED `Failed to resolve import "./DuplicateBroadcastDialog"` (GOOD red). With the dialog in place its 14 state tests passed and the two opener tests stayed red until the openers were wired (`ReferenceError: audienceText is not defined` after the move, then the missing «Actions for Spring prices» Duplicate on a launched row). One incidental assertion in the table-opener test (`getBroadcast` called with a third `expect.anything()` argument) was narrowed to the workspace and broadcast ids before that opener's GREEN — the read itself is what the test proves.
+- `implement` (T36): gate — `pnpm lint` clean; full `pnpm test`: only `e2e/contacts-load` merge timing, `e2e/notification-load` reply p95 and `inbox/http/changes` (p95 + "61 concurrent changes") — the known load set — failed; all green re-run alone.
+
