@@ -17,6 +17,7 @@ const api = vi.hoisted(() => ({
   duplicateBroadcast: vi.fn(),
   deleteBroadcast: vi.fn(),
   listBroadcastGroup: vi.fn(),
+  listBroadcastRecipients: vi.fn(),
 }));
 vi.mock('./api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./api')>()),
@@ -28,6 +29,7 @@ vi.mock('./api', async (importOriginal) => ({
   duplicateBroadcast: (...a: unknown[]) => api.duplicateBroadcast(...a),
   deleteBroadcast: (...a: unknown[]) => api.deleteBroadcast(...a),
   listBroadcastGroup: (...a: unknown[]) => api.listBroadcastGroup(...a),
+  listBroadcastRecipients: (...a: unknown[]) => api.listBroadcastRecipients(...a),
 }));
 const live = vi.hoisted(() => ({ onFrame: null as ((f: LiveFrame) => void) | null }));
 vi.mock('@/shared/api/live-connection', () => ({
@@ -517,6 +519,8 @@ describe('SCR-25 — live and errors', () => {
   it('a teammate launched it: the read-only view with the notice', async () => {
     await openDraft();
     api.getBroadcast.mockResolvedValue(launched());
+    // The read-only page (T35) then reads its report; it stays loading here.
+    api.listBroadcastRecipients.mockReturnValue(new Promise(() => undefined));
     await act(async () =>
       live.onFrame?.({
         type: 'broadcast.changed',

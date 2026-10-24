@@ -31,7 +31,7 @@ const numbers = new Intl.NumberFormat();
 const contactsText = (n: number) => `${numbers.format(n)} ${n === 1 ? 'contact' : 'contacts'}`;
 
 /** Decision 11: Draft secondary, Sending default with a pulsing dot, Sent outline, Stopped muted. */
-function StatusBadge({ status }: { status: BroadcastStatus }) {
+export function StatusBadge({ status }: { status: BroadcastStatus }) {
   switch (status) {
     case 'draft':
       return <Badge variant="secondary">Draft</Badge>;

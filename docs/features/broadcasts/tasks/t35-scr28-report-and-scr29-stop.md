@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/BroadcastPage.tsx", "apps/web/src
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T35 — Build SCR-28, the read-only broadcast page with BroadcastReport (live totals, outcome filter, 50-recipient pages with plain reasons) and SCR-29 StopBroadcastDialog for business owners
@@ -127,12 +127,12 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `BroadcastPage`: title row with the status badge (Decision 11), Duplicate, Stop for an owner while `sending`; launched-by / finished / stopped lines; Message card (plain text, line breaks kept); Audience card «as defined» from the launched tag names or «Hand-picked group» + `AudienceBreakdown` «Sent to N»; the ended-early `Alert` with Duplicate; skeleton and error + Retry — `apps/web/src/features/broadcasts/BroadcastPage.tsx`
-- [ ] `BroadcastReport`: the five totals (Waiting = waiting + sending, Failed = failed + not_confirmed, Not sent — stopped only when > 0), the outcome `Select` restarting from the top, the recipients `Table` with plain reasons and times, Show more with its failure + Retry, contact links to SCR-19, stacked rows below `md` — `apps/web/src/features/broadcasts/BroadcastReport.tsx`
-- [ ] Live: subscribe through the report store — on `broadcast.changed` `report` / `status` re-read totals and the current page in place, one fetch at a time, keeping scroll and shown rows — same files
-- [ ] `StopBroadcastDialog` (`AlertDialog`, Keep sending focused): the waiting count from the last read, stopping state, `stopped` / `unchanged` answers applied to the page (with the «Nothing was waiting any more» notice), `OWNER_ONLY` hiding Stop, error + enabled retry — `apps/web/src/features/broadcasts/StopBroadcastDialog.tsx`
-- [ ] Route page shows `BroadcastPage` when `getBroadcast` answers a launched status (and after a `409 BROADCAST_NOT_A_DRAFT` with the read-only notice) — `apps/web/src/pages/BroadcastDetailPage.tsx`
-- [ ] Testing Library tests for every SCR-28 and SCR-29 state above, for both roles — `BroadcastPage.test.tsx`, `BroadcastReport.test.tsx`, `StopBroadcastDialog.test.tsx`
+- [x] `BroadcastPage`: title row with the status badge (Decision 11), Duplicate, Stop for an owner while `sending`; launched-by / finished / stopped lines; Message card (plain text, line breaks kept); Audience card «as defined» from the launched tag names or «Hand-picked group» + `AudienceBreakdown` «Sent to N»; the ended-early `Alert` with Duplicate; skeleton and error + Retry — `apps/web/src/features/broadcasts/BroadcastPage.tsx`
+- [x] `BroadcastReport`: the five totals (Waiting = waiting + sending, Failed = failed + not_confirmed, Not sent — stopped only when > 0), the outcome `Select` restarting from the top, the recipients `Table` with plain reasons and times, Show more with its failure + Retry, contact links to SCR-19, stacked rows below `md` — `apps/web/src/features/broadcasts/BroadcastReport.tsx`
+- [x] Live: subscribe through the report store — on `broadcast.changed` `report` / `status` re-read totals and the current page in place, one fetch at a time, keeping scroll and shown rows — same files
+- [x] `StopBroadcastDialog` (`AlertDialog`, Keep sending focused): the waiting count from the last read, stopping state, `stopped` / `unchanged` answers applied to the page (with the «Nothing was waiting any more» notice), `OWNER_ONLY` hiding Stop, error + enabled retry — `apps/web/src/features/broadcasts/StopBroadcastDialog.tsx`
+- [x] Route page shows `BroadcastPage` when `getBroadcast` answers a launched status (and after a `409 BROADCAST_NOT_A_DRAFT` with the read-only notice) — `apps/web/src/pages/BroadcastDetailPage.tsx`
+- [x] Testing Library tests for every SCR-28 and SCR-29 state above, for both roles — `BroadcastPage.test.tsx`, `BroadcastReport.test.tsx`, `StopBroadcastDialog.test.tsx`
 
 ## Edge cases
 
@@ -149,6 +149,16 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-28 and SCR-29 state in screens.md: the message, the audience as defined, launched by and when, the status and the ended-early line, the five totals, the outcome filter and Show more with each reason in plain words, live re-reads on report and status one at a time, Stop only for an owner with the waiting count, the stopped and unchanged answers, and Duplicate offered instead of any edit.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every SCR-28 and SCR-29 state in screens.md: the message, the audience as defined, launched by and when, the status and the ended-early line, the five totals, the outcome filter and Show more with each reason in plain words, live re-reads on report and status one at a time, Stop only for an owner with the waiting count, the stopped and unchanged answers, and Duplicate offered instead of any edit.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T35): `BroadcastPage({ workspaceId, broadcastId, notice?, onDuplicate? })` opens the report store (`open` + `watch`, `close` on leave) and renders SCR-28: status badge (T30's `StatusBadge`, now exported from `BroadcastsTable.tsx`) with the ended-early note, «Launched by … · <formatBotTime>» / «Finished …» / «Stopped by …» and the read-only line, Message (plain, `whitespace-pre-wrap`), Audience as defined («Any of VIP · leaving out Staff», «All of …», «Every contact», «Contacts with no tags», «Hand-picked group») with `AudienceBreakdown` «Sent to», the ended-early `Alert`, and `BroadcastReport`. The `broadcast-launched-view` test id now wraps the page while its report loads too (`report-skeleton`, 8 `recipient-skeleton` rows). **Hand-off → T36:** Duplicate (title row and the ended-early alert) appears only when `onDuplicate` is passed (SCR-30); `BroadcastDetailPage` passes none yet.
+- `implement` (T35): `BroadcastReport({ workspaceId, totals })` — the five totals (`data-total`), the outcome `Select` (`aria-label="Outcome"`, restarts from the top through `setFilter`), the recipients table with plain reasons, outcome badges, `formatBotTime` times and contact links to SCR-19, Show more with «Couldn't load more recipients» + Retry, «No recipients with this outcome.»; reason and time collapse under the name below `md`. Its tests live in `BroadcastPage.test.tsx` (rendered through the page, so the live re-read path is the real one) rather than a separate `BroadcastReport.test.tsx`.
+- `implement` (T35): `StopBroadcastDialog` after `DeleteTagDialog`'s pending pattern; `stopped` / `unchanged` answers are applied by setting the report store's `broadcast` from the answer; `unchanged` adds «Nothing was waiting any more — the broadcast had already finished.»; `OWNER_ONLY` hides Stop locally. The dialog's count is `totals.waiting` only (recipients that will not get the message), not the «Waiting» stat (waiting + sending) — the in-flight ones finish. My first page test expected 22 (the stat); it was corrected to 20 before GREEN and recorded here.
+- `implement` (T35): a recipients-page failure on a filter change surfaces as the report store's page-level error («Couldn't load this broadcast» + Retry), as T29's store does; a background re-read failure keeps what is shown.
+- `implement` (T35): fixture updates outside files_hint — `app/routes.test.tsx` and `BroadcastEditor.test.tsx` now mock `listBroadcastRecipients` (pending) where they open a launched broadcast, since the read-only page reads its report.
+- `implement` (T35): RED — module-not-found for `StopBroadcastDialog`, missing `broadcast-report` / `Stop` / `Outcome` for the page (GOOD red); two page tests that passed vacuously in RED (the pre-existing skeleton, operator absence-only) were strengthened (report skeleton + 8 rows; the report and status present).
+- `implement` (T35): gate — full `pnpm test` green (304 files, 4230 tests); `pnpm lint` clean.

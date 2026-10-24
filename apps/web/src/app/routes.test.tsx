@@ -43,11 +43,16 @@ vi.mock('@/features/workspaces/team/Team', () => ({ Team: () => <p>team body</p>
 vi.mock('@/features/bot/settings/BotSettings', () => ({ BotSettings: () => <p>bot body</p> }));
 vi.mock('@/features/tags/TagsSettings', () => ({ TagsSettings: () => <p>tags body</p> }));
 // The broadcasts reads are answered here; the screens' bodies have their own tests.
-const broadcastsApi = vi.hoisted(() => ({ listBroadcasts: vi.fn(), getBroadcast: vi.fn() }));
+const broadcastsApi = vi.hoisted(() => ({
+  listBroadcasts: vi.fn(),
+  getBroadcast: vi.fn(),
+  listBroadcastRecipients: vi.fn(),
+}));
 vi.mock('@/features/broadcasts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/broadcasts/api')>()),
   listBroadcasts: (...a: unknown[]) => broadcastsApi.listBroadcasts(...a),
   getBroadcast: (...a: unknown[]) => broadcastsApi.getBroadcast(...a),
+  listBroadcastRecipients: (...a: unknown[]) => broadcastsApi.listBroadcastRecipients(...a),
 }));
 
 import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
@@ -422,6 +427,8 @@ describe('broadcasts routes and crumbs (T30, SCR-15, SCR-24)', () => {
       ...draft({ status: 'sent' }),
       version: undefined,
     });
+    // The read-only page (T35) then reads its report; it stays loading here.
+    broadcastsApi.listBroadcastRecipients.mockReturnValue(new Promise(() => undefined));
     renderAt('/w/w1/broadcasts/b1');
     expect(await screen.findByTestId('broadcast-launched-view')).toBeInTheDocument();
   });

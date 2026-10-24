@@ -866,7 +866,7 @@
         "apps/web/src/pages/BroadcastDetailPage.tsx"
       ],
       "file": "docs/features/broadcasts/tasks/t35-scr28-report-and-scr29-stop.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T36",

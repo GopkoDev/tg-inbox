@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router';
 import { BroadcastEditor } from '@/features/broadcasts/BroadcastEditor';
+import { BroadcastPage } from '@/features/broadcasts/BroadcastPage';
 import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
@@ -72,16 +73,20 @@ export function BroadcastDetailPage() {
     );
   if (status === 'launched' && launched)
     return (
-      <section data-testid="broadcast-launched-view" className="flex flex-col gap-4">
-        {wasDraft ? (
-          <Alert>
-            <AlertDescription>
-              This broadcast was launched and can no longer be changed.
-            </AlertDescription>
-          </Alert>
-        ) : null}
-        <h1 className="text-xl font-semibold break-words">{launched.name}</h1>
-      </section>
+      <BroadcastPage
+        key={broadcastId}
+        workspaceId={workspaceId}
+        broadcastId={broadcastId}
+        notice={
+          wasDraft ? (
+            <Alert>
+              <AlertDescription>
+                This broadcast was launched and can no longer be changed.
+              </AlertDescription>
+            </Alert>
+          ) : undefined
+        }
+      />
     );
   if (status === 'ready' && draft)
     return (
