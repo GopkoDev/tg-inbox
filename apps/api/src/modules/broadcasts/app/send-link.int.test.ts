@@ -39,6 +39,11 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
   let recipients: ReturnType<typeof createRecipientRepo>;
   /** `broadcasts.send` links enqueued, as `<ws>` or `<ws>@<iso>`. */
   let links: string[] = [];
+  /**
+   * Recipient ids in the order the link claimed them. The turn is decided at the claim; the sends
+   * then run up to 8 in flight, so their arrival order at the fake Bot API is not the turn order.
+   */
+  let claims: string[] = [];
 
   beforeAll(async () => {
     database = await startTestDatabase();
@@ -75,10 +80,18 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
       },
       async enqueueBlockedShare() {},
     };
+    const observed: typeof recipients = {
+      ...recipients,
+      async claim(workspaceId, id, at, tx) {
+        const claimed = await recipients.claim(workspaceId, id, at, tx);
+        if (claimed) claims.push(id);
+        return claimed;
+      },
+    };
     link = createSendLink({
       transaction,
       broadcasts,
-      recipients,
+      recipients: observed,
       contacts: createContactAudiences({
         audiences: createAudienceQuery(db),
         tags: createTagRepo(db),
@@ -112,6 +125,7 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
   beforeEach(() => {
     fake.reset();
     links = [];
+    claims = [];
   });
 
   /** A workspace with its bot and `n` contacts who wrote to it, each with a conversation. */
@@ -187,7 +201,10 @@ describe('send link against the fake Bot API (Postgres; AC-08, AC-11, AC-12, AC-
     const a = await w.launch(ids.slice(0, 2), new Date(Date.now() - 60_000));
     const b = await w.launch(ids.slice(2, 4));
     await link.runSendLink(w.workspaceId);
-    expect(sentChats(w.token)).toEqual([0, 2, 1, 3].map((i) => String(w.contacts[i]!.chatId)));
+    // Turns alternate, oldest launch first: a's first, b's first, a's second, b's second.
+    expect(claims).toEqual([a.rows[0]!.id, b.rows[0]!.id, a.rows[1]!.id, b.rows[1]!.id]);
+    // Each of them reached Telegram exactly once.
+    expect([...sentChats(w.token)].sort()).toEqual(w.contacts.map((c) => String(c.chatId)).sort());
     const sends = fake.calls(w.token).filter((c) => c.method === 'sendMessage');
     for (const s of sends) {
       expect(s.params.text).toBe('New prices from Monday.');
