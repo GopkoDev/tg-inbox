@@ -9,14 +9,17 @@ import type {
   ReadState,
   StatusLens,
   ThreadActivity,
+  ThreadBroadcastItem,
   ThreadItem,
   ThreadMessage,
   ThreadPage,
   ThreadReply,
 } from '@tg/shared';
 import { NotFoundError } from '../../../platform/errors.js';
+import type { BroadcastItemDetails } from '../../broadcasts/app/reads.js';
 import type {
   ActivityView,
+  BroadcastItemView,
   ConversationRow,
   ConversationSummaryRow,
   MessageView,
@@ -121,8 +124,35 @@ export function activityDto(
 }
 
 /** The inbox read use cases: guarded callers pass the workspace id and the member from the guard. */
+function broadcastItemDto(
+  workspaceId: string,
+  item: BroadcastItemView,
+  details: BroadcastItemDetails,
+): ThreadBroadcastItem {
+  return {
+    type: 'broadcast',
+    id: item.id,
+    workspace_id: workspaceId,
+    conversation_id: item.conversationId,
+    broadcast_id: item.broadcastId,
+    broadcast_name: details.broadcast_name,
+    text: details.text,
+    launched_by: details.launched_by,
+    state: item.state,
+    position_at: iso(item.positionAt),
+  };
+}
+
 export function createInboxReadUseCases(deps: InboxReadsDeps) {
-  const { conversations, contacts, workspaces, bots } = deps;
+  const { conversations, contacts, workspaces, bots, broadcasts, broadcastItems } = deps;
+
+  /** Each broadcast's name, text and launcher, in one call; none asked for an empty list. */
+  async function detailsOf(workspaceId: string, items: readonly BroadcastItemView[]) {
+    const ids = [...new Set(items.map((i) => i.broadcastId))];
+    if (ids.length === 0) return new Map<string, BroadcastItemDetails>();
+    const found = await broadcasts.itemDetails(workspaceId, ids);
+    return new Map(found.map((d) => [d.broadcast_id, d]));
+  }
 
   async function namesOf(workspaceId: string, ids: readonly string[]) {
     const unique = [...new Set(ids)];
@@ -262,13 +292,18 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
           return [];
         }),
       );
-      // Broadcast items are enriched from `broadcasts` by T25 (listThreadItems, ADR-0010); until
-      // then they are left out of the page.
+      // Broadcast items take the broadcast's name, text and launcher from `broadcasts` (ADR-0010).
+      const details = await detailsOf(
+        workspaceId,
+        page.items.flatMap((e) => (e.type === 'broadcast' ? [e.broadcastItem] : [])),
+      );
       const items: ThreadItem[] = page.items.flatMap((e): ThreadItem[] => {
         if (e.type === 'message') return [messageDto(workspaceId, e.message)];
         if (e.type === 'reply') return [replyDto(workspaceId, e.reply, names)];
         if (e.type === 'activity') return [activityDto(workspaceId, e.activity, names)];
-        return [];
+        const d = details.get(e.broadcastItem.broadcastId);
+        // A launched broadcast is never deleted, so its details are always found.
+        return d ? [broadcastItemDto(workspaceId, e.broadcastItem, d)] : [];
       });
       return {
         workspace_id: workspaceId,
@@ -291,6 +326,19 @@ export function createInboxReadUseCases(deps: InboxReadsDeps) {
       const m = await conversations.threadMessage(workspaceId, conversationId, messageId);
       if (!m) throw notFound();
       return messageDto(workspaceId, m);
+    },
+
+    /** One broadcast item of the conversation (a live `conversation.changed` refetch, AC-16). */
+    async getThreadBroadcastItem(
+      workspaceId: string,
+      conversationId: string,
+      itemId: string,
+    ): Promise<ThreadBroadcastItem> {
+      const item = await broadcastItems.getBroadcastItem(workspaceId, conversationId, itemId);
+      if (!item) throw notFound();
+      const d = (await detailsOf(workspaceId, [item])).get(item.broadcastId);
+      if (!d) throw notFound();
+      return broadcastItemDto(workspaceId, item, d);
     },
 
     async getThreadReply(

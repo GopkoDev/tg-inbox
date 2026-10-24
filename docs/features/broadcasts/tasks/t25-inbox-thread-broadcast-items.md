@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/inbox/app/reads.ts", "apps/api/src/modules/in
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T25 — Enrich the inbox thread with broadcast items: listThreadItems returns broadcast entries with the broadcast name, text and launching owner from broadcasts.itemDetails, and getThreadBroadcastItem reads one
@@ -89,10 +89,10 @@ No DB changes (reads `broadcast_items` through `conversations` (T13) and `broadc
 
 ## Checklist
 
-- [ ] Add `BroadcastsReads.itemDetails(ws, broadcastIds)` to the inbox ports (name, text, launched_by account id) — `apps/api/src/modules/inbox/app/ports.ts`
-- [ ] Enrich the thread page's broadcast entries in one `itemDetails` call per page plus member display names (deactivated included); add `getThreadBroadcastItem` — `apps/api/src/modules/inbox/app/reads.ts` (+ `reads.test.ts` with fakes)
-- [ ] Register `GET …/broadcast-items/:broadcastItemId` with its zod schemas; `listThreadItems`' response schema accepts the broadcast kind — `apps/api/src/modules/inbox/http/routes.ts`
-- [ ] Route integration tests: item between messages at its position, deactivated launcher named, foreign item 404, no read mark or attention change — `apps/api/src/modules/inbox/http/routes.int.test.ts`
+- [x] Add `BroadcastsReads.itemDetails(ws, broadcastIds)` to the inbox ports (name, text, launched_by account id) — `apps/api/src/modules/inbox/app/ports.ts`
+- [x] Enrich the thread page's broadcast entries in one `itemDetails` call per page plus member display names (deactivated included); add `getThreadBroadcastItem` — `apps/api/src/modules/inbox/app/reads.ts` (+ `reads.test.ts` with fakes)
+- [x] Register `GET …/broadcast-items/:broadcastItemId` with its zod schemas; `listThreadItems`' response schema accepts the broadcast kind — `apps/api/src/modules/inbox/http/routes.ts`
+- [x] Route integration tests: item between messages at its position, deactivated launcher named, foreign item 404, no read mark or attention change — `apps/api/src/modules/inbox/http/routes.int.test.ts`
 
 ## Edge cases
 
@@ -107,6 +107,16 @@ No DB changes (reads `broadcast_items` through `conversations` (T13) and `broadc
 
 ## Definition of Done
 
-- [ ] Route integration tests prove listThreadItems returns a broadcast item between the messages and replies at its position with name, text, state and the launching owner (also when deactivated), getThreadBroadcastItem answers one item and 404 ITEM_NOT_FOUND for an item of another conversation or workspace, and neither read changes read state or attention.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Route integration tests prove listThreadItems returns a broadcast item between the messages and replies at its position with name, text, state and the launching owner (also when deactivated), getThreadBroadcastItem answers one item and 404 ITEM_NOT_FOUND for an item of another conversation or workspace, and neither read changes read state or attention.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T25): `inbox/app/reads.ts`: `listThreadItems` maps `broadcast` entries to `ThreadBroadcastItem` with the broadcast's name, text and `launched_by` from one `broadcasts.itemDetails(ws, uniqueIds)` call per page (none for a page without broadcast items); `getThreadBroadcastItem(ws, conversationId, itemId)` reads through `conversations.getBroadcastItem` (T13) and answers the shared `NOT_FOUND` 404 for an item of another conversation or workspace, like the reply / activity reads (the contract's `ItemNotFound` response). Neither read touches read marks or attention (integration test).
+- `implement` (T25): new `InboxReadsDeps` ports `broadcasts: Pick<BroadcastReads, 'itemDetails'>` and `broadcastItems: Pick<BroadcastItems, 'getBroadcastItem'>` (edge `inbox → broadcasts`, `inbox → conversations`). Route `GET …/inbox/conversations/:conversationId/broadcast-items/:broadcastItemId` (`ThreadBroadcastItem`).
+- `implement` (T25): **deviation** — `deps.ts` (outside files_hint) had to build `createBroadcastReads` (with `createContactAudiences`, `createLaunchReadiness({ bots: botRepo })`, tag names through `tagAdmin.listTags`, display names through `workspaceAccess`) and `createBroadcastItems` so the inbox routes can be served; `broadcastReads` sits after the contacts reads and `inbox` calls it through a per-request closure. **Hand-off → T26:** reuse `broadcastReads` / `contactAudiences` / `broadcastItems` from `buildDeps()` for `registerBroadcasts` and the send link instead of building them twice.
+- `implement` (T25): **deviation** — the route tests live in a new `inbox/http/broadcast-items.int.test.ts` (the repo splits inbox route tests by concern: reads, replies, changes, media, live; `routes.int.test.ts` does not exist), and the unit tests in a new `inbox/app/reads.test.ts`.
+- `implement` (T25): RED — unit `expected [] to deeply equal [ { type: 'broadcast', … } ]` and `TypeError: h.reads.getThreadBroadcastItem is not a function`; routes `expected 500 to be 200` (thread page, no `broadcasts` port) and `expected 404 to be 200` (route absent) (GOOD red).
+- `implement` (T25): gate — `pnpm lint` clean; full `pnpm test`: only `e2e/contacts-load` merge timing and `e2e/notification-load` reply p95 (known load set) failed; both green re-run alone.
+

@@ -32,6 +32,12 @@ import { createPacer } from './modules/bots/app/pacer.js';
 import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
 import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
+import { createLaunchReadiness } from './modules/bots/app/launch-readiness.js';
+import { createBroadcastReads } from './modules/broadcasts/app/reads.js';
+import { createAudienceTagRepo } from './modules/broadcasts/infra/audience-tag-repo.js';
+import { createBroadcastRepo } from './modules/broadcasts/infra/broadcast-repo.js';
+import { createGroupRepo } from './modules/broadcasts/infra/group-repo.js';
+import { createRecipientRepo } from './modules/broadcasts/infra/recipient-repo.js';
 import { createBotRepo } from './modules/bots/infra/bot-repo.js';
 import { createTelegramGateway } from './modules/bots/infra/telegram-gateway.js';
 import { createTokenCipher } from './modules/bots/infra/token-cipher.js';
@@ -53,7 +59,9 @@ import { createBotMessageSender, createPingStarter } from './modules/notificatio
 import { createNotificationSignals } from './modules/notifications/infra/signals.js';
 import { createTelegramLinkRepo } from './modules/notifications/infra/telegram-link-repo.js';
 import { createContactReads, createContacts } from './modules/contacts/app/contacts.js';
+import { createContactAudiences } from './modules/contacts/app/audiences.js';
 import { createContactReach } from './modules/contacts/app/reach.js';
+import { createAudienceQuery } from './modules/contacts/infra/audience-query.js';
 import { createTagAdmin } from './modules/contacts/app/tag-admin.js';
 import { createTagWrites } from './modules/contacts/app/tags.js';
 import { createReachSignals, createTagSignals } from './modules/contacts/infra/tag-signals.js';
@@ -63,7 +71,9 @@ import { createReachRepo } from './modules/contacts/infra/reach-repo.js';
 import { createContactTagRepo } from './modules/contacts/infra/contact-tag-repo.js';
 import { createTagHistoryRepo } from './modules/contacts/infra/tag-history-repo.js';
 import { createTagRepo } from './modules/contacts/infra/tag-repo.js';
+import { createBroadcastItems } from './modules/conversations/app/broadcast-items.js';
 import { createConversations } from './modules/conversations/app/conversations.js';
+import { createBroadcastItemRepo } from './modules/conversations/infra/broadcast-item-repo.js';
 import { createActivityRepo } from './modules/conversations/infra/activity-repo.js';
 import { createConversationRepo } from './modules/conversations/infra/conversation-repo.js';
 import { createReplies, createReplyDelivery } from './modules/conversations/app/replies.js';
@@ -374,7 +384,13 @@ export function buildDeps(
     activities: createActivityRepo(db),
   });
 
-  // --- inbox: calls the app layers of conversations, contacts, bots and workspaces ---
+  // --- inbox: calls the app layers of conversations, contacts, bots, workspaces and broadcasts ---
+  // A broadcast item in the thread: one row of `conversations` (ADR-0010).
+  const broadcastItems = createBroadcastItems({
+    items: createBroadcastItemRepo(db),
+    signals: createConversationSignals(),
+    clock,
+  });
   const inboxConversations = createInboxReads({
     transaction,
     lists: createListQueries(db),
@@ -388,6 +404,9 @@ export function buildDeps(
     contacts,
     workspaces: workspaceAccess,
     bots: bots.inboxStatus,
+    // `broadcastReads` is built after the contacts reads below (its tag names come from them).
+    broadcasts: { itemDetails: (workspaceId, ids) => broadcastReads.itemDetails(workspaceId, ids) },
+    broadcastItems,
     clock,
   });
   // Assign / unassign: memberships FOR SHARE, then the conversation row (sad.md §8 lock order).
@@ -460,6 +479,33 @@ export function buildDeps(
     ...(overrides.logger && { logger: overrides.logger }),
   });
   // --- end contacts reads ---
+
+  // --- broadcasts: the reads `inbox` shows broadcast items with (inbox -> broadcasts, ADR-0010);
+  // `inbox` is built above and calls it only per request. The rest of the module
+  // (registerBroadcasts) is wired with its routes. ---
+  const contactAudiences = createContactAudiences({
+    audiences: createAudienceQuery(db),
+    tags: createTagRepo(db),
+  });
+  const broadcastReads = createBroadcastReads({
+    broadcasts: createBroadcastRepo(db),
+    audienceTags: createAudienceTagRepo(db),
+    groups: createGroupRepo(db),
+    recipients: createRecipientRepo(db),
+    contacts: {
+      resolveTags: async (workspaceId, tagIds) => {
+        const wanted = new Set(tagIds);
+        return (await tagAdmin.listTags(workspaceId)).items
+          .filter((t) => wanted.has(t.id))
+          .map((t) => ({ id: t.id, name: t.name }));
+      },
+      audienceBreakdown: contactAudiences.audienceBreakdown,
+      contactCards: contactAudiences.contactCards,
+    },
+    bots: createLaunchReadiness({ bots: botRepo }),
+    workspaces: { displayNames: workspaceAccess.displayNames },
+  });
+  // --- end broadcasts reads ---
 
   return {
     config,
