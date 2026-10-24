@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/broadcasts/app/send-link.ts", "apps/api/src/m
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T22 — Add one link of the sending chain: resolve stale in-flight recipients as not confirmed with their items, serve the sending broadcasts in turns with at most 8 sends in flight for at most 20 s, check the block at each turn, claim before the send, record each outcome with its broadcast item and a coalesced report signal, abort or finish, and decide the successor
@@ -171,11 +171,11 @@ Internal — no API surface. The link runs from the `broadcasts.send { workspace
 
 ## Checklist
 
-- [ ] Add `BotsApi.sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text })`, `ContactsApi.isBlocked(ws, contactId, botId)`, `ConversationsApi.recordBroadcastItem(tx, …)`, `jobs.enqueueSendLink(tx, ws, startAfter?)` to the ports and fakes (a scriptable fake bot) — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
-- [ ] Per-broadcast 1 s `report` coalescer (in memory) — `apps/api/src/modules/broadcasts/infra/signals.ts`
-- [ ] RED: unit tests with fakes — order and turns, blocked at the turn, every answer → outcome (T6 map), back to waiting on rate limit / pause, abort, 8 in flight, the 20 s stop, successor decision — `apps/api/src/modules/broadcasts/app/send-link.test.ts`
-- [ ] `runSendLink(ws, deadline)`: stale `sending` → `not_confirmed` + items at `claimed_at`; round-robin over `sending` broadcasts oldest launch first; per recipient: block check → claim (own committed tx) → send → outcome tx (recipient + item + coalesced signal) → abort / finish via T21; successor in the last tx — `apps/api/src/modules/broadcasts/app/send-link.ts`
-- [ ] Integration tests against the fake Bot API: two broadcasts alternate; a never-answering send → `not_confirmed`, one send recorded, never resent; a link killed between claim and outcome, then the next link → `not_confirmed` with the item at the claim time; a 429 → recipient waiting, successor at the pause end; a text refusal → abort with `text_refused`; a recipient blocked before its turn → `blocked`, no send — `apps/api/src/modules/broadcasts/app/send-link.int.test.ts`
+- [x] Add `BotsApi.sendBroadcastMessage({ workspaceId, telegramBotId, chatId, text })`, `ContactsApi.isBlocked(ws, contactId, botId)`, `ConversationsApi.recordBroadcastItem(tx, …)`, `jobs.enqueueSendLink(tx, ws, startAfter?)` to the ports and fakes (a scriptable fake bot) — `apps/api/src/modules/broadcasts/app/ports.ts`, `apps/api/src/modules/broadcasts/app/fakes.ts`
+- [x] Per-broadcast 1 s `report` coalescer (in memory) — `apps/api/src/modules/broadcasts/infra/signals.ts`
+- [x] RED: unit tests with fakes — order and turns, blocked at the turn, every answer → outcome (T6 map), back to waiting on rate limit / pause, abort, 8 in flight, the 20 s stop, successor decision — `apps/api/src/modules/broadcasts/app/send-link.test.ts`
+- [x] `runSendLink(ws, deadline)`: stale `sending` → `not_confirmed` + items at `claimed_at`; round-robin over `sending` broadcasts oldest launch first; per recipient: block check → claim (own committed tx) → send → outcome tx (recipient + item + coalesced signal) → abort / finish via T21; successor in the last tx — `apps/api/src/modules/broadcasts/app/send-link.ts`
+- [x] Integration tests against the fake Bot API: two broadcasts alternate; a never-answering send → `not_confirmed`, one send recorded, never resent; a link killed between claim and outcome, then the next link → `not_confirmed` with the item at the claim time; a 429 → recipient waiting, successor at the pause end; a text refusal → abort with `text_refused`; a recipient blocked before its turn → `blocked`, no send — `apps/api/src/modules/broadcasts/app/send-link.int.test.ts`
 
 ## Edge cases
 
@@ -193,6 +193,17 @@ Internal — no API surface. The link runs from the `broadcasts.send { workspace
 
 ## Definition of Done
 
-- [ ] Unit tests with fakes and integration tests against the fake Bot API prove a link sends each waiting recipient at most once in position order, two sending broadcasts alternate, a recipient blocked at its turn gets blocked with no send, a delivered or not-confirmed outcome writes its broadcast item in the outcome transaction, a rate limit or pause returns the recipient to waiting and delays the successor to the pause end, a refused text or a lost bot aborts through the settling transaction, a recipient left sending by a killed link becomes not confirmed with its item at the claim time and is never resent, report signals are at most one per broadcast per second, and the link stops claiming after 20 s and asks for a successor while anything still sends. Failed, stopped and blocked recipients get no broadcast item (test plan).
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Unit tests with fakes and integration tests against the fake Bot API prove a link sends each waiting recipient at most once in position order, two sending broadcasts alternate, a recipient blocked at its turn gets blocked with no send, a delivered or not-confirmed outcome writes its broadcast item in the outcome transaction, a rate limit or pause returns the recipient to waiting and delays the successor to the pause end, a refused text or a lost bot aborts through the settling transaction, a recipient left sending by a killed link becomes not confirmed with its item at the claim time and is never resent, report signals are at most one per broadcast per second, and the link stops claiming after 20 s and asks for a successor while anything still sends. Failed, stopped and blocked recipients get no broadcast item (test plan).
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T22): `createSendLink` (`broadcasts/app/send-link.ts`): `runSendLink(ws) → LinkSummary { staleResolved, claimed, outcomes, successor }`. Order: `sendingBroadcasts` (oldest launch first) → one transaction resolving stale `sending` recipients as `not_confirmed` + their items at `claimed_at` + one `report` per broadcast → turns (`nextTurn`, skipping broadcasts with nothing waiting) while no pause, no failure and before the 20 s deadline, at most 8 in flight: `nextWaiting` → block mark for the launch Telegram bot (`contacts.isBlocked`; blocked → outcome from `waiting`, no send, no item) → `claim` committed on its own → `bots.sendBroadcastMessage` → outcome transaction (recipient + item for delivered at the answer time / not confirmed at the claim time + coalesced report + due flush). Then wait for in-flight sends, `finishIfDone` per broadcast, wait until owed reports are due (≤ 1 s), and one last transaction flushing them and enqueuing the successor (`startAfter` = the pause end) while anything still sends; `broadcast.link` log (ids, counts, no text / chat ids).
+- `implement` (T22): **decision** — the recipient whose send answered `text_refused` / `bot_unavailable` / `bot_changed` was claimed but nothing was sent to it; the abort transaction (row lock → `backToWaiting` → `settle.endInTx(abort)`) puts it back to waiting so the bulk settle fails it with the abort reason; if the broadcast had already ended (a concurrent abort or a stop), `settleWaiting` fails it with the same reason. No recipient is left `sending` on an ended broadcast. `rate_limited { retryAfter }` from `bots` is mapped to the domain's `paused { until }` (both requeue).
+- `implement` (T22): a turn that throws (DB error) stops claiming; the link waits for the other sends and rethrows, so the pg-boss retry (T24) resolves the stranded `sending` row as not confirmed.
+- `implement` (T22): ports `BroadcastSender`, `ConversationsApi.recordBroadcastItem`, `ContactsApi.isBlocked`, `ReportSignals` (+ fakes `fakeBroadcastSender`, `fakeConversationsApi`). `createReportSignals(signals, clock)` in `infra/signals.ts`: one `ReportCoalescer` per workspace kept for the process (its `lastAt` must survive between links); `ReportCoalescer.msUntilDue` added to the T6 domain (outside files_hint, with its unit test) and `infra/signals.test.ts` (new). The 1-second rule is per process: two links of one workspace on different instances one after the other could publish twice within a second (harmless refetch).
+- `implement` (T22): **Hand-off → T24 / T26:** bind `bots = createSendBroadcastMessage(... createPacer({ perSecond: BROADCAST_MESSAGES_PER_SECOND }) ...)`, `conversations = createBroadcastItems(...)`, `contacts.isBlocked = contactAudiences.isBlocked`, `settle`, `reports = createReportSignals(createBroadcastSignals(), clock)` (one instance per process), `jobs.enqueueSendLink`; the `broadcasts.send` worker calls `runSendLink(job.data.workspace_id)`.
+- `implement` (T22): RED `Cannot find module './send-link.js'`, `TypeError: c.msUntilDue is not a function`, `TypeError: createReportSignals is not a function` (GOOD red). GREEN found a bug in the first `createReportSignals` (it dropped a workspace's coalescer once nothing was owed, losing the last publish time) — caught by the 1 s unit test. Integration written after GREEN; the never-answering send uses the fake's `resetAfterWrite` (a lost connection after the write → not confirmed) to avoid a 10 s timeout.
+- `implement` (T22): gate — `pnpm lint` clean; full `pnpm test`: `e2e/contacts-load` merge timing (known flake, green alone) and the new 429 integration test, whose first version assumed the scripted 429 hit position 1 while 8 sends race to the fake — fixed to find the rate-limited recipient by the first `sendMessage` call; both files green alone 3 runs in a row.
+

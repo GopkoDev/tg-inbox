@@ -71,4 +71,15 @@ describe('report coalescing (events.md assumption 3)', () => {
     c.shouldPublish('a', 10);
     expect(c.pending()).toEqual(['a']);
   });
+  it('msUntilDue is how long until every owed publish is due (0 when none is owed)', () => {
+    const c = new ReportCoalescer();
+    expect(c.msUntilDue(0)).toBe(0);
+    c.shouldPublish('a', 0);
+    c.shouldPublish('b', 300);
+    expect(c.msUntilDue(400)).toBe(0);
+    c.shouldPublish('a', 400);
+    c.shouldPublish('b', 500);
+    expect(c.msUntilDue(600)).toBe(700);
+    expect(c.msUntilDue(1300)).toBe(0);
+  });
 });

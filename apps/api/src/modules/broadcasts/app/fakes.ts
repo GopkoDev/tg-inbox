@@ -1,4 +1,6 @@
 import type { BroadcastDraft } from '@tg/shared';
+import type { Clock } from '../../../platform/clock.js';
+import { newId } from '../../../platform/ids.js';
 import { isNotReached, type RecipientState } from '../domain/recipient.js';
 import type {
   AudienceSpec,
@@ -9,13 +11,17 @@ import type {
   BroadcastJobs,
   BroadcastRecord,
   BroadcastRepo,
+  BroadcastSendOutcome,
+  BroadcastSender,
   BroadcastSignals,
   ContactCard,
   ContactsApi,
+  ConversationsApi,
   DraftView,
   Executor,
   GroupRepo,
   GroupRow,
+  NewBroadcastItem,
   RecipientRecord,
   RecipientRepo,
   RecipientTotals,
@@ -366,6 +372,10 @@ export function fakeContactsApi(): ContactsApi & {
         .map((c) => c.id)
         .sort();
     },
+    async isBlocked(workspaceId, contactId, telegramBotId) {
+      const c = (contacts.get(workspaceId) ?? []).find((x) => x.id === contactId);
+      return c?.blocked?.has(telegramBotId) ?? false;
+    },
     async audienceBreakdown(workspaceId, audience, telegramBotId) {
       const found = members(workspaceId, audience);
       if (telegramBotId === null) return { audienceSize: found.length, reach: null };
@@ -636,6 +646,69 @@ export function fakeBroadcastJobs(): BroadcastJobs & { jobs: string[]; links: st
     },
     async enqueueBlockedShare(_tx, workspaceId, broadcastId, startAfter) {
       jobs.push(`${workspaceId}:${broadcastId}@${startAfter.toISOString()}`);
+    },
+  };
+}
+
+/**
+ * `bots.sendBroadcastMessage`, scriptable per chat id (default: delivered at the clock's time).
+ * `advanceOnSend` moves the clock at each call; `holdAll` keeps every answer until `release()`.
+ */
+export function fakeBroadcastSender(clock: Clock & { advance(ms: number): void }) {
+  const sends: Parameters<BroadcastSender['sendBroadcastMessage']>[0][] = [];
+  const answeredAt: Date[] = [];
+  const script = new Map<bigint, BroadcastSendOutcome>();
+  let held: (() => void)[] = [];
+  let inFlight = 0;
+  let nextMessageId = 1n;
+  const fake = {
+    sends,
+    answeredAt,
+    script,
+    advanceOnSend: 0,
+    holdAll: false,
+    maxInFlight: 0,
+    release() {
+      fake.holdAll = false;
+      const now = held;
+      held = [];
+      now.forEach((go) => go());
+    },
+    async sendBroadcastMessage(
+      request: Parameters<BroadcastSender['sendBroadcastMessage']>[0],
+    ): Promise<BroadcastSendOutcome> {
+      const index = sends.length;
+      sends.push(request);
+      inFlight += 1;
+      fake.maxInFlight = Math.max(fake.maxInFlight, inFlight);
+      clock.advance(fake.advanceOnSend);
+      try {
+        if (fake.holdAll) await new Promise<void>((go) => held.push(go));
+        else await Promise.resolve();
+        answeredAt[index] = clock.now();
+        return (
+          script.get(request.chatId) ?? {
+            outcome: 'delivered',
+            messageId: nextMessageId++,
+            at: clock.now(),
+          }
+        );
+      } finally {
+        inFlight -= 1;
+      }
+    },
+  };
+  return fake satisfies BroadcastSender;
+}
+
+/** `conversations.recordBroadcastItem`: every contact has a conversation; items in `items`. */
+export function fakeConversationsApi(): ConversationsApi & { items: NewBroadcastItem[] } {
+  const items: NewBroadcastItem[] = [];
+  return {
+    items,
+    async recordBroadcastItem(_tx, item) {
+      items.push(item);
+      return { id: newId(), conversationId: `conversation-of-${item.contactId}` };
     },
   };
 }

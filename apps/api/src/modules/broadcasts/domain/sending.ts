@@ -61,6 +61,16 @@ export class ReportCoalescer {
     return due;
   }
 
+  /** Milliseconds until every owed publish is due at `now`; 0 when none is owed. */
+  msUntilDue(now: number): number {
+    let wait = 0;
+    for (const id of this.owed) {
+      const last = this.lastAt.get(id) ?? -Infinity;
+      wait = Math.max(wait, last + this.windowMs - now);
+    }
+    return wait;
+  }
+
   /** The broadcasts that still owe a publish (for the link's final flush). */
   pending(): string[] {
     return [...this.owed];

@@ -1,6 +1,8 @@
 import type { Broadcast, BroadcastDraft } from '@tg/shared';
 import type { Db } from '../../../platform/db.js';
 import type { LaunchReadinessReads } from '../../bots/app/launch-readiness.js';
+import type { BroadcastSendOutcome } from '../../bots/app/ports.js';
+import type { NewBroadcastItem } from '../../conversations/app/ports.js';
 import type {
   AudienceBreakdown,
   AudienceSpec,
@@ -377,6 +379,8 @@ export interface ContactsApi {
     telegramBotId: bigint,
     limit?: number,
   ): Promise<ReachableContact[]>;
+  /** Whether the contact has blocked this Telegram bot now (the mark at a recipient's turn). */
+  isBlocked(workspaceId: string, contactId: string, telegramBotId: bigint): Promise<boolean>;
   /** The Contacts list's matching set for a search and a tag filter (gone tags left out), sorted. */
   matchingContactIds(
     workspaceId: string,
@@ -392,6 +396,43 @@ export interface ContactsApi {
 
 /** What `broadcasts` asks the `bots` app layer: the bot row's state and Telegram bot id, or null. */
 export type BotsApi = LaunchReadinessReads;
+
+export type { BroadcastSendOutcome, NewBroadcastItem };
+
+/**
+ * `bots.sendBroadcastMessage` (flow 12): checks the workspace's bot is the launch Telegram bot and
+ * working, waits for no send pause, takes a pacer slot and classifies Telegram's answer.
+ */
+export interface BroadcastSender {
+  sendBroadcastMessage(request: {
+    workspaceId: string;
+    telegramBotId: bigint;
+    chatId: bigint;
+    text: string;
+  }): Promise<BroadcastSendOutcome>;
+}
+
+/** What `broadcasts` asks the `conversations` app layer (ADR-0010). */
+export interface ConversationsApi {
+  /** Joins the outcome transaction; null when the contact has no conversation. */
+  recordBroadcastItem(
+    tx: Executor,
+    item: NewBroadcastItem,
+  ): Promise<{ id: string; conversationId: string } | null>;
+}
+
+/**
+ * `broadcast.changed { change: report }` coalesced to at most one per broadcast per second
+ * (events.md assumption 3), in the caller's transaction.
+ */
+export interface ReportSignals {
+  /** Publishes now, or owes one publish when a report went out less than a second ago. */
+  report(tx: Executor, workspaceId: string, broadcastId: string): Promise<void>;
+  /** Publishes the workspace's owed reports that are due. */
+  flush(tx: Executor, workspaceId: string): Promise<void>;
+  /** Milliseconds until every owed report of the workspace is due; 0 when none is owed. */
+  msUntilDue(workspaceId: string, now: Date): number;
+}
 
 /** What `broadcasts` asks the `workspaces` app layer. */
 export interface WorkspacesApi {
