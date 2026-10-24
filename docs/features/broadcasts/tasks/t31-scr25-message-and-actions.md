@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/broadcasts/BroadcastEditor.tsx", "apps/web/s
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T31 — Build SCR-25, the draft editor's Message card and frame: name and text saved as you go with the remaining length by the shared rule, the status line and the stale-save merge, AudienceBreakdown, the role-aware title actions with the launch pre-check refusals in place, and SCR-31 DeleteDraftDialog
@@ -124,12 +124,12 @@ No DB changes.
 
 ## Checklist
 
-- [ ] `AudienceBreakdown` (four lines, the «Would reach» / «Sent to» emphasis, the no-bot variant with the owner's **Open bot settings** link) composing `Separator` and `Button` (link) — `apps/web/src/features/broadcasts/AudienceBreakdown.tsx`
-- [ ] `BroadcastEditor`: the two `Card`s; the Message card with `Field`, `Label`, `Input`, `Textarea`, `FieldError`, the remaining length from the shared `broadcastTextLength` / name rule (T1); create at the first valid name with `replace`; save as you go through the draft store (T29); the status line; the stale-save view with **Use mine** / **Keep theirs**; the Audience card slot (filled by T32 / T33) with `RadioGroup` and the breakdown — `apps/web/src/features/broadcasts/BroadcastEditor.tsx`
-- [ ] Title actions: **Launch** (owner) with the pre-check refusals as `Alert`s in place, **Duplicate**, «More» `DropdownMenu` with Delete by role and author; launched / deleted live switches — same file
-- [ ] `DeleteDraftDialog` on `AlertDialog`, after `DeleteTagDialog`'s pattern — `apps/web/src/features/broadcasts/DeleteDraftDialog.tsx`
-- [ ] Mount the editor for a draft on the detail page and `/new` — `apps/web/src/pages/BroadcastDetailPage.tsx`
-- [ ] Testing Library tests per state above (incl. a 2-unit emoji dropping the counter by 2 and a 4101-unit text «— 5 over» with nothing sent) — `BroadcastEditor.test.tsx`, `AudienceBreakdown.test.tsx`, `DeleteDraftDialog.test.tsx`
+- [x] `AudienceBreakdown` (four lines, the «Would reach» / «Sent to» emphasis, the no-bot variant with the owner's **Open bot settings** link) composing `Separator` and `Button` (link) — `apps/web/src/features/broadcasts/AudienceBreakdown.tsx`
+- [x] `BroadcastEditor`: the two `Card`s; the Message card with `Field`, `Label`, `Input`, `Textarea`, `FieldError`, the remaining length from the shared `broadcastTextLength` / name rule (T1); create at the first valid name with `replace`; save as you go through the draft store (T29); the status line; the stale-save view with **Use mine** / **Keep theirs**; the Audience card slot (filled by T32 / T33) with `RadioGroup` and the breakdown — `apps/web/src/features/broadcasts/BroadcastEditor.tsx`
+- [x] Title actions: **Launch** (owner) with the pre-check refusals as `Alert`s in place, **Duplicate**, «More» `DropdownMenu` with Delete by role and author; launched / deleted live switches — same file
+- [x] `DeleteDraftDialog` on `AlertDialog`, after `DeleteTagDialog`'s pattern — `apps/web/src/features/broadcasts/DeleteDraftDialog.tsx`
+- [x] Mount the editor for a draft on the detail page and `/new` — `apps/web/src/pages/BroadcastDetailPage.tsx`
+- [x] Testing Library tests per state above (incl. a 2-unit emoji dropping the counter by 2 and a 4101-unit text «— 5 over» with nothing sent) — `BroadcastEditor.test.tsx`, `AudienceBreakdown.test.tsx`, `DeleteDraftDialog.test.tsx`
 
 ## Edge cases
 
@@ -144,6 +144,17 @@ No DB changes.
 
 ## Definition of Done
 
-- [ ] Testing Library tests cover every SCR-25 Message-card, breakdown, title-action and live state in screens.md and every SCR-31 state: the remaining length counted in UTF-16 units with the field error past 4096, nothing saved while invalid, Saving… / Saved / Couldn't save — Retry, the stale-save view keeping the member's edit, no Launch for an operator with the owners-only note, Delete only for the author or an owner, each launch refusal with its message and the way to the bot settings, and the switch to the read-only page when a teammate launches.
-- [ ] every Hard Rule inlined above still holds
-- [ ] lint + vet clean (`pnpm lint`)
+- [x] Testing Library tests cover every SCR-25 Message-card, breakdown, title-action and live state in screens.md and every SCR-31 state: the remaining length counted in UTF-16 units with the field error past 4096, nothing saved while invalid, Saving… / Saved / Couldn't save — Retry, the stale-save view keeping the member's edit, no Launch for an operator with the owners-only note, Delete only for the author or an owner, each launch refusal with its message and the way to the bot settings, and the switch to the read-only page when a teammate launches.
+- [x] every Hard Rule inlined above still holds
+- [x] lint + vet clean (`pnpm lint`)
+
+## Implementation notes
+
+- `implement` (T31): `AudienceBreakdown` takes the wire `breakdown` (`DraftBreakdown` or `LaunchBreakdown`), `reachLabel` («Would reach» / «Sent to») and an optional `botSettingsHref` (shown only with `reach: null`); it also exports `formatCount` / `contactsText` (Intl). Lines carry `data-line` for tests.
+- `implement` (T31): `BroadcastEditor({ workspaceId, broadcastId?, audienceControls? })`: local field values filled from the store's draft once per id and from `stale.theirs` on a stale save; a field is sent through `useBroadcastDraftStore.editFields` (tidied value) after an 800 ms pause (`SAVE_PAUSE_MS`) or on blur, only when valid and different from the held draft. `/new` creates at the first valid name (`createBroadcast { name, text? }`) and replaces the address; the Audience card reads «Name the broadcast to start». **Hand-off → T32 / T33:** pass the kind's controls as `audienceControls`; the over-10 000 and dropped-tag notices are T32's. The kind `RadioGroup` switches tags → group at once and an **empty** group → tags at once; a non-empty group → tags does nothing yet (SCR-32 is T32).
+- `implement` (T31): «Use mine» / «Keep theirs» sit once in the stale `Alert` (one pair even when both fields were touched); the member's values show in muted boxes under each touched field (`data-testid="mine-name" | "mine-text"`).
+- `implement` (T31): launch refusals render in place (copy from screens.md SCR-25); `200` navigates to `/broadcasts/<id>/launch` without carrying the confirmation (**hand-off → T34:** SCR-27 reads `getLaunchConfirmation` itself). The daily-limit time uses `formatBotTime(next_launch_at)` (date + time) rather than «14:20 tomorrow» wording. `OWNER_ONLY` swaps Launch for the owners-only note locally (the role in the workspace store is not re-read here).
+- `implement` (T31): `BroadcastDetailPage` mounts the editor for `/new` and a ready draft; the loading state shows two card skeletons (`editor-skeleton`); «Couldn't load this broadcast» + Retry; a launch or delete arriving while the draft was shown at this address (live `status` / `deleted`, or `409 BROADCAST_NOT_A_DRAFT`) shows one notice «This broadcast was launched and can no longer be changed.» over the read-only view, or «This draft was deleted.» over `NotFoundCard`. The store does not tell a teammate's launch from a refused save, so the screens' separate «A teammate launched this broadcast.» line was folded into that one notice.
+- `implement` (T31): `DeleteDraftDialog({ workspaceId, draft: { id, audienceSize } | null, onClose, onDeleted, onLaunched, onGone })`, after `DeleteTagDialog`; the audience size shown is the draft breakdown's `audience_size`. **Hand-off → T36 / list:** `BroadcastsPage` can pass it as the table's `onDelete` opener.
+- `implement` (T31): RED — module-not-found for `AudienceBreakdown` / `DeleteDraftDialog`, `Unable to find a label with the text of: Name` for the editor (GOOD red); one editor test (operator, no bot: no settings link) passed vacuously in RED and was strengthened to also assert the «Reach is known…» line. During GREEN `BroadcastEditor.tsx` was briefly moved out of the tree by a stray command and restored unchanged (no stash created).
+- `implement` (T31): gate — full `pnpm test`: only `e2e/contacts-load` merge timing and `migrations.int` timeout (known set) failed; both passed re-run alone. `pnpm lint` clean.

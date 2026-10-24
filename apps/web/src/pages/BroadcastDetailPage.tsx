@@ -1,9 +1,11 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams } from 'react-router';
+import { BroadcastEditor } from '@/features/broadcasts/BroadcastEditor';
 import { useBroadcastDraftStore } from '@/features/broadcasts/draft-store';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
 import { Button } from '@/shared/ui/button';
+import { Card, CardContent } from '@/shared/ui/card';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { NotFoundCard } from './NotFoundPage';
 
@@ -20,6 +22,12 @@ export function BroadcastDetailPage() {
   const launched = useBroadcastDraftStore((s) =>
     s.broadcastId === broadcastId ? s.launched : null,
   );
+  /** The draft view was shown at this address: a later launch or delete came while it was open. */
+  const [shownDraft, setShownDraft] = useState<string | null>(null);
+  if (status === 'ready' && draft && broadcastId && shownDraft !== broadcastId) {
+    setShownDraft(broadcastId);
+  }
+  const wasDraft = broadcastId !== undefined && shownDraft === broadcastId;
 
   useEffect(() => {
     if (!broadcastId) return;
@@ -34,18 +42,21 @@ export function BroadcastDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, broadcastId]);
 
-  if (!broadcastId)
-    return (
-      <section data-testid="broadcast-draft-view" className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold">New broadcast</h1>
-      </section>
+  if (!broadcastId) return <BroadcastEditor key="new" workspaceId={workspaceId} />;
+  if (status === 'not_found')
+    return wasDraft ? (
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-muted-foreground">This draft was deleted.</p>
+        <NotFoundCard />
+      </div>
+    ) : (
+      <NotFoundCard />
     );
-  if (status === 'not_found') return <NotFoundCard />;
   if (status === 'error')
     return (
       <Alert variant="destructive">
         <AlertDescription className="flex items-center justify-between gap-2">
-          Couldn&apos;t load the broadcast
+          Couldn&apos;t load this broadcast
           <Button
             type="button"
             size="sm"
@@ -62,19 +73,34 @@ export function BroadcastDetailPage() {
   if (status === 'launched' && launched)
     return (
       <section data-testid="broadcast-launched-view" className="flex flex-col gap-4">
+        {wasDraft ? (
+          <Alert>
+            <AlertDescription>
+              This broadcast was launched and can no longer be changed.
+            </AlertDescription>
+          </Alert>
+        ) : null}
         <h1 className="text-xl font-semibold break-words">{launched.name}</h1>
       </section>
     );
   if (status === 'ready' && draft)
     return (
-      <section data-testid="broadcast-draft-view" className="flex flex-col gap-4">
-        <h1 className="text-xl font-semibold break-words">{draft.name}</h1>
-      </section>
+      <BroadcastEditor key={broadcastId} workspaceId={workspaceId} broadcastId={broadcastId} />
     );
   return (
-    <div className="flex flex-col gap-3" data-testid="broadcast-skeleton">
+    <div className="flex flex-col gap-4" data-testid="broadcast-skeleton">
       <Skeleton className="h-6 w-48" />
-      <Skeleton className="h-32 w-full" />
+      <div className="grid gap-4 lg:grid-cols-2">
+        {[0, 1].map((i) => (
+          <Card key={i} data-testid="editor-skeleton">
+            <CardContent className="flex flex-col gap-3">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-9 w-full" />
+              <Skeleton className="h-32 w-full" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
     </div>
   );
 }
