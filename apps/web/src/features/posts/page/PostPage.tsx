@@ -57,11 +57,13 @@ export function PostPage({
   postId,
   isOwner,
   onChangeTime,
+  onChanged,
 }: {
   workspaceId: string;
   postId: string;
   isOwner: boolean;
   onChangeTime?: (post: Post) => void;
+  onChanged?: () => void;
 }) {
   const guard = useShellGuard();
   const navigate = useNavigate();
@@ -86,6 +88,10 @@ export function PostPage({
   const [dialog, setDialog] = useState<'delete' | 'back' | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const seenRef = useRef<string | null>(null);
+  const changedRef = useRef(onChanged);
+  useEffect(() => {
+    changedRef.current = onChanged;
+  }, [onChanged]);
 
   const load = useCallback(
     async (background: boolean, isLive: () => boolean) => {
@@ -121,8 +127,13 @@ export function PostPage({
       });
     const unsubscribe = subscribeLive(workspaceId, {
       onFrame: (frame) => {
-        if (frame.type === 'resync' || (frame.type === 'post.changed' && frame.post_id === postId))
+        if (
+          frame.type === 'resync' ||
+          (frame.type === 'post.changed' && frame.post_id === postId)
+        ) {
           void load(true, () => live);
+          changedRef.current?.();
+        }
       },
       onReconnected: () => void load(true, () => live),
       onInvalidFrame: () => void load(true, () => live),
@@ -243,9 +254,11 @@ export function PostPage({
             <Button type="button" variant="outline" onClick={() => setDialog('back')}>
               Back to draft
             </Button>
-            <Button type="button" variant="outline" onClick={() => onChangeTime?.(post)}>
-              Change time
-            </Button>
+            {isOwner ? (
+              <Button type="button" variant="outline" onClick={() => onChangeTime?.(post)}>
+                Change time
+              </Button>
+            ) : null}
           </>
         ) : null}
         {state === 'published' && post.telegram_link ? (
@@ -264,6 +277,11 @@ export function PostPage({
           Duplicate
         </Button>
       </div>
+      {state === 'scheduled' && !isOwner ? (
+        <p className="text-sm text-muted-foreground">
+          Only a business owner can change the time of this post.
+        </p>
+      ) : null}
       {deletable && !isOwner ? (
         <p className="text-sm text-muted-foreground">
           Only a business owner can delete this post from Telegram.
@@ -289,8 +307,14 @@ export function PostPage({
           postId={postId}
           version={post.version}
           onClose={() => setDialog(null)}
-          onMoved={() => void navigate(`/w/${workspaceId}/posts/${postId}`, { replace: true })}
-          onTooLate={() => void load(true, () => true)}
+          onMoved={() => {
+            void navigate(`/w/${workspaceId}/posts/${postId}`, { replace: true });
+            onChanged?.();
+          }}
+          onTooLate={() => {
+            void load(true, () => true);
+            onChanged?.();
+          }}
         />
       ) : null}
     </div>

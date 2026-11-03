@@ -62,12 +62,14 @@ export function PostEditor({
   isOwner,
   onPublish,
   onSchedule,
+  onNotADraft,
 }: {
   workspaceId: string;
   postId: string | null;
   isOwner: boolean;
   onPublish?: (post: Post) => void;
   onSchedule?: (post: Post) => void;
+  onNotADraft?: () => void;
 }) {
   const guard = useShellGuard();
   const navigate = useNavigate();
@@ -104,11 +106,18 @@ export function PostEditor({
     setFields(values);
   }, []);
 
+  const saveRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
   useEffect(() => {
     aliveRef.current = true;
     return () => {
+      // a change waiting for its timer goes out now rather than being dropped
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+        timerRef.current = null;
+        void saveRef.current();
+      }
       aliveRef.current = false;
-      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, []);
 
@@ -168,7 +177,7 @@ export function PostEditor({
           silent: values.silent,
         });
         idRef.current = saved.id;
-        navigate(`/w/${workspaceId}/posts/${saved.id}`, { replace: true });
+        if (aliveRef.current) navigate(`/w/${workspaceId}/posts/${saved.id}`, { replace: true });
       } else {
         saved = await savePost(workspaceId, idRef.current as string, {
           expected_version: versionRef.current,
@@ -202,6 +211,7 @@ export function PostEditor({
         setNotDraft(true);
         setSaveStatus('idle');
         navigate(`/w/${workspaceId}/posts/${idRef.current}`, { replace: true });
+        onNotADraft?.();
       } else if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
         void guard(error, workspaceId).catch(() => undefined);
         setSaveStatus('error');
@@ -219,6 +229,10 @@ export function PostEditor({
     // the shell's guard is stable per address
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId, navigate, applyPost]);
+
+  useEffect(() => {
+    saveRef.current = save;
+  }, [save]);
 
   const change = (patch: Partial<Fields>) => {
     const next = { ...fieldsRef.current, ...patch };
@@ -442,6 +456,7 @@ export function PostEditor({
           onNotADraft={() => {
             setDeleting(false);
             setNotDraft(true);
+            onNotADraft?.();
           }}
         />
       ) : null}

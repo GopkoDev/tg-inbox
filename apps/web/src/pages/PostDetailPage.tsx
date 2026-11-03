@@ -1,62 +1,216 @@
-import { useEffect, useState } from 'react';
-import { Navigate, useLocation, useNavigate, useParams } from 'react-router';
+import { instantToLocal } from '@tg/shared';
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import {
+  Navigate,
+  UNSAFE_LocationContext as LocationContext,
+  UNSAFE_NavigationContext as NavigationContext,
+  UNSAFE_RouteContext as RouteContext,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router';
+import { listDestinations } from '@/features/posts/api';
 import { PostEditor } from '@/features/posts/editor/PostEditor';
-import { getPost } from '@/features/posts/api';
 import { PostPage } from '@/features/posts/page/PostPage';
+import { usePostStore } from '@/features/posts/post-store';
 import { PublishDialog } from '@/features/posts/publish/PublishDialog';
 import { ScheduleDialog } from '@/features/posts/publish/ScheduleDialog';
+import type { GuardFn } from '@/features/workspaces/guard';
 import { useWorkspaceStore } from '@/features/workspaces/store';
+import { ShellGuardContext } from '@/shared/ui/app-shell-context';
+import { Skeleton } from '@/shared/ui/skeleton';
+import { NotFoundCard } from './NotFoundPage';
+
+const unguarded: GuardFn = () => Promise.resolve('handled');
+
+interface Address {
+  workspaceId: string;
+  postId: string | undefined;
+  pathname: string;
+  isOwner: boolean;
+}
 
 /**
- * SCR-37 / SCR-38 / SCR-39 / SCR-40 post pages: a draft (or a new post) opens the editor under the
- * owner-only publish (SCR-38) and schedule (SCR-39) dialogs; an operator on those addresses is
- * replaced to the post (AC-03). Every other state opens the post page.
+ * The post address as one tree: the editor is chosen from the stored post's state, so a live
+ * change, a back to draft or a refused save switches editor <-> post page in place, and the
+ * `publish` / `schedule` steps open over it (SCR-37 to SCR-40). An operator on an owner-only
+ * step is replaced to the post (AC-03).
  */
-export function PostDetailPage() {
-  const { workspaceId = '', postId } = useParams();
+function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
+  const guard = useContext(ShellGuardContext) ?? unguarded;
   const navigate = useNavigate();
-  const { pathname } = useLocation();
-  const isOwner = useWorkspaceStore((s) => s.current?.role === 'owner');
-  const [draft, setDraft] = useState<boolean | null>(postId ? null : true);
+  const post = usePostStore((s) => s.post);
+  const status = usePostStore((s) => s.status);
+  const [wasEditor, setWasEditor] = useState(false);
+  const [zone, setZone] = useState<string | null>(null);
 
   useEffect(() => {
     if (!postId) return;
+    const store = usePostStore.getState();
+    void store.open(workspaceId, postId, guard);
+    return store.watch(workspaceId, postId, guard);
+    // the shell's guard is stable per address
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceId, postId]);
+
+  useEffect(() => {
     let live = true;
-    getPost(workspaceId, postId)
-      .then((post) => live && setDraft(post.state === 'draft'))
-      .catch(() => live && setDraft(true));
+    listDestinations(workspaceId, { background: true })
+      .then((list) => live && setZone(list.time_zone))
+      .catch(() => undefined);
     return () => {
       live = false;
     };
-  }, [workspaceId, postId, pathname]);
+  }, [workspaceId]);
 
+  const reload = () => void usePostStore.getState().reload(guard);
   const step = postId ? pathname.split('/').pop() : null;
   const dialog = step === 'publish' || step === 'schedule' ? step : null;
   const postPath = `/w/${workspaceId}/posts/${postId}`;
+  const close = () => void navigate(postPath, { replace: true });
+  const done = () => {
+    close();
+    reload();
+  };
 
   if (dialog && !isOwner) return <Navigate to={postPath} replace />;
-  if (draft === null) return null;
 
-  if (!draft && postId) {
-    return <PostPage workspaceId={workspaceId} postId={postId} isOwner={isOwner} />;
-  }
-
-  const close = () => navigate(postPath, { replace: true });
-  return (
-    <>
+  if (!postId) {
+    if (!wasEditor) setWasEditor(true);
+    return (
       <PostEditor
         workspaceId={workspaceId}
-        postId={postId ?? null}
+        postId={null}
         isOwner={isOwner}
-        onPublish={() => navigate(`${postPath}/publish`)}
-        onSchedule={() => navigate(`${postPath}/schedule`)}
+        onPublish={() => void navigate(`${postPath}/publish`)}
+        onSchedule={() => void navigate(`${postPath}/schedule`)}
       />
-      {postId && dialog === 'publish' ? (
-        <PublishDialog workspaceId={workspaceId} postId={postId} onClose={close} onDone={close} />
-      ) : null}
-      {postId && dialog === 'schedule' ? (
-        <ScheduleDialog workspaceId={workspaceId} postId={postId} onClose={close} onDone={close} />
-      ) : null}
+    );
+  }
+
+  const current = post?.id === postId ? post : null;
+  let body: ReactNode;
+  let overlay: ReactNode = null;
+  if (status === 'missing') {
+    if (wasEditor) setWasEditor(false);
+    body = <NotFoundCard />;
+  } else if (current && current.state !== 'draft') {
+    if (wasEditor) setWasEditor(false);
+    body = (
+      <PostPage
+        workspaceId={workspaceId}
+        postId={postId}
+        isOwner={isOwner}
+        onChangeTime={() => void navigate(`${postPath}/schedule`)}
+        onChanged={reload}
+      />
+    );
+    if (dialog === 'schedule' && current.state === 'scheduled' && current.schedule?.kind === 'time')
+      overlay = (
+        <ScheduleDialog
+          workspaceId={workspaceId}
+          postId={postId}
+          changeTime
+          initialLocalTime={instantToLocal(
+            new Date(current.schedule.scheduled_for),
+            zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
+          )}
+          onClose={close}
+          onDone={done}
+        />
+      );
+  } else if (current || wasEditor || status === 'error') {
+    if (!wasEditor) setWasEditor(true);
+    body = (
+      <PostEditor
+        workspaceId={workspaceId}
+        postId={postId}
+        isOwner={isOwner}
+        onNotADraft={reload}
+        onPublish={() => void navigate(`${postPath}/publish`)}
+        onSchedule={() => void navigate(`${postPath}/schedule`)}
+      />
+    );
+    if (dialog === 'publish')
+      overlay = (
+        <PublishDialog workspaceId={workspaceId} postId={postId} onClose={close} onDone={done} />
+      );
+    if (dialog === 'schedule')
+      overlay = (
+        <ScheduleDialog workspaceId={workspaceId} postId={postId} onClose={close} onDone={done} />
+      );
+  } else {
+    body = (
+      <div data-testid="post-page-skeleton" className="flex flex-col gap-3">
+        <Skeleton className="h-9 w-64" />
+        <Skeleton className="h-48 w-full" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {body}
+      {overlay}
     </>
   );
+}
+
+// The routes mount this page once per address; the tree below lives in one separate root that
+// outlives those mounts, so moving new -> :id -> publish / schedule keeps the editor (its focus,
+// its pending save) instead of remounting it (F16). It is torn down when no address claims it.
+let host: { root: Root; el: HTMLDivElement } | null = null;
+let claims = 0;
+
+export function PostDetailPage() {
+  const { workspaceId = '', postId } = useParams();
+  const { pathname } = useLocation();
+  const isOwner = useWorkspaceStore((s) => s.current?.role === 'owner');
+  const navigation = useContext(NavigationContext);
+  const location = useContext(LocationContext);
+  const route = useContext(RouteContext);
+  const guard = useContext(ShellGuardContext);
+  const slot = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    claims += 1;
+    if (!host) {
+      const el = document.createElement('div');
+      host = { root: createRoot(el), el };
+    }
+    if (slot.current && host.el.parentNode !== slot.current) slot.current.appendChild(host.el);
+    host.root.render(
+      <NavigationContext.Provider value={navigation}>
+        <LocationContext.Provider value={location}>
+          <RouteContext.Provider value={route}>
+            <ShellGuardContext.Provider value={guard}>
+              <PostSwitch
+                workspaceId={workspaceId}
+                postId={postId}
+                pathname={pathname}
+                isOwner={isOwner}
+              />
+            </ShellGuardContext.Provider>
+          </RouteContext.Provider>
+        </LocationContext.Provider>
+      </NavigationContext.Provider>,
+    );
+  });
+
+  // a layout cleanup, so it runs before the next address's layout effect claims the host
+  useLayoutEffect(
+    () => () => {
+      const seen = claims;
+      queueMicrotask(() => {
+        if (claims !== seen) return;
+        host?.root.unmount();
+        host = null;
+        usePostStore.getState().close();
+      });
+    },
+    [],
+  );
+
+  return <div ref={slot} />;
 }

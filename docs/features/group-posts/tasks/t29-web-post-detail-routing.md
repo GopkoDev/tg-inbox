@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/pages/PostDetailPage.tsx", "apps/web/src/app/routes.t
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T29 — Fix the post address: one page instance across new / :id / publish / schedule with the post in a store, live switch editor ↔ post page, NotFoundCard on 404, owner-only Change time wired to ScheduleDialog

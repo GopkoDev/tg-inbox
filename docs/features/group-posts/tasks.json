@@ -656,7 +656,7 @@
         "apps/web/src/features/posts/editor/PostEditor.tsx"
       ],
       "file": "docs/features/group-posts/tasks/t29-web-post-detail-routing.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T30",
