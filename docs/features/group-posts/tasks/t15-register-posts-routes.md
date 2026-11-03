@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/http/routes.ts", "apps/api/src/app.ts"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T15 — Register the posts routes (registerPosts): the 18 operations with zod schemas, guards and error mapping

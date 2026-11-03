@@ -334,7 +334,7 @@
         "apps/api/src/app.ts"
       ],
       "file": "docs/features/group-posts/tasks/t15-register-posts-routes.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T16",
