@@ -77,7 +77,7 @@
         "apps/api/src/modules/posts/domain/"
       ],
       "file": "docs/features/group-posts/tasks/t04-posts-domain.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T5",
@@ -102,7 +102,7 @@
         "apps/api/src/test/fixtures/telegram.ts"
       ],
       "file": "docs/features/group-posts/tasks/t05-bots-classify-chat-facts.md",
-      "status": "todo"
+      "status": "blocked"
     },
     {
       "id": "T6",
@@ -124,7 +124,7 @@
         "apps/api/src/test/fake-telegram.ts"
       ],
       "file": "docs/features/group-posts/tasks/t06-bots-send-delete-post.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T7",
@@ -160,7 +160,7 @@
         "apps/api/src/modules/posts/infra/"
       ],
       "file": "docs/features/group-posts/tasks/t08-posts-repositories.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T9",
@@ -379,7 +379,7 @@
         "apps/web/src/features/settings/SettingsLayout.tsx"
       ],
       "file": "docs/features/group-posts/tasks/t17-web-posts-api-stores-routes.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T18",
