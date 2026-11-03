@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/settings/", "apps/web/src/pages/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T18 — Build SCR-33 Channels & groups with SCR-34 connect-code, SCR-35 remove and SCR-43 time-zone dialogs
