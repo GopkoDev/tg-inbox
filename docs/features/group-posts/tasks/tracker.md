@@ -7,7 +7,7 @@
 
 | # | Task | Layer | Owner | Estimate | Blocked by | Status | Step |
 |---|---|---|---|---|---|---|---|
-| T1 | Add the shared workspace time-zone rule: IANA validity, local wall time to instant with skipped and repeated hours, display formatting | domain | Dmytro Hopko | S | — | todo | — |
+| T1 | Add the shared workspace time-zone rule: IANA validity, local wall time to instant with skipped and repeated hours, display formatting | domain | Dmytro Hopko | S | — | done | COMMIT |
 | T2 | Add the posts zod contracts, the 17 new error codes, and the post.changed / destinations.changed frames and signals | ports | Dmytro Hopko | M | — | todo | — |
 | T3 | Promote staged migrations 01–04 (workspaces.time_zone, destinations, destination_codes, posts) and regenerate DB types | migration | Dmytro Hopko | S | — | todo | — |
 | T4 | Add the posts domain: states and transitions, the schedule window, the 15-minute miss rule, limits, connect-code format and hashing, outcome reasons, Telegram link | domain | Dmytro Hopko | M | T1, T2 | todo | — |

@@ -8,4 +8,5 @@ export * from './health.js';
 export * from './inbox.js';
 export * from './notifications.js';
 export * from './tag-name.js';
+export * from './time-zone.js';
 export * from './workspaces.js';

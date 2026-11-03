@@ -9,8 +9,8 @@ files_hint: ["packages/shared/src/time-zone.ts", "packages/shared/src/time-zone.
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T1 — Add the shared workspace time-zone rule: IANA validity, local wall time to instant with skipped and repeated hours, display formatting
