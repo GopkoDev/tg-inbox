@@ -261,7 +261,7 @@
         "apps/api/src/modules/posts/app/settle-dead-letter.ts"
       ],
       "file": "docs/features/group-posts/tasks/t12-send-job.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T13",

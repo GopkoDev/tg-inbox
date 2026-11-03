@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/send-post.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "L"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T12 — Add the posts.send job body: re-check owner and limits, per-chat order and pauses, claim before the send, outcomes, missed after 15 minutes, and the dead-letter settler

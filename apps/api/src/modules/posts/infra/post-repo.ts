@@ -250,6 +250,67 @@ export function createPostRepo(db: Db) {
       return row ? toPost(row) : null;
     },
 
+    /** Scheduled or sending -> failed with a reason; never tried again, needs attention. */
+    async markFailed(
+      workspaceId: string,
+      id: string,
+      reason: string,
+      at: Date,
+      tx?: Db,
+    ): Promise<PostRecord | null> {
+      const row = await (tx ?? db)
+        .updateTable('posts')
+        .set({
+          state: 'failed',
+          outcome_reason: reason,
+          outcome_at: at,
+          needs_attention: true,
+          last_changed_at: at,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('state', 'in', ['scheduled', 'sending'])
+        .returningAll()
+        .executeTakeFirst();
+      return row ? toPost(row) : null;
+    },
+
+    /** Sending -> not confirmed: a claim that got no answer; never sent again. */
+    async markNotConfirmed(
+      workspaceId: string,
+      id: string,
+      at: Date,
+      tx?: Db,
+    ): Promise<PostRecord | null> {
+      const row = await (tx ?? db)
+        .updateTable('posts')
+        .set({ state: 'not_confirmed', outcome_at: at, needs_attention: true, last_changed_at: at })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('state', '=', 'sending')
+        .returningAll()
+        .executeTakeFirst();
+      return row ? toPost(row) : null;
+    },
+
+    /** Sending -> scheduled again (a 429 or a send pause: nothing reached the chat). */
+    async returnToScheduled(
+      workspaceId: string,
+      id: string,
+      at: Date,
+      tx?: Db,
+    ): Promise<PostRecord | null> {
+      const row = await (tx ?? db)
+        .updateTable('posts')
+        .set({ state: 'scheduled', sending_started_at: null, last_changed_at: at })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('state', '=', 'sending')
+        .returningAll()
+        .executeTakeFirst();
+      return row ? toPost(row) : null;
+    },
+
     async clearAttention(workspaceId: string, id: string, tx?: Db): Promise<boolean> {
       const res = await (tx ?? db)
         .updateTable('posts')
