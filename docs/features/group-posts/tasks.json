@@ -513,7 +513,7 @@
         "apps/web/e2e/"
       ],
       "file": "docs/features/group-posts/tasks/t23-browser-e2e.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T24",

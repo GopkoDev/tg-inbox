@@ -9,7 +9,7 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { BackToDraftDialog } from '../editor/BackToDraftDialog';
-import { duplicatePost, getPost, markPostSeen } from '../api';
+import { duplicatePost, getPost, listDestinations, markPostSeen } from '../api';
 import { usePostsStore } from '../posts-store';
 import { formatPostTime } from '../time';
 import { DeleteFromTelegramDialog } from './DeleteFromTelegramDialog';
@@ -65,7 +65,21 @@ export function PostPage({
 }) {
   const guard = useShellGuard();
   const navigate = useNavigate();
-  const zone = usePostsStore((s) => s.timeZone) ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const storeZone = usePostsStore((s) => s.timeZone);
+  const [fetchedZone, setFetchedZone] = useState<string | null>(null);
+  const zone = storeZone ?? fetchedZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  useEffect(() => {
+    if (storeZone) return;
+    let live = true;
+    listDestinations(workspaceId, { background: true })
+      .then((list) => {
+        if (live) setFetchedZone(list.time_zone);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [storeZone, workspaceId]);
   const [status, setStatus] = useState<'loading' | 'ready' | 'error' | 'missing'>('loading');
   const [post, setPost] = useState<Post | null>(null);
   const [reloads, setReloads] = useState(0);
@@ -176,6 +190,7 @@ export function PostPage({
   const reason = post.outcome_reason ? REASONS[post.outcome_reason] : null;
   const deletable = canDelete(post);
   const scheduledFor = post.schedule?.kind === 'time' ? post.schedule.scheduled_for : null;
+  const publisher = post.schedule?.scheduled_by ?? post.author;
   const badgeVariant =
     state === 'failed' ? 'destructive' : state === 'published' ? 'default' : 'secondary';
 
@@ -195,7 +210,7 @@ export function PostPage({
         {state === 'published' && post.published_at ? (
           <p>
             Published {formatPostTime(post.published_at, zone)}
-            {post.author ? ` · ${post.author.display_name}` : ''}
+            {publisher ? ` · ${publisher.display_name}` : ''}
           </p>
         ) : null}
         {state === 'failed' && reason ? <p>{reason}</p> : null}

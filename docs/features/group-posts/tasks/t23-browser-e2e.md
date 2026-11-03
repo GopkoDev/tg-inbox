@@ -9,8 +9,8 @@ files_hint: ["apps/web/e2e/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T23 — Add browser end-to-end posts flows against the real API: connect, draft, publish, schedule, outcome, delete
