@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/page/", "apps/web/src/pages/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T22 — Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen

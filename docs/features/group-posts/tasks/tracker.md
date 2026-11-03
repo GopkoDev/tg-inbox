@@ -28,7 +28,7 @@
 | T19 | Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows | ui | Dmytro Hopko | S | T17 | done | COMMIT |
 | T20 | Build SCR-37 the post editor with autosave, destination picker, sound option and preview, plus SCR-42 delete and SCR-44 back-to-draft dialogs | ui | Dmytro Hopko | M | T17 | done | COMMIT |
 | T21 | Build SCR-38 publish-now and SCR-39 schedule dialogs on their owner-only addresses, with the first-time time-zone step | ui | Dmytro Hopko | M | T20 | done | COMMIT |
-| T22 | Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen | ui | Dmytro Hopko | M | T20 | todo | — |
+| T22 | Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen | ui | Dmytro Hopko | M | T20 | done | COMMIT |
 | T23 | Add browser end-to-end posts flows against the real API: connect, draft, publish, schedule, outcome, delete | tests | Dmytro Hopko | M | T16, T18, T19, T21, T22 | todo | — |
 | T24 | Update CLAUDE.md, the architecture map and the design-system canon for the posts module | docs | Dmytro Hopko | S | T15, T18, T19, T21, T22 | todo | — |
 
