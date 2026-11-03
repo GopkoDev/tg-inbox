@@ -124,7 +124,7 @@
         "apps/api/src/test/fake-telegram.ts"
       ],
       "file": "docs/features/group-posts/tasks/t06-bots-send-delete-post.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T7",

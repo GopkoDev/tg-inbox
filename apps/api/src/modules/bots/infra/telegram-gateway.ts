@@ -7,6 +7,7 @@ import {
   MAX_DOWNLOAD_BYTES,
   type FileFetch,
   type BroadcastSendAnswer,
+  type PostSendAnswer,
   type SendOutcome,
   type TelegramGateway,
 } from '../app/ports.js';
@@ -154,6 +155,31 @@ function classifyBroadcastError(err: unknown): BroadcastSendAnswer {
     return { outcome: 'error' };
   }
   return { outcome: 'unknown' };
+}
+
+/** Classifies a failed post `sendMessage`; Telegram's description is never kept. */
+function classifyPostError(err: unknown): PostSendAnswer {
+  if (err instanceof GrammyError) {
+    const code = err.error_code;
+    if (code === 401 || code === 404) return { outcome: 'bot_unauthorized' };
+    if (code === 403) return { outcome: 'no_post_right' };
+    if (code === 400) {
+      return CHAT_LEVEL_400.test(err.description)
+        ? { outcome: 'chat_gone' }
+        : { outcome: 'text_refused' };
+    }
+    if (code === 429) {
+      const seconds = err.parameters.retry_after;
+      return typeof seconds === 'number' && seconds >= 0
+        ? { outcome: 'rate_limited', retryAfterMs: seconds * 1000 }
+        : { outcome: 'rate_limited' };
+    }
+    return { outcome: 'telegram_error' };
+  }
+  if (err instanceof HttpError && causeCodes(err).some((c) => NOT_WRITTEN.has(c))) {
+    return { outcome: 'telegram_error' };
+  }
+  return { outcome: 'no_answer' };
 }
 
 /** Same webhook when scheme, host and path match, ignoring a trailing slash. */
@@ -313,6 +339,33 @@ export function createTelegramGateway({
         };
       } catch (err) {
         return classifyBroadcastError(err);
+      }
+    },
+
+    async sendPost(token, chatId, text, silent, timeoutMs) {
+      try {
+        const sent = await api(token).sendMessage(
+          chatId,
+          text,
+          silent ? { disable_notification: true } : undefined,
+          timeout(timeoutMs),
+        );
+        return {
+          outcome: 'accepted',
+          messageId: BigInt(sent.message_id),
+          at: new Date(sent.date * 1000),
+        };
+      } catch (err) {
+        return classifyPostError(err);
+      }
+    },
+
+    async deletePost(token, chatId, messageId, timeoutMs) {
+      try {
+        await api(token).deleteMessage(chatId, Number(messageId), timeout(timeoutMs));
+        return { outcome: 'deleted' };
+      } catch {
+        return { outcome: 'refused' };
       }
     },
 

@@ -533,3 +533,41 @@ describe('fake Bot API: getFile and the file download', () => {
     expect((await fetch(url('photos/file_1.jpg', OTHER))).status).toBe(401);
   });
 });
+
+describe('fake Bot API: group chats, deleteMessage, getChatMember (group-posts T6)', () => {
+  let fake: FakeTelegram;
+  const api = () => telegramApi(TOKEN, { apiRoot: fake.apiRoot });
+  const GROUP = '-1001234567890';
+
+  beforeAll(async () => {
+    fake = await startFakeTelegram();
+  });
+  afterAll(async () => {
+    await fake.stop();
+  });
+  beforeEach(() => {
+    fake.reset();
+  });
+
+  it('sendMessage to a non-private chat id answers a supergroup/channel chat with that id', async () => {
+    fake.bot(TOKEN).script({});
+    const msg = await api().sendMessage(GROUP, 'news', { disable_notification: true });
+    expect(msg.chat.id).toBe(Number(GROUP));
+    expect(msg.chat.type).not.toBe('private');
+  });
+
+  it('deleteMessage is recorded and answers true; a scripted refusal is returned', async () => {
+    fake.bot(TOKEN).script({ deleteMessage: [sendAnswers.ok(0), sendAnswers.chatNotFound()] });
+    expect(await api().deleteMessage(GROUP, 5)).toBe(true);
+    await expect(api().deleteMessage(GROUP, 6)).rejects.toBeInstanceOf(GrammyError);
+    expect(fake.calls(TOKEN).filter((c) => c.method === 'deleteMessage')).toHaveLength(2);
+  });
+
+  it('getChatMember answers the scripted member of the chat', async () => {
+    fake.bot(TOKEN).script({
+      chatMembers: { [GROUP]: { status: 'administrator', can_post_messages: true } },
+    });
+    const member = await api().getChatMember(GROUP, 100001);
+    expect(member).toMatchObject({ status: 'administrator', can_post_messages: true });
+  });
+});

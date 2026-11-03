@@ -8,6 +8,9 @@ export const MEMBER_MESSAGES_PER_SECOND = 10;
  */
 export const BROADCAST_MESSAGES_PER_SECOND = 25;
 
+/** Post sends per second and bot: a pacer of its own, beside the member and broadcast ones. */
+export const POST_MESSAGES_PER_SECOND = 1;
+
 export interface Pacer {
   /**
    * Resolves when a send of this bot may start. Callers of one key are released one at a time, in

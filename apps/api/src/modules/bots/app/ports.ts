@@ -236,6 +236,24 @@ export type BroadcastSendAnswer =
   | { outcome: 'error' }
   | { outcome: 'unknown' };
 
+/**
+ * Telegram's answer to a post in a channel or group. `no_post_right`: a `403` (kicked, no right);
+ * `chat_gone`: chat not found; `text_refused`: any other `400`; `no_answer`: no answer after the
+ * write (it may have been published).
+ */
+export type PostSendAnswer =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'no_post_right' }
+  | { outcome: 'chat_gone' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'rate_limited'; retryAfterMs?: number }
+  | { outcome: 'telegram_error' }
+  | { outcome: 'no_answer' };
+
+/** Whether Telegram deleted a published post. */
+export type PostDeleteAnswer = { outcome: 'deleted' } | { outcome: 'refused' };
+
 /** What `broadcasts` gets back from `sendBroadcastMessage` (sad.md §5, flow 12). */
 export type BroadcastSendOutcome =
   | { outcome: 'delivered'; messageId: bigint; at: Date }
@@ -306,6 +324,24 @@ export interface TelegramGateway {
     text: string,
     timeoutMs: number,
   ): Promise<BroadcastSendAnswer>;
+  /**
+   * A post's plain text to a channel or group (`chatId` passed as a string, no `parse_mode`).
+   * Never throws.
+   */
+  sendPost(
+    token: string,
+    chatId: string,
+    text: string,
+    silent: boolean,
+    timeoutMs: number,
+  ): Promise<PostSendAnswer>;
+  /** Deletes a post the bot published; any failure is a refusal. Never throws. */
+  deletePost(
+    token: string,
+    chatId: string,
+    messageId: bigint,
+    timeoutMs: number,
+  ): Promise<PostDeleteAnswer>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /**

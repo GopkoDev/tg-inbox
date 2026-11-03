@@ -129,6 +129,10 @@ export interface BotScript {
   deleteWebhook?: CallBehaviour;
   /** `sendMessage` answers, consumed one per call; afterwards every call is answered ok. */
   sendMessage?: SendAnswer[];
+  /** `deleteMessage` answers, consumed one per call; afterwards every call is answered true. */
+  deleteMessage?: SendAnswer[];
+  /** `getChatMember` answers by chat id (the bot's own membership of a channel or group). */
+  chatMembers?: Record<string, Record<string, unknown>>;
   /** `getFile` outcomes and downloadable files by `file_id`. */
   files?: Record<string, FileScript>;
 }
@@ -156,6 +160,9 @@ interface BotState extends BotScript {
   webhookUrl: string;
   lastMessageId: number;
 }
+
+/** Telegram ids of groups, supergroups and channels are negative. */
+const isGroupChat = (chatId: unknown) => Number(chatId) < 0;
 
 const PATH = /^\/bot([^/]+)\/([A-Za-z]+)$/;
 
@@ -202,7 +209,9 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
       result: {
         message_id: bot.lastMessageId,
         date: Math.floor(Date.now() / 1000),
-        chat: { id: params.chat_id, type: 'private' },
+        chat: isGroupChat(params.chat_id)
+          ? { id: Number(params.chat_id), type: 'supergroup', title: 'Test Group' }
+          : { id: params.chat_id, type: 'private' },
         text: params.text,
       },
     });
@@ -343,6 +352,25 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
     switch (method) {
       case 'sendMessage':
         return answerSend(res, bot, params);
+      case 'deleteMessage': {
+        const next = bot.deleteMessage?.shift();
+        if (!next || next.kind === 'ok') return send(res, 200, { ok: true, result: true });
+        if (next.kind === 'error') return send(res, next.status, next.body);
+        if (next.kind === 'reset') return res.socket?.destroy();
+        return hang(res);
+      }
+      case 'getChatMember': {
+        const member = bot.chatMembers?.[String(params.chat_id)];
+        if (!member) {
+          return send(res, 400, {
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: chat not found',
+          });
+        }
+        const user = { id: Number(token.split(':')[0]), is_bot: true, first_name: 'Test Bot' };
+        return send(res, 200, { ok: true, result: { user, ...member } });
+      }
       case 'getFile':
         return answerGetFile(res, bot, params);
       case 'getWebhookInfo':
@@ -429,6 +457,7 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
           bots.set(token, {
             ...script,
             sendMessage: [...(script.sendMessage ?? [])],
+            deleteMessage: [...(script.deleteMessage ?? [])],
             webhookUrl: script.webhookUrl ?? '',
             lastMessageId: 0,
           });
