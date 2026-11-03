@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/list/", "apps/web/src/pages/"]
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T19 — Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows

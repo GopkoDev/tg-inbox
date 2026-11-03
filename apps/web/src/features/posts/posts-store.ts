@@ -74,7 +74,7 @@ export const usePostsStore = create<PostsState>()((set, get) => {
       const same = here(workspaceId);
       set({ workspaceId, filter, status: 'loading', items: same ? get().items : [] });
       try {
-        const list = await listPosts(workspaceId, filter);
+        const list = await listPosts(workspaceId, filter, {});
         if (opened === epoch) {
           set({
             status: 'ready',

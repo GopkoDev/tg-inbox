@@ -25,7 +25,7 @@
 | T16 | Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks | tests | Dmytro Hopko | M | T15 | todo | — |
 | T17 | Add the web posts API source, stores (posts, destinations, attention), time helpers, routes and the Posts nav item with its count | ui | Dmytro Hopko | M | T2, T1 | done | COMMIT |
 | T18 | Build SCR-33 Channels & groups with SCR-34 connect-code, SCR-35 remove and SCR-43 time-zone dialogs | ui | Dmytro Hopko | M | T17 | done | COMMIT |
-| T19 | Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows | ui | Dmytro Hopko | S | T17 | todo | — |
+| T19 | Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows | ui | Dmytro Hopko | S | T17 | done | COMMIT |
 | T20 | Build SCR-37 the post editor with autosave, destination picker, sound option and preview, plus SCR-42 delete and SCR-44 back-to-draft dialogs | ui | Dmytro Hopko | M | T17 | todo | — |
 | T21 | Build SCR-38 publish-now and SCR-39 schedule dialogs on their owner-only addresses, with the first-time time-zone step | ui | Dmytro Hopko | M | T20 | todo | — |
 | T22 | Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen | ui | Dmytro Hopko | M | T20 | todo | — |
