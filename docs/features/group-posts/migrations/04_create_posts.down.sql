@@ -1,0 +1,11 @@
+DROP INDEX IF EXISTS posts_workspace_id_deleted_by_account_id_idx;
+DROP INDEX IF EXISTS posts_workspace_id_scheduled_by_account_id_idx;
+DROP INDEX IF EXISTS posts_workspace_id_last_changed_by_account_id_idx;
+DROP INDEX IF EXISTS posts_workspace_id_author_account_id_idx;
+DROP INDEX IF EXISTS posts_workspace_id_destination_id_idx;
+DROP INDEX IF EXISTS posts_attention_idx;
+DROP INDEX IF EXISTS posts_sent_idx;
+DROP INDEX IF EXISTS posts_scheduled_idx;
+DROP INDEX IF EXISTS posts_workspace_id_state_last_changed_at_idx;
+DROP INDEX IF EXISTS posts_workspace_id_last_changed_at_idx;
+DROP TABLE IF EXISTS posts;
