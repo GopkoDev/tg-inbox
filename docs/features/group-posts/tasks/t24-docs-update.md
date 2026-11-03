@@ -9,8 +9,8 @@ files_hint: ["CLAUDE.md", "docs/architecture-map.md", "docs/design-system.md"]
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T24 — Update CLAUDE.md, the architecture map and the design-system canon for the posts module
