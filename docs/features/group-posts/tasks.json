@@ -1,0 +1,542 @@
+{
+  "slug": "group-posts",
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Add the shared workspace time-zone rule: IANA validity, local wall time to instant with skipped and repeated hours, display formatting",
+      "layer": "domain",
+      "deps": [],
+      "acs": [
+        "AC-09",
+        "AC-10"
+      ],
+      "dod": "unit tests for valid / skipped / repeated / invalid pass; lint + vet clean",
+      "files_hint": [
+        "packages/shared/src/time-zone.ts",
+        "packages/shared/src/time-zone.test.ts",
+        "packages/shared/src/index.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t01-time-zone-rule.md",
+      "status": "todo"
+    },
+    {
+      "id": "T2",
+      "title": "Add the posts zod contracts, the 17 new error codes, and the post.changed / destinations.changed frames and signals",
+      "layer": "ports",
+      "deps": [],
+      "acs": [
+        "AC-04",
+        "AC-06"
+      ],
+      "dod": "contract examples parse with the new schemas; `pnpm -r build` green (api + web compile with the new unions); lint + vet clean",
+      "files_hint": [
+        "packages/shared/src/posts.ts",
+        "packages/shared/src/errors.ts",
+        "packages/shared/src/inbox.ts",
+        "packages/shared/src/index.ts",
+        "apps/api/src/platform/realtime.ts",
+        "apps/api/src/platform/errors.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t02-shared-contracts-codes-frames.md",
+      "status": "todo"
+    },
+    {
+      "id": "T3",
+      "title": "Promote staged migrations 01–04 (workspaces.time_zone, destinations, destination_codes, posts) and regenerate DB types",
+      "layer": "migration",
+      "deps": [],
+      "acs": [
+        "AC-04"
+      ],
+      "dod": "migrations apply and revert cleanly (integration harness `src/test/postgres.ts` applies them); db types regenerated and committed; lint + vet clean",
+      "files_hint": [
+        "apps/api/migrations/",
+        "docs/features/group-posts/migrations/",
+        "apps/api/src/platform/db.types.gen.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t03-promote-migrations.md",
+      "status": "todo"
+    },
+    {
+      "id": "T4",
+      "title": "Add the posts domain: states and transitions, the schedule window, the 15-minute miss rule, limits, connect-code format and hashing, outcome reasons, Telegram link",
+      "layer": "domain",
+      "deps": [
+        "T1",
+        "T2"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-10",
+        "AC-11",
+        "AC-12",
+        "AC-16"
+      ],
+      "dod": "unit tests for every transition, window edge, limit and parser pass; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/domain/"
+      ],
+      "file": "docs/features/group-posts/tasks/t04-posts-domain.md",
+      "status": "todo"
+    },
+    {
+      "id": "T5",
+      "title": "Classify group and channel updates in bots into four facts, add channel_post to allowed_updates, and hand them to a late-bound ChatEventsPort",
+      "layer": "app",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-13",
+        "AC-14",
+        "AC-17"
+      ],
+      "dod": "classifier unit tests per chat type and update kind pass; integration: a group message creates no contact or conversation; health check re-registers a webhook without `channel_post`; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/bots/domain/inbound.ts",
+        "apps/api/src/modules/bots/app/accept-update.ts",
+        "apps/api/src/modules/bots/app/ports.ts",
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/test/fixtures/telegram.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t05-bots-classify-chat-facts.md",
+      "status": "todo"
+    },
+    {
+      "id": "T6",
+      "title": "Add bots.sendPost, bots.deletePost and postReadiness with a 1-per-second post pacer, and teach the fake Telegram group chats, deleteMessage and getChatMember",
+      "layer": "app",
+      "deps": [
+        "T2"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-13",
+        "AC-15",
+        "AC-17"
+      ],
+      "dod": "unit + integration tests against the fake Telegram for each classification pass; a post 429 leaves `send_paused_until` unchanged (test); lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/bots/app/",
+        "apps/api/src/modules/bots/infra/telegram-gateway.ts",
+        "apps/api/src/test/fake-telegram.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t06-bots-send-delete-post.md",
+      "status": "todo"
+    },
+    {
+      "id": "T7",
+      "title": "Add workspaces.timeZone and setTimeZone in the workspaces app layer",
+      "layer": "app",
+      "deps": [
+        "T3",
+        "T1"
+      ],
+      "acs": [
+        "AC-09"
+      ],
+      "dod": "integration tests pass (isolation included); lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/workspaces/"
+      ],
+      "file": "docs/features/group-posts/tasks/t07-workspaces-time-zone.md",
+      "status": "todo"
+    },
+    {
+      "id": "T8",
+      "title": "Build the posts repositories for destinations, destination codes and posts, with cross-workspace isolation tests",
+      "layer": "infra",
+      "deps": [
+        "T3",
+        "T4"
+      ],
+      "acs": [
+        "AC-04"
+      ],
+      "dod": "integration tests (Testcontainers) pass, isolation proven per repo; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/infra/"
+      ],
+      "file": "docs/features/group-posts/tasks/t08-posts-repositories.md",
+      "status": "todo"
+    },
+    {
+      "id": "T9",
+      "title": "Add the destination use cases: create and read a connect code, redeem it from ChatEventsPort, membership / upgrade / rename updates, remove, list, set the time zone",
+      "layer": "app",
+      "deps": [
+        "T5",
+        "T6",
+        "T7",
+        "T8"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-13",
+        "AC-14"
+      ],
+      "dod": "unit + integration tests for AC-01, AC-02, AC-13, AC-14 branches pass; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/destinations.ts",
+        "apps/api/src/modules/posts/app/chat-events.ts",
+        "apps/api/src/modules/posts/app/time-zone.ts",
+        "apps/api/src/modules/posts/app/destination-reads.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t09-destinations-use-cases.md",
+      "status": "todo"
+    },
+    {
+      "id": "T10",
+      "title": "Add the post draft use cases and reads: create, save against version, duplicate, delete draft, back to draft, list, get, attention count, mark seen",
+      "layer": "app",
+      "deps": [
+        "T8"
+      ],
+      "acs": [
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-11",
+        "AC-13",
+        "AC-18"
+      ],
+      "dod": "unit + integration tests for each AC branch pass; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/drafts.ts",
+        "apps/api/src/modules/posts/app/post-reads.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t10-draft-use-cases-and-reads.md",
+      "status": "todo"
+    },
+    {
+      "id": "T11",
+      "title": "Add the publish confirmation, publish now and schedule / change time against the shown version, queuing one posts.send job in the transaction",
+      "layer": "app",
+      "deps": [
+        "T9",
+        "T10"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-14",
+        "AC-16"
+      ],
+      "dod": "integration tests per branch pass (incl. concurrent publish); lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/publish.ts",
+        "apps/api/src/modules/posts/app/schedule.ts",
+        "apps/api/src/modules/posts/app/publish-confirmation.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t11-publish-and-schedule.md",
+      "status": "todo"
+    },
+    {
+      "id": "T12",
+      "title": "Add the posts.send job body: re-check owner and limits, per-chat order and pauses, claim before the send, outcomes, missed after 15 minutes, and the dead-letter settler",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T11"
+      ],
+      "acs": [
+        "AC-08",
+        "AC-11",
+        "AC-12",
+        "AC-13",
+        "AC-14",
+        "AC-16",
+        "AC-17"
+      ],
+      "dod": "integration tests per branch pass with the fake Telegram and fake clock; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/send-post.ts",
+        "apps/api/src/modules/posts/app/settle-dead-letter.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t12-send-job.md",
+      "status": "todo"
+    },
+    {
+      "id": "T13",
+      "title": "Add delete from Telegram within 48 hours and the deactivation return of scheduled posts",
+      "layer": "app",
+      "deps": [
+        "T6",
+        "T10"
+      ],
+      "acs": [
+        "AC-11",
+        "AC-15"
+      ],
+      "dod": "unit + integration tests pass; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/delete-published.ts",
+        "apps/api/src/modules/posts/app/deactivation.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t13-delete-and-deactivation.md",
+      "status": "todo"
+    },
+    {
+      "id": "T14",
+      "title": "Wire posts in buildDeps and buildApp: ChatEventsPort, onMembershipDeactivated, the posts.send queue + DLQ workers, the hub forwarding the two new frames",
+      "layer": "wiring",
+      "deps": [
+        "T9",
+        "T12",
+        "T13"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-12",
+        "AC-17"
+      ],
+      "dod": "`app.int.test.ts` boots; a posts.send job runs end to end in an integration test; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/deps.ts",
+        "apps/api/src/app.ts",
+        "apps/api/src/modules/posts/infra/jobs.ts",
+        "apps/api/src/modules/inbox/infra/hub.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t14-wiring-queues.md",
+      "status": "todo"
+    },
+    {
+      "id": "T15",
+      "title": "Register the posts routes (registerPosts): the 18 operations with zod schemas, guards and error mapping",
+      "layer": "ports",
+      "deps": [
+        "T11",
+        "T13",
+        "T14"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-04",
+        "AC-05",
+        "AC-06",
+        "AC-07",
+        "AC-09",
+        "AC-10",
+        "AC-15",
+        "AC-16",
+        "AC-18"
+      ],
+      "dod": "`app.inject()` tests per operation pass; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/http/routes.ts",
+        "apps/api/src/app.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t15-register-posts-routes.md",
+      "status": "todo"
+    },
+    {
+      "id": "T16",
+      "title": "Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks",
+      "layer": "tests",
+      "deps": [
+        "T15"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-04",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-12",
+        "AC-17"
+      ],
+      "dod": "e2e suite green; integrity queries return 0 rows; lint + vet clean",
+      "files_hint": [
+        "apps/api/src/e2e/"
+      ],
+      "file": "docs/features/group-posts/tasks/t16-api-e2e-integrity-timing.md",
+      "status": "todo"
+    },
+    {
+      "id": "T17",
+      "title": "Add the web posts API source, stores (posts, destinations, attention), time helpers, routes and the Posts nav item with its count",
+      "layer": "ui",
+      "deps": [
+        "T2",
+        "T1"
+      ],
+      "acs": [
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "store tests pass; nav shows the badge in a Testing Library test; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/",
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/shared/ui/app-shell.tsx",
+        "apps/web/src/features/settings/SettingsLayout.tsx"
+      ],
+      "file": "docs/features/group-posts/tasks/t17-web-posts-api-stores-routes.md",
+      "status": "todo"
+    },
+    {
+      "id": "T18",
+      "title": "Build SCR-33 Channels & groups with SCR-34 connect-code, SCR-35 remove and SCR-43 time-zone dialogs",
+      "layer": "ui",
+      "deps": [
+        "T17"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-13",
+        "AC-14"
+      ],
+      "dod": "component tests for every listed state pass; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/settings/",
+        "apps/web/src/pages/"
+      ],
+      "file": "docs/features/group-posts/tasks/t18-scr33-channels-settings.md",
+      "status": "todo"
+    },
+    {
+      "id": "T19",
+      "title": "Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows",
+      "layer": "ui",
+      "deps": [
+        "T17"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-12",
+        "AC-13"
+      ],
+      "dod": "component tests per state pass; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/list/",
+        "apps/web/src/pages/"
+      ],
+      "file": "docs/features/group-posts/tasks/t19-scr36-posts-list.md",
+      "status": "todo"
+    },
+    {
+      "id": "T20",
+      "title": "Build SCR-37 the post editor with autosave, destination picker, sound option and preview, plus SCR-42 delete and SCR-44 back-to-draft dialogs",
+      "layer": "ui",
+      "deps": [
+        "T17"
+      ],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-11",
+        "AC-18"
+      ],
+      "dod": "component tests per state pass; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/editor/",
+        "apps/web/src/pages/"
+      ],
+      "file": "docs/features/group-posts/tasks/t20-scr37-post-editor.md",
+      "status": "todo"
+    },
+    {
+      "id": "T21",
+      "title": "Build SCR-38 publish-now and SCR-39 schedule dialogs on their owner-only addresses, with the first-time time-zone step",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-03",
+        "AC-07",
+        "AC-08",
+        "AC-09",
+        "AC-10",
+        "AC-14",
+        "AC-16"
+      ],
+      "dod": "component tests per state pass; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/publish/",
+        "apps/web/src/pages/"
+      ],
+      "file": "docs/features/group-posts/tasks/t21-scr38-scr39-publish-schedule.md",
+      "status": "todo"
+    },
+    {
+      "id": "T22",
+      "title": "Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen",
+      "layer": "ui",
+      "deps": [
+        "T20"
+      ],
+      "acs": [
+        "AC-07",
+        "AC-08",
+        "AC-12",
+        "AC-13",
+        "AC-15"
+      ],
+      "dod": "component tests per state pass; lint + vet clean",
+      "files_hint": [
+        "apps/web/src/features/posts/page/",
+        "apps/web/src/pages/"
+      ],
+      "file": "docs/features/group-posts/tasks/t22-scr40-post-page.md",
+      "status": "todo"
+    },
+    {
+      "id": "T23",
+      "title": "Add browser end-to-end posts flows against the real API: connect, draft, publish, schedule, outcome, delete",
+      "layer": "tests",
+      "deps": [
+        "T16",
+        "T18",
+        "T19",
+        "T21",
+        "T22"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-05",
+        "AC-07",
+        "AC-09",
+        "AC-15"
+      ],
+      "dod": "browser e2e green; lint + vet clean",
+      "files_hint": [
+        "apps/web/e2e/"
+      ],
+      "file": "docs/features/group-posts/tasks/t23-browser-e2e.md",
+      "status": "todo"
+    },
+    {
+      "id": "T24",
+      "title": "Update CLAUDE.md, the architecture map and the design-system canon for the posts module",
+      "layer": "docs",
+      "deps": [
+        "T15",
+        "T18",
+        "T19",
+        "T21",
+        "T22"
+      ],
+      "acs": [
+        "AC-17"
+      ],
+      "dod": "docs updated; links resolve; lint clean",
+      "files_hint": [
+        "CLAUDE.md",
+        "docs/architecture-map.md",
+        "docs/design-system.md"
+      ],
+      "file": "docs/features/group-posts/tasks/t24-docs-update.md",
+      "status": "todo"
+    }
+  ]
+}
