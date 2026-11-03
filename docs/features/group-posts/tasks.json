@@ -160,7 +160,7 @@
         "apps/api/src/modules/posts/infra/"
       ],
       "file": "docs/features/group-posts/tasks/t08-posts-repositories.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T9",

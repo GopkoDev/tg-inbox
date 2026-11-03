@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/infra/"]
 owner: "Dmytro Hopko"
 estimate: "L"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T8 — Build the posts repositories for destinations, destination codes and posts, with cross-workspace isolation tests
