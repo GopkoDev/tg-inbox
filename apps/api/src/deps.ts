@@ -15,6 +15,7 @@ import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-re
 import { createAcceptInvitation } from './modules/workspaces/app/accept-invitation.js';
 import { publish } from './platform/realtime.js';
 import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
+import { createWorkspaceTimeZone } from './modules/workspaces/app/time-zone.js';
 import { createTeam } from './modules/workspaces/app/team.js';
 import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
 import { createWorkspaceAdmin } from './modules/workspaces/app/admin.js';
@@ -180,6 +181,7 @@ export function buildDeps(
     sessions: sessionUseCases,
     clock,
   });
+  const workspaceTimeZone = createWorkspaceTimeZone({ db });
   // --- end workspaces dependencies ---
 
   const workspaceAdmin = createWorkspaceAdmin({
@@ -674,6 +676,7 @@ export function buildDeps(
     acceptInvitation,
     team,
     workspaceAdmin,
+    workspaceTimeZone,
     contacts,
     contactReads,
     tagWrites,

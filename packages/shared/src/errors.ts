@@ -80,6 +80,7 @@ export const ErrorCode = {
   TIME_ZONE_REQUIRED: 'TIME_ZONE_REQUIRED',
   TIME_ZONE_INVALID: 'TIME_ZONE_INVALID',
   TIME_ZONE_CHANGED: 'TIME_ZONE_CHANGED',
+  TIME_ZONE_INVALID: 'TIME_ZONE_INVALID',
 } as const;
 
 export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];

@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/workspaces/"]
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T7 — Add workspaces.timeZone and setTimeZone in the workspaces app layer

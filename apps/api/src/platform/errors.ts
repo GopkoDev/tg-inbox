@@ -715,6 +715,13 @@ export class TimeZoneChangedError extends AppError {
 
   constructor(details?: unknown, message = 'The workspace time zone changed') {
     super(message, details);
+/** A workspace time zone that is not a valid IANA zone. */
+export class TimeZoneInvalidError extends AppError {
+  readonly code = ErrorCode.TIME_ZONE_INVALID;
+  readonly statusCode = 422;
+
+  constructor() {
+    super('The time zone is not a valid IANA zone');
   }
 }
 

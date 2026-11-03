@@ -36,4 +36,23 @@ export class KyselyWorkspaceRepo implements WorkspaceRepo {
       .executeTakeFirst();
     return row !== undefined;
   }
+
+  async getTimeZone(workspaceId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom('workspaces')
+      .select('time_zone')
+      .where('id', '=', workspaceId)
+      .executeTakeFirst();
+    return row?.time_zone ?? null;
+  }
+
+  /** Writes only when the zone differs (a same-zone call is not an UPDATE). */
+  async setTimeZone(workspaceId: string, zone: string): Promise<void> {
+    await this.db
+      .updateTable('workspaces')
+      .set({ time_zone: zone })
+      .where('id', '=', workspaceId)
+      .where((eb) => eb.or([eb('time_zone', 'is', null), eb('time_zone', '!=', zone)]))
+      .execute();
+  }
 }
