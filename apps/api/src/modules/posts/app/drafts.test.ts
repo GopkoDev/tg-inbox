@@ -221,7 +221,7 @@ describe('movePostBackToDraft (AC-11)', () => {
       scheduledByAccountId: OWNER,
       scheduleKind: 'time',
     });
-    await h.drafts.movePostBackToDraft(WS, TEAMMATE, p.id);
+    await h.drafts.movePostBackToDraft(WS, TEAMMATE, p.id, 1);
     expect(h.store.posts[0]).toMatchObject({
       state: 'draft',
       version: 2,
@@ -233,15 +233,52 @@ describe('movePostBackToDraft (AC-11)', () => {
     expect(h.store.signals).toEqual([`post:${WS}:${p.id}`]);
   });
 
-  it.each(['draft', 'sending', 'published'] as const)(
+  it.each(['sending', 'published'] as const)(
     'refuses a %s post: POST_NOT_SCHEDULED',
     async (state) => {
       const h = setup();
       const p = h.seed({ state });
-      await expect(h.drafts.movePostBackToDraft(WS, OPERATOR, p.id)).rejects.toMatchObject({
+      await expect(h.drafts.movePostBackToDraft(WS, OPERATOR, p.id, 1)).rejects.toMatchObject({
         code: 'POST_NOT_SCHEDULED',
         statusCode: 409,
       });
     },
   );
+});
+
+describe('movePostBackToDraft idempotence and version (AC-11)', () => {
+  it('answers unchanged for a post that is already a draft, without a signal', async () => {
+    const h = setup();
+    const p = h.seed();
+    const res = await h.drafts.movePostBackToDraft(WS, OPERATOR, p.id, p.version);
+    expect(res.outcome).toBe('unchanged');
+    expect(h.store.signals).toEqual([]);
+  });
+
+  it('answers changed for a scheduled post', async () => {
+    const h = setup();
+    const p = h.seed({
+      state: 'scheduled',
+      scheduledFor: new Date('2026-11-05T09:00:00Z'),
+      scheduledByAccountId: OWNER,
+      scheduleKind: 'time',
+    });
+    const res = await h.drafts.movePostBackToDraft(WS, OPERATOR, p.id, p.version);
+    expect(res.outcome).toBe('changed');
+  });
+
+  it('refuses a stale expected_version: POST_DRAFT_CHANGED', async () => {
+    const h = setup();
+    const p = h.seed({
+      state: 'scheduled',
+      version: 3,
+      scheduledFor: new Date('2026-11-05T09:00:00Z'),
+      scheduledByAccountId: OWNER,
+      scheduleKind: 'time',
+    });
+    await expect(h.drafts.movePostBackToDraft(WS, OPERATOR, p.id, 2)).rejects.toMatchObject({
+      code: 'POST_DRAFT_CHANGED',
+    });
+    expect(h.store.posts[0]?.state).toBe('scheduled');
+  });
 });

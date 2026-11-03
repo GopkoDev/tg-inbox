@@ -386,13 +386,18 @@ export function createPostRepo(db: Db) {
       return row ? toPost(row) : null;
     },
 
-    async list(workspaceId: string, filter: { state?: PostState }, tx?: Db): Promise<PostRecord[]> {
+    async list(
+      workspaceId: string,
+      filter: { states?: PostState[]; needsAttention?: boolean; limit?: number },
+      tx?: Db,
+    ): Promise<PostRecord[]> {
       let q = (tx ?? db).selectFrom('posts').selectAll().where('workspace_id', '=', workspaceId);
-      if (filter.state) q = q.where('state', '=', filter.state);
+      if (filter.states) q = q.where('state', 'in', filter.states);
+      if (filter.needsAttention) q = q.where('needs_attention', '=', true);
       const rows = await q
         .orderBy('last_changed_at', 'desc')
         .orderBy('id', 'desc')
-        .limit(LIST_CAP)
+        .limit(filter.limit ?? LIST_CAP)
         .execute();
       return rows.map(toPost);
     },

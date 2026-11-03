@@ -425,6 +425,8 @@ export function buildDeps(
     workspaces: postWorkspaces,
     workspaceSettings: workspaceTimeZone,
     currentBotId,
+    transaction,
+    signals: postSignals,
     clock,
   });
   const postViews = { postView: postReads.getPost };

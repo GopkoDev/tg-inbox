@@ -8,7 +8,7 @@ export interface PostingTimeZoneDeps {
   transaction: PostTransaction;
   posts: Pick<PostRepo, 'list'>;
   workspaces: {
-    lockActiveMembers(tx: Db, workspaceId: string, ids: readonly string[]): Promise<string[]>;
+    lockActiveOwners(tx: Db, workspaceId: string, ids: readonly string[]): Promise<string[]>;
   };
   lockPosts(tx: Db, workspaceId: string): Promise<void>;
   workspaceSettings: {
@@ -29,7 +29,7 @@ export function createPostingTimeZone(deps: PostingTimeZoneDeps) {
           return { outcome: 'unchanged' as const, time_zone: zone, relabelled_scheduled: 0 };
         }
         await workspaceSettings.setTimeZone(tx, workspaceId, zone);
-        const scheduled = await posts.list(workspaceId, { state: 'scheduled' }, tx);
+        const scheduled = await posts.list(workspaceId, { states: ['scheduled'] }, tx);
         await signals.destinationsChanged(tx, workspaceId);
         return {
           outcome: 'saved' as const,

@@ -26,7 +26,7 @@ export interface DestinationsDeps {
   destinations: Pick<DestinationRepo, 'countLive' | 'lock' | 'remove'>;
   posts: Pick<PostRepo, 'list' | 'returnToDraft'>;
   workspaces: {
-    lockActiveMembers(tx: Db, workspaceId: string, ids: readonly string[]): Promise<string[]>;
+    lockActiveOwners(tx: Db, workspaceId: string, ids: readonly string[]): Promise<string[]>;
   };
   lockPosts(tx: Db, workspaceId: string): Promise<void>;
   bots: {
@@ -47,7 +47,7 @@ export async function lockOwner(
   workspaceId: string,
   actor: PostActor,
 ): Promise<boolean> {
-  const active = await deps.workspaces.lockActiveMembers(tx, workspaceId, [actor.accountId]);
+  const active = await deps.workspaces.lockActiveOwners(tx, workspaceId, [actor.accountId]);
   await deps.lockPosts(tx, workspaceId);
   return active.includes(actor.accountId);
 }
@@ -142,7 +142,7 @@ export function createDestinations(deps: DestinationsDeps) {
         if (dest.removedAt) return { outcome: 'unchanged' as const, returned_to_draft: 0 };
         const now = clock.now();
         await destinations.remove(workspaceId, destinationId, actor.accountId, now, tx);
-        const scheduled = (await posts.list(workspaceId, { state: 'scheduled' }, tx)).filter(
+        const scheduled = (await posts.list(workspaceId, { states: ['scheduled'] }, tx)).filter(
           (p) => p.destinationId === destinationId,
         );
         let returned = 0;

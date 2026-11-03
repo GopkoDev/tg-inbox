@@ -602,7 +602,7 @@
         "apps/api/src/modules/posts/infra/post-repo.ts"
       ],
       "file": "docs/features/group-posts/tasks/t27-fix-reads-drafts-owner.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T28",

@@ -37,7 +37,7 @@ function setup(opts: { bot?: Outcome | 'unavailable'; ownerActive?: boolean } = 
     posts: fakePostRepo(store),
     destinations: fakeDestinationRepo(store),
     workspaces: {
-      async lockActiveMembers(_tx, ws, ids) {
+      async lockActiveOwners(_tx, ws, ids) {
         locks.push(`members:${ids.join(',')}`);
         return opts.ownerActive === false ? [] : ids.filter(() => ws === WS);
       },

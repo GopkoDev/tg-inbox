@@ -37,7 +37,7 @@ export interface PostPublishingDeps {
   posts: Pick<PostRepo, 'find' | 'lock' | 'schedule' | 'countScheduled' | 'sentTimesSince'>;
   destinations: Pick<DestinationRepo, 'find'>;
   workspaces: {
-    lockActiveMembers(tx: Db, workspaceId: string, ids: string[]): Promise<string[]>;
+    lockActiveOwners(tx: Db, workspaceId: string, ids: string[]): Promise<string[]>;
   };
   lockPosts(tx: Db, workspaceId: string): Promise<void>;
   workspaceSettings: { timeZone(workspaceId: string): Promise<string | null> };
@@ -89,7 +89,7 @@ export function createPostPublishing(deps: PostPublishingDeps) {
   }
 
   async function lockOwner(tx: Db, workspaceId: string, actor: PostActor): Promise<void> {
-    const active = await workspaces.lockActiveMembers(tx, workspaceId, [actor.accountId]);
+    const active = await workspaces.lockActiveOwners(tx, workspaceId, [actor.accountId]);
     await deps.lockPosts(tx, workspaceId);
     if (!active.includes(actor.accountId)) {
       throw new OwnerOnlyError('Only a business owner can do this');

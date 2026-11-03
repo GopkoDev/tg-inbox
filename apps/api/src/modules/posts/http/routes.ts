@@ -15,6 +15,7 @@ import {
   PostOutcome,
   PostSave,
   PostSchedule,
+  type PostState,
   PostScheduled,
   PublishConfirmation,
   TimeZoneSaved,
@@ -162,15 +163,17 @@ export async function registerPosts(app: FastifyInstance, deps: PostsDeps): Prom
       },
     },
     async (request) => {
-      const list = await reads.listPosts(request.workspace.workspaceId, {});
-      const keep: Record<z.infer<typeof ListFilter>, (i: PostList['items'][number]) => boolean> = {
-        all: () => true,
-        drafts: (i) => i.state === 'draft',
-        scheduled: (i) => i.state === 'scheduled' || i.state === 'sending',
-        published: (i) => i.state === 'published' || i.state === 'deleted',
-        attention: (i) => i.needs_attention,
+      const filters: Record<
+        z.infer<typeof ListFilter>,
+        { states?: PostState[]; needsAttention?: boolean }
+      > = {
+        all: {},
+        drafts: { states: ['draft'] },
+        scheduled: { states: ['scheduled', 'sending'] },
+        published: { states: ['published', 'deleted'] },
+        attention: { needsAttention: true },
       };
-      return { ...list, items: list.items.filter(keep[request.query.filter]) };
+      return reads.listPosts(request.workspace.workspaceId, filters[request.query.filter]);
     },
   );
 
@@ -295,12 +298,12 @@ export async function registerPosts(app: FastifyInstance, deps: PostsDeps): Prom
       schema: { params: z.object(onePost), body: ExpectedVersion, response: { 200: PostOutcome } },
     },
     async (request) => {
-      const post = await drafts.movePostBackToDraft(
+      return drafts.movePostBackToDraft(
         request.workspace.workspaceId,
         request.account.id,
         request.params.postId,
+        request.body.expected_version,
       );
-      return { outcome: 'changed' as const, post };
     },
   );
 

@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/post-reads.ts", "apps/api/src/modul
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T27 — Fix posts reads and drafts: SQL-side list filters with truncated, idempotent back-to-draft with expected_version, mark seen publishes post.changed, owner re-checked with lockActiveOwners

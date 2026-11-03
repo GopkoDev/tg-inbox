@@ -110,9 +110,9 @@ export function fakePostRepo(s: FakeStore) {
     async countAttention(ws: string) {
       return s.posts.filter((p) => p.workspaceId === ws && p.needsAttention).length;
     },
-    async list(ws: string, filter: { state?: PostRecord['state'] }) {
+    async list(ws: string, filter: { states?: PostRecord['state'][] }) {
       return s.posts
-        .filter((p) => p.workspaceId === ws && (!filter.state || p.state === filter.state))
+        .filter((p) => p.workspaceId === ws && (!filter.states || filter.states.includes(p.state)))
         .sort((a, b) => b.lastChangedAt.getTime() - a.lastChangedAt.getTime())
         .map((p) => ({ ...p }));
     },

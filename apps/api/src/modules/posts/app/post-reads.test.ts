@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import { newId } from '../../../platform/ids.js';
 import { createPostReads } from './post-reads.js';
+import type { PostRecord } from '../infra/post-repo.js';
 import {
   basePost,
   basePostDestination,
   fakeDestinationRepo,
   fakePostRepo,
   fakeStore,
+  fakeTransaction,
 } from './test-fakes.js';
 
 const T0 = new Date('2026-11-03T09:00:00Z');
@@ -21,12 +23,36 @@ const CURRENT_BOT = 1n;
 
 function setup() {
   const store = fakeStore();
+  const signalled: string[] = [];
   store.destinations.push(
     basePostDestination({ id: DEST, workspaceId: WS, username: 'acmenews', telegramBotId: 1n }),
     basePostDestination({ id: OLD_BOT_DEST, workspaceId: WS, telegramBotId: 2n }),
   );
   const reads = createPostReads({
-    posts: fakePostRepo(store),
+    posts: {
+      ...fakePostRepo(store),
+      // SQL-side filters and a row limit, as the real repo does
+      async list(
+        ws: string,
+        filter: { states?: PostRecord['state'][]; needsAttention?: boolean; limit?: number },
+      ) {
+        return store.posts
+          .filter(
+            (p) =>
+              p.workspaceId === ws &&
+              (!filter.states || filter.states.includes(p.state)) &&
+              (!filter.needsAttention || p.needsAttention),
+          )
+          .sort((a, b) => b.lastChangedAt.getTime() - a.lastChangedAt.getTime())
+          .slice(0, filter.limit ?? 200);
+      },
+    },
+    transaction: fakeTransaction(),
+    signals: {
+      async postChanged(_tx: unknown, ws: string, id: string) {
+        signalled.push(`post:${ws}:${id}`);
+      },
+    },
     destinations: fakeDestinationRepo(store),
     workspaces: {
       async displayNames(_ws, ids) {
@@ -42,7 +68,7 @@ function setup() {
     store.posts.push(p);
     return p;
   };
-  return { store, reads, seed };
+  return { store, reads, seed, signalled };
 }
 
 describe('listPosts (AC-05, AC-13)', () => {
@@ -66,7 +92,7 @@ describe('listPosts (AC-05, AC-13)', () => {
     h.seed({ state: 'failed', needsAttention: true });
     h.seed();
     h.store.posts.push(basePost({ id: newId(), workspaceId: OTHER_WS, state: 'failed' }));
-    const failed = await h.reads.listPosts(WS, { state: 'failed' });
+    const failed = await h.reads.listPosts(WS, { states: ['failed'] });
     expect(failed.items.map((i) => i.state)).toEqual(['failed']);
     expect((await h.reads.listPosts(WS, {})).items).toHaveLength(2);
   });
@@ -141,5 +167,45 @@ describe('attention count and mark seen (AC-13)', () => {
     const h = setup();
     const p = h.seed({ state: 'failed', needsAttention: true });
     await expect(h.reads.markPostSeen(OTHER_WS, p.id)).rejects.toMatchObject({ statusCode: 404 });
+  });
+});
+
+describe('list filters in SQL before the cap (AC-13)', () => {
+  it('finds an old failed post behind 200+ newer drafts, and reports truncated', async () => {
+    const h = setup();
+    h.seed({
+      state: 'failed',
+      needsAttention: true,
+      lastChangedAt: new Date('2026-01-01T00:00:00Z'),
+    });
+    for (let i = 0; i < 205; i++) {
+      h.seed({ lastChangedAt: new Date(Date.UTC(2026, 5, 1, 0, 0, i)) });
+    }
+    const failed = await h.reads.listPosts(WS, { needsAttention: true });
+    expect(failed.items.map((i) => i.state)).toEqual(['failed']);
+    expect(failed.truncated).toBe(false);
+    const all = await h.reads.listPosts(WS, {});
+    expect(all.items).toHaveLength(200);
+    expect(all.truncated).toBe(true);
+  });
+
+  it('accepts several states at once', async () => {
+    const h = setup();
+    h.seed({ state: 'scheduled' });
+    h.seed({ state: 'sending' });
+    h.seed({ state: 'draft' });
+    const list = await h.reads.listPosts(WS, { states: ['scheduled', 'sending'] });
+    expect(list.items.map((i) => i.state).sort()).toEqual(['scheduled', 'sending']);
+  });
+});
+
+describe('mark seen publishes post.changed (AC-13)', () => {
+  it('signals once when the mark was cleared, and not when unchanged', async () => {
+    const h = setup();
+    const p = h.seed({ state: 'failed', needsAttention: true });
+    await h.reads.markPostSeen(WS, p.id);
+    expect(h.signalled).toEqual([`post:${WS}:${p.id}`]);
+    await h.reads.markPostSeen(WS, p.id);
+    expect(h.signalled).toHaveLength(1);
   });
 });

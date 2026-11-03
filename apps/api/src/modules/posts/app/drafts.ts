@@ -159,11 +159,18 @@ export function createPostDrafts(deps: PostDraftsDeps) {
       return { outcome: 'deleted' };
     },
 
-    async movePostBackToDraft(workspaceId: string, actorId: string, postId: string): Promise<Post> {
-      await transaction(async (tx) => {
+    async movePostBackToDraft(
+      workspaceId: string,
+      actorId: string,
+      postId: string,
+      expectedVersion: number,
+    ): Promise<{ outcome: 'changed' | 'unchanged'; post: Post }> {
+      const outcome = await transaction(async (tx) => {
         const row = await posts.lock(workspaceId, postId, tx);
         if (!row) throw new NotFoundError(NOT_FOUND);
+        if (row.state === 'draft') return 'unchanged' as const;
         if (row.state !== 'scheduled') throw new PostNotScheduledError();
+        if (row.version !== expectedVersion) throw new PostDraftChangedError();
         const moved = await posts.returnToDraft(
           workspaceId,
           postId,
@@ -174,8 +181,9 @@ export function createPostDrafts(deps: PostDraftsDeps) {
         );
         if (!moved) throw new PostNotScheduledError();
         await signals.postChanged(tx, workspaceId, postId);
+        return 'changed' as const;
       });
-      return views.postView(workspaceId, postId);
+      return { outcome, post: await views.postView(workspaceId, postId) };
     },
   };
 }

@@ -7,6 +7,7 @@ import type {
   PostState,
   PostSummary,
 } from '@tg/shared';
+import type { Db } from '../../../platform/db.js';
 import type { Clock } from '../../../platform/clock.js';
 import { NotFoundError } from '../../../platform/errors.js';
 import { telegramLink } from '../domain/telegram-link.js';
@@ -21,11 +22,14 @@ export interface PostReadsDeps {
   };
   workspaceSettings: { timeZone(workspaceId: string): Promise<string | null> };
   currentBotId(workspaceId: string): Promise<bigint | null>;
+  transaction: <T>(fn: (tx: Db) => Promise<T>) => Promise<T>;
+  signals: { postChanged(tx: Db, workspaceId: string, postId: string): Promise<void> };
   clock: Clock;
 }
 
 const DELETE_WINDOW_MS = 48 * 3_600_000;
 const TEXT_START_MAX = 120;
+const LIST_MAX = 200;
 
 export function createPostReads(deps: PostReadsDeps) {
   const { posts, destinations, workspaces, workspaceSettings, currentBotId } = deps;
@@ -74,8 +78,13 @@ export function createPostReads(deps: PostReadsDeps) {
   }
 
   return {
-    async listPosts(workspaceId: string, filter: { state?: PostState }): Promise<PostList> {
-      const rows = await posts.list(workspaceId, filter.state ? { state: filter.state } : {});
+    async listPosts(
+      workspaceId: string,
+      filter: { states?: PostState[]; needsAttention?: boolean },
+    ): Promise<PostList> {
+      const fetched = await posts.list(workspaceId, { ...filter, limit: LIST_MAX + 1 });
+      const truncated = fetched.length > LIST_MAX;
+      const rows = fetched.slice(0, LIST_MAX);
       const [timeZone, who, dest] = await Promise.all([
         workspaceSettings.timeZone(workspaceId),
         names(
@@ -96,7 +105,7 @@ export function createPostReads(deps: PostReadsDeps) {
         last_changed_by: who(r.lastChangedByAccountId),
         last_changed_at: r.lastChangedAt.toISOString(),
       }));
-      return { workspace_id: workspaceId, time_zone: timeZone, truncated: false, items };
+      return { workspace_id: workspaceId, time_zone: timeZone, truncated, items };
     },
 
     async getPost(workspaceId: string, id: string): Promise<Post> {
@@ -162,7 +171,12 @@ export function createPostReads(deps: PostReadsDeps) {
       id: string,
     ): Promise<{ outcome: 'seen' | 'unchanged' }> {
       await load(workspaceId, id);
-      return { outcome: (await posts.clearAttention(workspaceId, id)) ? 'seen' : 'unchanged' };
+      const cleared = await deps.transaction(async (tx) => {
+        const done = await posts.clearAttention(workspaceId, id, tx);
+        if (done) await deps.signals.postChanged(tx, workspaceId, id);
+        return done;
+      });
+      return { outcome: cleared ? 'seen' : 'unchanged' };
     },
   };
 }

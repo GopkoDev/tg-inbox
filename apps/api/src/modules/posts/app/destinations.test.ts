@@ -180,7 +180,7 @@ function setup(o: { botId?: bigint | null; botState?: string; canPost?: boolean 
     },
   };
   const workspaces = {
-    async lockActiveMembers(_tx: Db, ws: string, ids: readonly string[]) {
+    async lockActiveOwners(_tx: Db, ws: string, ids: readonly string[]) {
       log.locks.push('members');
       return ids.filter((i) => store.active.has(`${ws}:${i}`));
     },

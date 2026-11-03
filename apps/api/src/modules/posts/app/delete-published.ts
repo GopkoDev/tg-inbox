@@ -21,7 +21,7 @@ export interface PostDeletionDeps {
   posts: Pick<PostRepo, 'find' | 'lock' | 'markDeleted'>;
   destinations: Pick<DestinationRepo, 'find'>;
   workspaces: {
-    lockActiveMembers(tx: Db, workspaceId: string, accountIds: string[]): Promise<string[]>;
+    lockActiveOwners(tx: Db, workspaceId: string, accountIds: string[]): Promise<string[]>;
   };
   bots: Pick<DeletePost, 'deletePost'>;
   signals: PostSignals;
@@ -41,7 +41,7 @@ export function createPostDeletion(deps: PostDeletionDeps) {
       // A plain read (no lock) so an unknown post is a 404 whatever the caller's membership.
       if (!(await posts.find(workspaceId, postId))) throw new NotFoundError('Post not found');
       await transaction(async (tx) => {
-        const active = await workspaces.lockActiveMembers(tx, workspaceId, [actor.accountId]);
+        const active = await workspaces.lockActiveOwners(tx, workspaceId, [actor.accountId]);
         if (!active.includes(actor.accountId)) {
           throw new AccessRemovedError('Your access to this workspace was removed');
         }

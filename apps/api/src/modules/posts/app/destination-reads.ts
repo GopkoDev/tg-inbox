@@ -18,7 +18,7 @@ export function createDestinationReads(deps: DestinationReadsDeps) {
     async listDestinations(workspaceId: string): Promise<DestinationList> {
       const [rows, scheduled, timeZone, botId] = await Promise.all([
         destinations.listLive(workspaceId),
-        posts.list(workspaceId, { state: 'scheduled' }),
+        posts.list(workspaceId, { states: ['scheduled'] }),
         workspaceSettings.timeZone(workspaceId),
         currentBotId(workspaceId),
       ]);

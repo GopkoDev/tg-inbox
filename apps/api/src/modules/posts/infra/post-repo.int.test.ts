@@ -242,7 +242,7 @@ describe('post repository (AC-04)', () => {
     const all = await posts.list(a.workspaceId, {});
     expect(all).toHaveLength(200);
     expect(all[0]!.id).toBe(ids[204]);
-    expect(await posts.list(a.workspaceId, { state: 'scheduled' })).toEqual([]);
+    expect(await posts.list(a.workspaceId, { states: ['scheduled'] })).toEqual([]);
     expect(await posts.list(b.workspaceId, {})).toEqual([]);
   });
 

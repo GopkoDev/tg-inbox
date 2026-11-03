@@ -95,7 +95,7 @@ function setup(opts: Opts = {}) {
     posts,
     destinations: fakeDestinationRepo(store),
     workspaces: {
-      async lockActiveMembers(_tx, _ws, ids) {
+      async lockActiveOwners(_tx, _ws, ids) {
         order.push('members');
         return ids.filter((i) => !(opts.inactive ?? []).includes(i));
       },
