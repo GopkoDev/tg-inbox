@@ -92,8 +92,15 @@ export function createPostSender(deps: PostSendDeps) {
       const seen = await posts.find(workspaceId, postId, tx);
       if (!seen) return { kind: 'done' };
       if (seen.state === 'sending') {
-        // A claim without an outcome: never sent again.
-        await settleNotConfirmed(tx, workspaceId, postId);
+        // Only the job of the claim's own moment may settle it (another job's claim may be live).
+        if (seen.scheduledFor?.toISOString() !== job.moment) return { kind: 'done' };
+        await deps.lockPosts(tx, workspaceId);
+        if (seen.destinationId) await destinations.lock(workspaceId, seen.destinationId, tx);
+        const locked = await posts.lock(workspaceId, postId, tx);
+        if (locked?.state === 'sending' && locked.scheduledFor?.toISOString() === job.moment) {
+          // A claim without an outcome: never sent again.
+          await settleNotConfirmed(tx, workspaceId, postId);
+        }
         return { kind: 'done' };
       }
       if (seen.state !== 'scheduled' || seen.scheduledFor?.toISOString() !== job.moment) {
@@ -118,15 +125,16 @@ export function createPostSender(deps: PostSendDeps) {
         }
       }
       await deps.lockPosts(tx, workspaceId);
+      // Lock order: destination, then post (sad.md §8).
+      const dest = seen.destinationId
+        ? await destinations.lock(workspaceId, seen.destinationId, tx)
+        : null;
       const post = await posts.lock(workspaceId, postId, tx);
       if (!post || post.state !== 'scheduled' || post.scheduledFor?.toISOString() !== job.moment) {
         return { kind: 'done' };
       }
       const moment = post.scheduledFor;
       const now = clock.now();
-      const dest = post.destinationId
-        ? await destinations.lock(workspaceId, post.destinationId, tx)
-        : null;
       const bot = await bots.postReadiness(workspaceId);
       const botPause = bot && later(bot.sendPausedUntil, now) ? bot.sendPausedUntil : null;
       const chatPause = dest && later(dest.pausedUntil, now) ? dest.pausedUntil : null;
@@ -166,10 +174,20 @@ export function createPostSender(deps: PostSendDeps) {
       if (later(dest.nextSendAt, now)) waits.push(dest.nextSendAt);
       if (waits.length > 0) {
         const startAfter = new Date(Math.max(...waits.map((w) => w.getTime())));
+        if (startAfter.getTime() > moment.getTime() + SEND_WINDOW_MS && (botPause || chatPause)) {
+          const botLater = botPause && (!chatPause || botPause.getTime() >= chatPause.getTime());
+          return end('missed', botLater ? 'bot_paused' : 'chat_rate_limited');
+        }
         await jobs.enqueueSend(tx, job, startAfter);
         return { kind: 'done' };
       }
 
+      await destinations.setNextSendAt(
+        workspaceId,
+        dest.id,
+        new Date(now.getTime() + CHAT_PACE_MS),
+        tx,
+      );
       const claimed = await posts.claim(workspaceId, postId, now, tx);
       if (!claimed) return { kind: 'done' };
       await signals.postChanged(tx, workspaceId, postId);
@@ -186,29 +204,42 @@ export function createPostSender(deps: PostSendDeps) {
     const { postId, workspaceId } = job;
     await transaction(async (tx) => {
       await deps.lockPosts(tx, workspaceId);
+      await destinations.lock(workspaceId, dest.id, tx);
       const now = clock.now();
+      const moment = new Date(job.moment);
       const fail = async (reason: string) => {
         const row = await posts.markFailed(workspaceId, postId, reason, now, tx);
         if (row) await signals.postChanged(tx, workspaceId, postId);
       };
-      const again = async (until: Date) => {
+      const again = async (until: Date, reason: 'bot_paused' | 'chat_rate_limited') => {
         const row = await posts.returnToScheduled(workspaceId, postId, now, tx);
         if (!row) return;
+        if (until.getTime() > moment.getTime() + SEND_WINDOW_MS) {
+          const missed = await posts.markMissed(workspaceId, postId, reason, now, tx);
+          if (missed) await signals.postChanged(tx, workspaceId, postId);
+          return;
+        }
         await signals.postChanged(tx, workspaceId, postId);
         await jobs.enqueueSend(tx, job, until);
       };
       const unavailable = async (problem: 'no_post_right' | 'chat_gone') => {
-        await fail(problem);
         await destinations.setAvailability(
           workspaceId,
           dest.id,
           { availability: 'unavailable', problem, membershipChangedAt: now },
           tx,
         );
+        await fail(problem);
         await signals.destinationsChanged(tx, workspaceId);
       };
       switch (sent.outcome) {
         case 'sent': {
+          await destinations.setNextSendAt(
+            workspaceId,
+            dest.id,
+            new Date(sent.at.getTime() + CHAT_PACE_MS),
+            tx,
+          );
           const row = await posts.markPublished(
             workspaceId,
             postId,
@@ -216,22 +247,16 @@ export function createPostSender(deps: PostSendDeps) {
             sent.at,
             tx,
           );
-          await destinations.setNextSendAt(
-            workspaceId,
-            dest.id,
-            new Date(sent.at.getTime() + CHAT_PACE_MS),
-            tx,
-          );
           if (row) await signals.postChanged(tx, workspaceId, postId);
           return;
         }
         case 'paused':
-          return again(sent.until);
+          return again(sent.until, 'bot_paused');
         case 'rate_limited': {
           const until = new Date(now.getTime() + (sent.retryAfterMs ?? DEFAULT_RATE_LIMIT_MS));
           await destinations.setPausedUntil(workspaceId, dest.id, until, tx);
           await signals.destinationsChanged(tx, workspaceId);
-          return again(until);
+          return again(until, 'chat_rate_limited');
         }
         case 'bot_unavailable':
           return fail('bot_not_working');

@@ -459,7 +459,7 @@ export function createPostRepo(db: Db) {
       return rows.map(toPost);
     },
 
-    /** Scheduled posts of one chat due before `before`, other than `excludeId` (per-chat order). */
+    /** Posts of one chat ahead of (`before`, `excludeId`) by (scheduled_for, id), plus any `sending` post (per-chat order). */
     async earlierDueInChat(
       workspaceId: string,
       destinationId: string,
@@ -472,9 +472,19 @@ export function createPostRepo(db: Db) {
         .selectAll()
         .where('workspace_id', '=', workspaceId)
         .where('destination_id', '=', destinationId)
-        .where('state', '=', 'scheduled')
-        .where('scheduled_for', '<', before)
         .where('id', '<>', excludeId)
+        .where((eb) =>
+          eb.or([
+            eb('state', '=', 'sending'),
+            eb.and([
+              eb('state', '=', 'scheduled'),
+              eb.or([
+                eb('scheduled_for', '<', before),
+                eb.and([eb('scheduled_for', '=', before), eb('id', '<', excludeId)]),
+              ]),
+            ]),
+          ]),
+        )
         .orderBy('scheduled_for')
         .orderBy('id')
         .execute();

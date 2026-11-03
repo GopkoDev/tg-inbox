@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/send-post.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T25 — Fix the posts.send job: same-instant order and 3 s pace, stale-job settle only for its own moment, wait past the window → missed now with the pause reason, lock order destination → post

@@ -556,7 +556,7 @@
         "apps/api/src/modules/posts/infra/post-repo.ts"
       ],
       "file": "docs/features/group-posts/tasks/t25-fix-send-job.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T26",

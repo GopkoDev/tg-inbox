@@ -58,6 +58,10 @@ function setup(opts: Opts = {}) {
   const get = (id: string) => store.posts.find((p) => p.id === id)!;
   const posts = {
     ...base,
+    async lock(ws: string, id: string) {
+      events.push('post-lock');
+      return base.lock(ws, id);
+    },
     async claim(_ws: string, id: string, at: Date) {
       const p = get(id);
       if (!p || p.state !== 'scheduled') return null;
@@ -66,6 +70,7 @@ function setup(opts: Opts = {}) {
       return { ...p };
     },
     async markPublished(_ws: string, id: string, v: { telegramMessageId: bigint }, at: Date) {
+      events.push('post-write');
       const p = get(id);
       if (p.state !== 'sending') return null;
       Object.assign(p, {
@@ -89,6 +94,7 @@ function setup(opts: Opts = {}) {
     },
     /** New repo method: sending/scheduled -> failed with a reason, needs attention. */
     async markFailed(_ws: string, id: string, reason: string, at: Date) {
+      events.push('post-write');
       const p = get(id);
       if (p.state !== 'sending' && p.state !== 'scheduled') return null;
       Object.assign(p, {
@@ -135,13 +141,16 @@ function setup(opts: Opts = {}) {
       return { ...dest };
     },
     async lock() {
+      events.push('dest-lock');
       return { ...dest };
     },
     async setPausedUntil(_ws: string, _id: string, until: Date | null) {
+      events.push('dest-write');
       dest.pausedUntil = until;
       return true;
     },
     async setNextSendAt(_ws: string, _id: string, at: Date | null) {
+      events.push('dest-write');
       dest.nextSendAt = at;
       return true;
     },
@@ -150,6 +159,7 @@ function setup(opts: Opts = {}) {
       _id: string,
       v: Pick<DestinationRecord, 'availability' | 'problem' | 'membershipChangedAt'>,
     ) {
+      events.push('dest-write');
       Object.assign(dest, v);
       return true;
     },
@@ -590,5 +600,90 @@ describe('dead-letter settler (AC-08, AC-12)', () => {
     expect(h.get(done.id).state).toBe('published');
     expect(h.get(moved.id).state).toBe('scheduled');
     expect(h.jobs).toHaveLength(0);
+  });
+});
+
+describe('sendPost: review follow-up T25 (F1-F4)', () => {
+  it('F1: the claim commits the chat pace (next_send_at = now + 3 s) before the send', async () => {
+    let paceAtSend: Date | null = null;
+    const ref: { h?: ReturnType<typeof setup> } = {};
+    const h = setup({
+      send: async () => {
+        paceAtSend = ref.h!.dest.nextSendAt;
+        return { outcome: 'sent', messageId: 1n, at: T0 };
+      },
+    });
+    ref.h = h;
+    const p = h.seed();
+    await h.run(p);
+    expect(paceAtSend).toEqual(new Date(T0.getTime() + 3000));
+  });
+
+  it("F2: a job of an old moment leaves another moment's live sending claim alone", async () => {
+    const h = setup();
+    const p = h.seed({ state: 'sending', sendingStartedAt: T0 });
+    await h.run(p, new Date(T0.getTime() - 5 * MIN));
+    expect(h.sends).toHaveLength(0);
+    expect(h.get(p.id).state).toBe('sending');
+    expect(h.store.signals).not.toContain(`post:${WS}:${p.id}`);
+  });
+
+  it('F3: a bot pause that ends past moment + 15 min marks the post missed now with bot_paused', async () => {
+    const h = setup({
+      now: new Date(T0.getTime() + MIN),
+      bot: {
+        state: 'connected',
+        telegramBotId: BOT,
+        sendPausedUntil: new Date(T0.getTime() + 20 * MIN),
+      },
+    });
+    const p = h.seed();
+    await h.run(p);
+    expect(h.sends).toHaveLength(0);
+    expect(h.jobs).toHaveLength(0);
+    expect(h.get(p.id)).toMatchObject({
+      state: 'missed',
+      outcomeReason: 'bot_paused',
+      needsAttention: true,
+    });
+  });
+
+  it('F3: a chat limit that ends past moment + 15 min marks the post missed now with chat_rate_limited', async () => {
+    const h = setup({
+      now: new Date(T0.getTime() + MIN),
+      dest: { pausedUntil: new Date(T0.getTime() + 20 * MIN) },
+    });
+    const p = h.seed();
+    await h.run(p);
+    expect(h.jobs).toHaveLength(0);
+    expect(h.get(p.id)).toMatchObject({ state: 'missed', outcomeReason: 'chat_rate_limited' });
+  });
+
+  it('F3: a 429 whose retry-after ends past the window ends missed with chat_rate_limited, not queued', async () => {
+    const h = setup({
+      now: new Date(T0.getTime() + 10 * MIN),
+      send: async () => ({ outcome: 'rate_limited', retryAfterMs: 10 * MIN }),
+    });
+    const p = h.seed();
+    await h.run(p);
+    expect(h.jobs).toHaveLength(0);
+    expect(h.get(p.id)).toMatchObject({ state: 'missed', outcomeReason: 'chat_rate_limited' });
+  });
+
+  it('F4: prepare locks the destination before the post', async () => {
+    const h = setup();
+    const p = h.seed();
+    await h.run(p);
+    expect(h.events.indexOf('dest-lock')).toBeGreaterThanOrEqual(0);
+    expect(h.events.indexOf('dest-lock')).toBeLessThan(h.events.indexOf('post-lock'));
+  });
+
+  it('F4: record writes the destination before the post', async () => {
+    const h = setup();
+    const p = h.seed();
+    await h.run(p);
+    const afterSend = h.events.slice(h.events.indexOf('send'));
+    expect(afterSend.indexOf('dest-write')).toBeGreaterThanOrEqual(0);
+    expect(afterSend.indexOf('dest-write')).toBeLessThan(afterSend.indexOf('post-write'));
   });
 });

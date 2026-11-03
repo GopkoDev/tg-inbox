@@ -31,7 +31,7 @@
 | T22 | Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen | ui | Dmytro Hopko | M | T20 | done | COMMIT |
 | T23 | Add browser end-to-end posts flows against the real API: connect, draft, publish, schedule, outcome, delete | tests | Dmytro Hopko | M | T16, T18, T19, T21, T22 | done | COMMIT |
 | T24 | Update CLAUDE.md, the architecture map and the design-system canon for the posts module | docs | Dmytro Hopko | S | T15, T18, T19, T21, T22 | done | COMMIT |
-| T25 | Fix the posts.send job: same-instant order and 3 s pace, stale-job settle only for its own moment, wait past the window → missed now with the pause reason, lock order destination → post | app | Dmytro Hopko | M | — | todo | — |
+| T25 | Fix the posts.send job: same-instant order and 3 s pace, stale-job settle only for its own moment, wait past the window → missed now with the pause reason, lock order destination → post | app | Dmytro Hopko | M | — | done | COMMIT |
 | T26 | Fix connecting and Telegram classification: redeem under posts:<ws> with the 20 limit (also on revival) and a visible limit result, needed right per chat kind, 400 rights / upgrade answers, delete timeout as Telegram unavailable | app | Dmytro Hopko | M | — | todo | — |
 | T27 | Fix posts reads and drafts: SQL-side list filters with truncated, idempotent back-to-draft with expected_version, mark seen publishes post.changed, owner re-checked with lockActiveOwners | app | Dmytro Hopko | M | — | todo | — |
 | T28 | Write the missing API end-to-end posts suites (reopened T16): flows, tenancy and secrecy, limits, outage / restart, deactivation, timing — integrity queries zero after them | tests | Dmytro Hopko | M | T25, T26, T27 | todo | — |

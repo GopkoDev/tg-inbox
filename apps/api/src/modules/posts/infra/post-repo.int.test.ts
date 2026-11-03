@@ -268,4 +268,20 @@ describe('post repository (AC-04)', () => {
     expect(await posts.countSentSince(a.workspaceId, at(301))).toBe(0);
     expect(await posts.countSentSince(b.workspaceId, at(0))).toBe(0);
   });
+
+  it('orders due posts of one chat by (scheduled_for, id) and counts a sending post (T25 F1)', async () => {
+    const { a, destA } = await setup();
+    const ids = [newId(), newId(), newId()].sort();
+    for (const id of ids) {
+      await posts.insertDraft(a.workspaceId, { ...draftOf(a, destA.id), id });
+      await schedule(a.workspaceId, id, 1, a.ownerAccountId, at(100));
+    }
+    const ahead = async (id: string) =>
+      (await posts.earlierDueInChat(a.workspaceId, destA.id, at(100), id)).map((p) => p.id);
+    expect(await ahead(ids[0]!)).toEqual([]);
+    expect(await ahead(ids[1]!)).toEqual([ids[0]]);
+    expect(await ahead(ids[2]!)).toEqual([ids[0], ids[1]]);
+    await posts.claim(a.workspaceId, ids[0]!, at(101));
+    expect(await ahead(ids[1]!)).toEqual([ids[0]]);
+  });
 });
