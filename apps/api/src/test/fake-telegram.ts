@@ -74,7 +74,7 @@ export type GetMeBehaviour = 'ok' | 'unauthorized' | 'server_error' | 'rate_limi
 export type CallBehaviour = 'ok' | 'fail' | 'hang';
 
 /** What a webhook registered by today's code subscribes to (ADR-0003). */
-const CURRENT_ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member'];
+const CURRENT_ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member', 'channel_post'];
 
 /** One scripted `sendMessage` answer — plain JSON so it crosses the control API. */
 export type SendAnswer =

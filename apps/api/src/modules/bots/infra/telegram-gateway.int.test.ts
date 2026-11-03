@@ -108,6 +108,11 @@ describe('Telegram gateway (against the fake Bot API)', () => {
         webhookUrl: OUR_URL,
         allowedUpdates: ['my_chat_member', 'message', 'edited_message'],
       });
+      expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours_outdated');
+      fake.bot(TOKEN).script({
+        webhookUrl: OUR_URL,
+        allowedUpdates: ['channel_post', 'my_chat_member', 'message', 'edited_message'],
+      });
       expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours');
       // Another service's webhook stays foreign whatever it subscribes to.
       fake.bot(TOKEN).script({
@@ -145,7 +150,7 @@ describe('Telegram gateway (against the fake Bot API)', () => {
             params: {
               url: OUR_URL,
               secret_token: SECRET,
-              allowed_updates: ['message', 'edited_message', 'my_chat_member'],
+              allowed_updates: ['message', 'edited_message', 'my_chat_member', 'channel_post'],
               max_connections: 7,
               drop_pending_updates: dropPending,
             },

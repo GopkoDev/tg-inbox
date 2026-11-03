@@ -81,6 +81,24 @@ describe('acceptUpdate (Postgres)', () => {
       .execute(),
   });
 
+  it('a group message and a group code write no contact or conversation (AC-17)', async () => {
+    const ws = await insertWorkspace(db);
+    const b = await insertBot(db, { workspaceId: ws, connectedAt: T });
+    const group = { fromId: 760009, chatType: 'group' as const, date: T_S + 5 };
+    const talk = telegramUpdate({ ...group, updateId: 1, messageId: 1, text: 'busy chatter' });
+    const code = telegramUpdate({
+      ...group,
+      updateId: 2,
+      messageId: 2,
+      text: '/connect tgp_Ab12xyZ9',
+    });
+    expect(await accept.acceptUpdate(b.bot.id, b.webhookSecret!, talk, log)).toMatch(/^ignored:/);
+    expect(await accept.acceptUpdate(b.bot.id, b.webhookSecret!, code, log)).toBe(
+      'destination_code',
+    );
+    expect(await holdings(ws)).toEqual({ contacts: [], conversations: [], messages: [] });
+  });
+
   it('the same person writing to two businesses lands separately in each (AC-13)', async () => {
     const acme = await insertWorkspace(db);
     const bolt = await insertWorkspace(db);

@@ -98,7 +98,7 @@ describe('acceptUpdate', () => {
   });
 
   it.each([
-    ['a group message', { chatType: 'group' as const }, 'not_private'],
+    ['a group message', { chatType: 'group' as const }, 'chat_ignored'],
     ['a bot sender', { fromIsBot: true }, 'bot_sender'],
     ['a business message', { businessConnectionId: 'bc1' }, 'business'],
     ['a message before the capture epoch', { date: EPOCH_S - 1 }, 'before_epoch'],
@@ -135,7 +135,7 @@ describe('acceptUpdate', () => {
         workspaceId: 'ws-a',
         updateId: 7,
         outcome: 'ignored',
-        reason: 'not_private',
+        reason: 'chat_ignored',
       },
     ]);
     const printed = JSON.stringify(h.lines);
@@ -251,11 +251,11 @@ describe('acceptUpdate — my_chat_member blocks (ADR-0003, AC-14)', () => {
     expect(h.interceptor.calls).toEqual([]);
   });
 
-  it('a group my_chat_member is ignored and records nothing', async () => {
+  it('a group my_chat_member is a chat_membership fact and records no reach', async () => {
     const h = setup();
     expect(
       await h.accept.acceptUpdate(BOT, SECRET, blockUpdate('kicked', { chatType: 'group' }), h.log),
-    ).toBe('ignored:not_private');
+    ).toBe('chat_membership');
     expect(h.reach.changes).toEqual([]);
     expect(h.interceptor.calls).toEqual([]);
   });

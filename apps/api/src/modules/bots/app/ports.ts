@@ -2,6 +2,12 @@ import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
 import type {
+  ChatMembership,
+  ChatMigrated,
+  ChatRenamed,
+  DestinationCode,
+} from '../domain/inbound.js';
+import type {
   InboundKind,
   NormalisedEdit,
   NormalisedMessage,
@@ -396,3 +402,27 @@ export interface ContactsReach {
     at: Date,
   ): Promise<unknown>;
 }
+
+/** Context every chat fact carries: the workspace and Telegram bot that received it. */
+export interface ChatEventContext {
+  workspaceId: string;
+  telegramBotId: bigint;
+}
+
+/**
+ * Group / channel facts `bots` classifies and hands to `posts` (ADR-0003). Late-bound by the
+ * composition root; a no-op until bound. Nothing of a destination is captured.
+ */
+export interface ChatEventsPort {
+  onDestinationCode(event: ChatEventContext & Omit<DestinationCode, 'type'>): Promise<unknown>;
+  onChatMembership(event: ChatEventContext & Omit<ChatMembership, 'type'>): Promise<unknown>;
+  onChatMigrated(event: ChatEventContext & Omit<ChatMigrated, 'type'>): Promise<unknown>;
+  onChatRenamed(event: ChatEventContext & Omit<ChatRenamed, 'type'>): Promise<unknown>;
+}
+
+export const noopChatEvents: ChatEventsPort = {
+  onDestinationCode: async () => undefined,
+  onChatMembership: async () => undefined,
+  onChatMigrated: async () => undefined,
+  onChatRenamed: async () => undefined,
+};

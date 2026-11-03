@@ -68,7 +68,7 @@ type Signal = Parameters<Api['getMe']>[0];
 const timeout = (ms: number) => AbortSignal.timeout(ms) as unknown as Signal;
 
 /** `my_chat_member` tells the bot about private blocks and unblocks (ADR-0003). */
-const ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member'] as const;
+const ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member', 'channel_post'] as const;
 
 /**
  * grammY errors become typed outcomes here. Their messages, causes and URLs (which embed the

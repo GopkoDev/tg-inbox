@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/bots/domain/inbound.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T5 — Classify group and channel updates in bots into four facts, add channel_post to allowed_updates, and hand them to a late-bound ChatEventsPort
