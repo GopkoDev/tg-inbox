@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/e2e/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T28 — Write the missing API end-to-end posts suites (reopened T16): flows, tenancy and secrecy, limits, outage / restart, deactivation, timing — integrity queries zero after them
