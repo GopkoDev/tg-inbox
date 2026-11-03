@@ -18,6 +18,7 @@ import { Input } from '@/shared/ui/input';
 import { Label } from '@/shared/ui/label';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { schedulePost, setPostingTimeZone } from '../api';
+import { TimeZoneSelect } from '../settings/TimeZoneField';
 import {
   BLOCKER_TEXT,
   BotSettingsLink,
@@ -185,11 +186,7 @@ export function ScheduleDialog({
         ) : needsZone ? (
           <div className="space-y-2">
             <Label htmlFor="schedule-zone">Time zone</Label>
-            <Input
-              id="schedule-zone"
-              value={zoneInput}
-              onChange={(e) => setZoneInput(e.target.value)}
-            />
+            <TimeZoneSelect id="schedule-zone" value={zoneInput} onChange={setZoneInput} />
           </div>
         ) : (
           <div className="space-y-3">

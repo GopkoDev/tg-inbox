@@ -114,7 +114,8 @@ describe('SCR-39 ScheduleDialog', () => {
     renderIt();
     expect(await screen.findByText('Confirm the workspace time zone')).toBeInTheDocument();
     expect(screen.queryByLabelText('Date')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Time zone'), { target: { value: 'Europe/Warsaw' } });
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Time zone' }), { key: 'Enter' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Europe/Warsaw' }));
     fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(api.setPostingTimeZone).toHaveBeenCalledWith(WS, { time_zone: 'Europe/Warsaw' });
     expect(await screen.findByLabelText('Date')).toBeInTheDocument();

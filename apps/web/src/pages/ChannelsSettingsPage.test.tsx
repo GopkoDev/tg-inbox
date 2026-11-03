@@ -216,8 +216,10 @@ describe('ChannelsSettingsPage (SCR-33)', () => {
     renderPage();
     await screen.findByText('Europe/Kyiv');
     fireEvent.click(screen.getByRole('button', { name: 'Change' }));
-    const input = await screen.findByLabelText(/time zone/i);
-    fireEvent.change(input, { target: { value: 'Europe/Warsaw' } });
+    fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Time zone' }), {
+      key: 'Enter',
+    });
+    fireEvent.click(await screen.findByRole('option', { name: 'Europe/Warsaw' }));
     fireEvent.click(screen.getByRole('button', { name: /^(Change|Continue)$/ }));
     const dialog = await screen.findByRole('alertdialog');
     expect(within(dialog).getByText('Change the time zone to Europe/Warsaw?')).toBeTruthy();

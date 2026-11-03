@@ -10,7 +10,7 @@ owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
 status: "todo"
-step: ""
+step: "COMMIT"
 ---
 
 # T31 — Fix the list and settings: attention marker from needs_attention, connect dialog re-reads on destinations.changed, TimeZoneField as a Select reused by ScheduleDialog, Tabs / Badges in the list, PostCrumb built and registered

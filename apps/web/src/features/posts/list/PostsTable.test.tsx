@@ -146,6 +146,35 @@ describe('PostsTable (SCR-36)', () => {
     expect(within(ok).queryByTestId('needs-attention')).toBeNull();
   });
 
+  it('drives the attention marker from needs_attention, not from the state (AC-12, AC-13)', async () => {
+    api.listPosts.mockResolvedValue(
+      list([
+        post(1, { state: 'not_confirmed', needs_attention: true }),
+        post(2, { state: 'failed', outcome_reason: 'chat_gone', needs_attention: false }),
+      ]),
+    );
+    renderPage();
+    const flagged = (await screen.findByText('Post text 1')).closest('tr')!;
+    expect(within(flagged).getByTestId('needs-attention')).toBeInTheDocument();
+    const seen = screen.getByText('Post text 2').closest('tr')!;
+    expect(within(seen).getByText('Failed')).toBeInTheDocument();
+    expect(within(seen).queryByTestId('needs-attention')).toBeNull();
+  });
+
+  it('renders the destination kind as a badge', async () => {
+    api.listPosts.mockResolvedValue(list([post(1)]));
+    renderPage();
+    const kind = await screen.findByText('Channel');
+    expect(kind).toHaveAttribute('data-slot', 'badge');
+  });
+
+  it('renders the filters with the Tabs primitive', async () => {
+    api.listPosts.mockResolvedValue(list([post(1)]));
+    renderPage();
+    await screen.findByText('Post text 1');
+    expect(screen.getByRole('tablist')).toHaveAttribute('data-slot', 'tabs-list');
+  });
+
   it('keeps the filter in the address and asks the API for it', async () => {
     api.listPosts.mockResolvedValue(list([post(1)]));
     renderPage();

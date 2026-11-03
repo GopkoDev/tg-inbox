@@ -1,6 +1,6 @@
 import { isValidTimeZone } from '@tg/shared';
 import { Loader2 } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import {
@@ -13,10 +13,51 @@ import {
   AlertDialogTitle,
 } from '@/shared/ui/alert-dialog';
 import { Button } from '@/shared/ui/button';
-import { Input } from '@/shared/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { setPostingTimeZone } from '../api';
 
-const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const browserZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+const allZones = (): string[] => {
+  try {
+    return Intl.supportedValuesOf('timeZone');
+  } catch {
+    return [];
+  }
+};
+
+/** The one time zone picker (SCR-33 row and SCR-39 zone step): a Select over the IANA zones. */
+export function TimeZoneSelect({
+  id,
+  value,
+  onChange,
+  disabled,
+}: {
+  id?: string;
+  value: string;
+  onChange: (zone: string) => void;
+  disabled?: boolean;
+}) {
+  const zones = useMemo(() => {
+    const list = allZones();
+    const extra = [value, browserZone()].filter((z) => z && !list.includes(z));
+    return [...new Set(extra), ...list];
+  }, [value]);
+  return (
+    <Select value={value} onValueChange={onChange} disabled={disabled}>
+      <SelectTrigger id={id} aria-label="Time zone" className="w-60">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {zones.map((z) => (
+          <SelectItem key={z} value={z}>
+            {z}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
 
 /** SCR-33 time zone row with the SCR-43 confirmation (owner only edits). */
 export function TimeZoneField({
@@ -80,14 +121,7 @@ export function TimeZoneField({
               Not set — you'll be asked when you first schedule a post
             </span>
           ))}
-        {editing && (
-          <Input
-            aria-label="Time zone"
-            className="w-60"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-          />
-        )}
+        {editing && <TimeZoneSelect value={value} onChange={setValue} disabled={pending} />}
         {canEdit && !editing && (
           <Button
             variant="outline"

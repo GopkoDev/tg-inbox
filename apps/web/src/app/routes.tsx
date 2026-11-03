@@ -7,6 +7,7 @@ import {
 } from 'react-router';
 import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
 import { BroadcastCrumb } from '@/features/broadcasts/BroadcastCrumb';
+import { PostCrumb } from '@/features/posts/PostCrumb';
 import { ContactCrumb } from '@/features/contacts/ContactCrumb';
 import { SettingsIndexRedirect } from '@/features/settings/SettingsIndexRedirect';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
@@ -114,17 +115,17 @@ const workspaceRoute: RouteObject = {
         },
         {
           path: ':postId',
-          handle: { crumb: 'Post' },
+          handle: { crumb: 'Post', Crumb: PostCrumb },
           element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
         },
         {
           path: ':postId/publish',
-          handle: { crumb: 'Post' },
+          handle: { crumb: 'Post', Crumb: PostCrumb },
           element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
         },
         {
           path: ':postId/schedule',
-          handle: { crumb: 'Post' },
+          handle: { crumb: 'Post', Crumb: PostCrumb },
           element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
         },
       ],

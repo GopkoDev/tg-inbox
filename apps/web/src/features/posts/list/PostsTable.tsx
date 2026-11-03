@@ -8,7 +8,9 @@ import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Card, CardContent } from '@/shared/ui/card';
 import { EmptyFilterState } from '@/shared/ui/empty-filter-state';
+import { DataTableToolbar } from '@/shared/ui/data-table-toolbar';
 import { Skeleton } from '@/shared/ui/skeleton';
+import { Tabs, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/ui/table';
 import type { PostFilter } from '../api';
 import { useDestinationsStore } from '../destinations-store';
@@ -92,9 +94,9 @@ function RowView({
         {post.destination ? (
           <div className="flex flex-col">
             <span>{post.destination.title}</span>
-            <span className="text-xs text-muted-foreground">
+            <Badge variant="outline" className="mt-0.5">
               {KIND_LABEL[post.destination.kind]}
-            </span>
+            </Badge>
           </div>
         ) : (
           <span className="text-muted-foreground">No destination</span>
@@ -102,14 +104,16 @@ function RowView({
       </TableCell>
       <TableCell>
         <div className="flex items-center gap-2">
+          {post.needs_attention ? (
+            <TriangleAlert
+              data-testid="needs-attention"
+              className="size-4 text-destructive"
+              aria-label="Needs attention"
+              role="img"
+            />
+          ) : null}
           {failed ? (
             <>
-              <TriangleAlert
-                data-testid="needs-attention"
-                className="size-4 text-destructive"
-                aria-label="Needs attention"
-                role="img"
-              />
               <Badge variant="destructive">{STATE_LABEL[post.state]}</Badge>
               {post.state === 'missed' && post.scheduled_for && zone ? (
                 <span className="text-xs text-muted-foreground">
@@ -187,21 +191,19 @@ export function PostsTable({ workspaceId }: { workspaceId: string }) {
     );
 
   const tabs = (
-    <div role="tablist" aria-label="Filter posts" className="flex flex-wrap gap-1">
-      {FILTERS.map((f) => (
-        <Button
-          key={f.value}
-          type="button"
-          role="tab"
-          size="sm"
-          variant={f.value === filter ? 'default' : 'outline'}
-          aria-selected={f.value === filter}
-          onClick={() => select(f.value)}
-        >
-          {f.label}
-        </Button>
-      ))}
-    </div>
+    <DataTableToolbar
+      filters={
+        <Tabs value={filter} onValueChange={(v) => select(parseFilter(v))}>
+          <TabsList aria-label="Filter posts" className="h-auto flex-wrap">
+            {FILTERS.map((f) => (
+              <TabsTrigger key={f.value} value={f.value} onClick={() => select(f.value)}>
+                {f.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      }
+    />
   );
 
   if (status === 'error')

@@ -3,6 +3,7 @@ import type { DestinationCodeCreated, DestinationCodeStatus } from '@tg/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '@/shared/api/client';
+import { subscribeLive } from '@/shared/api/live-connection';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { Button } from '@/shared/ui/button';
 import {
@@ -17,8 +18,6 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { createDestinationCode, getDestinationCode } from '../api';
 import { useDestinationsStore } from '../destinations-store';
-
-const POLL_MS = 3000;
 
 type View =
   | { kind: 'creating' }
@@ -130,12 +129,19 @@ export function ConnectCodeDialog({
   useEffect(() => {
     if (!createdId || done) return;
     const first = setTimeout(() => void poll(), 0);
-    const timer = setInterval(() => void poll(), POLL_MS);
+    const stop = subscribeLive(workspaceId, {
+      onFrame: (frame) => {
+        if (frame.type === 'destinations.changed' || frame.type === 'resync') void poll();
+      },
+      onReconnected: () => void poll(),
+      onInvalidFrame: () => void poll(),
+      onClosed: () => undefined,
+    });
     return () => {
       clearTimeout(first);
-      clearInterval(timer);
+      stop();
     };
-  }, [createdId, done, poll]);
+  }, [workspaceId, createdId, done, poll]);
 
   useEffect(() => {
     if (!createdId || !expiresAt || done) return;

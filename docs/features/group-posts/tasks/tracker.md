@@ -37,7 +37,7 @@
 | T28 | Write the missing API end-to-end posts suites (reopened T16): flows, tenancy and secrecy, limits, outage / restart, deactivation, timing — integrity queries zero after them | tests | Dmytro Hopko | M | T25, T26, T27 | done | COMMIT |
 | T29 | Fix the post address: one page instance across new / :id / publish / schedule with the post in a store, live switch editor ↔ post page, NotFoundCard on 404, owner-only Change time wired to ScheduleDialog | ui | Dmytro Hopko | M | T27 | done | COMMIT |
 | T30 | Complete the editor and post page states: save line and save-error Alert with Retry, SCR-40 declared content, destination problem text in publish / schedule, workspace-zone times everywhere, Field / FieldError and kind Badges | ui | Dmytro Hopko | M | T29 | done | COMMIT |
-| T31 | Fix the list and settings: attention marker from needs_attention, connect dialog re-reads on destinations.changed, TimeZoneField as a Select reused by ScheduleDialog, Tabs / Badges in the list, PostCrumb built and registered | ui | Dmytro Hopko | M | T29 | todo | — |
+| T31 | Fix the list and settings: attention marker from needs_attention, connect dialog re-reads on destinations.changed, TimeZoneField as a Select reused by ScheduleDialog, Tabs / Badges in the list, PostCrumb built and registered | ui | Dmytro Hopko | M | T29 | done | COMMIT |
 | T32 | Make the web tests assert real outcomes and run the browser e2e suite green, adding attention and change-time flows | tests | Dmytro Hopko | M | T28, T30, T31 | todo | — |
 
 **Total:** 32 tasks (T25–T32 are review follow-ups, 2026-11-04).
