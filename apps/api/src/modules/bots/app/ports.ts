@@ -342,6 +342,14 @@ export interface TelegramGateway {
     messageId: bigint,
     timeoutMs: number,
   ): Promise<PostDeleteAnswer>;
+  /** Whether the bot may post in a channel or group (its own membership there); false on any failure. */
+  chatRights(
+    token: string,
+    chatId: string,
+    telegramBotId: bigint,
+    kind: string,
+    timeoutMs: number,
+  ): Promise<{ canPost: boolean }>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /**

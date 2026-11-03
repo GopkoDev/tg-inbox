@@ -369,6 +369,26 @@ export function createTelegramGateway({
       }
     },
 
+    async chatRights(token, chatId, telegramBotId, kind, timeoutMs) {
+      try {
+        const m = await api(token).getChatMember(chatId, Number(telegramBotId), timeout(timeoutMs));
+        const rights = m as {
+          status: string;
+          can_post_messages?: boolean;
+          can_send_messages?: boolean;
+        };
+        if (m.status === 'creator') return { canPost: true };
+        if (m.status === 'administrator') {
+          return { canPost: kind === 'channel' ? rights.can_post_messages === true : true };
+        }
+        if (m.status === 'member') return { canPost: kind !== 'channel' };
+        if (m.status === 'restricted') return { canPost: rights.can_send_messages === true };
+        return { canPost: false };
+      } catch {
+        return { canPost: false };
+      }
+    },
+
     async getMe(token, timeoutMs) {
       try {
         const me = await api(token).getMe(timeout(timeoutMs));

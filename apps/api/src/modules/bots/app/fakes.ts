@@ -239,6 +239,9 @@ export function fakeGateway(): TelegramGateway & {
     async deletePost() {
       return { outcome: 'refused' } as const;
     },
+    async chatRights() {
+      return { canPost: true };
+    },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });
       return fake.me;

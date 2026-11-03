@@ -92,6 +92,15 @@ export function createWorkspaceAccess(deps: WorkspaceAccessDeps) {
       return uow.reposOn(tx).memberships.lockActiveAccountIds(workspaceId, accountIds);
     },
 
+    /** Joins `tx`: `FOR SHARE` on the memberships of `accountIds`; returns the active business owners among them. */
+    lockActiveOwners(
+      tx: Transaction<DB>,
+      workspaceId: string,
+      accountIds: readonly string[],
+    ): Promise<string[]> {
+      return uow.reposOn(tx).memberships.lockActiveOwnerAccountIds(workspaceId, accountIds);
+    },
+
     /** Active members of the workspace for the assignee chooser, by display name then account id. */
     async activeMembers(
       workspaceId: string,

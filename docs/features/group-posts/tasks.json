@@ -305,7 +305,7 @@
         "apps/api/src/modules/inbox/infra/hub.ts"
       ],
       "file": "docs/features/group-posts/tasks/t14-wiring-queues.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T15",
