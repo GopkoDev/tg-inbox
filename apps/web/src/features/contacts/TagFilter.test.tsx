@@ -165,3 +165,46 @@ describe('TagFilter popover', () => {
     expect(screen.getByRole('checkbox', { name: /Kyiv/ })).not.toBeChecked();
   });
 });
+
+describe('TagFilter driven by a draft (controlled, SCR-25 Send to)', () => {
+  it.each([
+    [{ mode: 'any', tagIds: [] }, 'Send to'],
+    [{ mode: 'any', tagIds: [TAGS[1]!.id] }, 'Send to · Any of 1'],
+    [{ mode: 'all', tagIds: [TAGS[0]!.id, TAGS[1]!.id] }, 'Send to · All of 2'],
+    [{ mode: 'none', tagIds: [] }, 'Send to · No tags'],
+  ] as const)('with a label reads %j as «%s»', (value, label) => {
+    render(
+      <TagFilter
+        tags={TAGS}
+        status="ready"
+        onRetry={() => undefined}
+        mode={value.mode}
+        tagIds={[...value.tagIds]}
+        onChange={() => undefined}
+        label="Send to"
+      />,
+    );
+    expect(screen.getByRole('button', { name: label })).toBeInTheDocument();
+  });
+
+  it('disables the tags it is told to (left out elsewhere), and only those', () => {
+    const onChange = vi.fn();
+    render(
+      <TagFilter
+        tags={TAGS}
+        status="ready"
+        onRetry={() => undefined}
+        mode="any"
+        tagIds={[]}
+        onChange={onChange}
+        label="Send to"
+        disabledTagIds={[TAGS[2]!.id]}
+      />,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Send to' }));
+    expect(screen.getByRole('checkbox', { name: /Wholesale/ })).toBeDisabled();
+    expect(screen.getByRole('checkbox', { name: /VIP/ })).toBeEnabled();
+    fireEvent.click(screen.getByRole('checkbox', { name: /VIP/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ mode: 'any', tagIds: [TAGS[1]!.id] });
+  });
+});

@@ -28,10 +28,14 @@ let epoch = 0;
 let issued = 0;
 let landed = 0;
 
-/** Frames that can change the count: an arrival, an assignment or state change, a read. */
+/**
+ * Frames that can change the count: an arrival, an assignment or state change, a read. A broadcast
+ * item never does (ADR-0010).
+ */
 function changesCount(frame: LiveFrame): boolean {
   if (frame.type === 'resync') return true;
   if (frame.type !== 'conversation.changed') return false;
+  if (frame.item?.type === 'broadcast') return false;
   return frame.change !== 'edited';
 }
 

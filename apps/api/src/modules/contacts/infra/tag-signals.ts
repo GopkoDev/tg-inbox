@@ -1,7 +1,7 @@
 import type { Transaction } from 'kysely';
 import type { DB } from '../../../platform/db.types.gen.js';
 import { publish } from '../../../platform/realtime.js';
-import type { TagSignals } from '../app/ports.js';
+import type { ReachSignals, TagSignals } from '../app/ports.js';
 
 /**
  * `contact.changed` / `tags.changed` through the realtime publisher, in the caller's transaction:
@@ -20,5 +20,20 @@ export function createTagSignals(): TagSignals {
       }),
     tagsChanged: (tx, workspaceId) =>
       publish(tx as Transaction<DB>, { type: 'tags.changed', v: 1, workspace_id: workspaceId }),
+  };
+}
+
+/** `contact.changed { change: "reach" }` in the caller's transaction (contracts/events.md). */
+export function createReachSignals(): ReachSignals {
+  return {
+    // Called only inside a transaction (capture's, or recordBlockChange's own).
+    reachChanged: (tx, workspaceId, contactId) =>
+      publish(tx as Transaction<DB>, {
+        type: 'contact.changed',
+        v: 1,
+        workspace_id: workspaceId,
+        contact_id: contactId,
+        change: 'reach',
+      }),
   };
 }

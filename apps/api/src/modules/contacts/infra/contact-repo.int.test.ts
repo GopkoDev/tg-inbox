@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createDb, type Db } from '../../../platform/db.js';
-import { insertContact } from '../../../test/fixtures/contacts.js';
+import { insertContact, insertReach } from '../../../test/fixtures/contacts.js';
 import { insertWorkspace, twoWorkspaces } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import type { ContactProfile } from '../app/ports.js';
@@ -317,9 +317,44 @@ describe('contact repository', () => {
         createdAt: at(100),
         firstWroteAt: at(5),
         lastWroteAt: at(9),
+        blockedSince: null,
       });
       expect(await repo.profile(b, contactId)).toBeNull();
       expect(await repo.profile(a, '0199ffff-ffff-7fff-8fff-ffffffffffff')).toBeNull();
+    });
+  });
+
+  describe('profile blocked_since for the current Telegram bot (AC-10, AC-14)', () => {
+    it('reads the mark of the given bot by the reach key; null for another bot, no row or no bot', async () => {
+      const { a, b } = await twoWorkspaces(db);
+      const blocked = await insertContact(db, { workspaceId: a });
+      const unblocked = await insertContact(db, { workspaceId: a });
+      const foreign = await insertContact(db, { workspaceId: b });
+      await insertReach(db, {
+        workspaceId: a,
+        contactId: blocked,
+        telegramBotId: 9001n,
+        blockedAt: at(3),
+      });
+      await insertReach(db, {
+        workspaceId: a,
+        contactId: unblocked,
+        telegramBotId: 9001n,
+        wroteAt: at(1),
+        blockedAt: null,
+      });
+      await insertReach(db, {
+        workspaceId: b,
+        contactId: foreign,
+        telegramBotId: 9001n,
+        blockedAt: at(4),
+      });
+      expect((await repo.profile(a, blocked, 9001n))?.blockedSince).toEqual(at(3));
+      expect((await repo.profile(a, blocked, 8001n))?.blockedSince).toBeNull();
+      expect((await repo.profile(a, blocked, null))?.blockedSince).toBeNull();
+      expect((await repo.profile(a, unblocked, 9001n))?.blockedSince).toBeNull();
+      // Isolation: a contact (and its reach row) of another workspace is never read.
+      expect(await repo.profile(a, foreign, 9001n)).toBeNull();
     });
   });
 });

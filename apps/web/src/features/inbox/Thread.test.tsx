@@ -12,6 +12,7 @@ const api = {
   getThreadMessage: vi.fn(),
   getThreadReply: vi.fn(),
   getThreadActivity: vi.fn(),
+  getThreadBroadcastItem: vi.fn(),
   markConversationRead: vi.fn(),
   getInboxBotStatus: vi.fn(),
   sendReply: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('./api-source', () => ({
   getThreadMessage: (...a: unknown[]) => api.getThreadMessage(...a),
   getThreadReply: (...a: unknown[]) => api.getThreadReply(...a),
   getThreadActivity: (...a: unknown[]) => api.getThreadActivity(...a),
+  getThreadBroadcastItem: (...a: unknown[]) => api.getThreadBroadcastItem(...a),
   markConversationRead: (...a: unknown[]) => api.markConversationRead(...a),
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
   sendReply: (...a: unknown[]) => api.sendReply(...a),
@@ -621,6 +623,77 @@ describe('SCR-02 actions bar and activity lines (AC-02, AC-05, AC-09)', () => {
     await flush();
     expect(screen.getByTestId('activity-line').textContent).toContain('Ana Shevchenko closed this');
     expect(screen.getByRole('button', { name: 'Reopen' })).toBeInTheDocument();
+  });
+});
+
+describe('SCR-02 broadcast items (AC-16)', () => {
+  const broadcastItem = (n: number, min: number, over = {}) => ({
+    type: 'broadcast' as const,
+    id: id(400 + n),
+    workspace_id: WS,
+    conversation_id: CONV,
+    broadcast_id: id(300),
+    broadcast_name: 'Spring prices',
+    text: `broadcast ${n}`,
+    launched_by: { account_id: id(951), display_name: 'Test Owner' },
+    state: 'delivered' as const,
+    position_at: at(min),
+    ...over,
+  });
+
+  it('renders a broadcast item among messages at its time', async () => {
+    await openAndRender([message(1, 1), broadcastItem(1, 2), message(2, 3)]);
+    const order = Array.from(
+      document.querySelectorAll('[data-testid="bubble"], [data-testid="broadcast-item"]'),
+    ).map((e) => e.getAttribute('data-testid'));
+    expect(order).toEqual(['bubble', 'broadcast-item', 'bubble']);
+    expect(screen.getByText('broadcast 1')).toBeInTheDocument();
+  });
+
+  it('a live item of the open conversation is fetched and inserted in place, touching nothing else', async () => {
+    await openAndRender([message(1, 1), message(2, 9)], {
+      read_through_at: at(9),
+    });
+    api.markConversationRead.mockClear();
+    api.listConversations.mockClear();
+    api.getConversation.mockClear();
+    api.getThreadBroadcastItem.mockResolvedValue(broadcastItem(2, 5));
+    act(() => sockets[0]!.handlers.onFrame(changed('created', { type: 'broadcast', id: id(402) })));
+    await flush();
+    expect(api.getThreadBroadcastItem).toHaveBeenCalledWith(WS, CONV, id(402), {
+      background: true,
+    });
+    const order = Array.from(
+      document.querySelectorAll('[data-testid="bubble"], [data-testid="broadcast-item"]'),
+    ).map((e) => e.getAttribute('data-testid'));
+    expect(order).toEqual(['bubble', 'broadcast-item', 'bubble']);
+    expect(api.markConversationRead).not.toHaveBeenCalled();
+    expect(api.listConversations).not.toHaveBeenCalled();
+    expect(api.getConversation).not.toHaveBeenCalled();
+  });
+
+  it('a broadcast item at the same time as a message comes after it', async () => {
+    await openAndRender([message(1, 4)]);
+    api.getThreadBroadcastItem.mockResolvedValue(broadcastItem(0, 4, { id: id(1) }));
+    act(() => sockets[0]!.handlers.onFrame(changed('created', { type: 'broadcast', id: id(1) })));
+    await flush();
+    const order = Array.from(
+      document.querySelectorAll('[data-testid="bubble"], [data-testid="broadcast-item"]'),
+    ).map((e) => e.getAttribute('data-testid'));
+    expect(order).toEqual(['bubble', 'broadcast-item']);
+  });
+
+  it('a frame for another conversation fetches nothing', async () => {
+    await openAndRender([message(1, 1)]);
+    act(() =>
+      sockets[0]!.handlers.onFrame({
+        ...changed('created', { type: 'broadcast', id: id(403) }),
+        conversation_id: id(199),
+      }),
+    );
+    await flush();
+    expect(api.getThreadBroadcastItem).not.toHaveBeenCalled();
+    expect(api.listConversations).toHaveBeenCalledTimes(1);
   });
 });
 

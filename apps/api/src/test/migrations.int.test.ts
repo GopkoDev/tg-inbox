@@ -4,7 +4,18 @@ import { Migrator } from 'kysely/migration';
 import { TSFileMigrationProvider } from 'kysely-ctl';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { DB } from '../platform/db.types.gen.js';
 import { newId } from '../platform/ids.js';
+import { insertBot } from './fixtures/bots.js';
+import {
+  endBroadcastFixture,
+  insertBroadcast,
+  insertGroupContact,
+  launchBroadcastFixture,
+  twoWorkspacesWithBroadcasts,
+} from './fixtures/broadcasts.js';
+import { insertContact, insertReach } from './fixtures/contacts.js';
+import { insertBroadcastItem } from './fixtures/conversations.js';
 import { startTestDatabase, type TestDatabase } from './postgres.js';
 
 const TABLES = [
@@ -700,6 +711,15 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'add_bots_needs_token_at',
+        'create_broadcast_items',
+        'create_broadcast_recipients',
+        'create_broadcast_group_contacts',
+        'create_broadcast_audience_tags',
+        'create_broadcasts',
+        'add_conversations_workspace_id_id_key',
+        'backfill_contact_bot_reach',
+        'create_contact_bot_reach',
         'create_contact_tag_history',
         'create_contact_tags',
         'create_tags',
@@ -1207,7 +1227,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 23; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -1913,6 +1933,526 @@ describe('contacts migrations 04-06', () => {
       expect(await tables()).toEqual([]);
       expect((await migrator.migrateToLatest()).error).toBeUndefined();
       expect(await tables()).toEqual(['contact_tag_history', 'contact_tags', 'tags']);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_REACH = '1791681110011_create_contact_tag_history';
+
+describe('broadcasts migrations 01-02 (reach)', () => {
+  let database: TestDatabase;
+  let db: Kysely<unknown>;
+  const day = (d: number, h = 10) => new Date(Date.UTC(2026, 1, d, h));
+  const typed = (handle: Kysely<unknown>) => handle as unknown as Kysely<DB>;
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    db = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+  });
+
+  afterAll(async () => {
+    await db?.destroy();
+    await database?.stop();
+  });
+
+  const migratorFor = (handle: Kysely<unknown>) =>
+    new Migrator({
+      db: handle,
+      provider: new TSFileMigrationProvider({
+        migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+      }),
+    });
+
+  async function workspace(handle: Kysely<unknown>) {
+    const ws = newId();
+    await sql`INSERT INTO workspaces (id, name, created_at) VALUES (${ws}, 'Acme', ${day(1)})`.execute(
+      handle,
+    );
+    return ws;
+  }
+
+  type ReachRow = {
+    contact_id: string;
+    telegram_bot_id: string;
+    wrote_at: Date | null;
+    blocked_at: Date | null;
+    changed_at: Date;
+  };
+  async function reachRows(handle: Kysely<unknown>, ws?: string) {
+    const { rows } = await sql<ReachRow>`
+      SELECT contact_id, telegram_bot_id, wrote_at, blocked_at, changed_at FROM contact_bot_reach
+      WHERE ${ws ?? null}::uuid IS NULL OR workspace_id = ${ws ?? null}::uuid
+      ORDER BY contact_id`.execute(handle);
+    return rows;
+  }
+
+  it('backfills one "wrote" row per contact that wrote, for its workspace bot row in any state', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      expect((await migrator.migrateTo(LAST_PRE_REACH)).error).toBeUndefined();
+      const t = typed(freshDb);
+      const connected = await workspace(freshDb);
+      const needsToken = await workspace(freshDb);
+      const disconnected = await workspace(freshDb);
+      const noBot = await workspace(freshDb);
+      await insertBot(t, { workspaceId: connected, telegramBotId: 5001n });
+      await insertBot(t, { workspaceId: needsToken, telegramBotId: 5002n, state: 'needs_token' });
+      await insertBot(t, {
+        workspaceId: disconnected,
+        telegramBotId: 5003n,
+        state: 'disconnected',
+      });
+      const wrote = { firstWroteAt: day(2), lastWroteAt: day(5) };
+      const c1 = await insertContact(t, { workspaceId: connected, ...wrote });
+      const silent = await insertContact(t, { workspaceId: connected });
+      const c2 = await insertContact(t, { workspaceId: needsToken, ...wrote });
+      const c3 = await insertContact(t, { workspaceId: disconnected, ...wrote });
+      await insertContact(t, { workspaceId: noBot, ...wrote });
+
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+
+      const row = (contact: string, bot: string) => ({
+        contact_id: contact,
+        telegram_bot_id: bot,
+        wrote_at: day(2),
+        blocked_at: null,
+        changed_at: day(5),
+      });
+      expect(await reachRows(freshDb, connected)).toEqual([row(c1, '5001')]);
+      expect((await reachRows(freshDb, connected)).map((r) => r.contact_id)).not.toContain(silent);
+      expect(await reachRows(freshDb, needsToken)).toEqual([row(c2, '5002')]);
+      expect(await reachRows(freshDb, disconnected)).toEqual([row(c3, '5003')]);
+      expect(await reachRows(freshDb, noBot)).toEqual([]);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+
+  it('a re-run of the backfill adds nothing and keeps a row capture wrote', async () => {
+    const t = typed(db);
+    const ws = await workspace(db);
+    await insertBot(t, { workspaceId: ws, telegramBotId: 6001n });
+    const c = await insertContact(t, {
+      workspaceId: ws,
+      firstWroteAt: day(2),
+      lastWroteAt: day(3),
+    });
+    await insertReach(t, {
+      workspaceId: ws,
+      contactId: c,
+      telegramBotId: 6001n,
+      wroteAt: day(1),
+      blockedAt: day(4),
+      changedAt: day(4),
+    });
+    const before = await reachRows(db);
+    const backfill = await import('../../migrations/1791681110013_backfill_contact_bot_reach.js');
+    await backfill.up(db);
+    await backfill.up(db);
+    expect(await reachRows(db)).toEqual(before);
+    expect(await reachRows(db, ws)).toEqual([
+      {
+        contact_id: c,
+        telegram_bot_id: '6001',
+        wrote_at: day(1),
+        blocked_at: day(4),
+        changed_at: day(4),
+      },
+    ]);
+  });
+
+  it('refuses a row naming another workspace contact and facts after changed_at, on the named constraints', async () => {
+    const t = typed(db);
+    const a = await workspace(db);
+    const b = await workspace(db);
+    const contactOfB = await insertContact(t, { workspaceId: b });
+    const contactOfA = await insertContact(t, { workspaceId: a });
+    const insert = (o: {
+      ws: string;
+      contact: string;
+      wrote?: Date | null;
+      blocked?: Date | null;
+      changed: Date;
+    }) =>
+      sql`INSERT INTO contact_bot_reach (workspace_id, contact_id, telegram_bot_id, wrote_at, blocked_at, changed_at)
+        VALUES (${o.ws}, ${o.contact}, ${9001}, ${o.wrote ?? null}, ${o.blocked ?? null}, ${o.changed})`.execute(
+        db,
+      );
+    await expect(insert({ ws: a, contact: contactOfB, changed: day(1) })).rejects.toThrow(
+      /contact_bot_reach_contact_fkey/,
+    );
+    await expect(
+      insert({ ws: a, contact: contactOfA, blocked: day(3), changed: day(2) }),
+    ).rejects.toThrow(/contact_bot_reach_blocked_at_check/);
+    await expect(
+      insert({ ws: a, contact: contactOfA, wrote: day(3), changed: day(2) }),
+    ).rejects.toThrow(/contact_bot_reach_wrote_at_check/);
+    await insert({ ws: a, contact: contactOfA, wrote: day(1), blocked: day(2), changed: day(2) });
+  });
+
+  it('insertReach defaults changedAt to the latest fact and insertContact({ reachForBot }) writes a "wrote" row', async () => {
+    const t = typed(db);
+    const ws = await workspace(db);
+    const c = await insertContact(t, { workspaceId: ws });
+    await insertReach(t, {
+      workspaceId: ws,
+      contactId: c,
+      telegramBotId: 7001n,
+      wroteAt: day(1),
+      blockedAt: day(6),
+    });
+    const before = Date.now();
+    await insertReach(t, { workspaceId: ws, contactId: c, telegramBotId: 7002n });
+    const rows = await reachRows(db, ws);
+    expect(rows.find((r) => r.telegram_bot_id === '7001')).toMatchObject({
+      wrote_at: day(1),
+      blocked_at: day(6),
+      changed_at: day(6),
+    });
+    const bare = rows.find((r) => r.telegram_bot_id === '7002')!;
+    expect(bare).toMatchObject({ wrote_at: null, blocked_at: null });
+    expect(bare.changed_at.getTime()).toBeGreaterThanOrEqual(before - 1000);
+
+    const reached = await insertContact(t, {
+      workspaceId: ws,
+      reachForBot: 7003n,
+      firstWroteAt: day(2),
+      lastWroteAt: day(4),
+    });
+    expect(await reachRows(db, ws)).toContainEqual({
+      contact_id: reached,
+      telegram_bot_id: '7003',
+      wrote_at: day(2),
+      blocked_at: null,
+      changed_at: day(4),
+    });
+    const plain = await insertContact(t, { workspaceId: ws, reachForBot: 7003n });
+    const { rows: contactRows } = await sql<{ first_wrote_at: Date | null }>`
+      SELECT first_wrote_at FROM contacts WHERE id = ${plain}`.execute(db);
+    expect(contactRows[0]!.first_wrote_at).not.toBeNull();
+    expect((await reachRows(db, ws)).map((r) => r.contact_id)).toContain(plain);
+  });
+
+  it('reverts 02 then 01 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = migratorFor(freshDb);
+      const exists = async () => {
+        const { rows } = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name = 'contact_bot_reach'`.execute(freshDb);
+        return rows[0]!.n === 1;
+      };
+      expect(await exists()).toBe(true);
+      expect(
+        (await migrator.migrateTo('1791681110012_create_contact_bot_reach')).error,
+      ).toBeUndefined();
+      expect(await exists()).toBe(true);
+      expect((await migrator.migrateTo(LAST_PRE_REACH)).error).toBeUndefined();
+      expect(await exists()).toBe(false);
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await exists()).toBe(true);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+const LAST_PRE_BROADCASTS = '1791681110013_backfill_contact_bot_reach';
+const BROADCAST_TABLES = [
+  'broadcast_audience_tags',
+  'broadcast_group_contacts',
+  'broadcast_items',
+  'broadcast_recipients',
+  'broadcasts',
+];
+
+describe('broadcasts migrations 03-08 (tables)', () => {
+  let database: TestDatabase;
+  let raw: Kysely<unknown>;
+  let db: Kysely<DB>;
+  let world: Awaited<ReturnType<typeof twoWorkspacesWithBroadcasts>>;
+  const at = new Date('2026-10-11T10:00:00Z');
+
+  beforeAll(async () => {
+    database = await startTestDatabase();
+    raw = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: database.url }) }),
+    });
+    db = raw as unknown as Kysely<DB>;
+    world = await twoWorkspacesWithBroadcasts(db);
+  });
+
+  afterAll(async () => {
+    await raw?.destroy();
+    await database?.stop();
+  });
+
+  it('creates the five tables and the unique (workspace_id, id) index on conversations', async () => {
+    const { rows } = await sql<{ table_name: string }>`
+      SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'`.execute(raw);
+    const names = rows.map((r) => r.table_name);
+    for (const t of BROADCAST_TABLES) expect(names).toContain(t);
+    const idx = await sql<{ indexdef: string }>`
+      SELECT indexdef FROM pg_indexes WHERE indexname = 'conversations_workspace_id_id_key'`.execute(
+      raw,
+    );
+    expect(idx.rows[0]?.indexdef).toMatch(/UNIQUE INDEX .*\(workspace_id, id\)/);
+  });
+
+  it('twoWorkspacesWithBroadcasts builds a draft and a launched broadcast with two recipients per workspace', async () => {
+    for (const w of [world.a, world.b]) {
+      const rows = await db
+        .selectFrom('broadcasts')
+        .select(['id', 'status', 'recipient_count', 'audience_size'])
+        .where('workspace_id', '=', w.workspaceId)
+        .orderBy('id')
+        .execute();
+      expect(rows).toEqual([
+        { id: w.draftId, status: 'draft', recipient_count: null, audience_size: null },
+        { id: w.launchedId, status: 'sending', recipient_count: 2, audience_size: 2 },
+      ]);
+      const recipients = await db
+        .selectFrom('broadcast_recipients')
+        .select(['id', 'contact_id', 'position', 'state'])
+        .where('workspace_id', '=', w.workspaceId)
+        .orderBy('position')
+        .execute();
+      expect(recipients.map((r) => r.id)).toEqual(w.recipientIds);
+      expect(recipients.map((r) => r.position)).toEqual([1, 2]);
+      expect(recipients.every((r) => r.state === 'waiting')).toBe(true);
+    }
+  });
+
+  it('refuses a group row, recipient or item naming the other workspace contact, broadcast or conversation', async () => {
+    const { a, b } = world;
+    await expect(
+      insertGroupContact(db, {
+        workspaceId: a.workspaceId,
+        broadcastId: a.draftId,
+        contactId: b.taggedContactId,
+        addedByAccountId: a.ownerAccountId,
+      }),
+    ).rejects.toThrow(/broadcast_group_contacts_contact_fkey/);
+    await expect(
+      insertGroupContact(db, {
+        workspaceId: a.workspaceId,
+        broadcastId: b.draftId,
+        contactId: a.taggedContactId,
+        addedByAccountId: a.ownerAccountId,
+      }),
+    ).rejects.toThrow(/broadcast_group_contacts_broadcast_fkey/);
+    await expect(
+      sql`INSERT INTO broadcast_recipients (id, workspace_id, broadcast_id, contact_id, position, telegram_user_id, state)
+        VALUES (${newId()}, ${a.workspaceId}, ${a.launchedId}, ${b.taggedContactId}, 3, 1, 'waiting')`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcast_recipients_contact_fkey/);
+    await expect(
+      sql`INSERT INTO broadcast_recipients (id, workspace_id, broadcast_id, contact_id, position, telegram_user_id, state)
+        VALUES (${newId()}, ${a.workspaceId}, ${b.launchedId}, ${a.taggedContactId}, 3, 1, 'waiting')`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcast_recipients_broadcast_fkey/);
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: b.conversationId,
+        broadcastId: a.launchedId,
+      }),
+    ).rejects.toThrow(/broadcast_items_conversation_fkey/);
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: a.conversationId,
+        broadcastId: b.launchedId,
+      }),
+    ).rejects.toThrow(/broadcast_items_broadcast_fkey/);
+  });
+
+  it('refuses a frozen breakdown that does not add up, exceeds 10 000 or has no recipient', async () => {
+    const { a } = world;
+    const launched = (set: string) =>
+      sql`UPDATE broadcasts SET ${sql.raw(set)} WHERE id = ${a.launchedId}`.execute(raw);
+    await expect(launched('audience_size = 3')).rejects.toThrow(/broadcasts_breakdown_check/);
+    await expect(launched('audience_size = 10001, never_wrote_count = 9999')).rejects.toThrow(
+      /broadcasts_breakdown_check/,
+    );
+    await expect(launched('recipient_count = 0, never_wrote_count = 2')).rejects.toThrow(
+      /broadcasts_breakdown_check/,
+    );
+    await launched('audience_size = 3, blocked_count = 1');
+    await launched('audience_size = 2, blocked_count = 0');
+  });
+
+  it('refuses a launched row missing its launch columns and a non-draft with an empty text', async () => {
+    const { a } = world;
+    await expect(
+      sql`UPDATE broadcasts SET launched_at = NULL WHERE id = ${a.launchedId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_launch_check/);
+    await expect(
+      sql`UPDATE broadcasts SET launch_telegram_bot_id = NULL WHERE id = ${a.launchedId}`.execute(
+        raw,
+      ),
+    ).rejects.toThrow(/broadcasts_launch_check/);
+    await expect(
+      sql`UPDATE broadcasts SET text = '' WHERE id = ${a.launchedId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_text_check/);
+    await expect(
+      sql`UPDATE broadcasts SET text = ' Hello' WHERE id = ${a.draftId}`.execute(raw),
+    ).rejects.toThrow(/broadcasts_text_check/);
+    const empty = await insertBroadcast(db, {
+      workspaceId: a.workspaceId,
+      authorAccountId: a.operatorAccountId,
+      text: '',
+    });
+    expect(empty).toBeTruthy();
+  });
+
+  it('refuses a failed recipient without a reason and a second item for one broadcast and conversation', async () => {
+    const { a } = world;
+    const [first] = a.recipientIds;
+    await expect(
+      sql`UPDATE broadcast_recipients SET state = 'failed', outcome_at = ${at}, claimed_at = ${at}
+        WHERE id = ${first}`.execute(raw),
+    ).rejects.toThrow(/broadcast_recipients_failure_reason_state_check/);
+    await insertBroadcastItem(db, {
+      workspaceId: a.workspaceId,
+      conversationId: a.conversationId,
+      broadcastId: a.launchedId,
+    });
+    await expect(
+      insertBroadcastItem(db, {
+        workspaceId: a.workspaceId,
+        conversationId: a.conversationId,
+        broadcastId: a.launchedId,
+        state: 'not_confirmed',
+      }),
+    ).rejects.toThrow(/broadcast_items_broadcast_conversation_key/);
+  });
+
+  it('launchBroadcastFixture positions recipients by contact id and fills per-state columns; endBroadcastFixture ends it', async () => {
+    const { a } = world;
+    const contacts = [...a.contactIds].sort().reverse();
+    const id = await insertBroadcast(db, {
+      workspaceId: a.workspaceId,
+      authorAccountId: a.ownerAccountId,
+      audience: { kind: 'tags', mode: 'none', tags: [{ tagId: a.tagId, kind: 'exclude' }] },
+    });
+    const recipients = await launchBroadcastFixture(db, {
+      broadcast: id,
+      launchedByAccountId: a.ownerAccountId,
+      telegramBotId: a.telegramBotId,
+      recipients: [
+        { contactId: contacts[0]!, state: 'delivered' },
+        { contactId: contacts[1]!, state: 'failed' },
+      ],
+      breakdown: { blocked: 1, neverWrote: 2 },
+    });
+    expect(recipients.map((r) => r.contactId)).toEqual([...contacts].sort());
+    expect(recipients.map((r) => r.position)).toEqual([1, 2]);
+    await endBroadcastFixture(db, {
+      broadcast: id,
+      status: 'stopped',
+      stoppedByAccountId: a.ownerAccountId,
+    });
+    const row = await db
+      .selectFrom('broadcasts')
+      .select(['status', 'end_reason', 'audience_size', 'recipient_count'])
+      .where('id', '=', id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({
+      status: 'stopped',
+      end_reason: 'stopped',
+      audience_size: 5,
+      recipient_count: 2,
+    });
+    const tags = await db
+      .selectFrom('broadcast_audience_tags')
+      .select(['kind', 'tag_name'])
+      .where('broadcast_id', '=', id)
+      .execute();
+    expect(tags).toEqual([{ kind: 'exclude', tag_name: 'VIP' }]);
+  });
+
+  it('reverts 08 down to 03 and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const state = async () => {
+        const tables = await sql<{ table_name: string }>`
+          SELECT table_name FROM information_schema.tables
+          WHERE table_schema = 'public' AND table_name LIKE 'broadcast%'
+          ORDER BY table_name`.execute(freshDb);
+        const idx = await sql<{ n: number }>`
+          SELECT count(*)::int AS n FROM pg_indexes
+          WHERE indexname = 'conversations_workspace_id_id_key'`.execute(freshDb);
+        return { tables: tables.rows.map((r) => r.table_name), index: idx.rows[0]!.n };
+      };
+      const full = { tables: BROADCAST_TABLES, index: 1 };
+      expect(await state()).toEqual(full);
+      expect((await migrator.migrateTo(LAST_PRE_BROADCASTS)).error).toBeUndefined();
+      expect(await state()).toEqual({ tables: [], index: 0 });
+      expect((await migrator.migrateToLatest()).error).toBeUndefined();
+      expect(await state()).toEqual(full);
+    } finally {
+      await freshDb.destroy();
+      await fresh.stop();
+    }
+  });
+});
+
+describe('broadcasts migration 09 (bots.needs_token_at)', () => {
+  it('adds a nullable needs_token_at, reverts alone and re-applies', async () => {
+    const fresh = await startTestDatabase();
+    const freshDb = new Kysely<unknown>({
+      dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString: fresh.url }) }),
+    });
+    try {
+      const migrator = new Migrator({
+        db: freshDb,
+        provider: new TSFileMigrationProvider({
+          migrationFolder: resolve(import.meta.dirname, '../../migrations'),
+        }),
+      });
+      const column = async () =>
+        (
+          await sql<{ is_nullable: string; data_type: string }>`
+            SELECT is_nullable, data_type FROM information_schema.columns
+            WHERE table_name = 'bots' AND column_name = 'needs_token_at'`.execute(freshDb)
+        ).rows;
+      expect(await column()).toEqual([
+        { is_nullable: 'YES', data_type: 'timestamp with time zone' },
+      ]);
+      const down = await migrator.migrateDown();
+      expect(down.error).toBeUndefined();
+      expect(down.results?.[0]?.migrationName).toBe('1791681110020_add_bots_needs_token_at');
+      expect(await column()).toEqual([]);
+      const up = await migrator.migrateToLatest();
+      expect(up.error).toBeUndefined();
+      expect(await column()).toHaveLength(1);
     } finally {
       await freshDb.destroy();
       await fresh.stop();

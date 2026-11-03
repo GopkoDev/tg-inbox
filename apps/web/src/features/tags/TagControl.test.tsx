@@ -63,6 +63,7 @@ const contact = (tags: ContactTag[]): ContactProfile => ({
   language_code: null,
   first_wrote_at: null,
   last_wrote_at: null,
+  blocked_since: null,
   tags,
 });
 const added = (

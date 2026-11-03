@@ -54,9 +54,13 @@ const contactFields = {
   last_wrote_at: DateTime.nullable(),
 };
 
+/** `contact_bot_reach.blocked_at` for the current Telegram bot; null when not blocked or no bot. */
+const BlockedSince = DateTime.nullable();
+
 export const ContactRow = z.strictObject({
   ...contactFields,
   tags: z.array(TagRef).max(20),
+  blocked_since: BlockedSince,
 });
 export type ContactRow = z.infer<typeof ContactRow>;
 
@@ -80,6 +84,7 @@ export type ContactPage = z.infer<typeof ContactPage>;
 export const ContactProfile = z.strictObject({
   ...contactFields,
   tags: z.array(ContactTag).max(20),
+  blocked_since: BlockedSince,
 });
 export type ContactProfile = z.infer<typeof ContactProfile>;
 

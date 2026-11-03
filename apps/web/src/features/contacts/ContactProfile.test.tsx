@@ -78,6 +78,7 @@ const profile = (over: Partial<ContactProfileDto> = {}): ContactProfileDto => ({
   language_code: 'uk',
   first_wrote_at: '2026-09-02T09:00:00Z',
   last_wrote_at: ago(3 * 60_000),
+  blocked_since: null,
   tags: [
     {
       id: id(301),
@@ -248,6 +249,7 @@ describe('SCR-19 header card', () => {
         language_code: null,
         first_wrote_at: null,
         last_wrote_at: null,
+        blocked_since: null,
         tags: [],
       }),
     );
@@ -430,5 +432,29 @@ describe('SCR-19 live', () => {
     await settle();
     expect(live.subs).toHaveLength(0);
     expect(useContactsStore.getState().profile).toBeNull();
+  });
+});
+
+describe('SCR-19 blocked the bot (AC-14)', () => {
+  const since = '2026-10-20T11:00:00.000Z';
+
+  it('shows the line with the badge and the day when blocked, none otherwise', async () => {
+    api.getContact.mockResolvedValue(profile({ blocked_since: since }));
+    renderProfile();
+    const line = await screen.findByTestId('blocked-line');
+    expect(within(line).getByText('Blocked the bot')).toBeInTheDocument();
+    expect(line.textContent).toContain(`since ${formatFullDay(since)}`);
+  });
+
+  it('no line when not blocked; a reach frame for this contact re-reads it and the line appears', async () => {
+    renderProfile();
+    await screen.findByRole('heading', { level: 1 });
+    expect(screen.queryByTestId('blocked-line')).toBeNull();
+    api.getContact.mockResolvedValue(profile({ blocked_since: since }));
+    await act(async () => {
+      emit({ type: 'contact.changed', contact_id: C1, change: 'reach' });
+      await settle();
+    });
+    expect(await screen.findByTestId('blocked-line')).toBeInTheDocument();
   });
 });

@@ -6,6 +6,7 @@ import {
   type RouteObject,
 } from 'react-router';
 import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
+import { BroadcastCrumb } from '@/features/broadcasts/BroadcastCrumb';
 import { ContactCrumb } from '@/features/contacts/ContactCrumb';
 import { SettingsIndexRedirect } from '@/features/settings/SettingsIndexRedirect';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
@@ -69,6 +70,33 @@ const workspaceRoute: RouteObject = {
           path: ':contactId',
           handle: { crumb: 'Contact', Crumb: ContactCrumb },
           element: lazyPage(() => import('@/pages/ContactProfilePage'), 'ContactProfilePage'),
+        },
+      ],
+    },
+    {
+      // SCR-24 the list; one address per broadcast: SCR-25 while a draft, SCR-28 once launched
+      // (chosen from the read), and its /launch address (SCR-27 over SCR-25).
+      path: 'broadcasts',
+      handle: { crumb: 'Broadcasts' },
+      children: [
+        {
+          index: true,
+          element: lazyPage(() => import('@/pages/BroadcastsPage'), 'BroadcastsPage'),
+        },
+        {
+          path: 'new',
+          handle: { crumb: 'New broadcast' },
+          element: lazyPage(() => import('@/pages/BroadcastDetailPage'), 'BroadcastDetailPage'),
+        },
+        {
+          path: ':broadcastId',
+          handle: { crumb: 'Broadcast', Crumb: BroadcastCrumb },
+          element: lazyPage(() => import('@/pages/BroadcastDetailPage'), 'BroadcastDetailPage'),
+        },
+        {
+          path: ':broadcastId/launch',
+          handle: { crumb: 'Broadcast', Crumb: BroadcastCrumb },
+          element: lazyPage(() => import('@/pages/BroadcastDetailPage'), 'BroadcastDetailPage'),
         },
       ],
     },

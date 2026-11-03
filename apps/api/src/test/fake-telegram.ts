@@ -73,6 +73,9 @@ export const RECORDED = {
 export type GetMeBehaviour = 'ok' | 'unauthorized' | 'server_error' | 'rate_limited' | 'hang';
 export type CallBehaviour = 'ok' | 'fail' | 'hang';
 
+/** What a webhook registered by today's code subscribes to (ADR-0003). */
+const CURRENT_ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member'];
+
 /** One scripted `sendMessage` answer — plain JSON so it crosses the control API. */
 export type SendAnswer =
   | { kind: 'ok'; messageId: number }
@@ -91,6 +94,12 @@ export const sendAnswers = {
   blocked: () => failure(403, 'Forbidden: bot was blocked by the user'),
   deactivated: () => failure(403, 'Forbidden: user is deactivated'),
   chatNotFound: () => failure(400, 'Bad Request: chat not found'),
+  userNotFound: () => failure(400, 'Bad Request: user not found'),
+  peerIdInvalid: () => failure(400, 'Bad Request: PEER_ID_INVALID'),
+  textTooLong: () => failure(400, 'Bad Request: message is too long'),
+  textEmpty: () => failure(400, 'Bad Request: message text is empty'),
+  /** A 400 whose description names nothing we classify. */
+  otherBadRequest: () => failure(400, 'Bad Request: something new'),
   unauthorized: (): SendAnswer => ({ kind: 'error', status: 401, body: RECORDED.unauthorized }),
   serverError: (): SendAnswer => ({ kind: 'error', status: 500, body: RECORDED.serverError }),
   tooMany: (retryAfter: number) =>
@@ -110,6 +119,11 @@ export interface BotScript {
   getMe?: GetMeBehaviour;
   /** URL the bot currently delivers to (another service's, or ours); '' / unset = no webhook. */
   webhookUrl?: string;
+  /**
+   * `allowed_updates` the webhook was registered with; unset = today's set (message,
+   * edited_message, my_chat_member). `setWebhook` stores what it is given.
+   */
+  allowedUpdates?: string[];
   getWebhookInfo?: CallBehaviour;
   setWebhook?: CallBehaviour;
   deleteWebhook?: CallBehaviour;
@@ -131,6 +145,8 @@ export interface FakeTelegram {
   /** Scripts a token; a token never scripted is answered 401 like an unknown token. */
   bot(token: string): { script(script: BotScript): void };
   calls(token?: string): RecordedCall[];
+  /** When each `sendMessage` of a token reached the fake (ms since epoch), oldest first. */
+  sendTimes(token: string): number[];
   /** Forgets scripts and calls, and drops every hanging request. */
   reset(): void;
   stop(): Promise<void>;
@@ -153,6 +169,7 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
   const latency = options.latencyMs ?? 0;
   const bots = new Map<string, BotState>();
   let recorded: RecordedCall[] = [];
+  let sendTimes: { token: string; at: number }[] = [];
   const hanging = new Set<ServerResponse>();
   const timers = new Set<NodeJS.Timeout>();
 
@@ -332,11 +349,18 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
         return send(res, 200, {
           ok: true,
           result: bot.webhookUrl
-            ? { ...RECORDED.getWebhookInfoSet.result, url: bot.webhookUrl }
+            ? {
+                ...RECORDED.getWebhookInfoSet.result,
+                url: bot.webhookUrl,
+                allowed_updates: bot.allowedUpdates ?? CURRENT_ALLOWED_UPDATES,
+              }
             : RECORDED.getWebhookInfoEmpty.result,
         });
       case 'setWebhook':
         bot.webhookUrl = String(params.url ?? '');
+        if (Array.isArray(params.allowed_updates)) {
+          bot.allowedUpdates = params.allowed_updates.map(String);
+        }
         return send(res, 200, RECORDED.setWebhook);
       case 'deleteWebhook':
         bot.webhookUrl = '';
@@ -387,6 +411,7 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
     readParams(req).then(
       (params) => {
         recorded.push({ token, method, params });
+        if (method === 'sendMessage') sendTimes.push({ token, at: Date.now() });
         if (latency > 0) setTimeout(() => answer(res, token, method, params), latency);
         else answer(res, token, method, params);
       },
@@ -413,9 +438,13 @@ export async function startFakeTelegram(options: FakeTelegramOptions = {}): Prom
     calls(token) {
       return recorded.filter((c) => token === undefined || c.token === token);
     },
+    sendTimes(token) {
+      return sendTimes.filter((s) => s.token === token).map((s) => s.at);
+    },
     reset() {
       bots.clear();
       recorded = [];
+      sendTimes = [];
       dropHanging();
     },
     async stop() {

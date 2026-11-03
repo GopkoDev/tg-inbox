@@ -178,3 +178,43 @@ export function signedDelivery(
     payload: update as Record<string, unknown>,
   });
 }
+
+export interface MyChatMemberOptions {
+  updateId: number;
+  /** The user who blocked or unblocked the bot (also the private chat's id). */
+  fromId: number;
+  /** Unix seconds. */
+  date: number;
+  /** `kicked` = blocked the bot, `member` = unblocked (or started) it. */
+  status: string;
+  chatType?: 'private' | 'group' | 'supergroup' | 'channel';
+}
+
+/** A webhook delivery of `my_chat_member`: the bot's own membership in a chat changed. */
+export function telegramMyChatMember(o: MyChatMemberOptions): Update {
+  const chatType = o.chatType ?? 'private';
+  const chat =
+    chatType === 'private'
+      ? { id: o.fromId, type: 'private', first_name: 'Test User' }
+      : { id: -1000000000 - o.fromId, type: chatType, title: 'Test Group' };
+  const bot = { id: 100001, is_bot: true, first_name: 'Acme Bot', username: 'acme_bot' };
+  const oldStatus = o.status === 'kicked' ? 'member' : 'kicked';
+  return {
+    update_id: o.updateId,
+    my_chat_member: {
+      chat,
+      from: { id: o.fromId, is_bot: false, first_name: 'Test User', language_code: 'en' },
+      date: o.date,
+      old_chat_member: {
+        status: oldStatus,
+        user: bot,
+        ...(oldStatus === 'kicked' && { until_date: 0 }),
+      },
+      new_chat_member: {
+        status: o.status,
+        user: bot,
+        ...(o.status === 'kicked' && { until_date: 0 }),
+      },
+    },
+  } as unknown as Update;
+}

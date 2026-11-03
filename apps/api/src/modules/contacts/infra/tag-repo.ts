@@ -99,6 +99,16 @@ export function createTagRepo(db: Db): TagRepo {
       return rows.map((r) => r.id);
     },
 
+    async namesOf(workspaceId, ids, tx) {
+      if (ids.length === 0) return [];
+      return (tx ?? db)
+        .selectFrom('tags')
+        .select(['id', 'name'])
+        .where('workspace_id', '=', workspaceId)
+        .where('id', 'in', [...ids])
+        .execute();
+    },
+
     async lockForKeyShare(workspaceId, tagId, tx) {
       const row = await tx
         .selectFrom('tags')

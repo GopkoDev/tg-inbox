@@ -4,6 +4,7 @@ import {
   fakeBotSignals,
   fakeBotTransaction,
   fakeContactsApi,
+  fakeContactsReach,
   fakeConversationsApi,
   fakeGateway,
   type FakeBotRow,
@@ -46,6 +47,8 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
   const clock = fixedClock(at(600));
   const conversations = fakeConversationsApi();
   const contacts = fakeContactsApi();
+  /** `contacts.recordBlockChange` as `bots` calls it (ADR-0003). */
+  const reach = fakeContactsReach();
   // Derived like the real one: stable per (bot, capture epoch), new on a new epoch.
   const secrets: WebhookSecrets = {
     secretFor: (botId, connectedAt) => `secret-${botId}-${connectedAt.getTime()}`,
@@ -90,6 +93,7 @@ export function createBotsHarness(rows: FakeBotRow[] = []) {
     clock,
     conversations,
     contacts,
+    reach,
     secrets,
     transaction,
     signals,

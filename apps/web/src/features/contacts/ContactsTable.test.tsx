@@ -13,6 +13,9 @@ import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ShellGuardContext } from '@/shared/ui/app-shell-context';
 import { stubRadixDom } from '@/test/radix';
 
+const live = vi.hoisted(() => ({
+  subscribers: [] as { workspaceId: string; onFrame: (frame: unknown) => void }[],
+}));
 const api = vi.hoisted(() => ({
   listContacts: vi.fn(),
   listTags: vi.fn(),
@@ -31,11 +34,18 @@ vi.mock('@/features/inbox/api-source', async (importOriginal) => ({
   getInboxBotStatus: (...a: unknown[]) => api.getInboxBotStatus(...a),
 }));
 vi.mock('@/shared/api/live-connection', () => ({
-  subscribeLive: () => () => undefined,
+  subscribeLive: (workspaceId: string, subscriber: { onFrame: (frame: unknown) => void }) => {
+    const entry = { workspaceId, onFrame: subscriber.onFrame };
+    live.subscribers.push(entry);
+    return () => {
+      live.subscribers = live.subscribers.filter((s) => s !== entry);
+    };
+  },
   liveStatus: () => 'idle',
 }));
 
 import { formatBotDay, formatBotTime } from '@/features/bot/settings/format';
+import { formatFullDay } from './format';
 import { useContactsStore } from './store';
 import { useTagsStore } from '@/features/tags/store';
 import { ContactsPage } from '@/pages/ContactsPage';
@@ -59,6 +69,7 @@ const row = (n: number, over: Partial<ContactRow> = {}): ContactRow => ({
   language_code: 'uk',
   first_wrote_at: ago(30 * 86_400_000),
   last_wrote_at: ago(3 * 60_000),
+  blocked_since: null,
   tags: [],
   ...over,
 });
@@ -128,6 +139,7 @@ const rowsOf = () => within(screen.getByRole('table')).getAllByRole('row').slice
 
 beforeEach(() => {
   vi.resetAllMocks();
+  live.subscribers = [];
   guard.mockResolvedValue('handled');
   api.listContacts.mockResolvedValue(page());
   api.listTags.mockResolvedValue({ workspace_id: WS, items: tags });
@@ -198,6 +210,7 @@ describe('SCR-18 loading and default', () => {
             language_code: null,
             first_wrote_at: null,
             last_wrote_at: null,
+            blocked_since: null,
           }),
         ],
       }),
@@ -606,5 +619,44 @@ describe('SCR-18 empty states and errors', () => {
     expect(where()).toBe(`/w/${WS}/contacts/${id(901)}`);
     fireEvent.click(screen.getByRole('button', { name: 'go-back' }));
     await waitFor(() => expect(where()).toBe(`/w/${WS}/contacts?q=ada`));
+  });
+});
+
+describe('SCR-18 blocked the bot (AC-14)', () => {
+  it('marks a row whose contact blocked the bot, with the day in the title; no marker otherwise', async () => {
+    const since = '2026-10-20T11:00:00.000Z';
+    api.listContacts.mockResolvedValue(page({ items: [row(1, { blocked_since: since }), row(2)] }));
+    renderTable();
+    await screen.findByText('2 contacts');
+    const [blocked, other] = rowsOf();
+    const badge = within(blocked!).getByText('Blocked the bot');
+    expect(badge).toHaveAttribute('title', `Blocked the bot since ${formatFullDay(since)}`);
+    expect(within(other!).queryByText('Blocked the bot')).toBeNull();
+  });
+
+  it('re-reads the shown rows live when a shown contact blocks the bot (contact.changed reach)', async () => {
+    renderTable();
+    await screen.findByText('2 contacts');
+    const since = '2026-10-20T11:00:00.000Z';
+    api.listContacts.mockResolvedValue(page({ items: [row(1, { blocked_since: since }), row(2)] }));
+    await waitFor(() => expect(live.subscribers.map((s) => s.workspaceId)).toContain(WS));
+    act(() => {
+      for (const s of live.subscribers)
+        s.onFrame({
+          type: 'contact.changed',
+          v: 1,
+          workspace_id: WS,
+          contact_id: id(901),
+          change: 'reach',
+        });
+    });
+    const [blocked] = rowsOf();
+    expect(await within(blocked!).findByText('Blocked the bot')).toBeInTheDocument();
+  });
+
+  it('shows no marker at all when nothing is blocked (no bot)', async () => {
+    renderTable();
+    await screen.findByText('2 contacts');
+    expect(screen.queryByText('Blocked the bot')).toBeNull();
   });
 });

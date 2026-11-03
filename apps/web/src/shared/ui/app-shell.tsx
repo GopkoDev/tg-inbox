@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Contact, Inbox, LogOut, Settings, X } from 'lucide-react';
+import { ChevronsUpDown, Contact, Inbox, LogOut, Megaphone, Settings, X } from 'lucide-react';
 import {
   Fragment,
   type ComponentType,
@@ -188,7 +188,7 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
 
 /**
  * The workspace area frame (SCR-07): an inset sidebar (workspace switcher, Inbox / Contacts /
- * owner-only Settings, account menu with sign-out), an inset header (trigger + breadcrumb) and the
+ * Broadcasts / Settings, account menu with sign-out), an inset header (trigger + breadcrumb) and the
  * dismissible `access-removed` notice. It is the layout route of `/w/:workspaceId`: it enters the
  * workspace of the URL (`useWorkspaceFromUrl`) and renders the matched screen (`<Outlet/>`, keyed
  * on the workspace) only once that entry is `ready` — a skeleton before, not-found / a retry row
@@ -287,6 +287,7 @@ export function AppShell() {
     ? [
         { to: `${base}/inbox`, label: 'Inbox', icon: Inbox },
         { to: `${base}/contacts`, label: 'Contacts', icon: Contact },
+        { to: `${base}/broadcasts`, label: 'Broadcasts', icon: Megaphone },
         { to: `${base}/settings`, label: 'Settings', icon: Settings },
       ]
     : [];

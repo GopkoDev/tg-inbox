@@ -21,6 +21,7 @@ import {
   ThreadActivity,
   ThreadMessage,
   ThreadPage,
+  ThreadBroadcastItem,
   ThreadReply,
 } from '@tg/shared';
 import { createWorkspaceGuard, type WorkspaceGuardDeps } from '../../workspaces/http/guard.js';
@@ -256,6 +257,24 @@ export async function registerInbox(app: FastifyInstance, deps: InboxDeps): Prom
         request.workspace.workspaceId,
         request.params.conversationId,
         request.params.activityId,
+      ),
+  );
+
+  // A broadcast item of the thread, for a live `conversation.changed` refetch (ADR-0010, AC-16).
+  r.get(
+    `${base}/conversations/:conversationId/broadcast-items/:broadcastItemId`,
+    {
+      preHandler: pre,
+      schema: {
+        params: z.object({ ...conversation, broadcastItemId: z.uuid() }),
+        response: { 200: ThreadBroadcastItem },
+      },
+    },
+    async (request) =>
+      reads.getThreadBroadcastItem(
+        request.workspace.workspaceId,
+        request.params.conversationId,
+        request.params.broadcastItemId,
       ),
   );
 

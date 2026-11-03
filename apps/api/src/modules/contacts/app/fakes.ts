@@ -4,11 +4,15 @@ import { tagNameKey } from '../domain/tag-name.js';
 import { CONTACTS_PAGE_SIZE, mergeLink, TAG_HISTORY_PAGE_SIZE } from '../domain/tags.js';
 import {
   normalizeSearchQuery,
+  type AudienceQuery,
+  type AudienceSpec,
   type ContactListFilter,
   type ContactListQuery,
   type ContactRecord,
   type ContactRepo,
   type ContactTagRepo,
+  type ReachRepo,
+  type ReachSignals,
   type TagHistoryRepo,
   type Executor,
   type TagHistoryRow,
@@ -18,10 +22,14 @@ import {
 } from './ports.js';
 
 /** In-memory ContactRepo for unit tests; applies the same profile-refresh rule as the SQL. */
-export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
+export function fakeContactRepo(
+  /** Reach rows the profile's and the list's blocked marks are read from. */
+  reach: FakeReachRow[] = [],
+): ContactRepo & { rows: ContactRecord[]; reach: FakeReachRow[] } {
   const rows: ContactRecord[] = [];
   return {
     rows,
+    reach,
     async upsertFromProfile(workspaceId, profile, seenAt, now) {
       const existing = rows.find(
         (r) => r.workspaceId === workspaceId && r.telegramUserId === profile.telegramUserId,
@@ -65,12 +73,20 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
         .map((r) => r.id)
         .sort();
     },
-    async profile(workspaceId, contactId) {
+    async profile(workspaceId, contactId, telegramBotId = null) {
       const row = rows.find((r) => r.workspaceId === workspaceId && r.id === contactId);
-      return row ? { ...row } : null;
+      return row
+        ? { ...row, blockedSince: blockedSinceOf(reach, workspaceId, contactId, telegramBotId) }
+        : null;
     },
     async lockContact(workspaceId, contactId) {
       return rows.some((r) => r.workspaceId === workspaceId && r.id === contactId);
+    },
+    async idByTelegramUser(workspaceId, telegramUserId) {
+      return (
+        rows.find((r) => r.workspaceId === workspaceId && r.telegramUserId === telegramUserId)
+          ?.id ?? null
+      );
     },
     async contactsByIds(workspaceId, ids) {
       return rows
@@ -83,6 +99,24 @@ export function fakeContactRepo(): ContactRepo & { rows: ContactRecord[] } {
         }));
     },
   };
+}
+
+/** The blocked mark of one contact for one bot in reach rows; null bot = no mark. */
+function blockedSinceOf(
+  reach: readonly FakeReachRow[],
+  workspaceId: string,
+  contactId: string,
+  telegramBotId: bigint | null,
+): Date | null {
+  if (telegramBotId === null) return null;
+  return (
+    reach.find(
+      (r) =>
+        r.workspaceId === workspaceId &&
+        r.contactId === contactId &&
+        r.telegramBotId === telegramBotId,
+    )?.blockedAt ?? null
+  );
 }
 
 // ───────── tags and the Contacts reads ─────────
@@ -181,7 +215,7 @@ export function fakeReadPorts(
   }
 
   const lists: ContactListQuery = {
-    async listPage(ws, f) {
+    async listPage(ws, f, telegramBotId = null) {
       const all = (await matching(ws, f)).sort((a, b) => {
         if (a.lastWroteAt === null || b.lastWroteAt === null) {
           if (a.lastWroteAt !== b.lastWroteAt) return a.lastWroteAt === null ? 1 : -1;
@@ -213,6 +247,7 @@ export function fakeReadPorts(
           firstWroteAt: c.firstWroteAt,
           lastWroteAt: c.lastWroteAt,
           tags: tagsOfContact(ws, c.id).map((x) => ({ id: x.tag.id, name: x.tag.name })),
+          blockedSince: blockedSinceOf(contactRepo.reach, ws, c.id, telegramBotId),
         })),
         hasNext: slice.length > CONTACTS_PAGE_SIZE,
       };
@@ -268,6 +303,132 @@ export function fakeReadPorts(
   };
 
   return { lists, tags, contactTags, tagHistory };
+}
+
+// ───────── audiences ─────────
+
+export interface FakeReach {
+  workspaceId: string;
+  contactId: string;
+  telegramBotId: bigint;
+  wroteAt: Date | null;
+  blockedAt: Date | null;
+}
+
+/**
+ * In-memory `AudienceQuery` over the contact and tag fakes plus `reach` rows, with the SQL's rules:
+ * the Contacts filter (left-out tags remove), the partition blocked → never wrote → reachable, the
+ * reachable set sorted by id. `calls` logs each query (`breakdown`, `reachable:<limit>`, …).
+ */
+export function fakeAudienceQuery(
+  contactRepo: ReturnType<typeof fakeContactRepo>,
+  store: FakeTagStore,
+): AudienceQuery & { reach: FakeReach[]; calls: string[] } {
+  const reach: FakeReach[] = [];
+  const calls: string[] = [];
+  const { lists } = fakeReadPorts(contactRepo, store);
+  const carries = (ws: string, contactId: string, tagIds: readonly string[]) =>
+    store.links.some(
+      (l) => l.workspaceId === ws && l.contactId === contactId && tagIds.includes(l.tagId),
+    );
+  async function members(ws: string, audience: AudienceSpec): Promise<ContactRecord[]> {
+    if (audience.kind === 'ids') {
+      return contactRepo.rows.filter(
+        (c) => c.workspaceId === ws && audience.contactIds.includes(c.id),
+      );
+    }
+    const all: ContactRecord[] = [];
+    let after: { lastWroteAt: Date | null; id: string } | undefined;
+    const filter = { q: null, mode: audience.mode, tagIds: audience.include };
+    for (;;) {
+      const page = await lists.listPage(ws, { ...filter, ...(after && { after }) });
+      for (const r of page.rows) all.push(contactRepo.rows.find((c) => c.id === r.id)!);
+      if (!page.hasNext) break;
+      const last = page.rows.at(-1)!;
+      after = { lastWroteAt: last.lastWroteAt, id: last.id };
+    }
+    return all.filter((c) => !carries(ws, c.id, audience.exclude));
+  }
+  const reachOf = (ws: string, contactId: string, bot: bigint) =>
+    reach.find((r) => r.workspaceId === ws && r.contactId === contactId && r.telegramBotId === bot);
+  const kind = (ws: string, contactId: string, bot: bigint) => {
+    const r = reachOf(ws, contactId, bot);
+    if (r?.blockedAt) return 'blocked' as const;
+    if (!r?.wroteAt) return 'neverWrote' as const;
+    return 'reachable' as const;
+  };
+  return {
+    reach,
+    calls,
+    async breakdown(ws, audience, bot) {
+      calls.push('breakdown');
+      const list = await members(ws, audience);
+      if (bot === null) return { audienceSize: list.length, reach: null };
+      const counts = { blocked: 0, neverWrote: 0, reachable: 0 };
+      for (const c of list) counts[kind(ws, c.id, bot)] += 1;
+      return { audienceSize: list.length, reach: counts };
+    },
+    async launchSet(ws, audience, bot, limit) {
+      calls.push(`launchSet:${limit}`);
+      const all = (await members(ws, audience)).sort((x, y) => (x.id < y.id ? -1 : 1));
+      return {
+        total: all.length,
+        rows: all.slice(0, limit).map((c) => ({
+          id: c.id,
+          telegramUserId: c.telegramUserId,
+          reach: kind(ws, c.id, bot),
+        })),
+      };
+    },
+    async reachable(ws, audience, bot, limit) {
+      calls.push(`reachable:${limit}`);
+      return (await members(ws, audience))
+        .filter((c) => kind(ws, c.id, bot) === 'reachable')
+        .sort((x, y) => (x.id < y.id ? -1 : 1))
+        .slice(0, limit)
+        .map((c) => ({ id: c.id, telegramUserId: c.telegramUserId }));
+    },
+    async matchingIds(ws, filter) {
+      calls.push('matchingIds');
+      const all = await members(ws, {
+        kind: 'tags',
+        mode: filter.mode,
+        include: filter.tagIds,
+        exclude: [],
+      });
+      const searched = await contactRepo.searchContactIds(ws, filter.q ?? '');
+      return all
+        .filter((c) => searched === null || searched.includes(c.id))
+        .map((c) => c.id)
+        .sort();
+    },
+    async cards(ws, ids, bot) {
+      calls.push('cards');
+      return ids.flatMap((id) => {
+        const c = contactRepo.rows.find((r) => r.workspaceId === ws && r.id === id);
+        if (!c) return [];
+        const tags = store.links
+          .filter((l) => l.workspaceId === ws && l.contactId === id)
+          .map((l) => store.tags.find((t) => t.id === l.tagId)!)
+          .sort((x, y) => collator.compare(x.name, y.name))
+          .map((t) => ({ id: t.id, name: t.name }));
+        return [
+          {
+            id,
+            firstName: c.firstName,
+            lastName: c.lastName,
+            username: c.username,
+            tags,
+            blockedSince: bot === null ? null : (reachOf(ws, id, bot)?.blockedAt ?? null),
+          },
+        ];
+      });
+    },
+    async isBlocked(ws, contactId, bot) {
+      calls.push('isBlocked');
+      return Boolean(reachOf(ws, contactId, bot)?.blockedAt);
+    },
+  };
 }
 
 // ───────── tag writes ─────────
@@ -336,6 +497,11 @@ export function fakeTagWritePorts(
     },
     async resolveIds(ws, ids) {
       return store.tags.filter((t) => t.workspaceId === ws && ids.includes(t.id)).map((t) => t.id);
+    },
+    async namesOf(ws, ids) {
+      return store.tags
+        .filter((t) => t.workspaceId === ws && ids.includes(t.id))
+        .map((t) => ({ id: t.id, name: t.name }));
     },
     async lockForKeyShare(ws, id) {
       events.push('lock:key-share');
@@ -531,4 +697,73 @@ export function fakeTagWritePorts(
   }
 
   return { tags, contactTags, tagHistory, signals, transaction, signalLog, events };
+}
+
+export interface FakeReachRow {
+  workspaceId: string;
+  contactId: string;
+  telegramBotId: bigint;
+  wroteAt: Date | null;
+  blockedAt: Date | null;
+  changedAt: Date;
+}
+
+/** In-memory ReachRepo; applies the same "not older than changed_at" rule as the SQL. */
+export function fakeReachRepo(): ReachRepo & { rows: FakeReachRow[] } {
+  const rows: FakeReachRow[] = [];
+  const find = (ws: string, contactId: string, bot: bigint) =>
+    rows.find((r) => r.workspaceId === ws && r.contactId === contactId && r.telegramBotId === bot);
+  return {
+    rows,
+    async upsertWrote(workspaceId, contactId, telegramBotId, sentAt) {
+      const row = find(workspaceId, contactId, telegramBotId);
+      if (!row) {
+        rows.push({
+          workspaceId,
+          contactId,
+          telegramBotId,
+          wroteAt: sentAt,
+          blockedAt: null,
+          changedAt: sentAt,
+        });
+        return false;
+      }
+      if (row.wroteAt === null || sentAt < row.wroteAt) row.wroteAt = sentAt;
+      if (sentAt < row.changedAt) return false;
+      const cleared = row.blockedAt !== null;
+      row.blockedAt = null;
+      row.changedAt = sentAt;
+      return cleared;
+    },
+    async applyBlockChange(workspaceId, contactId, telegramBotId, blocked, at) {
+      const row = find(workspaceId, contactId, telegramBotId);
+      if (!row) {
+        rows.push({
+          workspaceId,
+          contactId,
+          telegramBotId,
+          wroteAt: null,
+          blockedAt: blocked ? at : null,
+          changedAt: at,
+        });
+        return blocked;
+      }
+      if (at < row.changedAt) return false;
+      const was = row.blockedAt !== null;
+      row.blockedAt = blocked ? (row.blockedAt ?? at) : null;
+      row.changedAt = at;
+      return was !== blocked;
+    },
+  };
+}
+
+/** ReachSignals as a log: `contact.changed:reach:<ws>:<contact>`. */
+export function fakeReachSignals(): ReachSignals & { log: string[] } {
+  const log: string[] = [];
+  return {
+    log,
+    async reachChanged(_tx, workspaceId, contactId) {
+      log.push(`contact.changed:reach:${workspaceId}:${contactId}`);
+    },
+  };
 }

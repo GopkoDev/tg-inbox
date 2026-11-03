@@ -66,6 +66,14 @@ describe('disconnect (flow 7, AC-18)', () => {
     },
   );
 
+  it('our webhook with outdated allowed updates is still ours → deleteWebhook', async () => {
+    const h = createBotsHarness([botRow()]);
+    h.telegram.webhook = 'ours_outdated';
+    h.conversations.withConversations.add('ws-a');
+    await h.disconnect.disconnect('ws-a');
+    expect(h.telegram.calls.map((c) => c.method)).toEqual(['getWebhook', 'deleteWebhook']);
+  });
+
   it('nothing captured → the row is deleted', async () => {
     const h = createBotsHarness([botRow()]);
     expect(await h.disconnect.disconnect('ws-a')).toEqual({ state: 'not_connected' });

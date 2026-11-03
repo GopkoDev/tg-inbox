@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS broadcast_group_contacts_workspace_id_added_by_account_id_idx;
+DROP INDEX IF EXISTS broadcast_group_contacts_workspace_id_contact_id_idx;
+DROP INDEX IF EXISTS broadcast_group_contacts_added_at_idx;
+DROP TABLE IF EXISTS broadcast_group_contacts;

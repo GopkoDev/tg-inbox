@@ -65,6 +65,7 @@ describe('bot repository', () => {
       lastCheckedAt: at(0),
       createdAt: at(0),
       sendPausedUntil: null,
+      stoppedWorkingAt: null,
     });
     expect(
       JSON.stringify(found, (_k, v: unknown) => (typeof v === 'bigint' ? String(v) : v)),
@@ -207,6 +208,42 @@ describe('bot repository', () => {
       name: 'New Name',
       username: 'new_name_bot',
     });
+  });
+
+  it('setState to needs_token records when the bot stopped working; a later state keeps it (AC-12)', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toBeNull();
+    expect(await repo.setState(w, bot.id, 'needs_token', at(4))).toBe(true);
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(4));
+    expect(await repo.setState(w, bot.id, 'connected', at(6))).toBe(true);
+    expect(await repo.findByWorkspace(w)).toMatchObject({
+      state: 'connected',
+      stoppedWorkingAt: at(4),
+    });
+  });
+
+  it('update to needs_token (a paste undone with an unreadable old token) also records when the bot stopped working (AC-12)', async () => {
+    const w = await insertWorkspace(db);
+    const { bot } = await insertBot(db, { workspaceId: w });
+    expect(
+      (
+        await repo.update(w, bot.id, {
+          state: 'needs_token',
+          lastCheckedAt: at(1),
+          stoppedWorkingAt: at(9),
+        })
+      ).ok,
+    ).toBe(true);
+    // The app's moment it happened, not the old exchange time the patch carries.
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));
+    // A needs_token patch without the moment is a programming error, never a silent gap.
+    await expect(repo.update(w, bot.id, { state: 'needs_token' })).rejects.toThrow(
+      'stoppedWorkingAt',
+    );
+    // A row already needing a token keeps its own moment.
+    await repo.update(w, bot.id, { state: 'needs_token', stoppedWorkingAt: at(12) });
+    expect((await repo.findByWorkspace(w))?.stoppedWorkingAt).toEqual(at(9));
   });
 
   it('setState with ifLastCheckedAt writes only when the row is unchanged since it was read', async () => {

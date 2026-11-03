@@ -25,7 +25,7 @@ import {
   withAddress,
   type ContactsAddress,
 } from './address';
-import { contactFullName, firstWroteText, languageName, lastWrote } from './format';
+import { contactFullName, firstWroteText, formatFullDay, languageName, lastWrote } from './format';
 import { useContactsStore } from './store';
 import { TagFilter } from './TagFilter';
 
@@ -64,12 +64,23 @@ function ContactRowView({ workspaceId, contact }: { workspaceId: string; contact
             <AvatarFallback>{initials(name)}</AvatarFallback>
           </Avatar>
           <div className="flex min-w-0 flex-col">
-            <Link
-              to={`/w/${workspaceId}/contacts/${contact.id}`}
-              className="truncate font-medium hover:underline"
-            >
-              {name}
-            </Link>
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              <Link
+                to={`/w/${workspaceId}/contacts/${contact.id}`}
+                className="truncate font-medium hover:underline"
+              >
+                {name}
+              </Link>
+              {contact.blocked_since ? (
+                <Badge
+                  variant="outline"
+                  className="text-destructive"
+                  title={`Blocked the bot since ${formatFullDay(contact.blocked_since)}`}
+                >
+                  Blocked the bot
+                </Badge>
+              ) : null}
+            </div>
             {contact.username ? (
               <span className="truncate text-xs text-muted-foreground">@{contact.username}</span>
             ) : (
@@ -190,6 +201,13 @@ export function ContactsTable({ workspaceId }: { workspaceId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceId]);
   useEffect(() => () => useContactsStore.getState().clearList(), []);
+  // The "blocked the bot" marker is live: `contact.changed` reach re-reads the shown rows.
+  useEffect(
+    () => useContactsStore.getState().watch(workspaceId, guard),
+    // the shell's guard is stable per address
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [workspaceId],
+  );
 
   // A tag the workspace no longer has: left out of the address, and the page says so.
   const missing = list?.status === 'ready' ? list.missingTagIds : [];

@@ -83,11 +83,24 @@ export type IgnoreReason =
   | 'before_epoch'
   | 'unsupported_update'
   | 'malformed'
-  | 'no_text';
+  | 'no_text'
+  /** A `my_chat_member` status other than `kicked` / `member`. */
+  | 'unsupported_status';
+
+/**
+ * A private user blocked (`kicked`) or unblocked (`member`) the bot, at Telegram's time
+ * (ADR-0003). Never a message: handled before the inbound interceptor and capture.
+ */
+export interface ReachChange {
+  telegramUserId: bigint;
+  blocked: boolean;
+  at: Date;
+}
 
 export type InboundDecision =
   | { type: 'capture'; message: NormalisedMessage }
   | { type: 'edit'; edit: NormalisedEdit; sender: SenderProfile }
+  | ({ type: 'reach' } & ReachChange)
   | { type: 'ignore'; reason: IgnoreReason };
 
 type Obj = Record<string, unknown>;
@@ -144,11 +157,36 @@ function filter(
   return { message, from };
 }
 
+/**
+ * `my_chat_member` in a private chat: the user's block (`kicked`) or unblock (`member`) of the bot.
+ * Not filtered by the capture epoch: the reach row keeps the newest fact (ADR-0002).
+ */
+function classifyMemberUpdate(update: unknown): InboundDecision {
+  if (!isObject(update) || !isInt(update.date)) return ignore('malformed');
+  const { chat, from, new_chat_member: member } = update;
+  if (!isObject(chat) || !isInt(chat.id) || typeof chat.type !== 'string')
+    return ignore('malformed');
+  if (!isObject(from) || !isInt(from.id)) return ignore('malformed');
+  if (!isObject(member) || typeof member.status !== 'string') return ignore('malformed');
+  if (chat.type !== 'private') return ignore('not_private');
+  if (member.status !== 'kicked' && member.status !== 'member') {
+    return ignore('unsupported_status');
+  }
+  return {
+    type: 'reach',
+    telegramUserId: BigInt(from.id),
+    blocked: member.status === 'kicked',
+    at: new Date(update.date * 1000),
+  };
+}
+
 export function classifyUpdate(
   update: unknown,
   { connectedAt }: { connectedAt: Date },
 ): InboundDecision {
   if (!isObject(update) || !isInt(update.update_id)) return ignore('malformed');
+
+  if (update.my_chat_member !== undefined) return classifyMemberUpdate(update.my_chat_member);
 
   if (update.message !== undefined) {
     const passed = filter(update.message, connectedAt, 'date');

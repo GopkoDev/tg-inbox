@@ -15,7 +15,11 @@ import {
   type FakeTelegramClient,
 } from '../../../api/src/test/fake-telegram.ts';
 import { fakeBotToken } from '../../../api/src/test/fixtures/bots.ts';
-import { signedDelivery, telegramUpdate } from '../../../api/src/test/fixtures/telegram.ts';
+import {
+  signedDelivery,
+  telegramMyChatMember,
+  telegramUpdate,
+} from '../../../api/src/test/fixtures/telegram.ts';
 import { e2eConfig } from './config.ts';
 
 export { expect, PASSWORD };
@@ -68,6 +72,22 @@ export interface World {
   tagContact(actor: string, workspaceId: string, firstName: string, name: string): Promise<string>;
   /** An owner deletes a tag over HTTP, confirming its current count. */
   deleteTag(ownerEmail: string, workspaceId: string, tagId: string): Promise<void>;
+  /**
+   * A private `my_chat_member` update posted to the bot's webhook as Telegram: `kicked` = the
+   * customer blocked the bot, `member` = unblocked it (each newer than the last).
+   */
+  customerBlocksBot(token: string, fromId: number, status?: 'kicked' | 'member'): Promise<void>;
+  /**
+   * `actor` creates a broadcast draft over HTTP; with `audience`, saves its tag audience ("any of"
+   * `tagIds`, leaving out `excludeTagIds`). Returns the broadcast id.
+   */
+  draftBroadcast(
+    actor: string,
+    workspaceId: string,
+    name: string,
+    text: string,
+    audience?: { tagIds: string[]; excludeTagIds?: string[] },
+  ): Promise<string>;
 }
 
 interface Backend {
@@ -112,6 +132,7 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
     const { cli, ahead, advance, app, fake } = backend;
     let nextBot = 600_000n;
     let nextUpdate = 1;
+    let lastBlockDate = 0;
     const messageIds = new Map<number, number>();
     const owners = new Map<string, Device>();
     const members = new Map<string, Device>();
@@ -315,6 +336,39 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
           expected_count: tag.contact_count,
         });
         if (res.statusCode !== 200) throw new Error(`delete failed: ${res.statusCode} ${res.body}`);
+      },
+      async customerBlocksBot(token, fromId, status = 'kicked') {
+        const set = (await fake.calls(token)).filter((c) => c.method === 'setWebhook').at(-1);
+        if (!set) throw new Error('the bot has no webhook registered');
+        const url = String(set.params.url);
+        // Unix seconds, strictly after the customer's last message and the previous change.
+        lastBlockDate = Math.max(Math.floor(Date.now() / 1000) + 1, lastBlockDate + 1);
+        const res = await signedDelivery(
+          app,
+          { id: url.slice(url.lastIndexOf('/') + 1), secret: String(set.params.secret_token) },
+          telegramMyChatMember({ updateId: nextUpdate++, fromId, date: lastBlockDate, status }),
+        );
+        if (res.statusCode !== 200) throw new Error(`my_chat_member failed: ${res.statusCode}`);
+      },
+      async draftBroadcast(actor, workspaceId, name, text, audience) {
+        const device = await deviceOf(actor);
+        const base = `/api/workspaces/${workspaceId}/broadcasts`;
+        const created = await device.post(base, { name, text });
+        if (created.statusCode !== 201)
+          throw new Error(`create draft failed: ${created.statusCode} ${created.body}`);
+        const draft = created.json() as { id: string; version: number };
+        if (audience) {
+          const res = await device.post(`${base}/${draft.id}/audience`, {
+            expected_version: draft.version,
+            kind: 'tags',
+            mode: 'any',
+            tag_ids: audience.tagIds,
+            exclude_tag_ids: audience.excludeTagIds ?? [],
+          });
+          if (res.statusCode !== 200)
+            throw new Error(`save audience failed: ${res.statusCode} ${res.body}`);
+        }
+        return draft.id;
       },
     };
     await use(world);

@@ -58,6 +58,7 @@ const row = {
   first_wrote_at: '2026-09-02T08:14:00Z',
   last_wrote_at: at,
   tags: [ref, { id: T2, name: 'VIP' }],
+  blocked_since: null,
 };
 const bareRow = {
   ...row,
@@ -68,6 +69,7 @@ const bareRow = {
   first_wrote_at: null,
   last_wrote_at: null,
   tags: [],
+  blocked_since: '2026-10-20T11:00:00Z',
 };
 const page = {
   workspace_id: W,

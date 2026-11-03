@@ -416,6 +416,150 @@ export class TagChangeLimitReachedError extends AppError {
   }
 }
 
+/** A broadcast name that is empty or longer than 80 characters once tidied (AC-02). */
+export class BroadcastNameInvalidError extends AppError {
+  readonly code = ErrorCode.BROADCAST_NAME_INVALID;
+  readonly statusCode = 400;
+
+  constructor() {
+    super('A name must be 1 to 80 characters', { field: 'name', min_length: 1, max_length: 80 });
+  }
+}
+
+/**
+ * A text that is empty or longer than 4096 UTF-16 code units once trimmed (AC-02); also an empty
+ * draft text at launch ("Write the text before launching"). `length` is the trimmed length.
+ */
+export class BroadcastTextInvalidError extends AppError {
+  readonly code = ErrorCode.BROADCAST_TEXT_INVALID;
+  readonly statusCode = 400;
+
+  constructor(
+    length: number,
+    message = 'The text must be 1 to 4096 characters as Telegram counts them',
+  ) {
+    super(message, { field: 'text', min_length: 1, max_length: 4096, length });
+  }
+}
+
+/** A save against a version a teammate has moved on: details.draft is the current draft (AC-03). */
+export class BroadcastDraftChangedError extends AppError {
+  readonly code = ErrorCode.BROADCAST_DRAFT_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(draft: unknown) {
+    super('A teammate changed this draft — check their version and apply your change again', {
+      draft,
+    });
+  }
+}
+
+/** A switch away from a group whose size differs from the one the member confirmed (AC-03). */
+export class BroadcastGroupChangedError extends AppError {
+  readonly code = ErrorCode.BROADCAST_GROUP_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(groupSize: number) {
+    super(`The group changed — it now holds ${groupSize} contacts`, { group_size: groupSize });
+  }
+}
+
+/** A draft-only change of a launched broadcast (AC-09). */
+export class BroadcastNotADraftError extends AppError {
+  readonly code = ErrorCode.BROADCAST_NOT_A_DRAFT;
+  readonly statusCode = 409;
+
+  constructor(broadcastId: string, status: 'sending' | 'sent' | 'stopped') {
+    super('This broadcast was launched and can no longer be changed', {
+      broadcast_id: broadcastId,
+      status,
+    });
+  }
+}
+
+/** "Only recipients it did not reach" of a broadcast still sending (AC-13). */
+export class BroadcastNotEndedError extends AppError {
+  readonly code = ErrorCode.BROADCAST_NOT_ENDED;
+  readonly statusCode = 409;
+
+  constructor(broadcastId: string) {
+    super('Available once the broadcast has ended', {
+      broadcast_id: broadcastId,
+      status: 'sending',
+    });
+  }
+}
+
+/** The confirmed version or audience fingerprint no longer holds: details.confirmation is current (AC-06). */
+export class BroadcastAudienceChangedError extends AppError {
+  readonly code = ErrorCode.BROADCAST_AUDIENCE_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(confirmation: unknown) {
+    super('The contacts this broadcast would reach changed — check and confirm again', {
+      confirmation,
+    });
+  }
+}
+
+const AUDIENCE_LIMIT = 10000;
+
+/** An audience over 10 000 contacts, reachable or not (AC-05). */
+export class BroadcastAudienceTooLargeError extends AppError {
+  readonly code = ErrorCode.BROADCAST_AUDIENCE_TOO_LARGE;
+  readonly statusCode = 409;
+
+  constructor(audienceSize: number) {
+    const canAdd = Math.max(0, AUDIENCE_LIMIT - audienceSize);
+    super(
+      canAdd > 0
+        ? `A broadcast's audience can hold at most 10 000 contacts — ${canAdd} more can be added`
+        : "A broadcast's audience can hold at most 10 000 contacts",
+      { limit: AUDIENCE_LIMIT, audience_size: audienceSize, can_add: canAdd },
+    );
+  }
+}
+
+/** A launch whose audience reaches nobody (AC-09). */
+export class BroadcastNoReachableContactError extends AppError {
+  readonly code = ErrorCode.BROADCAST_NO_REACHABLE_CONTACT;
+  readonly statusCode = 409;
+
+  constructor(breakdown: unknown) {
+    super('This audience has no reachable contact', { breakdown });
+  }
+}
+
+/** A launch with no bot or a bot that is not working (AC-10). */
+export class BroadcastNeedsWorkingBotError extends AppError {
+  readonly code = ErrorCode.BROADCAST_NEEDS_WORKING_BOT;
+  readonly statusCode = 409;
+
+  constructor(botState: 'not_connected' | 'needs_token' | 'taken_over') {
+    super(
+      botState === 'not_connected'
+        ? 'Launching needs a working bot — connect it in Settings — Bot'
+        : 'Launching needs a working bot',
+      { bot_state: botState },
+    );
+  }
+}
+
+/** The workspace's 11th launch within 24 hours (AC-09): `next_launch_at` + `Retry-After`. */
+export class BroadcastLaunchLimitReachedError extends AppError {
+  readonly code = ErrorCode.BROADCAST_LAUNCH_LIMIT_REACHED;
+  readonly statusCode = 429;
+  override readonly headers: Record<string, string>;
+
+  constructor(nextLaunchAt: Date, retryAfterSeconds: number) {
+    super(
+      `A workspace can launch at most 10 broadcasts in 24 hours — the next launch is possible in ${Math.max(1, Math.ceil(retryAfterSeconds / 60))} minutes`,
+      { limit: 10, window_hours: 24, next_launch_at: nextLaunchAt.toISOString() },
+    );
+    this.headers = { 'Retry-After': String(retryAfterSeconds) };
+  }
+}
+
 /**
  * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
  * AppError. Its message never carries Telegram's error text or URL.

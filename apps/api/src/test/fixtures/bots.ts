@@ -65,6 +65,7 @@ export async function insertBot(
     lastCheckedAt: o.lastCheckedAt ?? (live ? T : null),
     createdAt: T,
     sendPausedUntil: o.sendPausedUntil ?? null,
+    stoppedWorkingAt: null,
   };
   await db
     .insertInto('bots')

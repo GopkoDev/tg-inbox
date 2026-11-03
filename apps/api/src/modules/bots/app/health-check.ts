@@ -5,6 +5,7 @@ import {
   type BotSignals,
   type TelegramGateway,
   type Transaction,
+  type WebhookSecrets,
 } from './ports.js';
 import { webhookUrl } from './webhook-url.js';
 
@@ -14,6 +15,8 @@ export interface HealthCheckDeps {
   clock: Clock;
   transaction: Transaction;
   signals: BotSignals;
+  /** The per-bot derived secret, for re-registering an outdated webhook (ADR-0003). */
+  secrets: WebhookSecrets;
   /** `TELEGRAM_WEBHOOK_BASE_URL`. */
   webhookBaseUrl: string;
 }
@@ -42,6 +45,7 @@ export function createHealthCheck({
   clock,
   transaction,
   signals,
+  secrets,
   webhookBaseUrl,
 }: HealthCheckDeps): HealthCheck {
   return {
@@ -82,11 +86,8 @@ export function createHealthCheck({
       if (me === 'transient') return 'transient';
       if (me === 'unauthorized') return write('needs_token');
 
-      const target = await telegram.getWebhook(
-        token,
-        webhookUrl(webhookBaseUrl, botId),
-        HEALTH_CHECK_TIMEOUT,
-      );
+      const url = webhookUrl(webhookBaseUrl, botId);
+      const target = await telegram.getWebhook(token, url, HEALTH_CHECK_TIMEOUT);
       const identity = { name: me.name, username: me.username };
       switch (target) {
         case 'transient':
@@ -95,6 +96,18 @@ export function createHealthCheck({
           return write('needs_token');
         case 'ours':
           return write('connected', identity);
+        case 'ours_outdated': {
+          // Registered before `my_chat_member` (flow 17): set again with the same URL and secret,
+          // keeping pending updates. A failure writes nothing; the next due check tries again.
+          const connectedAt = found.bot.connectedAt;
+          if (connectedAt === null) return 'skipped';
+          const set = await telegram.setWebhook(
+            token,
+            { url, secret: secrets.secretFor(botId, connectedAt), dropPending: false },
+            HEALTH_CHECK_TIMEOUT,
+          );
+          return set === 'ok' ? write('connected', identity) : 'transient';
+        }
         case 'stale':
         case 'foreign':
         case 'none':

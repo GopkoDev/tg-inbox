@@ -1,0 +1,2825 @@
+# Derived contract for broadcasts. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (broadcasts, broadcast_audience_tags, broadcast_group_contacts,
+#                           broadcast_recipients, contact_bot_reach, broadcast_items) + the existing schema
+#                           (contacts, contact_tags / tags for the audience, memberships for display names,
+#                           bots.state for launch readiness)
+#   error responses       ← sad.md §6 seeded flows 1–4 and flows 5–19 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria
+# Field origins and the drift check are in api-sync-report.md next to this file. The live frames
+# (broadcast.changed, contact.changed reach, conversation.changed broadcast), the realtime signals, the
+# pg-boss jobs and the inbound my_chat_member update are in events.md.
+#
+# THIS IS A DELTA over the shipped contracts:
+#   - shared-inbox (../../shared-inbox/contracts/openapi.yaml): the guard responses, ErrorEnvelope, Cursor,
+#     MemberRef, WorkspaceId / ConversationId / BackgroundRequest parameters, ItemNotFound;
+#   - assignment-statuses (../../assignment-statuses/contracts/openapi.yaml): ThreadPage / ThreadItem /
+#     ThreadActivity, the current listThreadItems;
+#   - contacts (../../contacts/contracts/openapi.yaml): listContacts / getContact, ContactRow,
+#     ContactProfile, TagRef, TagName, TagFilterMode, TagNotFoundError;
+#   - operator-notifications (../../operator-notifications/contracts/openapi.yaml): the current live socket;
+#   - bot-connection (../../bot-connection/contracts/openapi.yaml): receiveTelegramUpdate, TelegramUpdate.
+#   Every operation and schema here carries `x-delta: added` or `x-delta: changed`. An operation or schema
+#   not listed here is unchanged and stays defined in its original contract. Unchanged pieces are external
+#   $refs, never copies.
+#
+# Deviations from the api-skill defaults are the repo's, recorded in api-sync-report.md:
+#   - auth: the opaque session cookie (workspace-operators ADR-0002), not a bearer token
+#   - paths: /api/... with no /v1 segment (workspace-operators ADR-0003, ADR-0004)
+#   - methods: GET reads and action POSTs only (the repo's style)
+#   - error envelope: the repo's { "error": { code, message, details? } } with UPPER_SNAKE codes
+#     (CLAUDE.md, packages/shared/src/errors.ts)
+#   - no Idempotency-Key header: every write is idempotent by state under the broadcast row lock (a second
+#     launch answers `already_launched`, a second stop `unchanged`, a repeated add `unchanged`, a repeated
+#     remove `unchanged`); the one async actor (the broadcasts.send chain) is enqueued inside the launch
+#     transaction, so a retried launch can never enqueue twice
+openapi: 3.1.0
+
+info:
+  title: broadcasts API (delta over shared-inbox, assignment-statuses, contacts, operator-notifications, bot-connection)
+  version: 0.1.0
+  description: |
+    Lets a workspace send one plain-text message from its own business bot to a chosen part of its contact
+    base, without leaving the panel (spec §1, §2). Pilots hold a tagged contact base that was pitched as
+    "your broadcast base in the making"; this is the step that uses it. The sharpest failure is that
+    broadcasts and support share **one bot**, so a broadcast must never take replies down with it, never
+    send twice and never send what the owner did not confirm.
+
+    - **Broadcasts list** (US-01, US-04): `GET …/broadcasts`, drafts and launched broadcasts together, the
+      most recently changed first.
+    - **Drafts** (US-01, US-02): any member creates a draft, saves its name and text and its audience
+      against the version shown, fills a broadcast group from the Contacts search and filter, and deletes
+      their own drafts (a business owner deletes any draft). Every draft read carries the count breakdown
+      for the current bot.
+    - **Launch** (US-03): a business owner reads the launch confirmation (also the pre-check) and launches
+      against its version and audience fingerprint. At most 10 launches per workspace in 24 hours.
+    - **Delivery report** (US-04): the launched broadcast with totals by outcome, recipients 50 at a time
+      in position order, narrowable to one outcome; a business owner stops a sending broadcast.
+    - **Duplicate** (US-05): any broadcast into a new draft, with a choice of audience for a launched one.
+    - **Blocked the bot** (US-06): Contacts rows and the profile gain `blocked_since` for the current bot.
+    - **Broadcast items** (US-07): the inbox thread gains the item type `broadcast`.
+
+    Every route sits behind the workspace-access guard: a caller who was never a member gets
+    `404 NOT_FOUND` with no hint, a deactivated member `403 ACCESS_REMOVED`, a signed-out caller
+    `401 UNAUTHENTICATED` (AC-08). A broadcast, contact or tag id is always looked up together with the
+    workspace id, so a foreign id is not found, and the composite foreign keys make a cross-workspace
+    group row, recipient or item impossible. Names and the broadcast text are shown as plain text only
+    (spec §6.1). Only `bots` talks to Telegram; no route here calls it synchronously.
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+security:
+  - SessionCookie: []
+
+tags:
+  - name: broadcasts
+    description: Module `broadcasts` (ADR-0001). Owns broadcasts, audience tags, group rows and recipients; `registerBroadcasts` under `/api/workspaces/:workspaceId/broadcasts…`. Reaches `contacts`, `conversations`, `bots` and `workspaces` through their app layers
+  - name: contacts
+    description: Module `contacts`. The list and profile reads gain the blocked mark for the current bot (ADR-0002)
+  - name: inbox
+    description: Module `inbox`. The thread gains broadcast items, enriched from `broadcasts.itemDetails` (ADR-0010), and the live socket carries `broadcast.changed`
+  - name: bots
+    description: Module `bots`. The webhook now also receives `my_chat_member` (ADR-0003)
+
+paths:
+  # ───────────────────────── added operations: broadcasts ─────────────────────────
+  /api/workspaces/{workspaceId}/broadcasts:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: List every broadcast of the workspace, drafts and launched together, the most recently changed first (US-01, US-04)
+      description: |
+        Flow 5 (AC-01, AC-08). Both roles get the same list. Read by
+        `broadcasts_workspace_id_last_changed_at_idx` (`last_changed_at DESC, id DESC`). **Not paged**
+        (ux-flows assumption): a pilot workspace holds tens of broadcasts, and at most 10 are launched per
+        day. Each row carries its audience size: a draft's is computed on this read (a group counts its
+        rows, a tag audience runs the Contacts filter count), a launched one's is the frozen
+        `audience_size`. Re-read after every `broadcast.changed` frame (events.md), so statuses change live.
+        An empty list is the panel's "what a broadcast is" state with "New broadcast" for every member.
+      operationId: listBroadcasts
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: Every broadcast of the workspace
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastList" }
+              examples:
+                withBroadcasts:
+                  summary: A draft and a sending broadcast (AC-01)
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    items:
+                      - id: "01920000-0000-7000-8000-000000000502"
+                        name: "Test broadcast 2"
+                        status: draft
+                        audience_kind: tags
+                        audience_size: 38
+                        author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                        last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                        last_changed_at: "2026-10-23T09:12:00Z"
+                        launched_at: null
+                        ended_at: null
+                      - id: "01920000-0000-7000-8000-000000000501"
+                        name: "Test broadcast 1"
+                        status: sending
+                        audience_kind: tags
+                        audience_size: 38
+                        author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                        last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                        last_changed_at: "2026-10-23T09:00:00Z"
+                        launched_at: "2026-10-23T09:00:00Z"
+                        ended_at: null
+                empty:
+                  summary: No broadcast yet
+                  value:
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    items: []
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Create a draft at its first valid name (US-01)
+      description: |
+        Flow 6 (AC-01, AC-02, AC-10). The panel calls this at the first valid name typed in the empty
+        editor; leaving an editor that never had a valid name creates nothing. The server tidies and
+        measures with the shared rule (`packages/shared/src/broadcast-text.ts`, ADR-0012): the name 1–80
+        graphemes, the text trimmed at both ends and, when given, 1–4096 UTF-16 code units. An absent
+        `text` starts the draft with an empty text (data-model assumption 3); the launch refuses an empty
+        text later.
+
+        The draft starts at `version` 1, `audience_kind` `tags`, `tag_mode` `any` with no tag (every
+        contact), with the caller as author and last changer. Needs no bot. Publishes
+        `broadcast.changed { change: draft }` in the same transaction. Nothing is sent.
+      operationId: createBroadcast
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastCreate" }
+            example:
+              name: "Test broadcast 1"
+      responses:
+        "201":
+          description: The new draft with its breakdown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastDraft" }
+              example:
+                id: "01920000-0000-7000-8000-000000000503"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                status: draft
+                version: 1
+                name: "Test broadcast 1"
+                text: ""
+                author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_at: "2026-10-23T09:20:00Z"
+                created_at: "2026-10-23T09:20:00Z"
+                audience: { kind: tags, mode: any, tags: [], dropped_tags: [] }
+                breakdown:
+                  audience_size: 120
+                  reach: { blocked_count: 2, never_wrote_count: 0, reachable_count: 118 }
+        "400":
+          description: The body does not match the schema (`VALIDATION_ERROR`), or the tidied name or text breaks the shared rule (`BROADCAST_NAME_INVALID`, `BROADCAST_TEXT_INVALID`, AC-02). Nothing is created
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BroadcastNameInvalidError" }
+                  - { $ref: "#/components/schemas/BroadcastTextInvalidError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                nameTooLong:
+                  value:
+                    error: { code: BROADCAST_NAME_INVALID, message: "A name must be 1 to 80 characters", details: { field: name, min_length: 1, max_length: 80 } }
+                textTooLong:
+                  value:
+                    error: { code: BROADCAST_TEXT_INVALID, message: "The text must be 1 to 4096 characters as Telegram counts them", details: { field: text, min_length: 1, max_length: 4096, length: 4101 } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Read one broadcast — the draft with its breakdown, or the launched broadcast with its report totals (US-01, US-03, US-04)
+      description: |
+        Flows 7 and 11 (AC-01, AC-05, AC-08, AC-09, AC-10, AC-11, AC-14, AC-18). One address, two views:
+        the answer's `status` picks the draft editor (SCR-25, `draft`) or the read-only broadcast page
+        (SCR-28, `sending` / `sent` / `stopped`). A foreign or unknown id is `404` with no hint (SCR-06).
+
+        **Draft.** The current fields and `version`, and the audience: a tag audience lists its stored
+        tags that still exist under their **current** names (a rename keeps working) and, in
+        `dropped_tags`, the ones deleted or merged away under the name they had when chosen (the notice,
+        AC-01); a group gives its size. `breakdown` is computed on every read (not cached, not pushed,
+        ux-flows) by `contacts.audienceBreakdown` for the **current** Telegram bot (ADR-0002, ADR-0004):
+        audience size, then blocked, then never wrote to the current bot, then reachable. With no bot row
+        at all `reach` is null and only the size is shown ("reach is known once a bot is connected"); a
+        bot that is not working still has its Telegram bot id, so its breakdown is computed (sad.md §6
+        assumption). An `audience_size` above 10 000 is saved but cannot be launched (AC-05).
+
+        **Launched.** Name, text and the audience as it was defined at launch (tag names at launch), who
+        launched it and when, the breakdown frozen at launch, who stopped it and when, the finish time and
+        end reason, and `totals` — one grouped count over its recipient rows by state
+        (`broadcast_recipients_state_position_idx`). The page re-reads this and its current recipient page
+        after each `broadcast.changed` frame (events.md), one fetch at a time.
+      operationId: getBroadcast
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The broadcast
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Broadcast" }
+              examples:
+                draftTagAudience:
+                  summary: A tag audience with a dropped tag — 38 match, 2 blocked, 36 reachable (AC-01)
+                  value:
+                    id: "01920000-0000-7000-8000-000000000502"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    status: draft
+                    version: 4
+                    name: "Test broadcast 2"
+                    text: "New prices from Monday."
+                    author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    last_changed_at: "2026-10-23T09:12:00Z"
+                    created_at: "2026-10-23T09:05:00Z"
+                    audience:
+                      kind: tags
+                      mode: any
+                      tags:
+                        - { tag_id: "01920000-0000-7000-8000-000000000302", name: "VIP", kind: include }
+                        - { tag_id: "01920000-0000-7000-8000-000000000303", name: "Staff", kind: exclude }
+                      dropped_tags:
+                        - { tag_id: "01920000-0000-7000-8000-000000000399", name: "Test tag", kind: include }
+                    breakdown:
+                      audience_size: 38
+                      reach: { blocked_count: 2, never_wrote_count: 0, reachable_count: 36 }
+                draftGroupNoBot:
+                  summary: A broadcast group in a workspace with no bot — size only
+                  value:
+                    id: "01920000-0000-7000-8000-000000000504"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    status: draft
+                    version: 2
+                    name: "Test broadcast 4"
+                    text: "Hello"
+                    author: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    last_changed_at: "2026-10-23T09:30:00Z"
+                    created_at: "2026-10-23T09:25:00Z"
+                    audience: { kind: group, size: 14 }
+                    breakdown: { audience_size: 14, reach: null }
+                sending:
+                  summary: A sending broadcast with its totals (AC-11)
+                  value:
+                    id: "01920000-0000-7000-8000-000000000501"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    status: sending
+                    name: "Test broadcast 1"
+                    text: "New prices from Monday."
+                    author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    last_changed_at: "2026-10-23T09:00:00Z"
+                    created_at: "2026-10-22T16:00:00Z"
+                    audience:
+                      kind: tags
+                      mode: any
+                      tags:
+                        - { tag_id: "01920000-0000-7000-8000-000000000302", name: "VIP", kind: include }
+                        - { tag_id: "01920000-0000-7000-8000-000000000303", name: "Staff", kind: exclude }
+                    launched_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    launched_at: "2026-10-23T09:00:00Z"
+                    launch_breakdown: { audience_size: 38, blocked_count: 2, never_wrote_count: 0, recipient_count: 36 }
+                    stopped_by: null
+                    stopped_at: null
+                    ended_at: null
+                    end_reason: null
+                    totals: { waiting: 20, sending: 2, delivered: 12, blocked: 1, failed: 1, not_confirmed: 0, stopped: 0 }
+                    not_reached_count: 0
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/save:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Save the draft's name and/or text against the version shown (US-01)
+      description: |
+        Flow 6 (AC-02, AC-03, AC-09, AC-10; ADR-0005). The editor saves as the member types (no separate
+        save step), each save carrying the `expected_version` it was shown. The server tidies and
+        measures with the shared rule first (ADR-0012): an invalid value is refused and the draft keeps
+        its last valid content. Then, under the broadcast row lock (`FOR NO KEY UPDATE`):
+        - not a broadcast of this workspace → `404` with no hint;
+        - launched → `409 BROADCAST_NOT_A_DRAFT` (the panel shows the read-only page with Duplicate, AC-09);
+        - another version → `409 BROADCAST_DRAFT_CHANGED` with the current draft; the editor shows the
+          teammate's version next to the member's own edit to apply again (AC-03);
+        - the version shown → the fields are written, `version` + 1, last changed by the caller, and
+          `broadcast.changed { change: draft }` is published in the same transaction.
+        A save whose tidied values equal the stored ones still raises the version (the panel never sends
+        one). Group adds and removes never raise the version, so they never make this save stale.
+      operationId: saveBroadcastFields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastFieldsSave" }
+            example:
+              expected_version: 3
+              text: "New prices from Monday."
+      responses:
+        "200":
+          description: The draft with its new version
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastDraft" }
+              example:
+                id: "01920000-0000-7000-8000-000000000502"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                status: draft
+                version: 4
+                name: "Test broadcast 2"
+                text: "New prices from Monday."
+                author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_at: "2026-10-23T09:12:00Z"
+                created_at: "2026-10-23T09:05:00Z"
+                audience:
+                  kind: tags
+                  mode: any
+                  tags: [{ tag_id: "01920000-0000-7000-8000-000000000302", name: "VIP", kind: include }]
+                  dropped_tags: []
+                breakdown:
+                  audience_size: 40
+                  reach: { blocked_count: 2, never_wrote_count: 0, reachable_count: 38 }
+        "400":
+          description: Neither field given, a malformed body (`VALIDATION_ERROR`), or a value that breaks the shared rule (`BROADCAST_NAME_INVALID`, `BROADCAST_TEXT_INVALID`, AC-02). Nothing changes
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BroadcastNameInvalidError" }
+                  - { $ref: "#/components/schemas/BroadcastTextInvalidError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                emptyText:
+                  value:
+                    error: { code: BROADCAST_TEXT_INVALID, message: "The text must be 1 to 4096 characters as Telegram counts them", details: { field: text, min_length: 1, max_length: 4096, length: 0 } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409": { $ref: "#/components/responses/DraftSaveConflict" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/audience:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Save the draft's audience — a tag audience, or switch the kind — against the version shown (US-01, US-02)
+      description: |
+        Flow 7 (AC-01, AC-03, AC-05, AC-08; ADR-0004, ADR-0005). Checked under the broadcast row lock as
+        `saveBroadcastFields` (`404`, `BROADCAST_NOT_A_DRAFT`, `BROADCAST_DRAFT_CHANGED`).
+
+        **`kind: tags`** saves the whole tag audience: the match mode, the chosen tags and the tags to leave
+        out. Every id is first resolved among this workspace's tags (`tags_workspace_id_id_key`): an id that
+        does not resolve — deleted, merged away, or another workspace's — is `404 TAG_NOT_FOUND` naming it,
+        and nothing is saved (flow 7: "refused as not found"). The draft's tag rows are replaced, each with
+        `include` / `exclude` and the tag's name now; `version` + 1. `mode: none` takes no tags at all
+        (neither chosen nor left out), and a tag cannot be both chosen and left out (`400
+        VALIDATION_ERROR`). No chosen tag with `any` / `all` means every contact (AC-01). An audience that
+        would match more than 10 000 contacts is saved; the draft read says it cannot be launched (AC-05).
+
+        Switching **from a broadcast group** that holds contacts to a tag audience needs
+        `expected_group_size`, the size the switch confirmation showed (SCR-32): a different current size
+        is `409 BROADCAST_GROUP_CHANGED` with the current size, and the dialog asks again. Otherwise the
+        group rows are deleted with the switch. An empty group needs no confirmation (`expected_group_size`
+        0 or absent).
+
+        **`kind: group`** switches a tag audience to an empty broadcast group: the tag rows are deleted,
+        `version` + 1. Sent while the audience is already a group, it changes nothing and answers the
+        draft unchanged (no version raise). Contacts are then added with the group routes.
+
+        Publishes `broadcast.changed { change: draft }` when something was written.
+      operationId: saveBroadcastAudience
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastAudienceSave" }
+            examples:
+              tagAudience:
+                summary: Any of VIP, leaving out Staff (AC-01)
+                value:
+                  expected_version: 2
+                  kind: tags
+                  mode: any
+                  tag_ids: ["01920000-0000-7000-8000-000000000302"]
+                  exclude_tag_ids: ["01920000-0000-7000-8000-000000000303"]
+              switchFromGroup:
+                summary: Switch a group of 14 to a tag audience after the confirmation (SCR-32)
+                value:
+                  expected_version: 5
+                  kind: tags
+                  mode: any
+                  tag_ids: []
+                  exclude_tag_ids: []
+                  expected_group_size: 14
+              toGroup:
+                value:
+                  expected_version: 3
+                  kind: group
+      responses:
+        "200":
+          description: The draft with its audience, new version and breakdown
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastDraft" }
+              example:
+                id: "01920000-0000-7000-8000-000000000502"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                status: draft
+                version: 3
+                name: "Test broadcast 2"
+                text: "New prices from Monday."
+                author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_at: "2026-10-23T09:10:00Z"
+                created_at: "2026-10-23T09:05:00Z"
+                audience:
+                  kind: tags
+                  mode: any
+                  tags:
+                    - { tag_id: "01920000-0000-7000-8000-000000000302", name: "VIP", kind: include }
+                    - { tag_id: "01920000-0000-7000-8000-000000000303", name: "Staff", kind: exclude }
+                  dropped_tags: []
+                breakdown:
+                  audience_size: 38
+                  reach: { blocked_count: 2, never_wrote_count: 0, reachable_count: 36 }
+        "400":
+          description: "A malformed body, more than 100 ids in a list, `mode: none` with tags, or a tag both chosen and left out. Nothing changes"
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                noneWithTags:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "\"No tags\" cannot be combined with chosen or left-out tags", details: { field: tag_ids } }
+                bothWays:
+                  value:
+                    error: { code: VALIDATION_ERROR, message: "A tag cannot be both chosen and left out", details: { field: exclude_tag_ids } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404":
+          description: |
+            `NOT_FOUND` — the workspace or the broadcast is unknown to the caller (no hint). `TAG_NOT_FOUND` —
+            a named tag is not a tag of this workspace (deleted, merged away or foreign; no hint which).
+            Nothing changes
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagNotFoundError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                tagGone:
+                  value:
+                    error: { code: TAG_NOT_FOUND, message: "This tag no longer exists", details: { tag_id: "01920000-0000-7000-8000-000000000399" } }
+                broadcastNotFound:
+                  value:
+                    error: { code: NOT_FOUND, message: "Not found" }
+        "409":
+          description: |
+            `BROADCAST_NOT_A_DRAFT` (launched meanwhile), `BROADCAST_DRAFT_CHANGED` (another version, with
+            the current draft), or `BROADCAST_GROUP_CHANGED` (the group's size is no longer the one the
+            switch confirmation showed, with the current size). Nothing changes
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BroadcastNotADraftError" }
+                  - { $ref: "#/components/schemas/BroadcastDraftChangedError" }
+                  - { $ref: "#/components/schemas/BroadcastGroupChangedError" }
+              examples:
+                groupChanged:
+                  value:
+                    error: { code: BROADCAST_GROUP_CHANGED, message: "The group changed — it now holds 15 contacts", details: { group_size: 15 } }
+                notADraft:
+                  value:
+                    error: { code: BROADCAST_NOT_A_DRAFT, message: "This broadcast was launched and can no longer be changed", details: { broadcast_id: "01920000-0000-7000-8000-000000000502", status: sending } }
+
+  # ───────────────────────── added operations: the broadcast group ─────────────────────────
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Read a page of the draft's broadcast group, the most recently added first (US-02)
+      description: |
+        Flow 8 (AC-04, AC-14). 50 contacts per page (no `limit` parameter), keyset by (`added_at`,
+        `contact_id`) on `broadcast_group_contacts_added_at_idx`; `after` continues with older additions.
+        Each row has the contact's name, username and tags (from `contacts.contactCards`, the Contacts row
+        rules) and `blocked_since` for the **current** Telegram bot, so the group marks the contacts who
+        blocked the bot; plus who added it and when. `size` is the group's row count. The breakdown is the
+        draft's (`getBroadcast`), which the editor re-reads after every group change.
+
+        A launched broadcast keeps its group rows read-only (data-model assumption 8) and answers them too;
+        the recipient list (`listBroadcastRecipients`) is the truth for a launched group. A draft whose
+        audience is a tag audience answers an empty page with `size: 0`.
+      operationId: listBroadcastGroup
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page. It encodes (`added_at`, `contact_id`)
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+      responses:
+        "200":
+          description: One page of the group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                broadcast_id: "01920000-0000-7000-8000-000000000504"
+                size: 14
+                items:
+                  - contact:
+                      id: "01920000-0000-7000-8000-0000000000a1"
+                      first_name: "Test"
+                      last_name: "User"
+                      username: "test_user_1"
+                      tags: [{ id: "01920000-0000-7000-8000-000000000304", name: "Wholesale" }]
+                      blocked_since: "2026-10-20T11:00:00Z"
+                    added_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    added_at: "2026-10-23T09:31:00Z"
+                has_prev: false
+                has_next: false
+                next_cursor: null
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group/membership:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Which of these contacts (one picker page) are already in the group (US-02)
+      description: |
+        Flow 8 (AC-04, AC-05). The group picker (SCR-26) reads a page with the Contacts list's own route
+        (`listContacts`, same search, filter and counts by construction) and then asks which of that
+        page's contact ids are in the group, to mark them. At most 50 ids (one page). Ids that are not
+        in the group — including ids of other workspaces — are simply absent from the answer, so it gives
+        no hint. Read by `broadcast_group_contacts_pkey`.
+      operationId: getBroadcastGroupMembership
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: contact
+          required: true
+          description: "Contact ids of one picker page, repeated (`contact=<id>&contact=<id>`)"
+          style: form
+          explode: true
+          schema:
+            type: array
+            minItems: 1
+            maxItems: 50
+            items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The asked ids that are in the group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupMembership" }
+              example:
+                broadcast_id: "01920000-0000-7000-8000-000000000504"
+                contact_ids: ["01920000-0000-7000-8000-0000000000a1"]
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group/contacts:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Add one contact to the draft's broadcast group (US-02)
+      description: |
+        Flow 8 "add one contact" (AC-03, AC-04, AC-05, AC-08; ADR-0005). Under the broadcast row lock
+        (`FOR NO KEY UPDATE`): still a draft (`BROADCAST_NOT_A_DRAFT`), its audience still a group
+        (`BROADCAST_DRAFT_CHANGED` with the current draft, when a teammate switched the kind meanwhile),
+        the contact a contact of this workspace (`404` with no hint otherwise — the composite foreign key
+        makes a foreign contact unstorable), already in the group (`200 unchanged`, "already there"), the
+        group under 10 000 (`409 BROADCAST_AUDIENCE_TOO_LARGE` with `can_add: 0`). Otherwise one row is
+        inserted (`ON CONFLICT DO NOTHING`) with the caller and the time; last changed by the caller;
+        **the version stays**, so no teammate's name or text save goes stale (AC-03). Publishes
+        `broadcast.changed { change: group }` when added.
+      operationId: addBroadcastGroupContact
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastGroupAdd" }
+            example:
+              contact_id: "01920000-0000-7000-8000-0000000000a1"
+      responses:
+        "200":
+          description: Added, or already in the group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupChange" }
+              examples:
+                added:
+                  value: { broadcast_id: "01920000-0000-7000-8000-000000000504", outcome: added, group_size: 2 }
+                alreadyThere:
+                  value: { broadcast_id: "01920000-0000-7000-8000-000000000504", outcome: unchanged, group_size: 2 }
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404":
+          description: The workspace, the broadcast or the contact is unknown to the caller — or the contact belongs to another workspace. The cases cannot be told apart (AC-08)
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: NOT_FOUND, message: "Not found" }
+        "409": { $ref: "#/components/responses/GroupWriteConflict" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group/contacts/{contactId}/remove:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+      - $ref: "../../contacts/contracts/openapi.yaml#/components/parameters/ContactId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Remove one contact from the draft's broadcast group (US-02)
+      description: |
+        Flow 8 "remove a contact" (AC-03, AC-04). Under the broadcast row lock: still a draft
+        (`BROADCAST_NOT_A_DRAFT`); then the row is deleted by its key. An absent row — never added, already
+        removed by a teammate, a foreign contact, or a tag-audience draft — answers `200 unchanged`, so a
+        remove gives no hint about foreign ids and two members' removes both stand. Changes nothing on the
+        contact. The version stays. Publishes `broadcast.changed { change: group }` when removed.
+      operationId: removeBroadcastGroupContact
+      responses:
+        "200":
+          description: Removed, or not in the group
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupChange" }
+              example: { broadcast_id: "01920000-0000-7000-8000-000000000504", outcome: removed, group_size: 13 }
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409":
+          description: "`BROADCAST_NOT_A_DRAFT` — launched meanwhile. Nothing changes"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastNotADraftError" }
+              example:
+                error: { code: BROADCAST_NOT_A_DRAFT, message: "This broadcast was launched and can no longer be changed", details: { broadcast_id: "01920000-0000-7000-8000-000000000504", status: sending } }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group/matching:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Count the contacts matching a search and filter that are not yet in the group — the first step of "add all matching" (US-02)
+      description: |
+        Flow 8 "add all matching", first step (AC-04, AC-05). Takes the Contacts list's `q`, `mode` and
+        `tag` with the same rules (`contacts.matchingContactIds`, ADR-0004; `mode=none` with a `tag` is
+        `400`, unresolved tag ids are left out and returned in `missing_tag_ids`). Answers how many match,
+        how many of them the group already holds, how many it would add, and how many the group can still
+        take under 10 000. The picker states `to_add_count` and asks to confirm; it shows the
+        too-large refusal up front when `to_add_count` exceeds `can_add`. Writes nothing.
+      operationId: countBroadcastGroupMatching
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: q
+          required: false
+          description: As `listContacts.q`
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: mode
+          required: false
+          schema: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+        - in: query
+          name: tag
+          required: false
+          description: As `listContacts.tag`
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 100
+            items: { type: string, format: uuid }
+      responses:
+        "200":
+          description: The counts for the confirmation step
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupMatching" }
+              example:
+                broadcast_id: "01920000-0000-7000-8000-000000000504"
+                matching_count: 14
+                already_in_group_count: 1
+                to_add_count: 13
+                can_add: 9986
+                missing_tag_ids: []
+        "400":
+          description: The query does not match the schema, or `mode=none` with a `tag` (as `listContacts`)
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: VALIDATION_ERROR, message: "\"No tags\" cannot be combined with chosen tags", details: { field: tag } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/group/add-matching:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Add every contact matching a search and filter now, as a whole or not at all (US-02)
+      description: |
+        Flow 8 "add all matching", on confirmation (AC-03, AC-04, AC-05). Under the broadcast row lock:
+        still a draft, still a group (as `addBroadcastGroupContact`); then the matching contact ids **now**
+        (up to the room left plus one) minus the group rows. If the group would pass 10 000 the whole add
+        is refused (`409 BROADCAST_AUDIENCE_TOO_LARGE` with how many can still be added) and nothing is
+        added. Otherwise every current match is inserted (`ON CONFLICT DO NOTHING`) with the caller and the
+        time, the version stays, and `broadcast.changed { change: group }` is published when anything was
+        added. `added_count` can differ from the `expected_count` the confirmation showed when the matches
+        changed meanwhile; the picker then says how many were added (AC-04). Contacts that match later are
+        never added.
+      operationId: addBroadcastGroupMatching
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastGroupAddMatching" }
+            example:
+              q: "kyiv"
+              mode: any
+              tag_ids: ["01920000-0000-7000-8000-000000000304"]
+              expected_count: 13
+      responses:
+        "200":
+          description: The current matches were added
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastGroupMatchingAdded" }
+              examples:
+                asCounted:
+                  value: { broadcast_id: "01920000-0000-7000-8000-000000000504", expected_count: 13, added_count: 13, group_size: 14 }
+                changedMeanwhile:
+                  value: { broadcast_id: "01920000-0000-7000-8000-000000000504", expected_count: 13, added_count: 12, group_size: 13 }
+        "400":
+          description: "A malformed body, or `mode: none` with tags (as `listContacts`). Nothing changes"
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: VALIDATION_ERROR, message: "\"No tags\" cannot be combined with chosen tags", details: { field: tag_ids } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409": { $ref: "#/components/responses/GroupWriteConflict" }
+
+  # ───────────────────────── added operations: delete, duplicate ─────────────────────────
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/delete:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Delete a draft — its author or a business owner (US-01)
+      description: |
+        Flow 9 (AC-07, AC-08, AC-09). After the confirmation that names the draft and its audience size
+        (SCR-31). A business owner's membership is share-locked first (`workspaces.lockActiveMembers`,
+        SAD §8 lock order), then the broadcast row `FOR NO KEY UPDATE`:
+        - not a broadcast of this workspace → `404` with no hint;
+        - launched → `409 BROADCAST_NOT_A_DRAFT` (read-only, offer Duplicate, AC-09);
+        - neither its author nor an active business owner → `403 FORBIDDEN` ("a draft is deleted by its
+          author or a business owner", AC-07), whatever the browser showed;
+        - otherwise its tag rows and group rows, then the broadcast row, are deleted, and
+          `broadcast.changed { change: deleted }` is published; every open list drops it.
+      operationId: deleteBroadcast
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastDeleted" }
+              example: { workspace_id: "01920000-0000-7000-8000-000000000001", broadcast_id: "01920000-0000-7000-8000-000000000502" }
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          description: The membership is deactivated, or the caller is neither the draft's author nor a business owner. Nothing changes
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                accessRemoved:
+                  value:
+                    error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+                notAuthor:
+                  value:
+                    error: { code: FORBIDDEN, message: "A draft is deleted by its author or a business owner" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409":
+          description: "`BROADCAST_NOT_A_DRAFT` — a launched broadcast is never deleted (AC-09)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastNotADraftError" }
+              example:
+                error: { code: BROADCAST_NOT_A_DRAFT, message: "This broadcast was launched and can no longer be changed", details: { broadcast_id: "01920000-0000-7000-8000-000000000501", status: sent } }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/duplicate:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Duplicate any broadcast into a new draft (US-05)
+      description: |
+        Flow 15 (AC-07, AC-08, AC-13, AC-18). Any member, either role. One transaction: a new draft whose
+        author and last changer are the caller, named "Copy of …" cut to 80 graphemes by the shared name
+        rule, with the same text, `version` 1, plus a copy of the source's audience by `audience`:
+        - `same` — only for a **draft** source (and its default): its tag rows or its group rows;
+        - `same_tags` — only for a launched broadcast with a tag audience: the tags it was launched with
+          (names at launch) as the copy's tag audience, evaluated again at the copy's launch;
+        - `all_recipients` — a launched broadcast: a group of every recipient's contact; those who blocked
+          the bot stay in it and count as unreachable in the breakdown;
+        - `not_reached` — a launched broadcast **that has ended** (`sent` or `stopped`): a group of the
+          recipients that failed with `bot_stopped`, `text_refused` or `telegram_error`, those `stopped`
+          before their turn, and the `not_confirmed` ones only with `include_not_confirmed: true` (the
+          dialog's warning, SCR-30). Delivered, blocked, `account_gone` and `chat_not_found` recipients are
+          never copied. While the source still sends this is `409 BROADCAST_NOT_ENDED`.
+        A choice that does not fit the source (`same` for a launched one, `same_tags` for a group,
+        `all_recipients` / `not_reached` for a draft) is `400 VALIDATION_ERROR` with `details.field:
+        audience`. Copied contacts pass the composite foreign keys to this workspace's contacts. The
+        source never changes. Publishes `broadcast.changed { change: draft }` for the copy.
+      operationId: duplicateBroadcast
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastDuplicate" }
+            examples:
+              draft:
+                value: { audience: same }
+              notReached:
+                summary: Only recipients it did not reach, including not confirmed after the warning
+                value: { audience: not_reached, include_not_confirmed: true }
+      responses:
+        "201":
+          description: The new draft (the panel opens its editor, SCR-25)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastDraft" }
+              example:
+                id: "01920000-0000-7000-8000-000000000505"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                status: draft
+                version: 1
+                name: "Copy of Test broadcast 1"
+                text: "New prices from Monday."
+                author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                last_changed_at: "2026-10-23T10:00:00Z"
+                created_at: "2026-10-23T10:00:00Z"
+                audience: { kind: group, size: 2 }
+                breakdown:
+                  audience_size: 2
+                  reach: { blocked_count: 0, never_wrote_count: 0, reachable_count: 2 }
+        "400":
+          description: The audience choice does not fit the source, or a malformed body. Nothing is created
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: VALIDATION_ERROR, message: "\"Same tags\" needs a broadcast sent to a tag audience", details: { field: audience } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409":
+          description: "`BROADCAST_NOT_ENDED` — \"only recipients it did not reach\" while the source still sends (AC-13). Nothing is created"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastNotEndedError" }
+              example:
+                error: { code: BROADCAST_NOT_ENDED, message: "Available once the broadcast has ended", details: { broadcast_id: "01920000-0000-7000-8000-000000000501", status: sending } }
+
+  # ───────────────────────── added operations: launch, stop, report ─────────────────────────
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/launch-confirmation:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Read the launch confirmation — also the pre-check (US-03)
+      description: |
+        Flow 10 (AC-05, AC-06, AC-07, AC-09, AC-10; ADR-0006). "Launch" on the draft, and the
+        launch-confirmation address, read this. It is the one pre-check: it answers either the
+        confirmation or the refusal the draft shows, with the same codes as `launchBroadcast`, so the
+        confirmation (SCR-27) never opens for a draft that cannot be launched. Business owners only
+        (`403 OWNER_ONLY` for an operator — the panel lands them on the draft with the owners-only note).
+
+        Checks, in the order the refusals are reported: a draft of this workspace (`404`; launched →
+        `409 BROADCAST_NOT_A_DRAFT`, the panel goes to the broadcast page); a non-empty text
+        (`400 BROADCAST_TEXT_INVALID`, data-model assumption 3); a working bot from
+        `bots.launchReadiness` — state `connected` (`409 BROADCAST_NEEDS_WORKING_BOT` with the bot's state,
+        and the way to Settings — Bot, SCR-08); the cap — fewer than 10 launches in the last 24 h
+        (`429 BROADCAST_LAUNCH_LIMIT_REACHED` with `next_launch_at` = the 10th newest `launched_at` + 24 h,
+        `broadcasts_workspace_id_launched_at_idx`); then the audience for that Telegram bot by
+        `contacts.reachableContacts`: at most 10 000 (`409 BROADCAST_AUDIENCE_TOO_LARGE`) and at least
+        one reachable (`409 BROADCAST_NO_REACHABLE_CONTACT`).
+
+        The confirmation carries the trimmed text exactly as the customer will see it, the breakdown, the
+        draft `version` and the audience `fingerprint` (SHA-256 over the sorted reachable contact ids). The
+        launch sends both back. Writes nothing.
+      operationId: getLaunchConfirmation
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The confirmation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LaunchConfirmation" }
+              example:
+                broadcast_id: "01920000-0000-7000-8000-000000000502"
+                version: 4
+                name: "Test broadcast 2"
+                text: "New prices from Monday."
+                breakdown: { audience_size: 38, blocked_count: 2, never_wrote_count: 0, recipient_count: 36 }
+                fingerprint: "9f2c4b0e7d1a6c3f5e8b2d4a6c1e3f5a7b9d0c2e4f6a8b1c3d5e7f9a0b2c4d6e"
+        "400": { $ref: "#/components/responses/LaunchTextInvalid" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/BroadcastOwnerRouteForbidden" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409": { $ref: "#/components/responses/LaunchRefused" }
+        "429": { $ref: "#/components/responses/LaunchLimitReached" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/launch:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Launch the draft against the version and the audience fingerprint the confirmation showed (US-03)
+      description: |
+        Seeded flow 1, flow 10 (AC-05, AC-06, AC-07, AC-08, AC-09, AC-10; ADR-0006). One transaction, lock
+        order memberships `FOR SHARE` → advisory `broadcast-launches:<ws>` → broadcast row
+        `FOR NO KEY UPDATE`:
+        1. the caller is an active business owner (`403 ACCESS_REMOVED` when deactivated meanwhile — nothing
+           is launched; `403 OWNER_ONLY` for an operator — nothing is sent or changed, AC-07);
+        2. the broadcast is a draft of this workspace (`404`); **already launched** — a double click or a
+           second owner — answers `200` with `outcome: already_launched` and the launched broadcast, and
+           launches nothing again (AC-06);
+        3. the shown `expected_version` (`409 BROADCAST_DRAFT_CHANGED` with the current draft; the panel
+           re-reads the confirmation to confirm again);
+        4. then every check of `getLaunchConfirmation` again, with the same codes — text, bot, cap, size,
+           at least one reachable;
+        5. the reachable set's fingerprint equals `fingerprint` (`409 BROADCAST_AUDIENCE_CHANGED` with the
+           current confirmation, even when the number is the same).
+        Then it inserts the recipients in fingerprint order (positions 1…n, the contact's Telegram user
+        id, `waiting`), freezes the text, the tag names at launch, the Telegram bot id and the confirmed
+        breakdown, sets `sending`, `launched_by`, `launched_at`, enqueues the first `broadcasts.send` link
+        and publishes `broadcast.changed { change: status }` — all in that transaction (events.md). A
+        refused launch writes nothing and does not count toward the cap (AC-09).
+      operationId: launchBroadcast
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/BroadcastLaunch" }
+            example:
+              expected_version: 4
+              fingerprint: "9f2c4b0e7d1a6c3f5e8b2d4a6c1e3f5a7b9d0c2e4f6a8b1c3d5e7f9a0b2c4d6e"
+      responses:
+        "200":
+          description: Launched now, or already launched (nothing launched again). The panel opens the broadcast page (SCR-28)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastLaunched" }
+              example:
+                outcome: launched
+                broadcast:
+                  id: "01920000-0000-7000-8000-000000000502"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  status: sending
+                  name: "Test broadcast 2"
+                  text: "New prices from Monday."
+                  author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                  last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  last_changed_at: "2026-10-23T10:05:00Z"
+                  created_at: "2026-10-23T09:05:00Z"
+                  audience:
+                    kind: tags
+                    mode: any
+                    tags:
+                      - { tag_id: "01920000-0000-7000-8000-000000000302", name: "VIP", kind: include }
+                      - { tag_id: "01920000-0000-7000-8000-000000000303", name: "Staff", kind: exclude }
+                  launched_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  launched_at: "2026-10-23T10:05:00Z"
+                  launch_breakdown: { audience_size: 38, blocked_count: 2, never_wrote_count: 0, recipient_count: 36 }
+                  stopped_by: null
+                  stopped_at: null
+                  ended_at: null
+                  end_reason: null
+                  totals: { waiting: 36, sending: 0, delivered: 0, blocked: 0, failed: 0, not_confirmed: 0, stopped: 0 }
+                  not_reached_count: 0
+        "400":
+          description: A malformed body (`VALIDATION_ERROR`), or the draft's text is empty (`BROADCAST_TEXT_INVALID`). Nothing is launched
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BroadcastTextInvalidError" }
+                  - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: BROADCAST_TEXT_INVALID, message: "Write the text before launching", details: { field: text, min_length: 1, max_length: 4096, length: 0 } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/BroadcastOwnerRouteForbidden" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+        "409":
+          description: |
+            Nothing is launched. `BROADCAST_DRAFT_CHANGED` (another version, with the current draft),
+            `BROADCAST_AUDIENCE_CHANGED` (the reachable set differs from the fingerprinted one, with the
+            current confirmation to confirm again), or the confirmation refusals:
+            `BROADCAST_NEEDS_WORKING_BOT`, `BROADCAST_AUDIENCE_TOO_LARGE`, `BROADCAST_NO_REACHABLE_CONTACT`
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/BroadcastDraftChangedError" }
+                  - { $ref: "#/components/schemas/BroadcastAudienceChangedError" }
+                  - { $ref: "#/components/schemas/BroadcastNeedsWorkingBotError" }
+                  - { $ref: "#/components/schemas/BroadcastAudienceTooLargeError" }
+                  - { $ref: "#/components/schemas/BroadcastNoReachableContactError" }
+              examples:
+                audienceChanged:
+                  summary: A contact was retagged since the confirmation — same number, different set (AC-06)
+                  value:
+                    error:
+                      code: BROADCAST_AUDIENCE_CHANGED
+                      message: "The contacts this broadcast would reach changed — check and confirm again"
+                      details:
+                        confirmation:
+                          broadcast_id: "01920000-0000-7000-8000-000000000502"
+                          version: 4
+                          name: "Test broadcast 2"
+                          text: "New prices from Monday."
+                          breakdown: { audience_size: 38, blocked_count: 2, never_wrote_count: 0, recipient_count: 36 }
+                          fingerprint: "0a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f9"
+                needsBot:
+                  value:
+                    error: { code: BROADCAST_NEEDS_WORKING_BOT, message: "Launching needs a working bot", details: { bot_state: needs_token } }
+        "429": { $ref: "#/components/responses/LaunchLimitReached" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/stop:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    post:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Stop a sending broadcast — business owners only (US-04)
+      description: |
+        Seeded flow 4 (AC-18; ADR-0009). After the confirmation that says how many recipients are still
+        waiting and that a stop cannot be undone (SCR-29); that number may be stale, and a stop needs no
+        second confirmation. Memberships `FOR SHARE` (an active business owner: `403 ACCESS_REMOVED` /
+        `403 OWNER_ONLY`), then the broadcast row `FOR NO KEY UPDATE`:
+        - `sending` with waiting recipients → every `waiting` recipient becomes `stopped` ("not sent —
+          stopped") and the broadcast `stopped` with `stopped_by`, `stopped_at`, `ended_at`, end reason
+          `stopped`, in one transaction; `broadcast.changed { change: status }` is published. After this
+          commit no send of it can start (a claim is a conditional single-row update); sends already in
+          flight finish and record their outcome (spec §6: 0 sends started more than 2 s after the stop);
+        - anything else — nothing waiting (only sends in flight, or it ended meanwhile), already stopped,
+          or a draft — answers `200 unchanged` with the broadcast as it is; a broadcast that ends with
+          its last outcome shows `sent` (AC-18 "a stop after every recipient has an outcome changes
+          nothing").
+      operationId: stopBroadcast
+      responses:
+        "200":
+          description: Stopped now, or unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastStopped" }
+              example:
+                outcome: stopped
+                broadcast:
+                  id: "01920000-0000-7000-8000-000000000501"
+                  workspace_id: "01920000-0000-7000-8000-000000000001"
+                  status: stopped
+                  name: "Test broadcast 1"
+                  text: "New prices from Monday."
+                  author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                  last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  last_changed_at: "2026-10-23T09:03:00Z"
+                  created_at: "2026-10-22T16:00:00Z"
+                  audience: { kind: group }
+                  launched_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  launched_at: "2026-10-23T09:00:00Z"
+                  launch_breakdown: { audience_size: 3000, blocked_count: 0, never_wrote_count: 0, recipient_count: 3000 }
+                  stopped_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                  stopped_at: "2026-10-23T09:03:00Z"
+                  ended_at: "2026-10-23T09:03:00Z"
+                  end_reason: stopped
+                  totals: { waiting: 0, sending: 2, delivered: 1190, blocked: 6, failed: 2, not_confirmed: 0, stopped: 1800 }
+                  not_reached_count: 1800
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/BroadcastOwnerRouteForbidden" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  /api/workspaces/{workspaceId}/broadcasts/{broadcastId}/recipients:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/BroadcastId"
+    get:
+      x-delta: added
+      tags: [broadcasts]
+      summary: Read a page of a launched broadcast's recipients with their outcomes (US-04)
+      description: |
+        Flow 11 (AC-11, AC-12, AC-18; ADR-0011). 50 recipients per page (no `limit` parameter), in
+        position order (the fingerprint's contact-id order, also the send order), keyset by `position` on
+        `broadcast_recipients_broadcast_position_key`, or by (`state`, `position`) on
+        `broadcast_recipients_state_position_idx` when narrowed to one `state`. Each row: the contact's
+        name and username, the outcome, the plain failure reason, and the outcome time. Contact names come
+        from `contacts.contactCards`. Picking a row opens the contact's profile (SCR-19). Re-read (the
+        current page) after each `broadcast.changed { change: report | status }` frame. A draft has no
+        recipients and answers an empty page.
+      operationId: listBroadcastRecipients
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: state
+          required: false
+          description: Narrow to one outcome (for example only `failed`)
+          schema: { $ref: "#/components/schemas/RecipientState" }
+        - in: query
+          name: after
+          required: false
+          description: The `next_cursor` of the previous page, issued for the same `state`. It encodes the last `position`
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+      responses:
+        "200":
+          description: One page of recipients
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BroadcastRecipientPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                broadcast_id: "01920000-0000-7000-8000-000000000501"
+                state: null
+                items:
+                  - id: "01920000-0000-7000-8000-000000000601"
+                    position: 1
+                    contact: { id: "01920000-0000-7000-8000-0000000000a1", first_name: "Test", last_name: "User", username: "test_user_1" }
+                    state: delivered
+                    failure_reason: null
+                    outcome_at: "2026-10-23T09:00:01Z"
+                  - id: "01920000-0000-7000-8000-000000000602"
+                    position: 2
+                    contact: { id: "01920000-0000-7000-8000-0000000000a2", first_name: "Test User 2", last_name: null, username: null }
+                    state: failed
+                    failure_reason: account_gone
+                    outcome_at: "2026-10-23T09:00:01Z"
+                  - id: "01920000-0000-7000-8000-000000000603"
+                    position: 3
+                    contact: { id: "01920000-0000-7000-8000-0000000000a3", first_name: "Test User 3", last_name: null, username: "test_user_3" }
+                    state: waiting
+                    failure_reason: null
+                    outcome_at: null
+                has_prev: false
+                has_next: true
+                next_cursor: "cG9zfDUw"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/BroadcastNotFound" }
+
+  # ───────────────────────── added operation: inbox ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/broadcast-items/{broadcastItemId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+      - $ref: "#/components/parameters/BroadcastItemId"
+    get:
+      x-delta: added
+      tags: [inbox]
+      summary: Read one broadcast item of the thread (US-07)
+      description: |
+        Flow 18 (AC-16; ADR-0010). After a `conversation.changed { item: { type: broadcast }, change:
+        created }` frame for the conversation open in this tab, the thread re-reads the new item and shows
+        it in place; any other tab or view ignores the frame (the inbox list and the attention count are
+        not refetched). Twin of `getThreadActivity`. Looked up by (workspace, conversation, id) on
+        `broadcast_items`; `inbox` adds the broadcast's name, text and launching owner from
+        `broadcasts.itemDetails` (a deactivated owner keeps their name). A foreign or unknown id is
+        `404 NOT_FOUND` with no hint. Never marks anything read.
+      operationId: getThreadBroadcastItem
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The broadcast item
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadBroadcastItem" }
+              example:
+                type: broadcast
+                id: "01920000-0000-7000-8000-000000000701"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                broadcast_id: "01920000-0000-7000-8000-000000000501"
+                broadcast_name: "Test broadcast 1"
+                text: "New prices from Monday."
+                launched_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                state: delivered
+                position_at: "2026-10-23T09:00:01Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ItemNotFound" }
+
+  # ───────────────────────── changed operations ─────────────────────────
+  /api/workspaces/{workspaceId}/inbox/conversations/{conversationId}/items:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/ConversationId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["response.items[] gains type broadcast"]
+      tags: [inbox]
+      summary: Read a page of the conversation's history — now with broadcast items (US-07)
+      description: |
+        Flow 18 (AC-16; ADR-0010). **Changed:** the thread merges a fourth keyset half, broadcast items by
+        `broadcast_items.position_at` (`broadcast_items_conversation_position_at_idx`): a delivered item
+        sits at the time its delivery was recorded, a not-confirmed one at the time the send was made (its
+        claim time). At equal positions the order is message < reply < activity < broadcast. The opaque
+        cursor also encodes the kind `broadcast`; a cursor issued before this feature still decodes.
+
+        A broadcast item is never unread, never moves `read_through_at`, never becomes the list row's
+        `last_item`, and changes no conversation state (status, assignee, waiting, attention). Only
+        delivered and not-confirmed recipients have one (AC-16). The panel shows it apart from replies:
+        the text as plain text, "Broadcast «<broadcast_name>» by <launched_by>", the delivered time or
+        "not confirmed"; the name links to the broadcast page (SCR-28).
+
+        Parameters and the other answers are unchanged (assignment-statuses `listThreadItems`).
+      operationId: listThreadItems
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: before
+          required: false
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+        - in: query
+          name: after
+          required: false
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/Limit"
+      responses:
+        "200":
+          description: One page of the thread, oldest first
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ThreadPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                items:
+                  - type: broadcast
+                    id: "01920000-0000-7000-8000-000000000701"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    broadcast_id: "01920000-0000-7000-8000-000000000501"
+                    broadcast_name: "Test broadcast 1"
+                    text: "New prices from Monday."
+                    launched_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    state: delivered
+                    position_at: "2026-10-23T09:00:01Z"
+                  - type: message
+                    id: "01920000-0000-7000-8000-0000000000e2"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    conversation_id: "01920000-0000-7000-8000-0000000000c1"
+                    kind: text
+                    body: "Is the VIP price for roses too?"
+                    sent_at: "2026-10-23T09:04:00Z"
+                    received_at: "2026-10-23T09:04:01Z"
+                    edited_at: null
+                    attachment: null
+                    location: null
+                    shared_contact: null
+                    poll: null
+                has_prev: true
+                has_next: false
+                prev_cursor: "MjAyNi0xMC0yM1QwOTowMDowMVp8YnwwMTky"
+                next_cursor: null
+                read_through_at: "2026-10-23T09:04:01Z"
+                newest_reply_id: null
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ConversationNotFound" }
+
+  /api/workspaces/{workspaceId}/contacts:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["response.items[].blocked_since"]
+      tags: [contacts]
+      summary: List the workspace's contacts — rows now carry the blocked mark for the current bot (US-06; also the group picker's read, US-02)
+      description: |
+        Flow 16, flow 8 (AC-04, AC-14). **Changed:** each row gains `blocked_since`, the time the contact
+        blocked the workspace's **current** Telegram bot, or null (ADR-0002). The bot id comes from the
+        `currentBot` port; the marks are read by `contact_bot_reach_pkey` for the listed page only. With
+        no bot row every row answers null. Reconnecting the same Telegram bot keeps the marks; a
+        different one starts clean (AC-10). Open lists re-read the affected row after a
+        `contact.changed { change: reach }` frame (events.md).
+
+        Everything else — `q`, `mode`, `tag`, `after`, order, 50 per page, counts, `missing_tag_ids`, the
+        `400` / `401` / `403` / `404` answers — is unchanged (contacts `listContacts`). The group picker
+        (SCR-26) uses this route as is, so its matching and counts are the Contacts list's by construction.
+      operationId: listContacts
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+        - in: query
+          name: q
+          required: false
+          schema: { type: string, maxLength: 200 }
+        - in: query
+          name: mode
+          required: false
+          schema: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+        - in: query
+          name: tag
+          required: false
+          style: form
+          explode: true
+          schema:
+            type: array
+            maxItems: 100
+            items: { type: string, format: uuid }
+        - in: query
+          name: after
+          required: false
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+      responses:
+        "200":
+          description: One page of contacts with the counts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactPage" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                filter: { q: null, mode: any, tag_ids: [] }
+                items:
+                  - id: "01920000-0000-7000-8000-0000000000a1"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    first_name: "Test"
+                    last_name: "User"
+                    username: "test_user_1"
+                    language_code: "uk"
+                    first_wrote_at: "2026-09-02T08:14:00Z"
+                    last_wrote_at: "2026-10-19T09:58:11Z"
+                    tags: [{ id: "01920000-0000-7000-8000-000000000302", name: "VIP" }]
+                    blocked_since: "2026-10-20T11:00:00Z"
+                has_prev: false
+                has_next: false
+                next_cursor: null
+                matching_count: 1
+                total_count: 1
+                missing_tag_ids: []
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/contacts/{contactId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "../../contacts/contracts/openapi.yaml#/components/parameters/ContactId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["response.blocked_since"]
+      tags: [contacts]
+      summary: Read a contact's profile — now with "blocked the bot since …" for the current bot (US-06)
+      description: |
+        Flow 16 (AC-14). **Changed:** the profile gains `blocked_since` for the current Telegram bot, or
+        null, as `ContactRow.blocked_since`. The profile shows "blocked the bot since <time>" while it is
+        set, and re-reads after a `contact.changed { change: reach }` frame for this contact. Everything
+        else is unchanged (contacts `getContact`).
+      operationId: getContact
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The contact's profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ContactProfile" }
+              example:
+                id: "01920000-0000-7000-8000-0000000000a1"
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                first_name: "Test"
+                last_name: "User"
+                username: "test_user_1"
+                language_code: "uk"
+                first_wrote_at: "2026-09-02T08:14:00Z"
+                last_wrote_at: "2026-10-19T09:58:11Z"
+                tags: []
+                blocked_since: "2026-10-20T11:00:00Z"
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../contacts/contracts/openapi.yaml#/components/responses/ContactNotFound" }
+
+  /api/workspaces/{workspaceId}/inbox/live:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: changed
+      x-delta-fields: ["server → client frame broadcast.changed", "contact.changed change reach", "conversation.changed item.type broadcast"]
+      tags: [inbox]
+      summary: Open this tab's live socket — now also carrying broadcast.changed and two widened frames (US-04, US-06, US-07)
+      description: |
+        Flows 5, 11, 16, 18 (AC-01, AC-11, AC-14, AC-16; ADR-0011). The upgrade, the guard, the `Origin`
+        check, the heartbeat, the re-check, the close codes, the `presence` client frame and every other
+        frame are unchanged (shared-inbox, operator-notifications, contacts `openLiveSocket`).
+
+        **Changed** (events.md), each to every socket of the workspace, ids only:
+        - new `broadcast.changed { broadcast_id, change: draft | group | status | report | deleted }` —
+          the list re-reads `listBroadcasts`; an open broadcast page re-reads `getBroadcast` and its
+          current recipient page; `report` is coalesced to at most one per broadcast per second;
+        - `contact.changed` gains `change: reach` — a contact's blocked mark for a bot changed;
+        - `conversation.changed` gains `item.type: broadcast` (with `change: created` only).
+      operationId: openLiveSocket
+      parameters:
+        - in: header
+          name: Upgrade
+          required: true
+          schema: { type: string, const: websocket }
+        - in: header
+          name: Origin
+          required: true
+          description: Unchanged. Must equal the panel's origin
+          schema: { type: string, maxLength: 2048 }
+      responses:
+        "101":
+          description: Switching protocols. The socket carries the frames in events.md (shared-inbox, assignment-statuses, operator-notifications, contacts and this feature)
+        "400": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/ValidationFailed" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          description: Unchanged — the membership is deactivated, or `Origin` is not the panel's origin
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                accessRemoved:
+                  value:
+                    error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+                foreignOrigin:
+                  value:
+                    error: { code: FORBIDDEN, message: "Forbidden" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/telegram/webhook/{botId}:
+    parameters:
+      - in: path
+        name: botId
+        required: true
+        description: Unchanged (bot-connection `receiveTelegramUpdate`)
+        schema: { type: string, maxLength: 64 }
+    post:
+      x-delta: changed
+      x-delta-fields: ["request: my_chat_member updates of private chats"]
+      tags: [bots]
+      summary: Receive a Telegram update for one bot — now also a private my_chat_member (blocked / unblocked) (US-06)
+      description: |
+        Seeded flow 3, flow 16 (AC-14; ADR-0003). The secret check before the body is parsed, the `401`
+        with an empty body, `500` with redelivery and every existing capture rule are unchanged
+        (bot-connection `receiveTelegramUpdate`).
+
+        **Changed:** the webhook's `allowed_updates` now names `my_chat_member`, and `bots` classifies a
+        private-chat `my_chat_member` **before** the inbound interceptor and capture, never handing it to
+        either. `new_chat_member.status` `kicked` records "blocked" and `member` records "unblocked" in
+        `contacts.recordBlockChange` for (workspace, this bot's Telegram id, `from.id`), at the update's
+        `date`, applied only when newer than the reach row's last fact. A user who is not a contact of the
+        workspace (for example a member's own linked Telegram account) changes nothing. No message,
+        conversation, unread, attention or ping results. `contact.changed { change: reach }` is published
+        when a mark changed. Group, channel and other statuses are ignored with `200`. The answer is always
+        `200` with an empty body for an authentic update, as before.
+
+        The 3-minute health check re-registers a webhook whose `allowed_updates` lack `my_chat_member`
+        (same URL and secret, pending updates kept), so bots connected before this feature start receiving
+        block notices within minutes of the deploy (flow 17; no route).
+      operationId: receiveTelegramUpdate
+      security:
+        - TelegramSecretToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TelegramUpdate" }
+            example:
+              update_id: 900002
+              my_chat_member:
+                chat: { id: 700001, type: private, first_name: "Test User" }
+                from: { id: 700001, is_bot: false, first_name: "Test User" }
+                date: 1792310400
+                old_chat_member: { status: member, user: { id: 900100, is_bot: true, first_name: "Test Bot" } }
+                new_chat_member: { status: kicked, user: { id: 900100, is_bot: true, first_name: "Test Bot" }, until_date: 0 }
+      responses:
+        "200":
+          description: Captured, applied, already present, or deliberately ignored. The body is empty
+        "401":
+          description: Unchanged — unknown bot id, a missing or mismatched secret, or a disconnected bot. Empty body
+        "500":
+          description: Unchanged — the handling failed. Telegram redelivers later
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example:
+                error: { code: INTERNAL_ERROR, message: "Internal server error" }
+
+components:
+  securitySchemes:
+    SessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: Restated only because a security requirement names a local scheme. Identical to the shared-inbox / workspace-operators scheme (workspace-operators ADR-0002)
+    TelegramSecretToken:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+      description: Restated only because a security requirement names a local scheme. Identical to bot-connection's per-bot secret (checked before the body is parsed, only its hash stored, redacted from logs)
+
+  parameters:
+    BroadcastId:
+      in: path
+      name: broadcastId
+      required: true
+      description: "`broadcasts.id` (UUIDv7), always looked up together with the workspace id (`broadcasts_workspace_id_id_key`). A malformed id answers 400; an unknown, deleted or foreign id answers 404 with no hint"
+      schema: { type: string, format: uuid }
+    BroadcastItemId:
+      in: path
+      name: broadcastItemId
+      required: true
+      description: "`broadcast_items.id` (UUIDv7) — the live frame's item id. Looked up with the workspace and conversation ids"
+      schema: { type: string, format: uuid }
+
+  responses:
+    BroadcastNotFound:
+      description: The workspace is unknown to the caller, or there is no such broadcast in it — deleted, never existed, or a broadcast of another workspace. The cases cannot be told apart, so there is no hint (AC-08, SCR-06)
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example:
+            error: { code: NOT_FOUND, message: "Not found" }
+    DraftSaveConflict:
+      description: |
+        `BROADCAST_NOT_A_DRAFT` — launched meanwhile; the panel shows the read-only page with Duplicate
+        (AC-09). `BROADCAST_DRAFT_CHANGED` — a teammate saved first; `details.draft` is the current draft,
+        shown next to the member's own edit to apply again (AC-03). Nothing changes
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/BroadcastNotADraftError" }
+              - { $ref: "#/components/schemas/BroadcastDraftChangedError" }
+          examples:
+            draftChanged:
+              value:
+                error:
+                  code: BROADCAST_DRAFT_CHANGED
+                  message: "A teammate changed this draft — check their version and apply your change again"
+                  details:
+                    draft:
+                      id: "01920000-0000-7000-8000-000000000502"
+                      workspace_id: "01920000-0000-7000-8000-000000000001"
+                      status: draft
+                      version: 4
+                      name: "Test broadcast 2"
+                      text: "New prices from Monday!"
+                      author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                      last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                      last_changed_at: "2026-10-23T09:11:00Z"
+                      created_at: "2026-10-23T09:05:00Z"
+                      audience: { kind: tags, mode: any, tags: [], dropped_tags: [] }
+                      breakdown: { audience_size: 120, reach: { blocked_count: 2, never_wrote_count: 0, reachable_count: 118 } }
+            notADraft:
+              value:
+                error: { code: BROADCAST_NOT_A_DRAFT, message: "This broadcast was launched and can no longer be changed", details: { broadcast_id: "01920000-0000-7000-8000-000000000502", status: sending } }
+    GroupWriteConflict:
+      description: |
+        Nothing is added. `BROADCAST_NOT_A_DRAFT` — launched meanwhile. `BROADCAST_DRAFT_CHANGED` — a
+        teammate switched the audience to a tag audience meanwhile (`details.draft` is the current draft).
+        `BROADCAST_AUDIENCE_TOO_LARGE` — the group would pass 10 000 contacts, reachable or not; the add is
+        refused as a whole and `details.can_add` says how many can still be added (AC-05)
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/BroadcastNotADraftError" }
+              - { $ref: "#/components/schemas/BroadcastDraftChangedError" }
+              - { $ref: "#/components/schemas/BroadcastAudienceTooLargeError" }
+          examples:
+            tooLarge:
+              value:
+                error: { code: BROADCAST_AUDIENCE_TOO_LARGE, message: "A broadcast's audience can hold at most 10 000 contacts — 10 more can be added", details: { limit: 10000, audience_size: 9990, can_add: 10 } }
+    BroadcastOwnerRouteForbidden:
+      description: The membership is deactivated (`ACCESS_REMOVED`; on a launch, nothing is launched, AC-08), or the caller is an operator and only business owners launch and stop broadcasts (`OWNER_ONLY`, AC-07, AC-18). Nothing is sent or changed. Same envelope as contacts `TagsOwnerRouteForbidden`
+      content:
+        application/json:
+          schema: { $ref: "../../workspace-operators/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          examples:
+            accessRemoved:
+              value:
+                error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" }
+            ownerOnly:
+              value:
+                error: { code: OWNER_ONLY, message: "Only a business owner launches and stops broadcasts" }
+    LaunchTextInvalid:
+      description: "`BROADCAST_TEXT_INVALID` — the draft has no text yet (data-model assumption 3); the editor says the text must be 1 to 4096 characters. Nothing is launched"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BroadcastTextInvalidError" }
+          example:
+            error: { code: BROADCAST_TEXT_INVALID, message: "Write the text before launching", details: { field: text, min_length: 1, max_length: 4096, length: 0 } }
+    LaunchRefused:
+      description: |
+        The draft cannot be launched now (flow 10, shown on the draft; the confirmation does not open).
+        `BROADCAST_NOT_A_DRAFT` — launched already (the panel opens the broadcast page).
+        `BROADCAST_NEEDS_WORKING_BOT` — no bot, or a bot that is not `connected`, with the way to
+        Settings — Bot (AC-10). `BROADCAST_AUDIENCE_TOO_LARGE` — over 10 000 (AC-05).
+        `BROADCAST_NO_REACHABLE_CONTACT` — the audience has no reachable contact (AC-09)
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/BroadcastNotADraftError" }
+              - { $ref: "#/components/schemas/BroadcastNeedsWorkingBotError" }
+              - { $ref: "#/components/schemas/BroadcastAudienceTooLargeError" }
+              - { $ref: "#/components/schemas/BroadcastNoReachableContactError" }
+          examples:
+            noBot:
+              value:
+                error: { code: BROADCAST_NEEDS_WORKING_BOT, message: "Launching needs a working bot — connect it in Settings — Bot", details: { bot_state: not_connected } }
+            tooLarge:
+              value:
+                error: { code: BROADCAST_AUDIENCE_TOO_LARGE, message: "A broadcast's audience can hold at most 10 000 contacts", details: { limit: 10000, audience_size: 10420, can_add: 0 } }
+            nobodyReachable:
+              value:
+                error: { code: BROADCAST_NO_REACHABLE_CONTACT, message: "This audience has no reachable contact", details: { breakdown: { audience_size: 3, blocked_count: 1, never_wrote_count: 2, recipient_count: 0 } } }
+    LaunchLimitReached:
+      description: |
+        `BROADCAST_LAUNCH_LIMIT_REACHED` — the workspace launched 10 broadcasts within the last 24 hours,
+        stopped and aborted ones included (AC-09; counted under `broadcast-launches:<ws>`). Nothing is
+        launched; drafts stay editable. `details.next_launch_at` is the 10th newest `launched_at` + 24 h;
+        `Retry-After` gives the same time in whole seconds
+      headers:
+        Retry-After:
+          schema: { type: integer, minimum: 1, maximum: 86400 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/BroadcastLaunchLimitReachedError" }
+          example:
+            error:
+              code: BROADCAST_LAUNCH_LIMIT_REACHED
+              message: "A workspace can launch at most 10 broadcasts in 24 hours — the next launch is possible at 14:20"
+              details: { limit: 10, window_hours: 24, next_launch_at: "2026-10-24T14:20:00Z" }
+
+  schemas:
+    # ───────── constants and names ─────────
+    BroadcastName:
+      x-delta: added
+      type: string
+      minLength: 1
+      description: |
+        `broadcasts.name` — internal, never sent. Tidied like a tag name and 1–80 graphemes (an emoji is
+        one) by the shared rule (`packages/shared/src/broadcast-text.ts`, ADR-0012); JSON Schema counts code
+        points, so no `maxLength` is stated. Shown as plain text only
+    BroadcastText:
+      x-delta: added
+      type: string
+      maxLength: 4096
+      description: |
+        `broadcasts.text` — trimmed at both ends; 1–4096 UTF-16 code units as Telegram counts them
+        (ADR-0012). Empty only in a draft that has no text yet (data-model assumption 3). `maxLength`
+        counts code points, which never exceed UTF-16 units, so it is a safe bound (data-model assumption 4).
+        Sent and shown as plain text, no formatting (AC-17)
+    RawBroadcastName:
+      x-delta: added
+      type: string
+      maxLength: 1000
+      description: The name as typed. The server tidies it and checks 1–80 graphemes (`BROADCAST_NAME_INVALID`); the bound only caps the request
+    RawBroadcastText:
+      x-delta: added
+      type: string
+      maxLength: 20000
+      description: The text as typed. The server trims it and checks 1–4096 UTF-16 code units (`BROADCAST_TEXT_INVALID`); the bound only caps the request
+    BroadcastStatus:
+      x-delta: added
+      type: string
+      enum: [draft, sending, sent, stopped]
+      description: "`broadcasts.status`. `sent` covers a finished broadcast and one ended early by a refused text or a lost bot (`end_reason`)"
+    AudienceKind:
+      x-delta: added
+      type: string
+      enum: [tags, group]
+      description: "`broadcasts.audience_kind`"
+    AudienceTagKind:
+      x-delta: added
+      type: string
+      enum: [include, exclude]
+      description: "`broadcast_audience_tags.kind` — chosen (with the match mode) or left out"
+    EndReason:
+      x-delta: added
+      type: string
+      enum: [completed, text_refused, bot_stopped, stopped]
+      description: "`broadcasts.end_reason` (data-model assumption 9)"
+    RecipientState:
+      x-delta: added
+      type: string
+      enum: [waiting, sending, delivered, blocked, failed, not_confirmed, stopped]
+      description: |
+        `broadcast_recipients.state`. The panel's wording (spec AC-11, AC-18): `waiting` / `sending` —
+        waiting; `delivered`; `blocked` — blocked the bot; `failed` — failed with its reason;
+        `not_confirmed` — "not confirmed — Telegram did not answer, not sent again"; `stopped` — "not sent —
+        stopped"
+    RecipientFailureReason:
+      x-delta: added
+      type: string
+      enum: [account_gone, chat_not_found, telegram_error, text_refused, bot_stopped]
+      description: |
+        `broadcast_recipients.failure_reason`, set exactly when `state` is `failed` (ADR-0009):
+        `account_gone` — "account no longer exists"; `chat_not_found` — "chat not found"; `telegram_error` —
+        "Telegram error"; `text_refused` — "Telegram refused the text"; `bot_stopped` — "the bot stopped
+        working". "Only recipients it did not reach" copies `bot_stopped`, `text_refused` and
+        `telegram_error` (AC-13)
+    AudienceFingerprint:
+      x-delta: added
+      type: string
+      pattern: "^[0-9a-f]{64}$"
+      description: SHA-256 (lowercase hex) over the sorted ids of the reachable contacts the confirmation counted (ADR-0006). Opaque to the panel, which sends it back unchanged
+
+    # ───────── audience and breakdown ─────────
+    AudienceTag:
+      x-delta: added
+      type: object
+      required: [tag_id, name, kind]
+      additionalProperties: false
+      properties:
+        tag_id: { type: string, format: uuid, description: "`broadcast_audience_tags.tag_id` — the tag's identity across renames" }
+        name:
+          $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagName"
+          description: In a draft's `tags`, the tag's **current** name; in `dropped_tags` and in a launched audience, `broadcast_audience_tags.tag_name` (the name when chosen, or at launch)
+        kind: { $ref: "#/components/schemas/AudienceTagKind" }
+    DraftTagAudience:
+      x-delta: added
+      type: object
+      required: [kind, mode, tags, dropped_tags]
+      additionalProperties: false
+      properties:
+        kind: { const: tags }
+        mode: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+        tags:
+          type: array
+          maxItems: 200
+          description: The stored tags that still exist, chosen and left out, in tag-list order. No chosen tag with `any` / `all` means every contact
+          items: { $ref: "#/components/schemas/AudienceTag" }
+        dropped_tags:
+          type: array
+          maxItems: 200
+          description: Stored tags deleted or merged away since they were chosen, under their stored name — left out of the evaluation and named in the notice (AC-01). They leave the draft at its next audience save
+          items: { $ref: "#/components/schemas/AudienceTag" }
+    DraftGroupAudience:
+      x-delta: added
+      type: object
+      required: [kind, size]
+      additionalProperties: false
+      properties:
+        kind: { const: group }
+        size: { type: integer, minimum: 0, maximum: 10000, description: "`count(broadcast_group_contacts)` of the draft" }
+    DraftAudience:
+      x-delta: added
+      oneOf:
+        - { $ref: "#/components/schemas/DraftTagAudience" }
+        - { $ref: "#/components/schemas/DraftGroupAudience" }
+      discriminator:
+        propertyName: kind
+        mapping:
+          tags: "#/components/schemas/DraftTagAudience"
+          group: "#/components/schemas/DraftGroupAudience"
+    LaunchedTagAudience:
+      x-delta: added
+      type: object
+      required: [kind, mode, tags]
+      additionalProperties: false
+      description: The tag audience as it was defined at launch — tag names at launch, rewritten by the launch (data-model assumption 8), never the current names
+      properties:
+        kind: { const: tags }
+        mode: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+        tags:
+          type: array
+          maxItems: 200
+          items: { $ref: "#/components/schemas/AudienceTag" }
+    LaunchedGroupAudience:
+      x-delta: added
+      type: object
+      required: [kind]
+      additionalProperties: false
+      description: A launched broadcast group — its recipients (`listBroadcastRecipients`) are the truth
+      properties:
+        kind: { const: group }
+    LaunchedAudience:
+      x-delta: added
+      oneOf:
+        - { $ref: "#/components/schemas/LaunchedTagAudience" }
+        - { $ref: "#/components/schemas/LaunchedGroupAudience" }
+      discriminator:
+        propertyName: kind
+        mapping:
+          tags: "#/components/schemas/LaunchedTagAudience"
+          group: "#/components/schemas/LaunchedGroupAudience"
+    DraftBreakdown:
+      x-delta: added
+      type: object
+      description: The count breakdown (CONTEXT) of a draft, computed on every read for the current Telegram bot by `contacts.audienceBreakdown` (ADR-0004). `audience_size` = `blocked_count` + `never_wrote_count` + `reachable_count`; a contact blocked through that bot counts as blocked even if it never wrote through it (data-model assumption 5)
+      required: [audience_size, reach]
+      additionalProperties: false
+      properties:
+        audience_size:
+          type: integer
+          minimum: 0
+          description: Every contact the audience holds or matches, reachable or not. Above 10 000 the draft cannot be launched (AC-05)
+        reach:
+          description: Null when the workspace has no bot row at all — reach is known once a bot is connected (sad.md §6 assumption)
+          anyOf:
+            - type: object
+              required: [blocked_count, never_wrote_count, reachable_count]
+              additionalProperties: false
+              properties:
+                blocked_count: { type: integer, minimum: 0, description: Blocked the current bot }
+                never_wrote_count: { type: integer, minimum: 0, description: Never wrote to the current bot }
+                reachable_count: { type: integer, minimum: 0, description: Would reach }
+            - { type: "null" }
+    LaunchBreakdown:
+      x-delta: added
+      type: object
+      description: The count breakdown a launch confirmation shows, frozen on the broadcast at launch (`broadcasts.audience_size`, `blocked_count`, `never_wrote_count`, `recipient_count`; CHECK they add up)
+      required: [audience_size, blocked_count, never_wrote_count, recipient_count]
+      additionalProperties: false
+      properties:
+        audience_size: { type: integer, minimum: 0 }
+        blocked_count: { type: integer, minimum: 0 }
+        never_wrote_count: { type: integer, minimum: 0 }
+        recipient_count: { type: integer, minimum: 0, description: The number it will be (was) sent to }
+    RecipientTotals:
+      x-delta: added
+      type: object
+      description: One grouped count of the broadcast's recipient rows by state; the sum is the frozen `recipient_count`
+      required: [waiting, sending, delivered, blocked, failed, not_confirmed, stopped]
+      additionalProperties: false
+      properties:
+        waiting: { type: integer, minimum: 0 }
+        sending: { type: integer, minimum: 0, description: "Claimed, the send in flight" }
+        delivered: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        not_confirmed: { type: integer, minimum: 0 }
+        stopped: { type: integer, minimum: 0 }
+
+    # ───────── broadcasts ─────────
+    BroadcastListItem:
+      x-delta: added
+      type: object
+      description: One row of the Broadcasts list (SCR-24, AC-01)
+      required: [id, name, status, audience_kind, audience_size, author, last_changed_by, last_changed_at, launched_at, ended_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        name: { $ref: "#/components/schemas/BroadcastName" }
+        status: { $ref: "#/components/schemas/BroadcastStatus" }
+        audience_kind: { $ref: "#/components/schemas/AudienceKind" }
+        audience_size:
+          type: integer
+          minimum: 0
+          description: A draft's current size (group rows, or the tag audience's matching count); a launched broadcast's frozen `audience_size`
+        author:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: "`broadcasts.author_account_id` — the draft author; the panel offers Delete on a draft row to them and to business owners"
+        last_changed_by:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: "`broadcasts.last_changed_by_account_id` — who last changed or launched (or stopped) it"
+        last_changed_at: { type: string, format: date-time, description: "`broadcasts.last_changed_at`, the list order" }
+        launched_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+    BroadcastList:
+      x-delta: added
+      type: object
+      required: [workspace_id, items]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        items:
+          type: array
+          description: Every broadcast of the workspace, `last_changed_at` desc then `id` desc
+          items: { $ref: "#/components/schemas/BroadcastListItem" }
+    BroadcastDraft:
+      x-delta: added
+      type: object
+      description: A draft broadcast as the editor shows it (SCR-25)
+      required: [id, workspace_id, status, version, name, text, author, last_changed_by, last_changed_at, created_at, audience, breakdown]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        status: { const: draft }
+        version: { type: integer, minimum: 1, description: "`broadcasts.version`, raised by name, text, kind and tag saves only (ADR-0005)" }
+        name: { $ref: "#/components/schemas/BroadcastName" }
+        text: { $ref: "#/components/schemas/BroadcastText" }
+        author: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+        last_changed_by: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+        last_changed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        audience: { $ref: "#/components/schemas/DraftAudience" }
+        breakdown: { $ref: "#/components/schemas/DraftBreakdown" }
+    LaunchedBroadcast:
+      x-delta: added
+      type: object
+      description: A launched broadcast as the read-only page shows it (SCR-28). Text and audience never change again (AC-09)
+      required: [id, workspace_id, status, name, text, author, last_changed_by, last_changed_at, created_at, audience, launched_by, launched_at, launch_breakdown, stopped_by, stopped_at, ended_at, end_reason, totals, not_reached_count]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        status: { type: string, enum: [sending, sent, stopped] }
+        name: { $ref: "#/components/schemas/BroadcastName" }
+        text:
+          $ref: "#/components/schemas/BroadcastText"
+          description: The trimmed text exactly as sent, frozen at launch (never empty)
+        author: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+        last_changed_by: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+        last_changed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        audience: { $ref: "#/components/schemas/LaunchedAudience" }
+        launched_by:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: "`broadcasts.launched_by_account_id`, still named after a deactivation (AC-16)"
+        launched_at: { type: string, format: date-time }
+        launch_breakdown: { $ref: "#/components/schemas/LaunchBreakdown" }
+        stopped_by:
+          description: "`broadcasts.stopped_by_account_id`; set exactly when `status` is `stopped`"
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+            - { type: "null" }
+        stopped_at: { type: [string, "null"], format: date-time, description: Set exactly when `status` is `stopped` }
+        ended_at: { type: [string, "null"], format: date-time, description: "The finish time (`sent`) or the stop time (`stopped`); null while `sending`" }
+        end_reason:
+          description: Null while `sending`
+          anyOf:
+            - { $ref: "#/components/schemas/EndReason" }
+            - { type: "null" }
+        totals: { $ref: "#/components/schemas/RecipientTotals" }
+        not_reached_count:
+          type: integer
+          minimum: 0
+          description: "Recipients a \"did not reach\" duplicate copies without the warning: `failed` with reason `bot_stopped`, `text_refused` or `telegram_error`, plus `stopped` (not confirmed ones are `totals.not_confirmed`). SCR-30 shows it (AC-13; amended at `tasks`, flag F-5)"
+    Broadcast:
+      x-delta: added
+      oneOf:
+        - { $ref: "#/components/schemas/BroadcastDraft" }
+        - { $ref: "#/components/schemas/LaunchedBroadcast" }
+      discriminator:
+        propertyName: status
+        mapping:
+          draft: "#/components/schemas/BroadcastDraft"
+          sending: "#/components/schemas/LaunchedBroadcast"
+          sent: "#/components/schemas/LaunchedBroadcast"
+          stopped: "#/components/schemas/LaunchedBroadcast"
+
+    # ───────── group ─────────
+    GroupContactCard:
+      x-delta: added
+      type: object
+      description: A contact as a group row and the report show it (`contacts.contactCards`)
+      required: [id, first_name, last_name, username, tags, blocked_since]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username: { type: [string, "null"], description: Without the leading `@` }
+        tags:
+          type: array
+          maxItems: 20
+          items: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagRef" }
+        blocked_since: { type: [string, "null"], format: date-time, description: As `ContactRow.blocked_since` }
+    BroadcastGroupRow:
+      x-delta: added
+      type: object
+      required: [contact, added_by, added_at]
+      additionalProperties: false
+      properties:
+        contact: { $ref: "#/components/schemas/GroupContactCard" }
+        added_by: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef" }
+        added_at: { type: string, format: date-time, description: "`broadcast_group_contacts.added_at`" }
+    BroadcastGroupPage:
+      x-delta: added
+      type: object
+      required: [workspace_id, broadcast_id, size, items, has_prev, has_next, next_cursor]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        broadcast_id: { type: string, format: uuid }
+        size: { type: integer, minimum: 0, maximum: 10000 }
+        items:
+          type: array
+          maxItems: 50
+          description: The most recently added first
+          items: { $ref: "#/components/schemas/BroadcastGroupRow" }
+        has_prev: { type: boolean, description: True when `after` was given }
+        has_next: { type: boolean }
+        next_cursor:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+            - { type: "null" }
+    BroadcastGroupMembership:
+      x-delta: added
+      type: object
+      required: [broadcast_id, contact_ids]
+      additionalProperties: false
+      properties:
+        broadcast_id: { type: string, format: uuid }
+        contact_ids:
+          type: array
+          maxItems: 50
+          description: The asked ids that are in the group
+          items: { type: string, format: uuid }
+    BroadcastGroupAdd:
+      x-delta: added
+      type: object
+      required: [contact_id]
+      additionalProperties: false
+      properties:
+        contact_id: { type: string, format: uuid }
+    BroadcastGroupChange:
+      x-delta: added
+      type: object
+      required: [broadcast_id, outcome, group_size]
+      additionalProperties: false
+      properties:
+        broadcast_id: { type: string, format: uuid }
+        outcome:
+          type: string
+          enum: [added, removed, unchanged]
+          description: "`unchanged` — already in the group (add) or not in it (remove); nothing written, no signal"
+        group_size: { type: integer, minimum: 0, maximum: 10000 }
+    BroadcastGroupMatching:
+      x-delta: added
+      type: object
+      required: [broadcast_id, matching_count, already_in_group_count, to_add_count, can_add, missing_tag_ids]
+      additionalProperties: false
+      properties:
+        broadcast_id: { type: string, format: uuid }
+        matching_count: { type: integer, minimum: 0, description: As `ContactPage.matching_count` for the same search and filter }
+        already_in_group_count: { type: integer, minimum: 0 }
+        to_add_count: { type: integer, minimum: 0, description: "`matching_count` − `already_in_group_count` — what the confirmation states" }
+        can_add: { type: integer, minimum: 0, maximum: 10000, description: 10 000 − the group's size }
+        missing_tag_ids:
+          type: array
+          maxItems: 100
+          items: { type: string, format: uuid }
+    BroadcastGroupAddMatching:
+      x-delta: added
+      type: object
+      required: [mode, tag_ids, expected_count]
+      additionalProperties: false
+      properties:
+        q: { type: [string, "null"], maxLength: 200, description: As `listContacts.q` }
+        mode: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+        tag_ids:
+          type: array
+          maxItems: 100
+          items: { type: string, format: uuid }
+        expected_count:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: The `to_add_count` the confirmation stated; echoed back so the picker can say the matches changed
+    BroadcastGroupMatchingAdded:
+      x-delta: added
+      type: object
+      required: [broadcast_id, expected_count, added_count, group_size]
+      additionalProperties: false
+      properties:
+        broadcast_id: { type: string, format: uuid }
+        expected_count: { type: integer, minimum: 0 }
+        added_count: { type: integer, minimum: 0, description: The current matches that were added }
+        group_size: { type: integer, minimum: 0, maximum: 10000 }
+
+    # ───────── requests ─────────
+    BroadcastCreate:
+      x-delta: added
+      type: object
+      required: [name]
+      additionalProperties: false
+      properties:
+        name: { $ref: "#/components/schemas/RawBroadcastName" }
+        text:
+          $ref: "#/components/schemas/RawBroadcastText"
+          description: Optional; absent starts the draft with no text
+    BroadcastFieldsSave:
+      x-delta: added
+      type: object
+      description: At least one of `name` and `text`
+      required: [expected_version]
+      minProperties: 2
+      additionalProperties: false
+      properties:
+        expected_version: { type: integer, minimum: 1, description: The `version` the editor was shown }
+        name: { $ref: "#/components/schemas/RawBroadcastName" }
+        text: { $ref: "#/components/schemas/RawBroadcastText" }
+    BroadcastAudienceSave:
+      x-delta: added
+      oneOf:
+        - type: object
+          title: TagAudience
+          required: [expected_version, kind, mode, tag_ids, exclude_tag_ids]
+          additionalProperties: false
+          properties:
+            expected_version: { type: integer, minimum: 1 }
+            kind: { const: tags }
+            mode: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+            tag_ids:
+              type: array
+              maxItems: 100
+              uniqueItems: true
+              items: { type: string, format: uuid }
+            exclude_tag_ids:
+              type: array
+              maxItems: 100
+              uniqueItems: true
+              items: { type: string, format: uuid }
+            expected_group_size:
+              type: integer
+              minimum: 0
+              maximum: 10000
+              description: Required when switching from a non-empty group — the size the switch confirmation showed (SCR-32)
+        - type: object
+          title: GroupAudience
+          required: [expected_version, kind]
+          additionalProperties: false
+          properties:
+            expected_version: { type: integer, minimum: 1 }
+            kind: { const: group }
+      discriminator:
+        propertyName: kind
+    BroadcastDuplicate:
+      x-delta: added
+      type: object
+      required: [audience]
+      additionalProperties: false
+      properties:
+        audience:
+          type: string
+          enum: [same, same_tags, all_recipients, not_reached]
+          description: The copy's audience (SCR-30); `same` for a draft source
+        include_not_confirmed:
+          type: boolean
+          default: false
+          description: With `not_reached` only — include the not-confirmed recipients after the warning that they may have received it
+    BroadcastLaunch:
+      x-delta: added
+      type: object
+      required: [expected_version, fingerprint]
+      additionalProperties: false
+      properties:
+        expected_version: { type: integer, minimum: 1, description: The confirmation's `version` }
+        fingerprint: { $ref: "#/components/schemas/AudienceFingerprint" }
+
+    # ───────── answers ─────────
+    LaunchConfirmation:
+      x-delta: added
+      type: object
+      description: What SCR-27 shows and what the launch sends back (ADR-0006)
+      required: [broadcast_id, version, name, text, breakdown, fingerprint]
+      additionalProperties: false
+      properties:
+        broadcast_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        name: { $ref: "#/components/schemas/BroadcastName" }
+        text:
+          $ref: "#/components/schemas/BroadcastText"
+          description: The trimmed text exactly as the customer will see it (never empty here)
+        breakdown: { $ref: "#/components/schemas/LaunchBreakdown" }
+        fingerprint: { $ref: "#/components/schemas/AudienceFingerprint" }
+    BroadcastLaunched:
+      x-delta: added
+      type: object
+      required: [outcome, broadcast]
+      additionalProperties: false
+      properties:
+        outcome:
+          type: string
+          enum: [launched, already_launched]
+          description: "`already_launched` — a double click or a second owner; nothing launched again (AC-06)"
+        broadcast: { $ref: "#/components/schemas/LaunchedBroadcast" }
+    BroadcastStopped:
+      x-delta: added
+      type: object
+      required: [outcome, broadcast]
+      additionalProperties: false
+      properties:
+        outcome:
+          type: string
+          enum: [stopped, unchanged]
+        broadcast: { $ref: "#/components/schemas/Broadcast" }
+    BroadcastDeleted:
+      x-delta: added
+      type: object
+      required: [workspace_id, broadcast_id]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        broadcast_id: { type: string, format: uuid }
+    RecipientContact:
+      x-delta: added
+      type: object
+      required: [id, first_name, last_name, username]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username: { type: [string, "null"] }
+    BroadcastRecipient:
+      x-delta: added
+      type: object
+      required: [id, position, contact, state, failure_reason, outcome_at]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid, description: "`broadcast_recipients.id`" }
+        position: { type: integer, minimum: 1, maximum: 10000 }
+        contact: { $ref: "#/components/schemas/RecipientContact" }
+        state: { $ref: "#/components/schemas/RecipientState" }
+        failure_reason:
+          description: Set exactly when `state` is `failed`
+          anyOf:
+            - { $ref: "#/components/schemas/RecipientFailureReason" }
+            - { type: "null" }
+        outcome_at:
+          type: [string, "null"]
+          format: date-time
+          description: "`broadcast_recipients.outcome_at` — the outcome's time; null while `waiting` / `sending`"
+    BroadcastRecipientPage:
+      x-delta: added
+      type: object
+      required: [workspace_id, broadcast_id, state, items, has_prev, has_next, next_cursor]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        broadcast_id: { type: string, format: uuid }
+        state:
+          description: The outcome this page is narrowed to, or null
+          anyOf:
+            - { $ref: "#/components/schemas/RecipientState" }
+            - { type: "null" }
+        items:
+          type: array
+          maxItems: 50
+          description: In position order
+          items: { $ref: "#/components/schemas/BroadcastRecipient" }
+        has_prev: { type: boolean, description: True when `after` was given }
+        has_next: { type: boolean }
+        next_cursor:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+            - { type: "null" }
+
+    # ───────── changed: thread ─────────
+    ThreadBroadcastItem:
+      x-delta: added
+      type: object
+      description: |
+        One broadcast item (`broadcast_items`, ADR-0010) enriched by `inbox` from `broadcasts.itemDetails`.
+        Never unread, never `last_item`, never a conversation state change (AC-16)
+      required: [type, id, workspace_id, conversation_id, broadcast_id, broadcast_name, text, launched_by, state, position_at]
+      additionalProperties: false
+      properties:
+        type: { const: broadcast }
+        id: { type: string, format: uuid, description: "`broadcast_items.id`, also the live frame's item id" }
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        broadcast_id: { type: string, format: uuid, description: Links to the broadcast page (SCR-28) }
+        broadcast_name: { $ref: "#/components/schemas/BroadcastName" }
+        text: { $ref: "#/components/schemas/BroadcastText" }
+        launched_by:
+          $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+          description: The launching owner, named after a deactivation too (AC-16)
+        state:
+          type: string
+          enum: [delivered, not_confirmed]
+          description: "`broadcast_items.state`"
+        position_at:
+          type: string
+          format: date-time
+          description: "`broadcast_items.position_at` — delivered: when the delivery was recorded; not confirmed: when the send was made"
+    ThreadItem:
+      x-delta: changed
+      x-delta-fields: [broadcast]
+      oneOf:
+        - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadMessage" }
+        - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadReply" }
+        - { $ref: "../../assignment-statuses/contracts/openapi.yaml#/components/schemas/ThreadActivity" }
+        - { $ref: "#/components/schemas/ThreadBroadcastItem" }
+      discriminator:
+        propertyName: type
+        mapping:
+          message: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadMessage"
+          reply: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ThreadReply"
+          activity: "../../assignment-statuses/contracts/openapi.yaml#/components/schemas/ThreadActivity"
+          broadcast: "#/components/schemas/ThreadBroadcastItem"
+    ThreadPage:
+      x-delta: changed
+      x-delta-fields: ["items[] gains ThreadBroadcastItem"]
+      type: object
+      description: Unchanged from assignment-statuses except that `items` may hold broadcast items
+      required: [workspace_id, conversation_id, items, has_prev, has_next, prev_cursor, next_cursor, read_through_at]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        conversation_id: { type: string, format: uuid }
+        items:
+          type: array
+          description: Oldest first; ties ordered message, reply, activity, broadcast
+          items: { $ref: "#/components/schemas/ThreadItem" }
+        has_prev: { type: boolean }
+        has_next: { type: boolean }
+        prev_cursor:
+          anyOf: [{ $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }, { type: "null" }]
+        next_cursor:
+          anyOf: [{ $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }, { type: "null" }]
+        read_through_at:
+          type: [string, "null"]
+          format: date-time
+          description: Unchanged — the newest customer arrival; broadcast items never move it
+        newest_reply_id:
+          type: [string, "null"]
+          format: uuid
+          description: Unchanged (shared-inbox)
+
+    # ───────── changed: contacts ─────────
+    ContactRow:
+      x-delta: changed
+      x-delta-fields: [blocked_since]
+      type: object
+      description: The contacts `ContactRow` plus the blocked mark for the current bot
+      required: [id, workspace_id, first_name, last_name, username, language_code, first_wrote_at, last_wrote_at, tags, blocked_since]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username: { type: [string, "null"] }
+        language_code: { type: [string, "null"] }
+        first_wrote_at: { type: [string, "null"], format: date-time }
+        last_wrote_at: { type: [string, "null"], format: date-time }
+        tags:
+          type: array
+          maxItems: 20
+          items: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagRef" }
+        blocked_since:
+          type: [string, "null"]
+          format: date-time
+          description: "`contact_bot_reach.blocked_at` for (workspace, contact, the current Telegram bot id); null when not blocked, when there is no reach row, or when the workspace has no bot (ADR-0002, AC-14)"
+    ContactPage:
+      x-delta: changed
+      x-delta-fields: ["items[] is the changed ContactRow"]
+      type: object
+      required: [workspace_id, filter, items, has_prev, has_next, next_cursor, matching_count, total_count, missing_tag_ids]
+      additionalProperties: false
+      properties:
+        workspace_id: { type: string, format: uuid }
+        filter:
+          type: object
+          required: [q, mode, tag_ids]
+          additionalProperties: false
+          properties:
+            q: { type: [string, "null"] }
+            mode: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/TagFilterMode" }
+            tag_ids:
+              type: array
+              maxItems: 100
+              items: { type: string, format: uuid }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: "#/components/schemas/ContactRow" }
+        has_prev: { type: boolean }
+        has_next: { type: boolean }
+        next_cursor:
+          anyOf:
+            - { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/Cursor" }
+            - { type: "null" }
+        matching_count: { type: integer, minimum: 0 }
+        total_count: { type: integer, minimum: 0 }
+        missing_tag_ids:
+          type: array
+          maxItems: 100
+          items: { type: string, format: uuid }
+    ContactProfile:
+      x-delta: changed
+      x-delta-fields: [blocked_since]
+      type: object
+      required: [id, workspace_id, first_name, last_name, username, language_code, first_wrote_at, last_wrote_at, tags, blocked_since]
+      additionalProperties: false
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        first_name: { type: string }
+        last_name: { type: [string, "null"] }
+        username: { type: [string, "null"] }
+        language_code: { type: [string, "null"] }
+        first_wrote_at: { type: [string, "null"], format: date-time }
+        last_wrote_at: { type: [string, "null"], format: date-time }
+        tags:
+          type: array
+          maxItems: 20
+          items: { $ref: "../../contacts/contracts/openapi.yaml#/components/schemas/ContactTag" }
+        blocked_since:
+          type: [string, "null"]
+          format: date-time
+          description: As `ContactRow.blocked_since` — the profile's "blocked the bot since …" line
+    TelegramUpdate:
+      x-delta: changed
+      x-delta-fields: [my_chat_member]
+      type: object
+      required: [update_id]
+      additionalProperties: true
+      description: bot-connection's `TelegramUpdate`, with `allowed_updates` now `message`, `edited_message` and `my_chat_member`. Only the fields named here and in bot-connection are read; the body is not validated at the HTTP layer beyond JSON
+      properties:
+        update_id: { type: integer }
+        message: { $ref: "../../bot-connection/contracts/openapi.yaml#/components/schemas/TelegramMessage" }
+        edited_message: { $ref: "../../bot-connection/contracts/openapi.yaml#/components/schemas/TelegramMessage" }
+        my_chat_member:
+          type: object
+          additionalProperties: true
+          description: Telegram's `ChatMemberUpdated`. Read only for `chat.type` `private`; never stored, never logged beyond ids
+          required: [chat, from, date, new_chat_member]
+          properties:
+            chat:
+              type: object
+              additionalProperties: true
+              required: [id, type]
+              properties:
+                id: { type: integer }
+                type: { type: string }
+            from:
+              type: object
+              additionalProperties: true
+              required: [id]
+              properties:
+                id: { type: integer, description: The customer's Telegram user id — `contacts.telegram_user_id` }
+            date: { type: integer, description: "Unix time of the change — the fact's time, compared with `contact_bot_reach.changed_at`" }
+            new_chat_member:
+              type: object
+              additionalProperties: true
+              required: [status]
+              properties:
+                status: { type: string, description: "`kicked` → blocked; `member` → unblocked; anything else is ignored" }
+
+    # ───────── errors (repo convention: CLAUDE.md, packages/shared/src/errors.ts) ─────────
+    ErrorCode:
+      x-delta: changed
+      x-delta-fields: [BROADCAST_NAME_INVALID, BROADCAST_TEXT_INVALID, BROADCAST_DRAFT_CHANGED, BROADCAST_GROUP_CHANGED, BROADCAST_NOT_A_DRAFT, BROADCAST_NOT_ENDED, BROADCAST_AUDIENCE_CHANGED, BROADCAST_AUDIENCE_TOO_LARGE, BROADCAST_NO_REACHABLE_CONTACT, BROADCAST_NEEDS_WORKING_BOT, BROADCAST_LAUNCH_LIMIT_REACHED]
+      type: string
+      description: |
+        `ErrorCode` in packages/shared/src/errors.ts — the codes this delta uses.
+
+        Existing: UNAUTHENTICATED 401, ACCESS_REMOVED 403, OWNER_ONLY 403, FORBIDDEN 403, NOT_FOUND 404,
+        TAG_NOT_FOUND 404, VALIDATION_ERROR 400, UNSUPPORTED_MEDIA_TYPE 415, PAYLOAD_TOO_LARGE 413,
+        INTERNAL_ERROR 500.
+
+        Added by this feature (sad.md §8 Error handling; names fixed here):
+        - BROADCAST_NAME_INVALID 400, BROADCAST_TEXT_INVALID 400 — `ValidationError`-class with their own
+          codes (AC-02; the text code also refuses launching an empty draft text);
+        - BROADCAST_DRAFT_CHANGED 409, BROADCAST_GROUP_CHANGED 409 — `ConflictError`-class (AC-03);
+        - BROADCAST_NOT_A_DRAFT 409 — `ConflictError`-class (AC-09);
+        - BROADCAST_NOT_ENDED 409 — `ConflictError`-class (AC-13; not in sad.md §8, flag F-2);
+        - BROADCAST_AUDIENCE_CHANGED 409, BROADCAST_AUDIENCE_TOO_LARGE 409,
+          BROADCAST_NO_REACHABLE_CONTACT 409, BROADCAST_NEEDS_WORKING_BOT 409 — `ConflictError`-class
+          (AC-05, AC-06, AC-09, AC-10);
+        - BROADCAST_LAUNCH_LIMIT_REACHED 429 — a `TooManyRequestsError`-class refusal with its own code,
+          `next_launch_at` and `Retry-After` (AC-09).
+      enum:
+        - VALIDATION_ERROR
+        - UNSUPPORTED_MEDIA_TYPE
+        - PAYLOAD_TOO_LARGE
+        - NOT_FOUND
+        - FORBIDDEN
+        - INTERNAL_ERROR
+        - UNAUTHENTICATED
+        - ACCESS_REMOVED
+        - OWNER_ONLY
+        - TAG_NOT_FOUND
+        - BROADCAST_NAME_INVALID
+        - BROADCAST_TEXT_INVALID
+        - BROADCAST_DRAFT_CHANGED
+        - BROADCAST_GROUP_CHANGED
+        - BROADCAST_NOT_A_DRAFT
+        - BROADCAST_NOT_ENDED
+        - BROADCAST_AUDIENCE_CHANGED
+        - BROADCAST_AUDIENCE_TOO_LARGE
+        - BROADCAST_NO_REACHABLE_CONTACT
+        - BROADCAST_NEEDS_WORKING_BOT
+        - BROADCAST_LAUNCH_LIMIT_REACHED
+
+    BroadcastNameInvalidError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_NAME_INVALID }
+            message: { type: string }
+            details:
+              type: object
+              required: [field, min_length, max_length]
+              additionalProperties: false
+              properties:
+                field: { const: name }
+                min_length: { const: 1 }
+                max_length: { const: 80, description: "Graphemes, after tidying" }
+
+    BroadcastTextInvalidError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_TEXT_INVALID }
+            message: { type: string }
+            details:
+              type: object
+              required: [field, min_length, max_length, length]
+              additionalProperties: false
+              properties:
+                field: { const: text }
+                min_length: { const: 1 }
+                max_length: { const: 4096, description: "UTF-16 code units, after trimming" }
+                length: { type: integer, minimum: 0, description: The trimmed text's length in UTF-16 code units }
+
+    BroadcastDraftChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_DRAFT_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [draft]
+              additionalProperties: false
+              properties:
+                draft:
+                  $ref: "#/components/schemas/BroadcastDraft"
+                  description: The current draft — the teammate's version, to show next to the member's own edit
+
+    BroadcastGroupChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_GROUP_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [group_size]
+              additionalProperties: false
+              properties:
+                group_size: { type: integer, minimum: 0, maximum: 10000, description: "The group's current size, to ask again with" }
+
+    BroadcastNotADraftError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_NOT_A_DRAFT }
+            message: { type: string }
+            details:
+              type: object
+              required: [broadcast_id, status]
+              additionalProperties: false
+              properties:
+                broadcast_id: { type: string, format: uuid }
+                status: { type: string, enum: [sending, sent, stopped] }
+
+    BroadcastNotEndedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_NOT_ENDED }
+            message: { type: string }
+            details:
+              type: object
+              required: [broadcast_id, status]
+              additionalProperties: false
+              properties:
+                broadcast_id: { type: string, format: uuid }
+                status: { const: sending }
+
+    BroadcastAudienceChangedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_AUDIENCE_CHANGED }
+            message: { type: string }
+            details:
+              type: object
+              required: [confirmation]
+              additionalProperties: false
+              properties:
+                confirmation:
+                  $ref: "#/components/schemas/LaunchConfirmation"
+                  description: The current confirmation — version, number and fingerprint to confirm again
+
+    BroadcastAudienceTooLargeError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_AUDIENCE_TOO_LARGE }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, audience_size, can_add]
+              additionalProperties: false
+              properties:
+                limit: { const: 10000 }
+                audience_size: { type: integer, minimum: 0, description: "The audience's current size (the group's rows, or the tag audience's matching count)" }
+                can_add: { type: integer, minimum: 0, maximum: 10000, description: How many contacts can still be added (0 when over) }
+
+    BroadcastNoReachableContactError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_NO_REACHABLE_CONTACT }
+            message: { type: string }
+            details:
+              type: object
+              required: [breakdown]
+              additionalProperties: false
+              properties:
+                breakdown: { $ref: "#/components/schemas/LaunchBreakdown" }
+
+    BroadcastNeedsWorkingBotError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_NEEDS_WORKING_BOT }
+            message: { type: string }
+            details:
+              type: object
+              required: [bot_state]
+              additionalProperties: false
+              properties:
+                bot_state:
+                  type: string
+                  enum: [not_connected, needs_token, taken_over]
+                  description: As `InboxBotStatus.state` (no row and `disconnected` are `not_connected`). Only `connected` launches (sad.md §1 assumption)
+
+    BroadcastLaunchLimitReachedError:
+      x-delta: added
+      type: object
+      required: [error]
+      additionalProperties: false
+      properties:
+        error:
+          type: object
+          required: [code, message, details]
+          additionalProperties: false
+          properties:
+            code: { const: BROADCAST_LAUNCH_LIMIT_REACHED }
+            message: { type: string }
+            details:
+              type: object
+              required: [limit, window_hours, next_launch_at]
+              additionalProperties: false
+              properties:
+                limit: { const: 10 }
+                window_hours: { const: 24 }
+                next_launch_at:
+                  type: string
+                  format: date-time
+                  description: The 10th newest `launched_at` of the workspace + 24 h

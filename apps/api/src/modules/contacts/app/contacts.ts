@@ -20,27 +20,39 @@ import {
   type ContactRepo,
   type ContactSummary,
   type ContactTagRepo,
+  type CurrentBot,
   type DisplayNames,
   type Executor,
+  type ReachRepo,
+  type ReachSignals,
   type TagHistoryRepo,
   type TagRepo,
   type UpsertResult,
 } from './ports.js';
 import { memberRefs } from './member-refs.js';
+import { recordWrote } from './reach.js';
 
 export interface ContactsDeps {
   repo: ContactRepo;
+  /** The "wrote" mark per Telegram bot (ADR-0002) and its `contact.changed reach` signal. */
+  reach: Pick<ReachRepo, 'upsertWrote'>;
+  signals: ReachSignals;
   clock: Clock;
 }
 
 /** The contacts app layer — what `conversations` (capture) and `bots` (settings) call. */
 export interface Contacts {
-  /** Called inside the capture transaction (`tx`) with the message's time as `seenAt`. */
+  /**
+   * Called inside the capture transaction (`tx`) with the message's time as `seenAt` and the
+   * Telegram id of the bot that received it: the contact, then its "wrote" mark for that bot
+   * (clearing an older block, ADR-0002).
+   */
   upsertFromProfile(
     workspaceId: string,
     profile: ContactProfile,
     seenAt: Date,
-    tx?: Executor,
+    telegramBotId: bigint,
+    tx: Executor,
   ): Promise<UpsertResult>;
   countContacts(workspaceId: string): Promise<number>;
   /** Contact ids matching the inbox search text; `null` when the text is empty (no filter). */
@@ -48,10 +60,21 @@ export interface Contacts {
   contactsByIds(workspaceId: string, ids: readonly string[]): Promise<ContactSummary[]>;
 }
 
-export function createContacts({ repo, clock }: ContactsDeps): Contacts {
+export function createContacts({ repo, reach, signals, clock }: ContactsDeps): Contacts {
   return {
-    upsertFromProfile: (workspaceId, profile, seenAt, tx) =>
-      repo.upsertFromProfile(workspaceId, profile, seenAt, clock.now(), tx),
+    async upsertFromProfile(workspaceId, profile, seenAt, telegramBotId, tx) {
+      const result = await repo.upsertFromProfile(workspaceId, profile, seenAt, clock.now(), tx);
+      // Lock order (sad.md §8): the contact row, then only its reach row.
+      await recordWrote(
+        { reach, signals },
+        tx,
+        workspaceId,
+        result.contactId,
+        telegramBotId,
+        seenAt,
+      );
+      return result;
+    },
     countContacts: (workspaceId) => repo.count(workspaceId),
     searchContactIds: (workspaceId, query) => repo.searchContactIds(workspaceId, query),
     contactsByIds: (workspaceId, ids) => repo.contactsByIds(workspaceId, ids),
@@ -68,6 +91,8 @@ export interface ContactReadsDeps {
   tagHistory: Pick<TagHistoryRepo, 'page'>;
   /** The `contacts → workspaces` edge (app layer): adders' and actors' names. */
   workspaces: DisplayNames;
+  /** The workspace's current Telegram bot (late-bound `bots` port): whose blocked marks are shown. */
+  currentBot: CurrentBot;
 }
 
 /** The query of `listContacts` as the use case takes it: `tagIds` and `after` optional, `q` raw. */
@@ -92,7 +117,10 @@ const iso = (d: Date) => d.toISOString();
 const isoOrNull = (d: Date | null) => (d === null ? null : iso(d));
 
 export function createContactReads(deps: ContactReadsDeps): ContactReads {
-  const { repo, lists, tags, contactTags, tagHistory, workspaces } = deps;
+  const { repo, lists, tags, contactTags, tagHistory, workspaces, currentBot } = deps;
+  /** Marks are per Telegram bot (ADR-0002): only the current bot's apply; no bot, no marks. */
+  const botIdOf = async (workspaceId: string) =>
+    (await currentBot.currentBot(workspaceId))?.telegramBotId ?? null;
 
   const refs = (workspaceId: string, accountIds: readonly string[]) =>
     memberRefs(workspaces, workspaceId, accountIds);
@@ -115,8 +143,9 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
         after = decodeContactCursor(input.after, key);
         if (after === null) throw new ValidationError('The cursor is not valid.');
       }
+      const botId = await botIdOf(workspaceId);
       const [page, matching, total] = await Promise.all([
-        lists.listPage(workspaceId, { ...filter, ...(after && { after }) }),
+        lists.listPage(workspaceId, { ...filter, ...(after && { after }) }, botId),
         lists.matchingCount(workspaceId, filter),
         lists.totalCount(workspaceId),
       ]);
@@ -134,6 +163,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           first_wrote_at: isoOrNull(r.firstWroteAt),
           last_wrote_at: isoOrNull(r.lastWroteAt),
           tags: r.tags,
+          blocked_since: isoOrNull(r.blockedSince),
         })),
         has_prev: after !== null,
         has_next: page.hasNext,
@@ -148,7 +178,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
     },
 
     async getContact(workspaceId, contactId) {
-      const contact = await repo.profile(workspaceId, contactId);
+      const contact = await repo.profile(workspaceId, contactId, await botIdOf(workspaceId));
       if (contact === null) throw new NotFoundError('Contact not found.');
       const carried = await contactTags.tagsOf(workspaceId, contactId);
       const ref = await refs(
@@ -170,6 +200,7 @@ export function createContactReads(deps: ContactReadsDeps): ContactReads {
           added_by: ref(t.addedByAccountId),
           added_at: iso(t.addedAt),
         })),
+        blocked_since: isoOrNull(contact.blockedSince),
       };
     },
 

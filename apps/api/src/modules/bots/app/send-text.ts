@@ -1,5 +1,11 @@
 import type { Clock } from '../../../platform/clock.js';
-import { SEND_TIMEOUT, type BotRepo, type SendOutcome, type TelegramGateway } from './ports.js';
+import {
+  SEND_TIMEOUT,
+  type BotRepo,
+  type ContactsReach,
+  type SendOutcome,
+  type TelegramGateway,
+} from './ports.js';
 import type { MarkNeedsToken } from './mark-needs-token.js';
 
 export interface SendTextDeps {
@@ -7,6 +13,8 @@ export interface SendTextDeps {
   telegram: TelegramGateway;
   markNeedsToken: MarkNeedsToken;
   clock: Clock;
+  /** A reply refused as blocked records the block (ADR-0003). */
+  reach: ContactsReach;
 }
 
 export interface SendTextRequest {
@@ -27,7 +35,13 @@ export interface SendText {
 
 const UNAUTHORIZED: SendOutcome = { outcome: 'bot_unauthorized' };
 
-export function createSendText({ bots, telegram, markNeedsToken, clock }: SendTextDeps): SendText {
+export function createSendText({
+  bots,
+  telegram,
+  markNeedsToken,
+  clock,
+  reach,
+}: SendTextDeps): SendText {
   return {
     async sendText({ workspaceId, chatId, text }) {
       const bot = await bots.findByWorkspace(workspaceId);
@@ -47,6 +61,14 @@ export function createSendText({ bots, telegram, markNeedsToken, clock }: SendTe
           bot.id,
           new Date(clock.now().getTime() + outcome.retryAfterMs),
         );
+      }
+      if (outcome.outcome === 'refused' && outcome.reason === 'blocked') {
+        // The chat of a private conversation is the customer's Telegram user id. Our clock is the
+        // fact's time (data-model assumption 11). The reply outcome never depends on this write: a
+        // failure is dropped, the block is learned again on the next refusal or my_chat_member.
+        await reach
+          .recordBlockChange(workspaceId, bot.telegramBotId, chatId, true, clock.now())
+          .catch(() => undefined);
       }
       return outcome;
     },

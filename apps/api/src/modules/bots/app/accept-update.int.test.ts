@@ -6,7 +6,10 @@ import { telegramUpdate } from '../../../test/fixtures/telegram.js';
 import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createContacts } from '../../contacts/app/contacts.js';
+import { createContactReach } from '../../contacts/app/reach.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
+import { createReachRepo } from '../../contacts/infra/reach-repo.js';
+import { createReachSignals } from '../../contacts/infra/tag-signals.js';
 import { createConversations } from '../../conversations/app/conversations.js';
 import { createActivityRepo } from '../../conversations/infra/activity-repo.js';
 import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
@@ -31,13 +34,24 @@ describe('acceptUpdate (Postgres)', () => {
     const clock = fixedClock(new Date(T.getTime() + 60_000));
     accept = createAcceptUpdate({
       interceptor: { intercept: async () => 'pass' },
+      reach: createContactReach({
+        transaction: (fn) => db.transaction().execute(fn),
+        contacts: createContactRepo(db),
+        reach: createReachRepo(db),
+        signals: createReachSignals(),
+      }),
       bots: createBotRepo(db, createTokenCipher(testBotKey)),
       conversations: createConversations({
         transaction: (fn) => db.transaction().execute(fn),
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         activities: createActivityRepo(db),
-        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        contacts: createContacts({
+          repo: createContactRepo(db),
+          reach: createReachRepo(db),
+          signals: createReachSignals(),
+          clock,
+        }),
         signals: createConversationSignals(),
         clock,
       }),

@@ -22,7 +22,9 @@ const label = (e: ThreadEntry) =>
     ? `m${e.message.body}`
     : e.type === 'reply'
       ? `r${e.reply.body}`
-      : `a${e.activity.kind}`;
+      : e.type === 'activity'
+        ? `a${e.activity.kind}`
+        : `b${e.broadcastItem.state}`;
 
 describe('thread queries', () => {
   let database: TestDatabase;
@@ -378,7 +380,9 @@ describe('thread queries', () => {
         }
         expect(down).toEqual(expected);
       }
-    });
+      // ~250 page reads with four keyset parts each: a correctness walk, not a timing check, so it
+      // gets room under full-suite load (it runs in about 1 s alone).
+    }, 60_000);
 
     it('an old cursor (message, reply) still pages into the activity half', async () => {
       const s = await setup();

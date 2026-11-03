@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newId } from '../../../platform/ids.js';
 import { createContactReads } from './contacts.js';
-import { fakeContactRepo, fakeTagStore, fakeReadPorts } from './fakes.js';
+import { fakeContactRepo, fakeTagStore, fakeReadPorts, type FakeReachRow } from './fakes.js';
 import type { ContactProfile } from './ports.js';
 
 const T0 = new Date('2026-10-11T10:00:00Z');
@@ -20,9 +20,15 @@ const profile = (n: number, o: Partial<ContactProfile> = {}): ContactProfile => 
   ...o,
 });
 
+const BOT = 9001n;
+const OLD_BOT = 8001n;
+
 async function setup() {
-  const contactRepo = fakeContactRepo();
+  const reach: FakeReachRow[] = [];
+  const contactRepo = fakeContactRepo(reach);
   const store = fakeTagStore();
+  // The workspace's current Telegram bot, as the late-bound `currentBot` port answers it.
+  const bot: { current: bigint | null; asked: string[] } = { current: BOT, asked: [] };
   const names = new Map([
     [ALICE, 'Alice (deactivated)'],
     [OWNER, 'Olga Owner'],
@@ -30,6 +36,12 @@ async function setup() {
   const reads = createContactReads({
     repo: contactRepo,
     ...fakeReadPorts(contactRepo, store),
+    currentBot: {
+      currentBot: async (ws) => {
+        bot.asked.push(ws);
+        return bot.current === null ? null : { telegramBotId: bot.current };
+      },
+    },
     workspaces: {
       // Like workspaces.displayNames: only accounts that belong to the workspace, deactivated included.
       displayNames: async (ws, ids) =>
@@ -38,7 +50,16 @@ async function setup() {
   });
   const contact = async (n: number, wroteAt: number, ws = WS, p: Partial<ContactProfile> = {}) =>
     (await contactRepo.upsertFromProfile(ws, profile(n, p), at(wroteAt), at(0))).contactId;
-  return { reads, contactRepo, store, contact };
+  const block = (contactId: string, telegramBotId: bigint, blockedAt: Date | null, ws = WS) =>
+    reach.push({
+      workspaceId: ws,
+      contactId,
+      telegramBotId,
+      wroteAt: at(1),
+      blockedAt,
+      changedAt: at(2),
+    });
+  return { reads, contactRepo, store, contact, bot, block };
 }
 
 describe('listContacts (AC-01, AC-02)', () => {
@@ -201,6 +222,7 @@ describe('getContact (AC-04, AC-13)', () => {
           added_at: at(3).toISOString(),
         },
       ],
+      blocked_since: null,
     });
   });
 
@@ -265,5 +287,59 @@ describe('listTagHistory (AC-04, AC-13)', () => {
     const foreign = await contact(1, 10, OTHER_WS);
     await expect(reads.listTagHistory(WS, foreign)).rejects.toMatchObject({ code: 'NOT_FOUND' });
     await expect(reads.listTagHistory(WS, newId())).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+});
+
+describe('blocked_since for the current Telegram bot (AC-10, AC-14)', () => {
+  it('marks a list row and the profile blocked for the current bot, since the block time', async () => {
+    const { reads, contact, block, bot } = await setup();
+    const olena = await contact(1, 10);
+    const other = await contact(2, 20);
+    block(olena, BOT, at(5));
+    const page = await reads.listContacts(WS, { mode: 'any' });
+    expect(page.items.map((i) => [i.id, i.blocked_since])).toEqual([
+      [other, null],
+      [olena, at(5).toISOString()],
+    ]);
+    expect((await reads.getContact(WS, olena)).blocked_since).toBe(at(5).toISOString());
+    expect((await reads.getContact(WS, other)).blocked_since).toBeNull();
+    expect(bot.asked).toEqual([WS, WS, WS]);
+  });
+
+  it('is null once unblocked, for a block of an older bot only, and with no bot at all', async () => {
+    const { reads, contact, block, bot } = await setup();
+    const unblocked = await contact(1, 10);
+    const oldBotOnly = await contact(2, 20);
+    block(unblocked, BOT, null);
+    block(oldBotOnly, OLD_BOT, at(5));
+    const page = await reads.listContacts(WS, { mode: 'any' });
+    expect(page.items.map((i) => i.blocked_since)).toEqual([null, null]);
+    expect((await reads.getContact(WS, oldBotOnly)).blocked_since).toBeNull();
+
+    // A workspace with no bot row: every mark is null, the reach rows are not consulted.
+    block(unblocked, OLD_BOT, at(6));
+    bot.current = null;
+    expect(
+      (await reads.listContacts(WS, { mode: 'any' })).items.map((i) => i.blocked_since),
+    ).toEqual([null, null]);
+    expect((await reads.getContact(WS, oldBotOnly)).blocked_since).toBeNull();
+  });
+
+  it('keeps the mark when the same Telegram bot is current again (reconnect)', async () => {
+    const { reads, contact, block, bot } = await setup();
+    const c = await contact(1, 10);
+    block(c, BOT, at(5));
+    bot.current = OLD_BOT;
+    expect((await reads.getContact(WS, c)).blocked_since).toBeNull();
+    bot.current = BOT;
+    expect((await reads.getContact(WS, c)).blocked_since).toBe(at(5).toISOString());
+  });
+
+  it('never shows a reach row of another workspace', async () => {
+    const { reads, contact, block } = await setup();
+    const c = await contact(1, 10);
+    block(c, BOT, at(5), OTHER_WS);
+    expect((await reads.listContacts(WS, { mode: 'any' })).items[0]!.blocked_since).toBeNull();
+    expect((await reads.getContact(WS, c)).blocked_since).toBeNull();
   });
 });

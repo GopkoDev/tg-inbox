@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import * as shared from '@tg/shared';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { describe, expect, it } from 'vitest';
@@ -6,6 +7,17 @@ import {
   AccessRemovedError,
   AlreadyAMemberError,
   AssigneeNotActiveError,
+  BroadcastAudienceChangedError,
+  BroadcastAudienceTooLargeError,
+  BroadcastDraftChangedError,
+  BroadcastGroupChangedError,
+  BroadcastLaunchLimitReachedError,
+  BroadcastNameInvalidError,
+  BroadcastNeedsWorkingBotError,
+  BroadcastNoReachableContactError,
+  BroadcastNotADraftError,
+  BroadcastNotEndedError,
+  BroadcastTextInvalidError,
   ChangeLimitReachedError,
   CloseNeedsConfirmationError,
   ContactTagLimitReachedError,
@@ -167,6 +179,57 @@ const cases: [string, () => AppError, number, string][] = [
     () => new TagChangeLimitReachedError(new Date('2026-10-19T10:21:14.000Z'), 14),
     429,
     'TAG_CHANGE_LIMIT_REACHED',
+  ],
+  ['broadcast name invalid', () => new BroadcastNameInvalidError(), 400, 'BROADCAST_NAME_INVALID'],
+  ['broadcast text invalid', () => new BroadcastTextInvalidError(0), 400, 'BROADCAST_TEXT_INVALID'],
+  [
+    'broadcast draft changed',
+    () => new BroadcastDraftChangedError({}),
+    409,
+    'BROADCAST_DRAFT_CHANGED',
+  ],
+  [
+    'broadcast group changed',
+    () => new BroadcastGroupChangedError(3),
+    409,
+    'BROADCAST_GROUP_CHANGED',
+  ],
+  [
+    'broadcast not a draft',
+    () => new BroadcastNotADraftError('b', 'sent'),
+    409,
+    'BROADCAST_NOT_A_DRAFT',
+  ],
+  ['broadcast not ended', () => new BroadcastNotEndedError('b'), 409, 'BROADCAST_NOT_ENDED'],
+  [
+    'broadcast audience changed',
+    () => new BroadcastAudienceChangedError({}),
+    409,
+    'BROADCAST_AUDIENCE_CHANGED',
+  ],
+  [
+    'broadcast audience too large',
+    () => new BroadcastAudienceTooLargeError(10001),
+    409,
+    'BROADCAST_AUDIENCE_TOO_LARGE',
+  ],
+  [
+    'broadcast no reachable contact',
+    () => new BroadcastNoReachableContactError({}),
+    409,
+    'BROADCAST_NO_REACHABLE_CONTACT',
+  ],
+  [
+    'broadcast needs working bot',
+    () => new BroadcastNeedsWorkingBotError('not_connected'),
+    409,
+    'BROADCAST_NEEDS_WORKING_BOT',
+  ],
+  [
+    'broadcast launch limit',
+    () => new BroadcastLaunchLimitReachedError(new Date('2026-10-24T14:20:00.000Z'), 600),
+    429,
+    'BROADCAST_LAUNCH_LIMIT_REACHED',
   ],
 ];
 
@@ -546,5 +609,142 @@ describe('contacts tag errors (sad.md §8)', () => {
       retry_at: '2026-10-19T10:21:14.200Z',
     });
     expect(res.json().error.message).toContain('60 per minute');
+  });
+});
+
+describe('broadcasts errors (sad.md §8, openapi.yaml refusal bodies)', () => {
+  const W = '01920000-0000-7000-8000-000000000001';
+  const B = '01920000-0000-7000-8000-000000000502';
+  const member = { account_id: '01920000-0000-7000-8000-0000000000b1', display_name: 'Test User' };
+  const at = '2026-10-23T09:11:00Z';
+  const breakdown = {
+    audience_size: 3,
+    blocked_count: 1,
+    never_wrote_count: 2,
+    recipient_count: 0,
+  };
+  const draft = {
+    id: B,
+    workspace_id: W,
+    status: 'draft',
+    version: 4,
+    name: 'Test broadcast 2',
+    text: 'Hello',
+    author: member,
+    last_changed_by: member,
+    last_changed_at: at,
+    created_at: at,
+    audience: { kind: 'group', size: 0 },
+    breakdown: { audience_size: 0, reach: null },
+  };
+  const confirmation = {
+    broadcast_id: B,
+    version: 4,
+    name: 'Test broadcast 2',
+    text: 'Hello',
+    breakdown: { audience_size: 1, blocked_count: 0, never_wrote_count: 0, recipient_count: 1 },
+    fingerprint: 'a'.repeat(64),
+  };
+  const refusals: [string, () => AppError, string, unknown][] = [
+    [
+      'BroadcastNameInvalidError',
+      () => new BroadcastNameInvalidError(),
+      'A name must be 1 to 80 characters',
+      { field: 'name', min_length: 1, max_length: 80 },
+    ],
+    [
+      'BroadcastTextInvalidError',
+      () => new BroadcastTextInvalidError(4101),
+      'The text must be 1 to 4096 characters as Telegram counts them',
+      { field: 'text', min_length: 1, max_length: 4096, length: 4101 },
+    ],
+    ['BroadcastDraftChangedError', () => new BroadcastDraftChangedError(draft), '', { draft }],
+    [
+      'BroadcastGroupChangedError',
+      () => new BroadcastGroupChangedError(15),
+      '',
+      { group_size: 15 },
+    ],
+    [
+      'BroadcastNotADraftError',
+      () => new BroadcastNotADraftError(B, 'sending'),
+      'This broadcast was launched and can no longer be changed',
+      { broadcast_id: B, status: 'sending' },
+    ],
+    [
+      'BroadcastNotEndedError',
+      () => new BroadcastNotEndedError(B),
+      'Available once the broadcast has ended',
+      { broadcast_id: B, status: 'sending' },
+    ],
+    [
+      'BroadcastAudienceChangedError',
+      () => new BroadcastAudienceChangedError(confirmation),
+      '',
+      { confirmation },
+    ],
+    [
+      'BroadcastAudienceTooLargeError',
+      () => new BroadcastAudienceTooLargeError(9990),
+      '',
+      { limit: 10000, audience_size: 9990, can_add: 10 },
+    ],
+    [
+      'BroadcastNoReachableContactError',
+      () => new BroadcastNoReachableContactError(breakdown),
+      'This audience has no reachable contact',
+      { breakdown },
+    ],
+    [
+      'BroadcastNeedsWorkingBotError',
+      () => new BroadcastNeedsWorkingBotError('needs_token'),
+      '',
+      { bot_state: 'needs_token' },
+    ],
+  ];
+
+  it.each(refusals)('%s answers the contract body', async (schema, make, message, details) => {
+    const env = await envelopeOf(make);
+    expect(env.error.details).toEqual(details);
+    if (message) expect(env.error.message).toBe(message);
+    const parsed = (shared as unknown as Record<string, z.ZodType>)[schema]!.safeParse(env);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+  });
+
+  it('BROADCAST_TEXT_INVALID can say to write the text before launching', async () => {
+    const env = await envelopeOf(
+      () => new BroadcastTextInvalidError(0, 'Write the text before launching'),
+    );
+    expect(env.error.message).toBe('Write the text before launching');
+    expect(env.error.details).toEqual({
+      field: 'text',
+      min_length: 1,
+      max_length: 4096,
+      length: 0,
+    });
+  });
+
+  it('BROADCAST_AUDIENCE_TOO_LARGE can add 0 once over the limit', async () => {
+    const env = await envelopeOf(() => new BroadcastAudienceTooLargeError(10420));
+    expect(env.error.details).toEqual({ limit: 10000, audience_size: 10420, can_add: 0 });
+    expect(env.error.message).toContain('at most 10 000 contacts');
+  });
+
+  it('BROADCAST_LAUNCH_LIMIT_REACHED is 429 with 10 / 24 h, next_launch_at and Retry-After', async () => {
+    const app = Fastify();
+    registerErrorHandler(app);
+    app.get('/e', () => {
+      throw new BroadcastLaunchLimitReachedError(new Date('2026-10-24T14:20:00.000Z'), 3600);
+    });
+    const res = await app.inject('/e');
+    expect(res.statusCode).toBe(429);
+    expect(res.headers['retry-after']).toBe('3600');
+    expect(res.json().error.details).toEqual({
+      limit: 10,
+      window_hours: 24,
+      next_launch_at: '2026-10-24T14:20:00.000Z',
+    });
+    expect(res.json().error.message).toContain('at most 10 broadcasts in 24 hours');
+    expect(shared.BroadcastLaunchLimitReachedError.safeParse(res.json()).success).toBe(true);
   });
 });

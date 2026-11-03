@@ -43,6 +43,17 @@ function HeaderCard({ workspaceId, contact }: { workspaceId: string; contact: Co
             <span className="text-sm text-muted-foreground">no username</span>
           )}
           <p className="text-sm text-muted-foreground">{factsLine(contact)}</p>
+          {contact.blocked_since ? (
+            <p
+              data-testid="blocked-line"
+              className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+            >
+              <Badge variant="outline" className="text-destructive">
+                Blocked the bot
+              </Badge>
+              <span>since {formatFullDay(contact.blocked_since)}</span>
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-1">
             {contact.tags.length === 0 ? (
               <span className="text-sm text-muted-foreground">No tags</span>

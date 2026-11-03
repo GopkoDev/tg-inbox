@@ -22,6 +22,20 @@ export interface ContactRecord extends ContactProfile {
   lastWroteAt: Date | null;
 }
 
+/** A contact as the profile reads it: its facts and the current bot's blocked mark. */
+export interface ContactProfileRecord extends ContactRecord {
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked, no row or no bot. */
+  blockedSince: Date | null;
+}
+
+/**
+ * The workspace's current Telegram bot, from the `bots` core (sad.md §5, ADR-0002): a runtime port
+ * late-bound in `buildDeps()`, no import of `bots`. Null when the workspace has no bot row.
+ */
+export interface CurrentBot {
+  currentBot(workspaceId: string): Promise<{ telegramBotId: bigint } | null>;
+}
+
 /** What list rows and thread headers show of a contact. */
 export interface ContactSummary {
   id: string;
@@ -69,8 +83,59 @@ export interface ContactRepo {
    * `tx` ends; false when it is not a contact of the workspace.
    */
   lockContact(workspaceId: string, contactId: string, tx: Executor): Promise<boolean>;
-  /** The contact's facts by (workspace, id), first and last wrote included; null for an unknown or foreign id. */
-  profile(workspaceId: string, contactId: string): Promise<ContactRecord | null>;
+  /**
+   * The contact's facts by (workspace, id), first and last wrote included, with its blocked mark for
+   * `telegramBotId` (the current bot; by the reach key); null for an unknown or foreign id.
+   */
+  profile(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId?: bigint | null,
+  ): Promise<ContactProfileRecord | null>;
+  /** The id of the workspace's contact with this Telegram user id; null when there is none. */
+  idByTelegramUser(
+    workspaceId: string,
+    telegramUserId: bigint,
+    tx?: Executor,
+  ): Promise<string | null>;
+}
+
+// ───────── reachability (ADR-0002) ─────────
+//
+// One `contact_bot_reach` row per (workspace, contact, Telegram bot id). A fact (a message, a block,
+// an unblock) is applied only when its time is not older than the row's `changed_at`, so an
+// out-of-order fact never flips the mark back. Each write locks only its reach row.
+
+export interface ReachRepo {
+  /**
+   * Capture's "wrote" in the capture transaction, after the contact upsert: `wrote_at` keeps the
+   * earliest message; a message not older than `changed_at` clears a block and becomes `changed_at`.
+   * True when it cleared a block (the visible mark changed).
+   */
+  upsertWrote(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId: bigint,
+    sentAt: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+  /**
+   * A block (`blocked`) or unblock at `at`, applied only when `at >= changed_at`; a block keeps an
+   * earlier "since". True when the blocked mark changed.
+   */
+  applyBlockChange(
+    workspaceId: string,
+    contactId: string,
+    telegramBotId: bigint,
+    blocked: boolean,
+    at: Date,
+    tx?: Executor,
+  ): Promise<boolean>;
+}
+
+/** `contact.changed { change: "reach" }`, published in the writing transaction. */
+export interface ReachSignals {
+  reachChanged(tx: Executor, workspaceId: string, contactId: string): Promise<void>;
 }
 
 // ───────── tags ─────────
@@ -120,6 +185,12 @@ export interface TagRepo {
   countFor(workspaceId: string, tagId: string, tx?: Executor): Promise<number>;
   /** The ids that are tags of the workspace; the others are dropped. */
   resolveIds(workspaceId: string, ids: readonly string[], tx?: Executor): Promise<string[]>;
+  /** The ids that are tags of the workspace, with their current names. */
+  namesOf(
+    workspaceId: string,
+    ids: readonly string[],
+    tx?: Executor,
+  ): Promise<{ id: string; name: string }[]>;
   /** Step 4: the tag row `FOR KEY SHARE`, or null when it is not (or no longer) a tag of the workspace. */
   lockForKeyShare(workspaceId: string, tagId: string, tx: Executor): Promise<TagRecord | null>;
   /** Step 2 (owner): the rows `FOR UPDATE` in id order; ids that are not tags of the workspace are dropped. */
@@ -284,18 +355,115 @@ export interface ContactListRow {
   lastWroteAt: Date | null;
   /** In tag-list order. */
   tags: { id: string; name: string }[];
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked, no row or no bot. */
+  blockedSince: Date | null;
 }
 
 export interface ContactListQuery {
-  /** Up to 50 rows by last wrote newest first (NULL tail last, id descending), after `after`. */
+  /**
+   * Up to 50 rows by last wrote newest first (NULL tail last, id descending), after `after`, each
+   * with its blocked mark for `telegramBotId` (read for the page ids only; null bot = no marks).
+   */
   listPage(
     workspaceId: string,
     filter: ContactListFilter & { after?: ContactListPosition },
+    telegramBotId?: bigint | null,
   ): Promise<{ rows: ContactListRow[]; hasNext: boolean }>;
   /** Contacts matching the search and the tag filter. */
   matchingCount(workspaceId: string, filter: ContactListFilter): Promise<number>;
   /** All contacts of the workspace. */
   totalCount(workspaceId: string): Promise<number>;
+}
+
+// ───────── audiences (broadcasts, ADR-0004) ─────────
+
+/**
+ * An audience to evaluate: a tag audience by the Contacts filter's rules (no chosen tag with `any` /
+ * `all` = every contact; a left-out tag removes the contact), or a list of contact ids (a group).
+ * Tag ids are tags of the workspace (unknown ones are dropped by the app layer first).
+ */
+export type AudienceSpec =
+  | {
+      kind: 'tags';
+      mode: TagFilterMode;
+      include: readonly string[];
+      exclude: readonly string[];
+    }
+  | { kind: 'ids'; contactIds: readonly string[] };
+
+/**
+ * The count breakdown for one Telegram bot, partitioned blocked, then never wrote, then reachable
+ * (data-model assumption 5); `reach` is null when no bot is given.
+ */
+export interface AudienceBreakdown {
+  audienceSize: number;
+  reach: { blocked: number; neverWrote: number; reachable: number } | null;
+}
+
+export interface ReachableContact {
+  id: string;
+  telegramUserId: bigint;
+}
+
+export interface LaunchSetRow extends ReachableContact {
+  reach: 'blocked' | 'neverWrote' | 'reachable';
+}
+
+/** An audience evaluated for a launch: the breakdown and exactly the reachable contacts it counts. */
+export interface LaunchAudience {
+  audienceSize: number;
+  /** Null when the audience is over the limit (only its size is known then). */
+  reach: { blocked: number; neverWrote: number; reachable: number } | null;
+  /** Sorted by contact id (the fingerprint's and the positions' order). */
+  reachable: ReachableContact[];
+}
+
+/** A contact as a group row and the report show it. */
+export interface ContactCard {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  /** In tag-list order. */
+  tags: { id: string; name: string }[];
+  /** `contact_bot_reach.blocked_at` for the given bot; null when not blocked or no bot. */
+  blockedSince: Date | null;
+}
+
+export interface AudienceQuery {
+  breakdown(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint | null,
+  ): Promise<AudienceBreakdown>;
+  /** The reachable contacts sorted by id, at most `limit`. */
+  reachable(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    limit: number,
+  ): Promise<ReachableContact[]>;
+  /**
+   * The whole audience for a launch in one statement (one snapshot, AC-06): `total` is its size
+   * and `rows` its first `limit` contacts by id, each with its reach for the Telegram bot.
+   */
+  launchSet(
+    workspaceId: string,
+    audience: AudienceSpec,
+    telegramBotId: bigint,
+    limit: number,
+    tx?: Executor,
+  ): Promise<{ total: number; rows: LaunchSetRow[] }>;
+  /** Ids of the contacts matching the search and the tag filter, sorted. */
+  matchingIds(workspaceId: string, filter: ContactListFilter, tx?: Executor): Promise<string[]>;
+  /** Cards of the given ids of the workspace, in the given order; foreign or unknown ids are left out. */
+  cards(
+    workspaceId: string,
+    contactIds: readonly string[],
+    telegramBotId: bigint | null,
+  ): Promise<ContactCard[]>;
+  /** Whether the contact has blocked the bot (by the reach PK). */
+  isBlocked(workspaceId: string, contactId: string, telegramBotId: bigint): Promise<boolean>;
 }
 
 /** What `contacts` uses of `workspaces` (sad.md §5): names of adders and actors, deactivated members included. */

@@ -26,27 +26,35 @@ describe('contact reads through buildDeps (contacts -> workspaces edge)', () => 
     const other = await insertWorkspace(db);
     const owner = await insertMembership(db, ws, { role: 'owner' });
     const gone = await insertMembership(db, ws, { state: 'deactivated' });
-    const { contactId } = await deps.contacts.upsertFromProfile(
-      ws,
-      {
-        telegramUserId: 777001n,
-        firstName: 'Test User',
-        lastName: null,
-        username: null,
-        languageCode: 'en',
-      },
-      T0,
+    const { contactId } = await db.transaction().execute((tx) =>
+      deps.contacts.upsertFromProfile(
+        ws,
+        {
+          telegramUserId: 777001n,
+          firstName: 'Test User',
+          lastName: null,
+          username: null,
+          languageCode: 'en',
+        },
+        T0,
+        9001n,
+        tx,
+      ),
     );
-    const foreign = await deps.contacts.upsertFromProfile(
-      other,
-      {
-        telegramUserId: 777001n,
-        firstName: 'Test User',
-        lastName: null,
-        username: null,
-        languageCode: 'en',
-      },
-      T0,
+    const foreign = await db.transaction().execute((tx) =>
+      deps.contacts.upsertFromProfile(
+        other,
+        {
+          telegramUserId: 777001n,
+          firstName: 'Test User',
+          lastName: null,
+          username: null,
+          languageCode: 'en',
+        },
+        T0,
+        9001n,
+        tx,
+      ),
     );
     const tagId = await insertTag(db, {
       workspaceId: ws,

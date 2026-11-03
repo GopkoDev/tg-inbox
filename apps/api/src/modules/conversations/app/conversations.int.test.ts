@@ -8,6 +8,8 @@ import { insertMembership, insertWorkspace } from '../../../test/fixtures/worksp
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createContacts } from '../../contacts/app/contacts.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
+import { createReachRepo } from '../../contacts/infra/reach-repo.js';
+import { createReachSignals } from '../../contacts/infra/tag-signals.js';
 import type { CloseSnapshot } from '../domain/state.js';
 import { createActivityRepo } from '../infra/activity-repo.js';
 import { createConversationRepo } from '../infra/conversation-repo.js';
@@ -21,6 +23,7 @@ const T0 = new Date('2026-10-11T10:00:00Z');
 const at = (s: number) => new Date(T0.getTime() + s * 1000);
 
 let nextUser = 800000;
+const RECEIVING_BOT = 9301n;
 const sender = (telegramUserId: bigint) => ({
   telegramUserId,
   firstName: 'Olena',
@@ -37,6 +40,7 @@ function message(userId: bigint, messageId: bigint, o: Partial<InboundMessage> =
     body: `m${messageId}`,
     sentAt: at(Number(messageId)),
     sender: sender(userId),
+    telegramBotId: RECEIVING_BOT,
     raw: { message_id: Number(messageId), text: `m${messageId}` },
     ...o,
   };
@@ -56,6 +60,14 @@ describe('conversations capture (Postgres)', () => {
     await database?.stop();
   });
 
+  const contactsOf = (clock: ReturnType<typeof fixedClock>) =>
+    createContacts({
+      repo: createContactRepo(db),
+      reach: createReachRepo(db),
+      signals: createReachSignals(),
+      clock,
+    });
+
   function build(messages: MessageRepo = createMessageRepo(db)) {
     const clock = fixedClock(at(100));
     return createConversations({
@@ -63,7 +75,7 @@ describe('conversations capture (Postgres)', () => {
       conversations: createConversationRepo(db),
       messages,
       activities: createActivityRepo(db),
-      contacts: createContacts({ repo: createContactRepo(db), clock }),
+      contacts: contactsOf(clock),
       signals: createConversationSignals(),
       clock,
     });
@@ -116,6 +128,51 @@ describe('conversations capture (Postgres)', () => {
     expect(await counts(w)).toEqual({ contacts: 1, conversations: 1, messages: 1 });
     expect(await conversations.lastMessageReceivedAt(w)).toEqual(at(100));
     expect(await conversations.hasConversations(w)).toBe(true);
+  });
+
+  it('capture writes the "wrote" reach row for the receiving Telegram bot and clears an older block (AC-10, AC-14)', async () => {
+    const w = await insertWorkspace(db);
+    const user = BigInt(nextUser++);
+    const conversations = build();
+    const reach = () =>
+      db
+        .selectFrom('contact_bot_reach')
+        .select(['telegram_bot_id', 'wrote_at', 'blocked_at', 'changed_at'])
+        .where('workspace_id', '=', w)
+        .execute();
+    await conversations.captureInbound(w, message(user, 5n));
+    expect(await reach()).toEqual([
+      {
+        telegram_bot_id: String(RECEIVING_BOT),
+        wrote_at: at(5),
+        blocked_at: null,
+        changed_at: at(5),
+      },
+    ]);
+    await db
+      .updateTable('contact_bot_reach')
+      .set({ blocked_at: at(8), changed_at: at(8) })
+      .where('workspace_id', '=', w)
+      .execute();
+    // An older message lowers wrote_at and keeps the block; a newer one clears it.
+    await conversations.captureInbound(w, message(user, 2n));
+    expect(await reach()).toEqual([
+      {
+        telegram_bot_id: String(RECEIVING_BOT),
+        wrote_at: at(2),
+        blocked_at: at(8),
+        changed_at: at(8),
+      },
+    ]);
+    await conversations.captureInbound(w, message(user, 9n));
+    expect(await reach()).toEqual([
+      {
+        telegram_bot_id: String(RECEIVING_BOT),
+        wrote_at: at(2),
+        blocked_at: null,
+        changed_at: at(9),
+      },
+    ]);
   });
 
   it('a redelivery is stored once (AC-11)', async () => {
@@ -226,7 +283,7 @@ describe('conversations capture (Postgres)', () => {
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         activities: createActivityRepo(db),
-        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        contacts: contactsOf(clock),
         signals: createConversationSignals(),
         clock,
       }).captureInbound(w, message(user, id, { sentAt: at(1) }));
@@ -293,7 +350,7 @@ describe('conversations capture (Postgres)', () => {
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         activities: createActivityRepo(db),
-        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        contacts: contactsOf(clock),
         signals: createConversationSignals(),
         clock,
       });
@@ -533,10 +590,7 @@ describe('conversations capture (Postgres)', () => {
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         activities: createActivityRepo(db),
-        contacts: createContacts({
-          repo: createContactRepo(db),
-          clock: fixedClock(at(400)),
-        }),
+        contacts: contactsOf(fixedClock(at(400))),
         signals: createConversationSignals(),
         clock: fixedClock(at(400)),
       });
@@ -566,7 +620,7 @@ describe('conversations capture (Postgres)', () => {
         conversations: createConversationRepo(db),
         messages: createMessageRepo(db),
         activities: createActivityRepo(db),
-        contacts: createContacts({ repo: createContactRepo(db), clock }),
+        contacts: contactsOf(clock),
         signals: createConversationSignals(),
         clock,
       }).captureInbound(w, message(user, 2n));

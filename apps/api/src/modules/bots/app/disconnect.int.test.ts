@@ -10,6 +10,8 @@ import { insertWorkspace } from '../../../test/fixtures/workspaces.js';
 import { startTestDatabase, type TestDatabase } from '../../../test/postgres.js';
 import { createContacts } from '../../contacts/app/contacts.js';
 import { createContactRepo } from '../../contacts/infra/contact-repo.js';
+import { createReachRepo } from '../../contacts/infra/reach-repo.js';
+import { createReachSignals } from '../../contacts/infra/tag-signals.js';
 import { createConversations } from '../../conversations/app/conversations.js';
 import { createActivityRepo } from '../../conversations/infra/activity-repo.js';
 import { createConversationRepo } from '../../conversations/infra/conversation-repo.js';
@@ -45,7 +47,12 @@ describe('reconnect and disconnect (Postgres + fake Bot API)', () => {
     fake = await startFakeTelegram();
     const clock = fixedClock(new Date('2026-10-11T12:00:00Z'));
     const bots = createBotRepo(db, createTokenCipher(testBotKey));
-    const contacts = createContacts({ repo: createContactRepo(db), clock });
+    const contacts = createContacts({
+      repo: createContactRepo(db),
+      reach: createReachRepo(db),
+      signals: createReachSignals(),
+      clock,
+    });
     const conversations = createConversations({
       transaction: (fn) => db.transaction().execute(fn),
       conversations: createConversationRepo(db),

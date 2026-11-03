@@ -231,6 +231,14 @@ export interface ConversationSignals {
   conversationRead(tx: Executor, signal: ReadSignal): Promise<void>;
   /** `conversation.changed` with item type activity (created): one per recorded state change. */
   activityChanged(tx: Executor, signal: ActivitySignal): Promise<void>;
+  /** `conversation.changed` with item type broadcast (created only: an item is never edited). */
+  broadcastItemChanged(tx: Executor, signal: BroadcastItemSignal): Promise<void>;
+}
+
+export interface BroadcastItemSignal {
+  workspaceId: string;
+  conversationId: string;
+  broadcastItemId: string;
 }
 
 // ───────── read side (inbox) ─────────
@@ -323,10 +331,56 @@ export interface ReplyView {
   createdAt: Date;
 }
 
+export type BroadcastItemState = 'delivered' | 'not_confirmed';
+
+/**
+ * A broadcast as a thread entry (ADR-0010): which broadcast reached the conversation and when.
+ * Names and text are joined by `inbox` from `broadcasts`.
+ */
+export interface BroadcastItemView {
+  id: string;
+  conversationId: string;
+  broadcastId: string;
+  state: BroadcastItemState;
+  /** Delivered: when recorded; not confirmed: when the send was made. */
+  positionAt: Date;
+  /** Non-null exactly when delivered. */
+  telegramMessageId: bigint | null;
+  createdAt: Date;
+}
+
+export interface NewBroadcastItem {
+  workspaceId: string;
+  contactId: string;
+  broadcastId: string;
+  state: BroadcastItemState;
+  positionAt: Date;
+  telegramMessageId: bigint | null;
+}
+
+export interface BroadcastItemRepo {
+  /**
+   * Inserts the item into the contact's one conversation of the workspace (found by
+   * `conversations_contact_id_key`); null when the contact has none. Writes no conversation column;
+   * a second item of the same broadcast and conversation is refused by the unique key.
+   */
+  insert(
+    item: NewBroadcastItem & { id: string; createdAt: Date },
+    tx: Executor,
+  ): Promise<{ conversationId: string } | null>;
+  /** Null for an unknown item and for one of another conversation or workspace. */
+  byId(
+    workspaceId: string,
+    conversationId: string,
+    itemId: string,
+  ): Promise<BroadcastItemView | null>;
+}
+
 export type ThreadEntry =
   | { type: 'message'; position: ThreadPosition; message: MessageView }
   | { type: 'reply'; position: ThreadPosition; reply: ReplyView }
-  | { type: 'activity'; position: ThreadPosition; activity: ActivityView };
+  | { type: 'activity'; position: ThreadPosition; activity: ActivityView }
+  | { type: 'broadcast'; position: ThreadPosition; broadcastItem: BroadcastItemView };
 
 export interface ThreadPageQuery {
   /** Items strictly before this position (older page). */
