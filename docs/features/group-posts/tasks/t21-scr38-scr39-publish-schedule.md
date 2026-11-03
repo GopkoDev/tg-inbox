@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/publish/", "apps/web/src/pages/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T21 — Build SCR-38 publish-now and SCR-39 schedule dialogs on their owner-only addresses, with the first-time time-zone step
