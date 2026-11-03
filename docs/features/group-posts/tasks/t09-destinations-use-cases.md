@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/destinations.ts", "apps/api/src/mod
 owner: "Dmytro Hopko"
 estimate: "L"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T9 — Add the destination use cases: create and read a connect code, redeem it from ChatEventsPort, membership / upgrade / rename updates, remove, list, set the time zone

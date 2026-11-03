@@ -15,7 +15,7 @@
 | T6 | Add bots.sendPost, bots.deletePost and postReadiness with a 1-per-second post pacer, and teach the fake Telegram group chats, deleteMessage and getChatMember | app | Dmytro Hopko | M | T2 | done | COMMIT |
 | T7 | Add workspaces.timeZone and setTimeZone in the workspaces app layer | app | Dmytro Hopko | S | T3, T1 | done | COMMIT |
 | T8 | Build the posts repositories for destinations, destination codes and posts, with cross-workspace isolation tests | infra | Dmytro Hopko | L | T3, T4 | done | COMMIT |
-| T9 | Add the destination use cases: create and read a connect code, redeem it from ChatEventsPort, membership / upgrade / rename updates, remove, list, set the time zone | app | Dmytro Hopko | L | T5, T6, T7, T8 | todo | — |
+| T9 | Add the destination use cases: create and read a connect code, redeem it from ChatEventsPort, membership / upgrade / rename updates, remove, list, set the time zone | app | Dmytro Hopko | L | T5, T6, T7, T8 | done | COMMIT |
 | T10 | Add the post draft use cases and reads: create, save against version, duplicate, delete draft, back to draft, list, get, attention count, mark seen | app | Dmytro Hopko | M | T8 | done | COMMIT |
 | T11 | Add the publish confirmation, publish now and schedule / change time against the shown version, queuing one posts.send job in the transaction | app | Dmytro Hopko | L | T9, T10 | todo | — |
 | T12 | Add the posts.send job body: re-check owner and limits, per-chat order and pauses, claim before the send, outcomes, missed after 15 minutes, and the dead-letter settler | app | Dmytro Hopko | L | T6, T11 | todo | — |

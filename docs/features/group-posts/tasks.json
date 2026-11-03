@@ -187,7 +187,7 @@
         "apps/api/src/modules/posts/app/destination-reads.ts"
       ],
       "file": "docs/features/group-posts/tasks/t09-destinations-use-cases.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T10",
