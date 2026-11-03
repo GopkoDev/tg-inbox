@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/delete-published.ts", "apps/api/src
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T13 — Add delete from Telegram within 48 hours and the deactivation return of scheduled posts

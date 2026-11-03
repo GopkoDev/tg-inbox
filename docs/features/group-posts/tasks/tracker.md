@@ -19,7 +19,7 @@
 | T10 | Add the post draft use cases and reads: create, save against version, duplicate, delete draft, back to draft, list, get, attention count, mark seen | app | Dmytro Hopko | M | T8 | done | COMMIT |
 | T11 | Add the publish confirmation, publish now and schedule / change time against the shown version, queuing one posts.send job in the transaction | app | Dmytro Hopko | L | T9, T10 | todo | — |
 | T12 | Add the posts.send job body: re-check owner and limits, per-chat order and pauses, claim before the send, outcomes, missed after 15 minutes, and the dead-letter settler | app | Dmytro Hopko | L | T6, T11 | todo | — |
-| T13 | Add delete from Telegram within 48 hours and the deactivation return of scheduled posts | app | Dmytro Hopko | S | T6, T10 | todo | — |
+| T13 | Add delete from Telegram within 48 hours and the deactivation return of scheduled posts | app | Dmytro Hopko | S | T6, T10 | done | COMMIT |
 | T14 | Wire posts in buildDeps and buildApp: ChatEventsPort, onMembershipDeactivated, the posts.send queue + DLQ workers, the hub forwarding the two new frames | wiring | Dmytro Hopko | M | T9, T12, T13 | todo | — |
 | T15 | Register the posts routes (registerPosts): the 18 operations with zod schemas, guards and error mapping | ports | Dmytro Hopko | M | T11, T13, T14 | todo | — |
 | T16 | Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks | tests | Dmytro Hopko | M | T15 | todo | — |

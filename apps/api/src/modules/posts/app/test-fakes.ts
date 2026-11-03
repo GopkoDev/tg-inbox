@@ -81,6 +81,26 @@ export function fakePostRepo(s: FakeStore) {
       });
       return { ...p };
     },
+    async markDeleted(ws: string, id: string, by: string, at: Date) {
+      const p = get(ws, id);
+      if (!p || p.state !== 'published') return null;
+      Object.assign(p, {
+        state: 'deleted',
+        deletedAt: at,
+        deletedByAccountId: by,
+        lastChangedByAccountId: by,
+        lastChangedAt: at,
+      });
+      return { ...p };
+    },
+    async scheduledByAccount(ws: string, accountId: string) {
+      return s.posts
+        .filter(
+          (p) =>
+            p.workspaceId === ws && p.state === 'scheduled' && p.scheduledByAccountId === accountId,
+        )
+        .map((p) => ({ ...p }));
+    },
     async clearAttention(ws: string, id: string) {
       const p = get(ws, id);
       if (!p || !p.needsAttention) return false;

@@ -271,6 +271,31 @@ export function createPostRepo(db: Db) {
       );
     },
 
+    /** Published -> deleted by a member; the text stays. */
+    async markDeleted(
+      workspaceId: string,
+      id: string,
+      byAccountId: string,
+      at: Date,
+      tx?: Db,
+    ): Promise<PostRecord | null> {
+      const row = await (tx ?? db)
+        .updateTable('posts')
+        .set({
+          state: 'deleted',
+          deleted_at: at,
+          deleted_by_account_id: byAccountId,
+          last_changed_by_account_id: byAccountId,
+          last_changed_at: at,
+        })
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('state', '=', 'published')
+        .returningAll()
+        .executeTakeFirst();
+      return row ? toPost(row) : null;
+    },
+
     /** Scheduled -> draft with a notice, raising the version so stale confirmations fail. */
     async returnToDraft(
       workspaceId: string,
