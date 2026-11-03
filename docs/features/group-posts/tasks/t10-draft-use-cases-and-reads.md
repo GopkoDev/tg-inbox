@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/drafts.ts", "apps/api/src/modules/p
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T10 — Add the post draft use cases and reads: create, save against version, duplicate, delete draft, back to draft, list, get, attention count, mark seen

@@ -275,7 +275,7 @@ export function createPostRepo(db: Db) {
     async returnToDraft(
       workspaceId: string,
       id: string,
-      notice: DraftNotice,
+      notice: DraftNotice | null,
       byAccountId: string,
       at: Date,
       tx?: Db,
@@ -309,6 +309,17 @@ export function createPostRepo(db: Db) {
         .limit(LIST_CAP)
         .execute();
       return rows.map(toPost);
+    },
+
+    /** Deletes a draft (the only state a post may be removed in); false when not a draft or foreign. */
+    async remove(workspaceId: string, id: string, tx?: Db): Promise<boolean> {
+      const res = await (tx ?? db)
+        .deleteFrom('posts')
+        .where('workspace_id', '=', workspaceId)
+        .where('id', '=', id)
+        .where('state', '=', 'draft')
+        .executeTakeFirst();
+      return Number(res.numDeletedRows) > 0;
     },
 
     async countScheduled(workspaceId: string, tx?: Db): Promise<number> {

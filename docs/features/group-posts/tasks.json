@@ -210,7 +210,7 @@
         "apps/api/src/modules/posts/app/post-reads.ts"
       ],
       "file": "docs/features/group-posts/tasks/t10-draft-use-cases-and-reads.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T11",
