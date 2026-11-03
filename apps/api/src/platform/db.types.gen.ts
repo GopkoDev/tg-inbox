@@ -198,6 +198,39 @@ export interface Conversations {
   workspace_id: string;
 }
 
+export interface DestinationCodes {
+  account_id: string;
+  code_hash: Buffer;
+  created_at: Timestamp;
+  destination_id: string | null;
+  expires_at: Timestamp;
+  id: string;
+  replaced_at: Timestamp | null;
+  result: string | null;
+  result_at: Timestamp | null;
+  used_at: Timestamp | null;
+  workspace_id: string;
+}
+
+export interface Destinations {
+  availability: string;
+  chat_id: Int8;
+  connected_at: Timestamp;
+  connected_by_account_id: string;
+  id: string;
+  kind: string;
+  membership_changed_at: Timestamp;
+  next_send_at: Timestamp | null;
+  paused_until: Timestamp | null;
+  problem: string | null;
+  removed_at: Timestamp | null;
+  removed_by_account_id: string | null;
+  telegram_bot_id: Int8;
+  title: string;
+  username: string | null;
+  workspace_id: string;
+}
+
 export interface Invitations {
   closed_at: Timestamp | null;
   created_at: Timestamp;
@@ -262,6 +295,32 @@ export interface Pings {
   opened_at: Timestamp | null;
   outcome: string;
   telegram_link_id: string;
+  workspace_id: string;
+}
+
+export interface Posts {
+  author_account_id: string;
+  created_at: Timestamp;
+  deleted_at: Timestamp | null;
+  deleted_by_account_id: string | null;
+  destination_id: string | null;
+  draft_notice: string | null;
+  id: string;
+  last_changed_at: Timestamp;
+  last_changed_by_account_id: string;
+  needs_attention: boolean;
+  outcome_at: Timestamp | null;
+  outcome_reason: string | null;
+  published_at: Timestamp | null;
+  schedule_kind: string | null;
+  scheduled_by_account_id: string | null;
+  scheduled_for: Timestamp | null;
+  sending_started_at: Timestamp | null;
+  silent: boolean;
+  state: string;
+  telegram_message_id: Int8 | null;
+  text: string;
+  version: number;
   workspace_id: string;
 }
 
@@ -353,6 +412,7 @@ export interface Workspaces {
   created_at: Timestamp;
   id: string;
   name: string;
+  time_zone: string | null;
 }
 
 export interface DB {
@@ -370,12 +430,15 @@ export interface DB {
   contacts: Contacts;
   conversation_activities: ConversationActivities;
   conversations: Conversations;
+  destination_codes: DestinationCodes;
+  destinations: Destinations;
   invitations: Invitations;
   memberships: Memberships;
   messages: Messages;
   password_reset_links: PasswordResetLinks;
   ping_items: PingItems;
   pings: Pings;
+  posts: Posts;
   read_marks: ReadMarks;
   replies: Replies;
   reply_attempts: ReplyAttempts;

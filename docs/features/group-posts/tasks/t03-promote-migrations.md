@@ -9,8 +9,8 @@ files_hint: ["apps/api/migrations/", "docs/features/group-posts/migrations/", "a
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T3 — Promote staged migrations 01–04 (workspaces.time_zone, destinations, destination_codes, posts) and regenerate DB types

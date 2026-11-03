@@ -9,7 +9,7 @@
 |---|---|---|---|---|---|---|---|
 | T1 | Add the shared workspace time-zone rule: IANA validity, local wall time to instant with skipped and repeated hours, display formatting | domain | Dmytro Hopko | S | — | done | COMMIT |
 | T2 | Add the posts zod contracts, the 17 new error codes, and the post.changed / destinations.changed frames and signals | ports | Dmytro Hopko | M | — | todo | — |
-| T3 | Promote staged migrations 01–04 (workspaces.time_zone, destinations, destination_codes, posts) and regenerate DB types | migration | Dmytro Hopko | S | — | todo | — |
+| T3 | Promote staged migrations 01–04 (workspaces.time_zone, destinations, destination_codes, posts) and regenerate DB types | migration | Dmytro Hopko | S | — | done | COMMIT |
 | T4 | Add the posts domain: states and transitions, the schedule window, the 15-minute miss rule, limits, connect-code format and hashing, outcome reasons, Telegram link | domain | Dmytro Hopko | M | T1, T2 | todo | — |
 | T5 | Classify group and channel updates in bots into four facts, add channel_post to allowed_updates, and hand them to a late-bound ChatEventsPort | app | Dmytro Hopko | M | T2 | todo | — |
 | T6 | Add bots.sendPost, bots.deletePost and postReadiness with a 1-per-second post pacer, and teach the fake Telegram group chats, deleteMessage and getChatMember | app | Dmytro Hopko | M | T2 | todo | — |

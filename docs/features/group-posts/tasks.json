@@ -55,7 +55,7 @@
         "apps/api/src/platform/db.types.gen.ts"
       ],
       "file": "docs/features/group-posts/tasks/t03-promote-migrations.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T4",
