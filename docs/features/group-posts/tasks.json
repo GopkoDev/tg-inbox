@@ -102,7 +102,7 @@
         "apps/api/src/test/fixtures/telegram.ts"
       ],
       "file": "docs/features/group-posts/tasks/t05-bots-classify-chat-facts.md",
-      "status": "blocked"
+      "status": "todo"
     },
     {
       "id": "T6",

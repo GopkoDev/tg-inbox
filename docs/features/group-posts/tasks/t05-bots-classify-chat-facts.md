@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/bots/domain/inbound.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "blocked"
-step: "GATE — inbound-chat.test.ts contradictory /connect@ tests (1 of 542 fails)"
+status: "todo"
+step: ""
 ---
 
 # T5 — Classify group and channel updates in bots into four facts, add channel_post to allowed_updates, and hand them to a late-bound ChatEventsPort
