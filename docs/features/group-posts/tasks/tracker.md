@@ -22,7 +22,7 @@
 | T13 | Add delete from Telegram within 48 hours and the deactivation return of scheduled posts | app | Dmytro Hopko | S | T6, T10 | done | COMMIT |
 | T14 | Wire posts in buildDeps and buildApp: ChatEventsPort, onMembershipDeactivated, the posts.send queue + DLQ workers, the hub forwarding the two new frames | wiring | Dmytro Hopko | M | T9, T12, T13 | done | COMMIT |
 | T15 | Register the posts routes (registerPosts): the 18 operations with zod schemas, guards and error mapping | ports | Dmytro Hopko | M | T11, T13, T14 | done | COMMIT |
-| T16 | Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks | tests | Dmytro Hopko | M | T15 | todo | — |
+| T16 | Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks | tests | Dmytro Hopko | M | T15 | done | COMMIT |
 | T17 | Add the web posts API source, stores (posts, destinations, attention), time helpers, routes and the Posts nav item with its count | ui | Dmytro Hopko | M | T2, T1 | done | COMMIT |
 | T18 | Build SCR-33 Channels & groups with SCR-34 connect-code, SCR-35 remove and SCR-43 time-zone dialogs | ui | Dmytro Hopko | M | T17 | done | COMMIT |
 | T19 | Build SCR-36 the Posts list with state filters, workspace-zone times and the attention rows | ui | Dmytro Hopko | S | T17 | done | COMMIT |
@@ -30,6 +30,6 @@
 | T21 | Build SCR-38 publish-now and SCR-39 schedule dialogs on their owner-only addresses, with the first-time time-zone step | ui | Dmytro Hopko | M | T20 | done | COMMIT |
 | T22 | Build SCR-40 the post page for every non-draft state, with SCR-41 delete-from-Telegram and mark-seen | ui | Dmytro Hopko | M | T20 | done | COMMIT |
 | T23 | Add browser end-to-end posts flows against the real API: connect, draft, publish, schedule, outcome, delete | tests | Dmytro Hopko | M | T16, T18, T19, T21, T22 | todo | — |
-| T24 | Update CLAUDE.md, the architecture map and the design-system canon for the posts module | docs | Dmytro Hopko | S | T15, T18, T19, T21, T22 | todo | — |
+| T24 | Update CLAUDE.md, the architecture map and the design-system canon for the posts module | docs | Dmytro Hopko | S | T15, T18, T19, T21, T22 | done | COMMIT |
 
 **Total:** 24 tasks, ~21 person-days.

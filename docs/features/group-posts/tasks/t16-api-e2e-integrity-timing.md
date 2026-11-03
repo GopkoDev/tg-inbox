@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/e2e/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T16 — Add the API end-to-end posts stories, the tenancy and secrecy suite, postIntegrity queries and the timing checks

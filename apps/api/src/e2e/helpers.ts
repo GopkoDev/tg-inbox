@@ -512,6 +512,57 @@ export const broadcastIntegrity = {
       .execute(),
 };
 
+/** Sent states of a post: the claim committed, so a send was (or may have been) made. */
+const POST_SENT_STATES = sql`('sending', 'published', 'not_confirmed', 'deleted')`;
+
+/** Integrity queries of posts (sad.md §7 run book). Each is scoped to one workspace and returns offending ids. */
+export const postIntegrity = {
+  /** 1. Sends that started more than 15 minutes after the chosen time. */
+  startedLate: async (db: Deps['db'], workspaceId: string) =>
+    (
+      await sql<{ id: string }>`select id from posts
+        where workspace_id = ${workspaceId} and sending_started_at is not null and scheduled_for is not null
+          and sending_started_at > scheduled_for + interval '15 minutes'`.execute(db)
+    ).rows,
+
+  /** 2. Two sends of one post: one Telegram message id on more than one post of a destination. */
+  twoSendsOfOnePost: async (db: Deps['db'], workspaceId: string) =>
+    (
+      await sql<{ id: string }>`select p.id from posts p
+        where p.workspace_id = ${workspaceId} and p.telegram_message_id is not null
+          and exists (select 1 from posts o
+            where o.workspace_id = p.workspace_id and o.destination_id = p.destination_id
+              and o.telegram_message_id = p.telegram_message_id and o.id <> p.id)`.execute(db)
+    ).rows,
+
+  /** 3. `sending` older than the job expiry (60 s). */
+  sendingPastExpiry: async (db: Deps['db'], workspaceId: string, asOf: Date = new Date()) =>
+    (
+      await sql<{ id: string }>`select id from posts
+        where workspace_id = ${workspaceId} and state = 'sending'
+          and sending_started_at + interval '60 seconds' < ${asOf}`.execute(db)
+    ).rows,
+
+  /** 4. Posts whose destination belongs to another workspace. */
+  foreignDestination: async (db: Deps['db'], workspaceId: string) =>
+    (
+      await sql<{ id: string }>`select p.id from posts p
+        join destinations d on d.id = p.destination_id
+        where p.workspace_id = ${workspaceId} and d.workspace_id <> p.workspace_id`.execute(db)
+    ).rows,
+
+  /** 5. More than 30 sent within 24 h (a rolling window ending at each send). */
+  overDailyCap: async (db: Deps['db'], workspaceId: string) =>
+    (
+      await sql<{ id: string }>`select p.id from posts p
+        where p.workspace_id = ${workspaceId} and p.state in ${POST_SENT_STATES}
+          and (select count(*) from posts o
+            where o.workspace_id = p.workspace_id and o.state in ${POST_SENT_STATES}
+              and o.sending_started_at > p.sending_started_at - interval '24 hours'
+              and o.sending_started_at <= p.sending_started_at) > 30`.execute(db)
+    ).rows,
+};
+
 /** Every integrity query for each workspace: every list must be empty. `asOf` is the test clock's now. */
 export async function integrityViolations(
   db: Deps['db'],
@@ -564,6 +615,12 @@ export async function integrityViolations(
     note('contacts-over-tag-limit', workspaceId, await c.contactsOverTagLimit(db, workspaceId));
     note('links-across-workspaces', workspaceId, await c.linksAcrossWorkspaces(db, workspaceId));
     note('links-without-history', workspaceId, await c.linksWithoutHistory(db, workspaceId));
+    const p = postIntegrity;
+    note('post-started-late', workspaceId, await p.startedLate(db, workspaceId));
+    note('post-two-sends', workspaceId, await p.twoSendsOfOnePost(db, workspaceId));
+    note('post-sending-past-expiry', workspaceId, await p.sendingPastExpiry(db, workspaceId, asOf));
+    note('post-foreign-destination', workspaceId, await p.foreignDestination(db, workspaceId));
+    note('post-over-daily-cap', workspaceId, await p.overDailyCap(db, workspaceId));
     const b = broadcastIntegrity;
     note('broadcast-waiting-on-ended', workspaceId, await b.waitingOnEnded(db, workspaceId));
     note(

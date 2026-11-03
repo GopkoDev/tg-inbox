@@ -357,7 +357,7 @@
         "apps/api/src/e2e/"
       ],
       "file": "docs/features/group-posts/tasks/t16-api-e2e-integrity-timing.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T17",
@@ -536,7 +536,7 @@
         "docs/design-system.md"
       ],
       "file": "docs/features/group-posts/tasks/t24-docs-update.md",
-      "status": "todo"
+      "status": "done"
     }
   ]
 }
