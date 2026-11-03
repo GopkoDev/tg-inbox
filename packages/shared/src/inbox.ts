@@ -522,6 +522,19 @@ export const BroadcastChangedFrame = z.object({
 /** The workspace's tag list changed (a tag was created, renamed, merged or deleted). */
 export const TagsChangedFrame = z.object({ ...frameBase, type: z.literal('tags.changed') });
 
+/** A post of the workspace changed; ids only, to every socket (events.md). */
+export const PostChangedFrame = z.object({
+  ...frameBase,
+  type: z.literal('post.changed'),
+  post_id: Id,
+});
+
+/** The workspace's destinations (or its time zone) changed; to every socket. */
+export const DestinationsChangedFrame = z.object({
+  ...frameBase,
+  type: z.literal('destinations.changed'),
+});
+
 export const LiveFrame = z.discriminatedUnion('type', [
   ConversationChangedFrame,
   BotChangedFrame,
@@ -530,6 +543,8 @@ export const LiveFrame = z.discriminatedUnion('type', [
   ContactChangedFrame,
   TagsChangedFrame,
   BroadcastChangedFrame,
+  PostChangedFrame,
+  DestinationsChangedFrame,
 ]);
 export type LiveFrame = z.infer<typeof LiveFrame>;
 

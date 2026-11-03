@@ -80,6 +80,15 @@ describe('realtime signal schema', () => {
     expect(realtimeSignalSchema.safeParse({ ...tags, v: 2 }).success).toBe(false);
   });
 
+  it('accepts post.changed and destinations.changed with ids only', () => {
+    const post = { type: 'post.changed', v: 1, workspace_id: ws, post_id: newId() };
+    expect(realtimeSignalSchema.safeParse(post).success).toBe(true);
+    expect(realtimeSignalSchema.safeParse({ ...post, post_id: undefined }).success).toBe(false);
+    const dest = { type: 'destinations.changed', v: 1, workspace_id: ws };
+    expect(realtimeSignalSchema.safeParse(dest).success).toBe(true);
+    expect(realtimeSignalSchema.safeParse({ ...dest, v: 2 }).success).toBe(false);
+  });
+
   it('accepts broadcast.changed with ids and one of the five change kinds only', () => {
     const broadcast = {
       type: 'broadcast.changed',

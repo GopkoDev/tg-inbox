@@ -38,7 +38,7 @@
         "apps/api/src/platform/errors.ts"
       ],
       "file": "docs/features/group-posts/tasks/t02-shared-contracts-codes-frames.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T3",

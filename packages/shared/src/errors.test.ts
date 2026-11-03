@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { ErrorCode, ErrorEnvelope } from './errors.js';
 
 describe('ErrorCode', () => {
-  it('declares the 58 codes', () => {
-    expect(Object.keys(ErrorCode)).toHaveLength(58);
+  it('declares the 75 codes', () => {
+    expect(Object.keys(ErrorCode)).toHaveLength(75);
     for (const c of [
       'BROADCAST_NAME_INVALID',
       'BROADCAST_TEXT_INVALID',

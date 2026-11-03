@@ -9,8 +9,8 @@ files_hint: ["packages/shared/src/posts.ts", "packages/shared/src/errors.ts", "p
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T2 — Add the posts zod contracts, the 17 new error codes, and the post.changed / destinations.changed frames and signals
