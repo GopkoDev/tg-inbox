@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/", "apps/web/src/app/routes.tsx", "app
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T17 — Add the web posts API source, stores (posts, destinations, attention), time helpers, routes and the Posts nav item with its count

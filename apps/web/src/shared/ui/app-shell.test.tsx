@@ -25,6 +25,10 @@ const getAttentionCount = vi.fn();
 vi.mock('@/features/attention/api', () => ({
   getAttentionCount: (id: string) => getAttentionCount(id),
 }));
+const getPostAttention = vi.fn();
+vi.mock('@/features/posts/api', () => ({
+  getPostAttention: (id: string) => getPostAttention(id),
+}));
 vi.mock('@/shared/api/live-connection', () => ({
   openLiveConnection: (workspaceId: string) => {
     const c = { workspaceId, close: vi.fn() };
@@ -189,7 +193,7 @@ describe('AppShell', () => {
     const names = within(nav)
       .getAllByRole('link')
       .map((l) => l.textContent);
-    expect(names).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
+    expect(names).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Posts', 'Settings']);
     expect(within(nav).getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current');
   });
 
@@ -201,7 +205,7 @@ describe('AppShell', () => {
       within(nav)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
+    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Posts', 'Settings']);
   });
 
   it('the Settings link is marked current on a settings page', () => {
@@ -283,6 +287,36 @@ describe('AppShell', () => {
       fireEvent.click(await screen.findByRole('menuitem', { name: 'Sign out' }));
       await waitFor(() => expect(screen.getByText('sign-in screen')).toBeInTheDocument());
       expect(live.opened[0]!.close).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('the Posts item and its count (SCR-15, AC-12, AC-13)', () => {
+    it('links to the posts list for both roles', () => {
+      useWorkspaceStore.getState().setCurrent(bolt);
+      getPostAttention.mockResolvedValue({ count: 0 });
+      renderShell('/w/w2');
+      const nav = screen.getByRole('navigation', { name: 'Workspace' });
+      expect(within(nav).getByRole('link', { name: 'Posts' })).toHaveAttribute(
+        'href',
+        '/w/w2/posts',
+      );
+    });
+
+    it('shows the number of posts needing attention next to Posts', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      getPostAttention.mockResolvedValue({ count: 2 });
+      renderShell();
+      const nav = screen.getByRole('navigation', { name: 'Workspace' });
+      expect(await within(nav).findByLabelText('2 posts need attention')).toHaveTextContent('2');
+      expect(getPostAttention).toHaveBeenCalledWith('w1');
+    });
+
+    it('shows no badge while the count is 0', async () => {
+      useWorkspaceStore.getState().setCurrent(acme);
+      getPostAttention.mockResolvedValue({ count: 0 });
+      renderShell();
+      await waitFor(() => expect(getPostAttention).toHaveBeenCalled());
+      expect(screen.queryByLabelText(/posts? needs? attention/)).not.toBeInTheDocument();
     });
   });
 

@@ -39,7 +39,7 @@ describe('SettingsLayout (SCR-16, Decision 1)', () => {
   it('an owner sees Bot, Team, Tags and Notifications and the full description', () => {
     useWorkspaceStore.getState().setCurrent(owner);
     renderAt('/w/w1/settings/bot');
-    expect(menu()).toEqual(['Bot', 'Team', 'Tags', 'Notifications']);
+    expect(menu()).toEqual(['Bot', 'Team', 'Tags', 'Channels & groups', 'Notifications']);
     expect(
       screen.getByText("Manage your workspace's bot, team and tags, and your notifications"),
     ).toBeInTheDocument();
@@ -57,13 +57,13 @@ describe('SettingsLayout (SCR-16, Decision 1)', () => {
   it('an operator never sees Tags in the menu, even on the Tags address (AC-11)', () => {
     useWorkspaceStore.getState().setCurrent(operator);
     renderAt('/w/w1/settings/tags');
-    expect(menu()).toEqual(['Notifications']);
+    expect(menu()).toEqual(['Channels & groups', 'Notifications']);
   });
 
   it('an operator sees Notifications only and the short description', () => {
     useWorkspaceStore.getState().setCurrent(operator);
     renderAt('/w/w1/settings/notifications');
-    expect(menu()).toEqual(['Notifications']);
+    expect(menu()).toEqual(['Channels & groups', 'Notifications']);
     expect(screen.getByText('Manage your notifications')).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 1, name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByText('notifications body')).toBeInTheDocument();

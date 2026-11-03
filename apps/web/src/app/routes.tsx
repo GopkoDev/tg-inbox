@@ -101,6 +101,35 @@ const workspaceRoute: RouteObject = {
       ],
     },
     {
+      // SCR-36 the list; SCR-37 while a draft and SCR-40 otherwise (chosen from the read), with
+      // /publish (SCR-38) and /schedule (SCR-39) over the post.
+      path: 'posts',
+      handle: { crumb: 'Posts' },
+      children: [
+        { index: true, element: lazyPage(() => import('@/pages/PostsPage'), 'PostsPage') },
+        {
+          path: 'new',
+          handle: { crumb: 'New post' },
+          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+        },
+        {
+          path: ':postId',
+          handle: { crumb: 'Post' },
+          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+        },
+        {
+          path: ':postId/publish',
+          handle: { crumb: 'Post' },
+          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+        },
+        {
+          path: ':postId/schedule',
+          handle: { crumb: 'Post' },
+          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+        },
+      ],
+    },
+    {
       path: 'settings',
       handle: { crumb: 'Settings' },
       element: lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage'),
@@ -120,6 +149,11 @@ const workspaceRoute: RouteObject = {
           path: 'tags',
           handle: { crumb: 'Tags' },
           element: lazyPage(() => import('@/pages/TagSettingsPage'), 'TagSettingsPage'),
+        },
+        {
+          path: 'channels',
+          handle: { crumb: 'Channels & groups' },
+          element: lazyPage(() => import('@/pages/ChannelsSettingsPage'), 'ChannelsSettingsPage'),
         },
         {
           path: 'notifications',
