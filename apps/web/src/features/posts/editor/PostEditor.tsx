@@ -12,6 +12,7 @@ import { Link, useNavigate } from 'react-router';
 import { ApiError } from '@/shared/api/client';
 import { Alert, AlertDescription } from '@/shared/ui/alert';
 import { useShellGuard } from '@/shared/ui/app-shell-context';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import { Checkbox } from '@/shared/ui/checkbox';
 import {
@@ -20,11 +21,13 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/shared/ui/dropdown-menu';
+import { Field, FieldError } from '@/shared/ui/field';
 import { Label } from '@/shared/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui/select';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { Textarea } from '@/shared/ui/textarea';
 import { createPost, duplicatePost, getPost, listDestinations, savePost } from '../api';
+import { KIND_LABEL } from '../publish/shared';
 import { DeletePostDialog } from './DeletePostDialog';
 
 const SAVE_DELAY_MS = 600;
@@ -298,12 +301,12 @@ export function PostEditor({
   const blocked = empty || tooMany > 0 || chosen === null || chosen.availability === 'unavailable';
   const channelsHref = `/w/${workspaceId}/settings/channels`;
   const saveText =
-    saveStatus === 'saving'
-      ? 'Saving…'
-      : saveStatus === 'saved'
-        ? 'Saved'
-        : saveStatus === 'error'
-          ? "Couldn't save"
+    tooMany > 0
+      ? 'Not saved — too long'
+      : saveStatus === 'saving'
+        ? 'Saving…'
+        : saveStatus === 'saved'
+          ? 'Saved'
           : '';
 
   return (
@@ -313,13 +316,23 @@ export function PostEditor({
           <AlertDescription>{NOTICES[post.draft_notice]}</AlertDescription>
         </Alert>
       ) : null}
+      {saveStatus === 'error' ? (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center gap-3">
+            Couldn&apos;t save
+            <Button type="button" size="sm" variant="outline" onClick={flush}>
+              Retry
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       {stale ? (
         <Alert>
           <AlertDescription>A teammate changed this draft — showing their version</AlertDescription>
         </Alert>
       ) : null}
 
-      <div className="flex flex-col gap-2">
+      <Field data-invalid={chosen === null || problem !== null}>
         <Label htmlFor="post-destination">Destination</Label>
         {destinations.length === 0 && chosen === null ? (
           <Link className="text-sm underline" to={channelsHref}>
@@ -333,50 +346,55 @@ export function PostEditor({
               flush();
             }}
           >
-            <SelectTrigger id="post-destination" aria-label="Destination" className="w-72">
+            <SelectTrigger
+              id="post-destination"
+              aria-label="Destination"
+              aria-invalid={chosen === null || problem !== null}
+              className="w-72"
+            >
               <SelectValue placeholder="Pick a destination">{chosen?.title}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {destinations.map((d) => (
                 <SelectItem key={d.id} value={d.id}>
                   {d.title}
+                  <Badge variant="outline">{KIND_LABEL[d.kind]}</Badge>
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         )}
-        {chosen === null ? (
-          <p className="text-sm text-muted-foreground">Pick where the post goes</p>
-        ) : null}
+        {chosen === null ? <FieldError>Pick where the post goes</FieldError> : null}
         {problem ? (
-          <p className="text-sm text-destructive">
+          <FieldError>
             {PROBLEMS[problem]}{' '}
             <Link className="underline" to={channelsHref}>
               Channels &amp; groups
             </Link>
-          </p>
+          </FieldError>
         ) : null}
-      </div>
+      </Field>
 
-      <div className="flex flex-col gap-2">
+      <Field data-invalid={empty || tooMany > 0}>
         <Label htmlFor="post-text">Text</Label>
         <Textarea
           id="post-text"
           aria-label="Text"
+          aria-invalid={empty || tooMany > 0}
           rows={10}
           value={fields.text}
           onChange={(event) => change({ text: event.target.value })}
           onBlur={flush}
         />
         <div className="flex items-center justify-between text-sm text-muted-foreground">
-          {empty ? <span>Write the text of the post</span> : <span />}
+          {empty ? <FieldError>Write the text of the post</FieldError> : <span />}
           {tooMany > 0 ? (
             <span className="text-destructive">{`${numbers.format(tooMany)} characters too many`}</span>
           ) : (
             <span>{`${numbers.format(BROADCAST_TEXT_MAX - length)} characters left`}</span>
           )}
         </div>
-      </div>
+      </Field>
 
       <div className="flex items-center gap-2">
         <Checkbox

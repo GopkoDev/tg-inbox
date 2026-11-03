@@ -22,6 +22,7 @@ import {
   ErrorCode,
   KIND_LABEL,
   ProblemAlert,
+  destinationProblemText,
   errorCode,
   isAuthError,
   useConfirmation,
@@ -30,12 +31,12 @@ import {
 type Problem =
   | { kind: 'changed' }
   | { kind: 'bot' }
-  | { kind: 'destination' }
+  | { kind: 'destination'; text: string | null }
   | { kind: 'daily'; at: string | null }
   | { kind: 'failed' };
 
-const timeOf = (iso: string, zone: string | null) =>
-  instantToLocal(new Date(iso), zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone).slice(11);
+const timeOf = (iso: string, zone: string) =>
+  `${instantToLocal(new Date(iso), zone).slice(11)} (${zone})`;
 
 /**
  * SCR-38: the last look at the destination and the exact text before publishing now (owner only).
@@ -73,7 +74,8 @@ export function PublishDialog({
         setProblem({ kind: 'changed' });
         await reload();
       } else if (code === ErrorCode.POSTS_NEED_WORKING_BOT) setProblem({ kind: 'bot' });
-      else if (code === ErrorCode.DESTINATION_UNAVAILABLE) setProblem({ kind: 'destination' });
+      else if (code === ErrorCode.DESTINATION_UNAVAILABLE)
+        setProblem({ kind: 'destination', text: destinationProblemText(error) });
       else if (code === ErrorCode.POST_DAILY_LIMIT_REACHED) {
         const at = (error as ApiError).details as { frees_at?: string } | undefined;
         setProblem({ kind: 'daily', at: at?.frees_at ?? null });
@@ -158,13 +160,13 @@ export function PublishDialog({
           </ProblemAlert>
         ) : null}
         {problem?.kind === 'destination' ? (
-          <ProblemAlert>The bot can&apos;t post in this chat any more</ProblemAlert>
+          <ProblemAlert>{problem.text ?? "The bot can't post in this chat any more"}</ProblemAlert>
         ) : null}
         {problem?.kind === 'daily' ? (
           <ProblemAlert>
             {`The daily posting limit was reached.${
-              problem.at
-                ? ` You can post again at ${timeOf(problem.at, data?.time_zone ?? null)}.`
+              problem.at && data?.time_zone
+                ? ` You can post again at ${timeOf(problem.at, data.time_zone)}.`
                 : ''
             }`}
           </ProblemAlert>

@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/editor/", "apps/web/src/features/posts
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T30 — Complete the editor and post page states: save line and save-error Alert with Retry, SCR-40 declared content, destination problem text in publish / schedule, workspace-zone times everywhere, Field / FieldError and kind Badges

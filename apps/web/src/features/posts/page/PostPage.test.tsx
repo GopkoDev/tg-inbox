@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   markPostSeen: vi.fn(),
   deletePostFromTelegram: vi.fn(),
   duplicatePost: vi.fn(),
+  listDestinations: vi.fn(),
 }));
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
@@ -18,6 +19,7 @@ vi.mock('../api', async (importOriginal) => ({
   markPostSeen: (...a: unknown[]) => api.markPostSeen(...a),
   deletePostFromTelegram: (...a: unknown[]) => api.deletePostFromTelegram(...a),
   duplicatePost: (...a: unknown[]) => api.duplicatePost(...a),
+  listDestinations: (...a: unknown[]) => api.listDestinations(...a),
 }));
 vi.mock('@/shared/api/live-connection', () => ({
   subscribeLive: () => () => undefined,
@@ -95,6 +97,7 @@ beforeEach(() => {
   guard.mockResolvedValue('handled');
   api.markPostSeen.mockResolvedValue({ outcome: 'seen' });
   api.getPost.mockResolvedValue(post());
+  api.listDestinations.mockResolvedValue({ items: [], time_zone: 'Europe/Kyiv' });
 });
 
 describe('SCR-40 PostPage', () => {
@@ -300,5 +303,60 @@ describe('SCR-40 PostPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
     await flush();
     expect(screen.getByText('Published')).toBeInTheDocument();
+  });
+});
+
+describe('T30 SCR-40 declared content', () => {
+  const sched = {
+    kind: 'time' as const,
+    scheduled_for: '2026-11-04T07:00:00Z',
+    scheduled_by: ref(id(12), 'Olena Owner'),
+  };
+  const base = { published_at: null, telegram_link: null, deletable_until: null, schedule: sched };
+
+  it('AC-12: missed is destructive and says it could not go out by the window end in the zone', async () => {
+    api.getPost.mockResolvedValue(
+      post({ ...base, state: 'missed', outcome_reason: 'bot_paused', needs_attention: true }),
+    );
+    renderIt();
+    await flush();
+    expect(screen.getByText(/It could not go out by .*09:15/)).toBeInTheDocument();
+    expect(screen.getByText('Missed').className).toMatch(/destructive/);
+  });
+
+  it('AC-13: failed because of the chat links to Channels & groups', async () => {
+    api.getPost.mockResolvedValue(
+      post({ ...base, state: 'failed', outcome_reason: 'no_post_right' }),
+    );
+    renderIt();
+    await flush();
+    expect(screen.getByRole('link', { name: /Channels & groups/ })).toHaveAttribute(
+      'href',
+      `/w/${WS}/settings/channels`,
+    );
+  });
+
+  it('AC-09: scheduled shows who scheduled it, kind, @username and the sound line', async () => {
+    api.getPost.mockResolvedValue(post({ ...base, state: 'scheduled', silent: true }));
+    renderIt();
+    await flush();
+    expect(screen.getByText(/Scheduled by Olena Owner/)).toBeInTheDocument();
+    expect(screen.getByText('Channel')).toBeInTheDocument();
+    expect(screen.getByText('@acme_news')).toBeInTheDocument();
+    expect(screen.getByText(/without sound/i)).toBeInTheDocument();
+  });
+
+  it('AC-07: sending shows a spinner', async () => {
+    api.getPost.mockResolvedValue(post({ ...base, state: 'sending' }));
+    renderIt();
+    await flush();
+    expect(screen.getByTestId('post-sending-spinner')).toBeInTheDocument();
+  });
+
+  it('AC-15: published past 48 h says the bot can no longer delete it', async () => {
+    api.getPost.mockResolvedValue(post({ deletable_until: '2020-01-01T00:00:00Z' }));
+    renderIt();
+    await flush();
+    expect(screen.getByText('The bot can no longer delete this post')).toBeInTheDocument();
   });
 });

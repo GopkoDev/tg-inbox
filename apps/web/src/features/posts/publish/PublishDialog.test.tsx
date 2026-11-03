@@ -165,4 +165,26 @@ describe('SCR-38 PublishDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
     expect(await screen.findByText(/You can post again at 10:12/)).toBeInTheDocument();
   });
+
+  it('AC-14: a refusal names the destination problem in plain language', async () => {
+    api.publishPost.mockRejectedValue(
+      new ApiError(409, ErrorCode.DESTINATION_UNAVAILABLE, 'gone', { problem: 'chat_gone' }),
+    );
+    renderIt();
+    await screen.findByText('Publish to Test Channel now?');
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(await screen.findByText(/no longer exists/)).toBeInTheDocument();
+  });
+
+  it('AC-09: the daily-limit time carries the workspace zone name', async () => {
+    api.publishPost.mockRejectedValue(
+      new ApiError(409, ErrorCode.POST_DAILY_LIMIT_REACHED, 'limit', {
+        frees_at: '2026-11-04T08:12:00Z',
+      }),
+    );
+    renderIt();
+    await screen.findByText('Publish to Test Channel now?');
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }));
+    expect(await screen.findByText(/You can post again at .*\(Europe\/Kyiv\)/)).toBeInTheDocument();
+  });
 });

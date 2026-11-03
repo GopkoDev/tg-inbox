@@ -684,7 +684,7 @@
         "apps/web/src/features/posts/time.ts"
       ],
       "file": "docs/features/group-posts/tasks/t30-web-post-content-states.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T31",

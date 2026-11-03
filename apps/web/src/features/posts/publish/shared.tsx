@@ -1,4 +1,9 @@
-import { ErrorCode, type PublishBlocker, type PublishConfirmation } from '@tg/shared';
+import {
+  DestinationProblem,
+  ErrorCode,
+  type PublishBlocker,
+  type PublishConfirmation,
+} from '@tg/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '@/shared/api/client';
@@ -15,6 +20,22 @@ export const BLOCKER_TEXT: Record<PublishBlocker, string> = {
   daily_limit: 'The daily posting limit was reached',
   not_a_draft: 'This post is no longer a draft',
 };
+
+/** SCR-33 plain texts for why the bot cannot post in a chat. */
+export const DESTINATION_PROBLEM_TEXT: Record<DestinationProblem, string> = {
+  no_post_right: "The bot can't post there. Give it the right to post, then try again.",
+  not_member: 'The bot is no longer in this channel or group.',
+  chat_gone: 'This channel or group no longer exists.',
+  not_current_bot: 'This destination was connected with another bot. Connect it again.',
+};
+
+/** The refusal's `details.problem` as plain text; the generic line when it is missing. */
+export function destinationProblemText(error: unknown): string | null {
+  const details =
+    error instanceof ApiError ? (error.details as { problem?: unknown } | undefined) : undefined;
+  const parsed = DestinationProblem.safeParse(details?.problem);
+  return parsed.success ? DESTINATION_PROBLEM_TEXT[parsed.data] : null;
+}
 
 /** Reads the confirmation (SCR-38 / SCR-39); `reload` re-reads without dropping the content. */
 export function useConfirmation(workspaceId: string, postId: string) {

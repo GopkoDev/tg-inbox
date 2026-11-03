@@ -346,3 +346,36 @@ describe('SCR-37 PostEditor', () => {
     expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
   });
 });
+
+describe('T30 editor states', () => {
+  it('AC-06: an over-limit draft says "Not saved — too long", never "Saved"', async () => {
+    renderIt(POST);
+    await flush();
+    typeText('a'.repeat(4100));
+    await advance(1000);
+    expect(screen.getByText('Not saved — too long')).toBeInTheDocument();
+    expect(screen.queryByText('Saved')).toBeNull();
+  });
+
+  it('AC-05: a failed save shows a destructive Alert whose Retry saves again', async () => {
+    api.savePost.mockRejectedValueOnce(new ApiError(500, ErrorCode.INTERNAL_ERROR, 'boom'));
+    renderIt(POST);
+    await flush();
+    typeText('New arrivals today');
+    await advance(700);
+    const alert = screen.getByRole('alert');
+    expect(alert).toHaveTextContent("Couldn't save");
+    api.savePost.mockResolvedValue(post({ version: 4, text: 'New arrivals today' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    await flush();
+    expect(api.savePost).toHaveBeenCalledTimes(2);
+    expect(screen.getByText('Saved')).toBeInTheDocument();
+  });
+
+  it('AC-06: the empty-text error is a Field error tied to the textbox (aria-invalid)', async () => {
+    renderIt(POST);
+    await flush();
+    typeText('   ');
+    expect(screen.getByRole('textbox', { name: 'Text' })).toHaveAttribute('aria-invalid', 'true');
+  });
+});

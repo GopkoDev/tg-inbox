@@ -23,6 +23,7 @@ import {
   BotSettingsLink,
   ErrorCode,
   ProblemAlert,
+  destinationProblemText,
   errorCode,
   isAuthError,
   useConfirmation,
@@ -34,7 +35,7 @@ type Problem =
   | { kind: 'zone'; zone: string | null }
   | { kind: 'changed' }
   | { kind: 'bot' }
-  | { kind: 'destination' }
+  | { kind: 'destination'; text: string | null }
   | { kind: 'limit' }
   | { kind: 'zone_invalid' }
   | { kind: 'failed' };
@@ -130,7 +131,8 @@ export function ScheduleDialog({
         setProblem({ kind: 'changed' });
         await reload();
       } else if (code === ErrorCode.POSTS_NEED_WORKING_BOT) setProblem({ kind: 'bot' });
-      else if (code === ErrorCode.DESTINATION_UNAVAILABLE) setProblem({ kind: 'destination' });
+      else if (code === ErrorCode.DESTINATION_UNAVAILABLE)
+        setProblem({ kind: 'destination', text: destinationProblemText(error) });
       else if (code === ErrorCode.POST_SCHEDULED_LIMIT_REACHED) setProblem({ kind: 'limit' });
       else if (!fail(error)) setProblem({ kind: 'failed' });
     } finally {
@@ -258,7 +260,7 @@ export function ScheduleDialog({
           </ProblemAlert>
         ) : null}
         {problem?.kind === 'destination' ? (
-          <ProblemAlert>The bot can&apos;t post in this chat any more</ProblemAlert>
+          <ProblemAlert>{problem.text ?? "The bot can't post in this chat any more"}</ProblemAlert>
         ) : null}
         {problem?.kind === 'limit' ? (
           <ProblemAlert>

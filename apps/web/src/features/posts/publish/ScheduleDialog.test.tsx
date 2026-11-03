@@ -194,4 +194,15 @@ describe('SCR-39 ScheduleDialog', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
     expect(await screen.findByText('The draft changed — check it again')).toBeInTheDocument();
   });
+
+  it('AC-10: a destination refusal names the problem in plain language', async () => {
+    api.schedulePost.mockRejectedValue(
+      new ApiError(409, ErrorCode.DESTINATION_UNAVAILABLE, 'gone', { problem: 'no_post_right' }),
+    );
+    renderIt();
+    await screen.findByText('Schedule the post');
+    fill();
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule' }));
+    expect(await screen.findByText(/Give it the right to post/)).toBeInTheDocument();
+  });
 });
