@@ -125,6 +125,8 @@ function sameUpdates(registered: readonly string[]): boolean {
 }
 
 /** A `400` about the recipient's chat, not the text (sad.md §11: reviewed with pilot data). */
+const RIGHTS_400 =
+  /not enough rights|have no rights|need administrator rights|CHAT_WRITE_FORBIDDEN|CHAT_SEND_PLAIN_FORBIDDEN|CHAT_ADMIN_REQUIRED/i;
 const CHAT_LEVEL_400 = /chat not found|user not found|PEER_ID_INVALID/i;
 
 /** Classifies a failed broadcast `sendMessage`; Telegram's description is matched, never kept. */
@@ -164,6 +166,8 @@ function classifyPostError(err: unknown): PostSendAnswer {
     if (code === 401 || code === 404) return { outcome: 'bot_unauthorized' };
     if (code === 403) return { outcome: 'no_post_right' };
     if (code === 400) {
+      if (typeof err.parameters?.migrate_to_chat_id === 'number') return { outcome: 'chat_gone' };
+      if (RIGHTS_400.test(err.description)) return { outcome: 'no_post_right' };
       return CHAT_LEVEL_400.test(err.description)
         ? { outcome: 'chat_gone' }
         : { outcome: 'text_refused' };
@@ -364,8 +368,12 @@ export function createTelegramGateway({
       try {
         await api(token).deleteMessage(chatId, Number(messageId), timeout(timeoutMs));
         return { outcome: 'deleted' };
-      } catch {
-        return { outcome: 'refused' };
+      } catch (err) {
+        if (err instanceof GrammyError) return { outcome: 'refused' };
+        if (err instanceof HttpError && causeCodes(err).some((c) => NOT_WRITTEN.has(c))) {
+          return { outcome: 'refused' };
+        }
+        return { outcome: 'no_answer' };
       }
     },
 

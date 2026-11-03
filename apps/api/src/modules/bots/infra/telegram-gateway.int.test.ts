@@ -433,6 +433,55 @@ describe('Telegram gateway posts (group-posts T6, AC-07, AC-13, AC-15, AC-17)', 
     });
   });
 
+  it.each([
+    [
+      'not enough rights to send text messages',
+      'Bad Request: not enough rights to send text messages to the chat',
+    ],
+    ['have no rights to send a message', 'Bad Request: have no rights to send a message'],
+    [
+      'need administrator rights in the channel chat',
+      'Bad Request: need administrator rights in the channel chat',
+    ],
+    ['CHAT_WRITE_FORBIDDEN', 'Bad Request: CHAT_WRITE_FORBIDDEN'],
+  ])('sendPost classifies a 400 "%s" as no_post_right (AC-13)', async (_n, description) => {
+    fake.bot(TOKEN).script({
+      sendMessage: [
+        { kind: 'error', status: 400, body: { ok: false, error_code: 400, description } },
+      ],
+    });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'no_post_right',
+    });
+  });
+
+  it('sendPost classifies a group upgraded to a supergroup (migrate_to_chat_id) as chat_gone (AC-14)', async () => {
+    fake.bot(TOKEN).script({
+      sendMessage: [
+        {
+          kind: 'error',
+          status: 400,
+          body: {
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: group chat was upgraded to a supergroup chat',
+            parameters: { migrate_to_chat_id: -1001999999999 },
+          },
+        },
+      ],
+    });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'chat_gone',
+    });
+  });
+
+  it('deletePost with no answer within the timeout is no_answer, not refused (AC-15)', async () => {
+    fake.bot(TOKEN).script({ deleteMessage: [sendAnswers.hang(5000)] });
+    expect(await gateway.deletePost(TOKEN, GROUP, 41n, 200)).toMatchObject({
+      outcome: 'no_answer',
+    });
+  });
+
   it('deletePost deletes, or reports a refusal', async () => {
     fake.bot(TOKEN).script({ deleteMessage: [sendAnswers.ok(0), sendAnswers.chatNotFound()] });
     expect(await gateway.deletePost(TOKEN, GROUP, 41n, SEND_TIMEOUT)).toMatchObject({

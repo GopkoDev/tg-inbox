@@ -252,7 +252,11 @@ export type PostSendAnswer =
   | { outcome: 'no_answer' };
 
 /** Whether Telegram deleted a published post. */
-export type PostDeleteAnswer = { outcome: 'deleted' } | { outcome: 'refused' };
+export type PostDeleteAnswer =
+  | { outcome: 'deleted' }
+  | { outcome: 'refused' }
+  /** No answer within the timeout, or a network failure: nothing is known. */
+  | { outcome: 'no_answer' };
 
 /** What `broadcasts` gets back from `sendBroadcastMessage` (sad.md §5, flow 12). */
 export type BroadcastSendOutcome =

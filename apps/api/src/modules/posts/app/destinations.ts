@@ -111,13 +111,19 @@ export function createDestinations(deps: DestinationsDeps) {
       if (c.usedAt) status = 'connected';
       else if (c.replacedAt) status = 'replaced';
       else if (c.expiresAt <= clock.now()) status = 'expired';
-      else if (c.result === 'no_post_right') status = 'no_post_right';
+      else if (c.result === 'no_post_right' || c.result === 'no_send_right') {
+        status = 'no_post_right';
+      } else if (c.result === 'destination_limit') status = 'destination_limit';
       return {
         id: c.id,
         status,
         expires_at: c.expiresAt.toISOString(),
-        // The code row does not record the chat kind; the post right is the one named for both.
-        needed_right: status === 'no_post_right' ? 'post_messages' : null,
+        needed_right:
+          status === 'no_post_right'
+            ? c.result === 'no_send_right'
+              ? 'send_messages'
+              : 'post_messages'
+            : null,
         destination_id: c.destinationId,
       };
     },

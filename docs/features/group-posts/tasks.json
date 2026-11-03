@@ -579,7 +579,7 @@
         "packages/shared/src/posts.ts"
       ],
       "file": "docs/features/group-posts/tasks/t26-fix-destinations-and-gateway.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T27",

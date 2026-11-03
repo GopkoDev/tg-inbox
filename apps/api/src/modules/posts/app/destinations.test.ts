@@ -200,6 +200,7 @@ function setup(o: { botId?: bigint | null; botState?: string; canPost?: boolean 
   });
   const events = createChatEvents({
     ...shared,
+    lockPosts,
     bots: {
       postReadiness: readiness,
       botRights: async () => ({ canPost: o.canPost ?? true }),
@@ -693,5 +694,68 @@ describe('setTimeZone (AC-03)', () => {
       OwnerOnlyError,
     );
     expect(written).toEqual([]);
+  });
+});
+
+describe('T26: redeem under the posts lock, the limit, the needed right (AC-01, AC-02)', () => {
+  const fill = (h: Harness, n: number) => {
+    for (let i = 0; i < n; i++) {
+      h.store.destinations.push(
+        basePostDestination({ id: newId(), workspaceId: WS, chatId: BigInt(-1000 - i) }),
+      );
+    }
+  };
+
+  it('takes the posts lock before counting or inserting', async () => {
+    const h = setup();
+    const c = await withCode(h);
+    h.log.locks.length = 0;
+    await h.events.onDestinationCode(codeEvent(c.code));
+    expect(h.log.locks).toContain(`posts:${WS}`);
+  });
+
+  it('a 21st destination is refused and the code shows destination_limit', async () => {
+    const h = setup();
+    const c = await withCode(h);
+    fill(h, 20);
+    await h.events.onDestinationCode(codeEvent(c.code));
+    expect(h.store.destinations).toHaveLength(20);
+    expect(h.log.deleted).toEqual([]);
+    expect((await h.destinations.getCode(WS, owner, c.id)).status).toBe('destination_limit');
+  });
+
+  it('reviving a removed destination at the limit is refused too', async () => {
+    const h = setup();
+    const c = await withCode(h);
+    fill(h, 20);
+    h.store.destinations.push(
+      basePostDestination({
+        id: newId(),
+        workspaceId: WS,
+        chatId: CHAT,
+        removedAt: T0,
+        removedByAccountId: OWNER,
+      } as never),
+    );
+    await h.events.onDestinationCode(codeEvent(c.code));
+    expect(h.store.destinations.find((d) => d.chatId === CHAT)!.removedAt).not.toBeNull();
+    expect((await h.destinations.getCode(WS, owner, c.id)).status).toBe('destination_limit');
+  });
+
+  it('names send_messages for a group and post_messages for a channel', async () => {
+    const g = setup({ canPost: false });
+    const gc = await withCode(g);
+    await g.events.onDestinationCode(codeEvent(gc.code, { kind: 'supergroup' }));
+    expect(await g.destinations.getCode(WS, owner, gc.id)).toMatchObject({
+      status: 'no_post_right',
+      needed_right: 'send_messages',
+    });
+    const c = setup({ canPost: false });
+    const cc = await withCode(c);
+    await c.events.onDestinationCode(codeEvent(cc.code, { kind: 'channel' }));
+    expect(await c.destinations.getCode(WS, owner, cc.id)).toMatchObject({
+      status: 'no_post_right',
+      needed_right: 'post_messages',
+    });
   });
 });

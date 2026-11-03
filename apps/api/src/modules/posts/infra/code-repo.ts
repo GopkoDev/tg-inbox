@@ -2,7 +2,8 @@ import type { Selectable } from 'kysely';
 import type { Db } from '../../../platform/db.js';
 import type { DestinationCodes } from '../../../platform/db.types.gen.js';
 
-export type CodeResult = 'connected' | 'no_post_right';
+/** 'no_send_right' = a group where the bot may not send messages; 'no_post_right' = a channel. */
+export type CodeResult = 'connected' | 'no_post_right' | 'no_send_right' | 'destination_limit';
 
 export interface CodeRecord {
   id: string;
@@ -121,7 +122,7 @@ export function createCodeRepo(db: Db) {
     async markResult(
       workspaceId: string,
       id: string,
-      result: 'no_post_right',
+      result: Exclude<CodeResult, 'connected'>,
       at: Date,
       tx?: Db,
     ): Promise<boolean> {

@@ -17,6 +17,7 @@ import type { DestinationSignals } from './destinations.js';
 
 export interface ChatEventsDeps {
   transaction: PostTransaction;
+  lockPosts(tx: Db, workspaceId: string): Promise<void>;
   codes: Pick<CodeRepo, 'findByHash' | 'markUsed' | 'markResult'>;
   destinations: Pick<
     DestinationRepo,
@@ -64,7 +65,7 @@ const kindOf = (telegramKind: string): DestinationKind =>
   telegramKind === 'channel' ? 'channel' : 'group';
 
 export function createChatEvents(deps: ChatEventsDeps) {
-  const { transaction, codes, destinations, bots, signals, clock } = deps;
+  const { transaction, lockPosts, codes, destinations, bots, signals, clock } = deps;
 
   /** The destination this bot owns in that chat, live, locked; null for any other chat. */
   async function ownLive(tx: Db, e: Context & { chatId: bigint }) {
@@ -99,14 +100,27 @@ export function createChatEvents(deps: ChatEventsDeps) {
           const code = await codes.findByHash(e.workspaceId, hashCode(e.code), tx);
           if (!code || code.usedAt || code.replacedAt || code.expiresAt <= now) return;
           if (!rights.canPost) {
-            await codes.markResult(e.workspaceId, code.id, 'no_post_right', now, tx);
+            const result = kindOf(e.kind) === 'group' ? 'no_send_right' : 'no_post_right';
+            await codes.markResult(e.workspaceId, code.id, result, now, tx);
             await signals.destinationsChanged(tx, e.workspaceId);
             return;
           }
+          await lockPosts(tx, e.workspaceId);
           const existing = await destinations.findByChat(e.workspaceId, e.chatId, tx);
+          const refuseAtLimit = async () => {
+            await codes.markResult(e.workspaceId, code.id, 'destination_limit', now, tx);
+            await signals.destinationsChanged(tx, e.workspaceId);
+          };
           let id: string;
           if (existing) {
             await destinations.lock(e.workspaceId, existing.id, tx);
+            if (
+              existing.removedAt &&
+              (await destinations.countLive(e.workspaceId, tx)) >= DESTINATION_LIMIT
+            ) {
+              await refuseAtLimit();
+              return;
+            }
             const revived = await destinations.revive(
               e.workspaceId,
               existing.id,
@@ -126,7 +140,10 @@ export function createChatEvents(deps: ChatEventsDeps) {
             if (!revived) return;
             id = revived.id;
           } else {
-            if ((await destinations.countLive(e.workspaceId, tx)) >= DESTINATION_LIMIT) return;
+            if ((await destinations.countLive(e.workspaceId, tx)) >= DESTINATION_LIMIT) {
+              await refuseAtLimit();
+              return;
+            }
             const created = await destinations.insert(
               e.workspaceId,
               {

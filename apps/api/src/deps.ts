@@ -437,6 +437,7 @@ export function buildDeps(
   // membership and rights, a group's upgrade and a rename.
   const chatEvents = createChatEvents({
     transaction,
+    lockPosts,
     codes: codeRepo,
     destinations: destinationRepo,
     bots: { postReadiness, botRights, deletePost },

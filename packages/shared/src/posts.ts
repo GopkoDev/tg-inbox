@@ -100,7 +100,14 @@ export type DestinationCodeCreated = z.infer<typeof DestinationCodeCreated>;
 
 export const DestinationCodeStatus = z.object({
   id: Id,
-  status: z.enum(['waiting', 'connected', 'no_post_right', 'expired', 'replaced']),
+  status: z.enum([
+    'waiting',
+    'connected',
+    'no_post_right',
+    'destination_limit',
+    'expired',
+    'replaced',
+  ]),
   expires_at: DateTime,
   needed_right: z.enum(['post_messages', 'send_messages']).nullable(),
   destination_id: Id.nullable(),

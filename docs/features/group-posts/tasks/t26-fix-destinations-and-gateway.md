@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/chat-events.ts", "apps/api/src/modu
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T26 — Fix connecting and Telegram classification: redeem under posts:<ws> with the 20 limit (also on revival) and a visible limit result, needed right per chat kind, 400 rights / upgrade answers, delete timeout as Telegram unavailable

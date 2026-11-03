@@ -1,3 +1,4 @@
+import { TelegramUnavailableError } from '../../../platform/errors.js';
 import type { MarkNeedsToken } from './mark-needs-token.js';
 import { SEND_TIMEOUT, type BotRepo, type TelegramGateway } from './ports.js';
 
@@ -41,7 +42,9 @@ export function createDeletePost({ bots, telegram, markNeedsToken }: DeletePostD
         await markNeedsToken(workspaceId);
         return { outcome: 'refused' };
       }
-      return telegram.deletePost(found.token, chatId, messageId, SEND_TIMEOUT);
+      const answer = await telegram.deletePost(found.token, chatId, messageId, SEND_TIMEOUT);
+      if (answer.outcome === 'no_answer') throw new TelegramUnavailableError();
+      return answer;
     },
   };
 }
