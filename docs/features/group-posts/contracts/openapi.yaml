@@ -1,0 +1,959 @@
+# Derived contract for group-posts. Do not hand-edit the shape. It is projected from:
+#   fields + constraints  ← data-model.md (posts, destinations, destination_codes, workspaces.time_zone) + the
+#                           existing schema (memberships for display names, bots.state / telegram_bot_id for readiness)
+#   error responses       ← sad.md §6 flows 1–11 (one response per alt-branch)
+#   endpoint list + shape ← spec.md §4 user stories / §5 acceptance criteria + Clarifications
+# Field origins and the drift check are in api-sync-report.md next to this file. The live frames
+# (post.changed, destinations.changed), the realtime signals, the posts.send jobs and the inbound group / channel
+# updates are in events.md.
+#
+# THIS IS A DELTA over the shipped contracts:
+#   - shared-inbox (../../shared-inbox/contracts/openapi.yaml): the guard responses, ErrorEnvelope, MemberRef,
+#     the WorkspaceId / BackgroundRequest parameters;
+#   - bot-connection + broadcasts: receiveTelegramUpdate (only its accepted update kinds change).
+#   Every operation and schema here carries `x-delta: added` or `x-delta: changed`.
+#
+# Deviations from the api-skill defaults are the repo's (as in every earlier contract), recorded in
+# api-sync-report.md: the session cookie, not a bearer token; /api/... with no /v1 segment; GET reads and action
+# POSTs only; the { "error": { code, message, details? } } envelope with UPPER_SNAKE codes; no Idempotency-Key
+# header — every write is idempotent by state under the post row lock (a second publish answers
+# `already_scheduled`, a second back-to-draft `unchanged`), and the one async actor (a posts.send job) is enqueued
+# inside the writing transaction.
+openapi: 3.1.0
+
+info:
+  title: group-posts API (delta over shared-inbox, bot-connection, broadcasts)
+  version: 0.1.0
+  description: |
+    Lets a workspace publish plain-text posts from its own business bot to the business's Telegram channels and
+    groups, now or at a scheduled time, without anyone using a personal account (spec §1, §2).
+
+    - **Destinations** (US-01): every member reads the connected chats and the workspace time zone; a business
+      owner creates a single-use connect code (posted in the chat to connect it), follows its result live,
+      removes a destination and sets the time zone.
+    - **Drafts** (US-02): any member creates, saves (against the version shown), duplicates and — as author or
+      business owner — deletes a draft.
+    - **Publish now / schedule** (US-03, US-04): a business owner reads the publish confirmation and publishes, or
+      schedules for a local time in the workspace zone, against the shown version; any member moves a scheduled
+      post back to a draft.
+    - **Outcomes** (US-05): the list and the post carry the state and reason live; opening a post marks it seen
+      for the team's attention count.
+    - **Delete** (US-06): a business owner deletes a published post from Telegram within 48 hours.
+
+    Every route sits behind the workspace-access guard: a caller who was never a member gets `404 NOT_FOUND`
+    with no hint, a deactivated member `403 ACCESS_REMOVED`, a signed-out caller `401 UNAUTHENTICATED` (AC-04).
+    A post, destination or code id is always looked up together with the workspace id. Texts and chat names are
+    plain text everywhere. Only `bots` talks to Telegram; `deleteFromTelegram` is the one route that waits for
+    Telegram (ADR-0008).
+
+servers:
+  - url: /
+    description: Same origin as the web panel (workspace-operators ADR-0004)
+
+security:
+  - SessionCookie: []
+
+tags:
+  - name: posts
+    description: Module `posts` (ADR-0001). Owns destinations, destination codes and posts; `registerPosts` under `/api/workspaces/:workspaceId/posts…`. Reaches `bots` and `workspaces` through their app layers
+  - name: bots
+    description: Module `bots`. The webhook accepts group and channel updates and hands four facts to `posts` (ADR-0003)
+
+paths:
+  /api/workspaces/{workspaceId}/posts/destinations:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: List the workspace's destinations and its time zone (US-01, SCR-33)
+      description: |
+        Flow 10 (AC-01, AC-03, AC-13, AC-14). Every member. Destinations not removed, oldest connected first,
+        each with its availability computed for the current bot: a destination connected with a different
+        Telegram bot than the one connected now reads `unavailable` with problem `not_current_bot`. Carries the
+        number of scheduled posts per destination and in total, which the remove and time-zone confirmations
+        show. Re-read on every `destinations.changed` frame.
+      operationId: listDestinations
+      responses:
+        "200":
+          description: The destinations and the time zone
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestinationList" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                time_zone: "Europe/Kyiv"
+                scheduled_total: 3
+                items:
+                  - id: "01920000-0000-7000-8000-000000000701"
+                    kind: channel
+                    title: "Test Channel"
+                    username: "test_channel"
+                    availability: available
+                    problem: null
+                    scheduled_count: 2
+                    connected_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    connected_at: "2026-11-03T09:00:00Z"
+                  - id: "01920000-0000-7000-8000-000000000702"
+                    kind: group
+                    title: "Test Group"
+                    username: null
+                    availability: unavailable
+                    problem: no_post_right
+                    scheduled_count: 1
+                    connected_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    connected_at: "2026-11-03T09:10:00Z"
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/destinations/connect-codes:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Create a single-use 10-minute connect code (business owner, US-01, SCR-34)
+      description: |
+        Flow 1 (AC-01, AC-03; ADR-0002). Lock order memberships `FOR SHARE` → advisory `posts:<ws>`. The caller's
+        previous unused code is marked replaced. The code is returned once and only its SHA-256 is stored; the
+        response also carries the exact group command (`/connect@<bot username> <code>`). Needs a working bot
+        (`409 POSTS_NEED_WORKING_BOT`) and fewer than 20 destinations (`409 DESTINATION_LIMIT_REACHED`).
+      operationId: createDestinationCode
+      responses:
+        "201":
+          description: The code, shown once
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestinationCodeCreated" }
+              example:
+                id: "01920000-0000-7000-8000-000000000801"
+                code: "tgp_Zm9vYmFyYmF6cXV4MTIzNDU2"
+                group_command: "/connect@test_business_bot tgp_Zm9vYmFyYmF6cXV4MTIzNDU2"
+                expires_at: "2026-11-03T09:10:00Z"
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          $ref: "#/components/responses/OwnerOnlyOrAccessRemoved"
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+        "409":
+          description: No working bot, or 20 destinations already
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                noBot:
+                  value: { error: { code: POSTS_NEED_WORKING_BOT, message: "Connect a working bot first" } }
+                limit:
+                  value: { error: { code: DESTINATION_LIMIT_REACHED, message: "A workspace can have at most 20 channels and groups", details: { limit: 20 } } }
+
+  /api/workspaces/{workspaceId}/posts/destinations/connect-codes/{codeId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/CodeId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: Read a connect code's live result (business owner, SCR-34)
+      description: |
+        Flow 1 (AC-01, AC-02). `waiting` until used or expired; `connected` with the destination; `no_post_right`
+        with the right the bot needs (the code stays usable until it expires); `expired` once `expires_at`
+        passed unused; `replaced` when a newer code of the same owner exists. Re-read on `destinations.changed`.
+        Only the owner who created it can read it (another member gets `404`).
+      operationId: getDestinationCode
+      responses:
+        "200":
+          description: The code's state (never the code itself)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestinationCodeStatus" }
+              examples:
+                connected:
+                  value: { id: "01920000-0000-7000-8000-000000000801", status: connected, expires_at: "2026-11-03T09:10:00Z", needed_right: null, destination_id: "01920000-0000-7000-8000-000000000701" }
+                missingRight:
+                  value: { id: "01920000-0000-7000-8000-000000000801", status: no_post_right, expires_at: "2026-11-03T09:10:00Z", needed_right: post_messages, destination_id: null }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/destinations/{destinationId}/remove:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/DestinationId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Remove a destination; its scheduled posts return to drafts (business owner, SCR-35)
+      description: |
+        Flow 10 (AC-03, Clarifications). Lock order memberships `FOR SHARE` → advisory `posts:<ws>` → destination
+        row → its scheduled post rows. Every scheduled post to it returns to `draft` with `draft_notice:
+        destination_removed` and a new version; a post already `sending` finishes. Removing an already removed
+        destination answers `unchanged`. Publishes `destinations.changed` and one `post.changed` per returned post.
+      operationId: removeDestination
+      responses:
+        "200":
+          description: Removed (or already removed)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DestinationRemoved" }
+              example: { outcome: removed, returned_to_draft: 2 }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/time-zone:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Set the workspace time zone (business owner, SCR-39 first time, SCR-43)
+      description: |
+        Flow 10, flow 5 (AC-09, Clarifications; ADR-0006). The zone must be a valid IANA name
+        (`400 TIME_ZONE_INVALID`). Scheduled posts keep their instant and are shown in the new zone. Writes
+        `workspaces.time_zone` through `workspaces.setTimeZone` inside the posts transaction and publishes
+        `destinations.changed`. Setting the same zone answers `unchanged`.
+      operationId: setPostingTimeZone
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/TimeZoneSet" }
+            example: { time_zone: "Europe/Kyiv" }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TimeZoneSaved" }
+              example: { outcome: saved, time_zone: "Europe/Kyiv", relabelled_scheduled: 3 }
+        "400":
+          description: Not an IANA zone
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example: { error: { code: TIME_ZONE_INVALID, message: "Pick a time zone from the list", details: { field: time_zone } } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/posts:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: List every post, the most recently changed first, optionally by state (US-02, US-05, SCR-36)
+      description: |
+        Flows 3, 9 (AC-05, AC-13). `filter` = `all` (default), `drafts`, `scheduled`, `published` (published and
+        deleted), `attention` (needs attention). Read by `posts_workspace_id_last_changed_at_idx` /
+        `posts_workspace_id_state_last_changed_at_idx`. **Not paged** in v1: a pilot workspace sends at most 30 a
+        day and the list shows the newest 200, with `truncated: true` beyond (OQ in api-sync-report). Re-read on
+        every `post.changed` frame.
+      operationId: listPosts
+      parameters:
+        - name: filter
+          in: query
+          required: false
+          schema: { type: string, enum: [all, drafts, scheduled, published, attention], default: all }
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The posts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostList" }
+              example:
+                workspace_id: "01920000-0000-7000-8000-000000000001"
+                time_zone: "Europe/Kyiv"
+                truncated: false
+                items:
+                  - id: "01920000-0000-7000-8000-000000000901"
+                    text_start: "New arrivals this week"
+                    destination: { id: "01920000-0000-7000-8000-000000000701", kind: channel, title: "Test Channel" }
+                    state: scheduled
+                    scheduled_for: "2026-11-04T07:00:00Z"
+                    published_at: null
+                    outcome_reason: null
+                    needs_attention: false
+                    last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    last_changed_at: "2026-11-03T09:20:00Z"
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Create a draft (US-02)
+      description: |
+        Flow 3 (AC-05). The panel calls it at the first edit of an empty editor. `text` may be empty in a draft;
+        `destination_id`, when given, must be a non-removed destination of this workspace (else `404` as unknown).
+        Version 1, the caller as author and last changer, `silent` false by default. Publishes `post.changed`.
+      operationId: createPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostCreate" }
+            example: { text: "New arrivals this week", destination_id: "01920000-0000-7000-8000-000000000701", silent: false }
+      responses:
+        "201":
+          description: The new draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "400": { $ref: "#/components/responses/PostTextInvalid" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/attention:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: Count the posts needing attention, for the navigation (US-05, SCR-15)
+      description: Flow 9 (AC-12, AC-13). Shared for the team. Read by `posts_attention_idx`; re-read on `post.changed`.
+      operationId: getPostAttention
+      parameters:
+        - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/BackgroundRequest"
+      responses:
+        "200":
+          description: The count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostAttention" }
+              example: { count: 1 }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/WorkspaceNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: Read one post (SCR-37 draft, SCR-40 post page)
+      description: Flow 9 (AC-04, AC-07, AC-13). A post of another workspace or an unknown id is `404` with no hint. Reading does not clear attention (`markPostSeen` does).
+      operationId: getPost
+      responses:
+        "200":
+          description: The post
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+              examples:
+                published:
+                  value:
+                    id: "01920000-0000-7000-8000-000000000901"
+                    workspace_id: "01920000-0000-7000-8000-000000000001"
+                    state: published
+                    version: 3
+                    text: "New arrivals this week"
+                    silent: false
+                    destination: { id: "01920000-0000-7000-8000-000000000701", kind: channel, title: "Test Channel", username: "test_channel", availability: available, problem: null }
+                    author: { account_id: "01920000-0000-7000-8000-0000000000b2", display_name: "Test User 2" }
+                    last_changed_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" }
+                    last_changed_at: "2026-11-04T07:00:12Z"
+                    created_at: "2026-11-03T09:00:00Z"
+                    schedule: { kind: time, scheduled_for: "2026-11-04T07:00:00Z", scheduled_by: { account_id: "01920000-0000-7000-8000-0000000000b1", display_name: "Test User" } }
+                    published_at: "2026-11-04T07:00:12Z"
+                    telegram_link: "https://t.me/test_channel/41"
+                    deletable_until: "2026-11-06T07:00:12Z"
+                    outcome_reason: null
+                    outcome_at: "2026-11-04T07:00:12Z"
+                    needs_attention: false
+                    draft_notice: null
+                    deleted_at: null
+                    deleted_by: null
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/save:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Save a draft against the version shown (US-02)
+      description: |
+        Flow 3 (AC-05, AC-06; ADR-0005). Post row `FOR NO KEY UPDATE`. Any omitted field keeps its value. Refused
+        when `expected_version` is stale (`409 POST_DRAFT_CHANGED` with the current post) or the post is not a
+        draft (`409 POST_NOT_A_DRAFT`; a scheduled post is moved back to a draft first). Clears `draft_notice`.
+      operationId: savePost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostSave" }
+            example: { expected_version: 2, text: "New arrivals this week!", silent: true }
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "400": { $ref: "#/components/responses/PostTextInvalid" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409": { $ref: "#/components/responses/PostStateConflict" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/duplicate:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Duplicate any post into a new draft (US-02, US-05)
+      description: Flow 3 (AC-07, Clarifications). Copies text, destination (kept even if unavailable) and the sound option; the caller is the author. Publishes `post.changed`.
+      operationId: duplicatePost
+      responses:
+        "201":
+          description: The new draft
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Post" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/delete:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Delete a draft (author or business owner, SCR-42)
+      description: |
+        Flow 3 (AC-18). Only a draft is deleted (`409 POST_NOT_A_DRAFT` otherwise — a scheduled post goes back to a
+        draft first; a post that went out is kept as a record). Another operator gets `403 FORBIDDEN`. Publishes
+        `post.changed`.
+      operationId: deletePostDraft
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outcome" }
+              example: { outcome: deleted }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403":
+          description: Not the author nor a business owner (`FORBIDDEN`), or access removed
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              example: { error: { code: FORBIDDEN, message: "Only the author or a business owner can delete this draft" } }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409": { $ref: "#/components/responses/PostStateConflict" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/publish-confirmation:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    get:
+      x-delta: added
+      tags: [posts]
+      summary: Read what a publish or schedule would send (business owner, SCR-38, SCR-39)
+      description: |
+        Flow 4 (AC-03, AC-07). The destination's Telegram name and kind, the exact trimmed text, the sound
+        option, the version, the workspace time zone and the daily headroom (`sent_last_24h`, `daily_limit`,
+        `frees_at`). Also the pre-check: `blockers` lists what would refuse a publish now (`text_empty`,
+        `no_destination`, `destination_unavailable`, `bot_not_working`, `daily_limit`, `not_a_draft`). An
+        operator gets `403 OWNER_ONLY` (the panel opens the post with the owners-only note).
+      operationId: getPublishConfirmation
+      responses:
+        "200":
+          description: The confirmation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PublishConfirmation" }
+              example:
+                post_id: "01920000-0000-7000-8000-000000000901"
+                version: 3
+                text: "New arrivals this week"
+                silent: false
+                destination: { id: "01920000-0000-7000-8000-000000000701", kind: channel, title: "Test Channel", username: "test_channel", availability: available, problem: null }
+                time_zone: "Europe/Kyiv"
+                sent_last_24h: 4
+                daily_limit: 30
+                frees_at: null
+                scheduled_waiting: 3
+                scheduled_limit: 100
+                blockers: []
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/publish:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Publish now against the version shown (business owner, US-03)
+      description: |
+        Flow 4 (AC-03, AC-07, AC-08, AC-14, AC-16; ADR-0004, ADR-0005). Lock order memberships `FOR SHARE` →
+        advisory `posts:<ws>` → destination row → post row. Checks in order: owner (`403 OWNER_ONLY`); a post
+        already scheduled or sent answers `200 already_scheduled` with the post, queuing nothing; version
+        (`409 POST_DRAFT_CHANGED`); text non-empty (`400 POST_TEXT_INVALID`); destination set and available for
+        the current bot (`409 DESTINATION_UNAVAILABLE`); bot working (`409 POSTS_NEED_WORKING_BOT`); fewer than 30
+        sent in 24 h (`409 POST_DAILY_LIMIT_REACHED` with `frees_at`). Then state `scheduled`, kind `now`,
+        `scheduled_for` = now, the caller as scheduling owner, one `posts.send` job queued in the transaction,
+        `post.changed`. The post page then follows the job's outcome live.
+      operationId: publishPost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExpectedVersion" }
+            example: { expected_version: 3 }
+      responses:
+        "200":
+          description: Queued to go out now, or already scheduled / sent
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostScheduled" }
+              example: { outcome: queued, post: { id: "01920000-0000-7000-8000-000000000901", state: scheduled } }
+        "400": { $ref: "#/components/responses/PostTextInvalid" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409": { $ref: "#/components/responses/PublishRefused" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/schedule:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Schedule a draft, or change a scheduled post's time (business owner, US-04)
+      description: |
+        Flow 5 (AC-09, AC-10, AC-16; ADR-0005, ADR-0006). Same locks and checks as `publishPost` except the daily
+        limit (checked when it goes out). `local_time` is a wall time to the minute in `time_zone`, which must be
+        the workspace's zone (`409 TIME_ZONE_REQUIRED` when unset, `409 TIME_ZONE_CHANGED` when it differs from
+        the zone the dialog showed). A local time a daylight-saving change skips is `400 POST_TIME_DOES_NOT_EXIST`;
+        a repeated one means its first occurrence. The instant must be 2 minutes to 90 days after now, measured at
+        this call (`400 POST_SCHEDULE_OUT_OF_RANGE`). A draft needs < 100 scheduled waiting
+        (`409 POST_SCHEDULED_LIMIT_REACHED`). On a scheduled post (same version) it changes the time and the
+        scheduling owner. Queues one `posts.send` job at the instant; an older job exits on a moment mismatch.
+      operationId: schedulePost
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PostSchedule" }
+            example: { expected_version: 3, local_time: "2026-11-04T09:00", time_zone: "Europe/Kyiv" }
+      responses:
+        "200":
+          description: Scheduled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostScheduled" }
+              example: { outcome: scheduled, post: { id: "01920000-0000-7000-8000-000000000901", state: scheduled } }
+        "400":
+          description: Text empty, out of range, or a skipped local time
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                range:
+                  value: { error: { code: POST_SCHEDULE_OUT_OF_RANGE, message: "Pick a time between 2 minutes and 90 days from now", details: { min_minutes: 2, max_days: 90 } } }
+                skipped:
+                  value: { error: { code: POST_TIME_DOES_NOT_EXIST, message: "02:30 does not exist on that day in Europe/Kyiv", details: { local_time: "2027-03-28T03:30", time_zone: "Europe/Kyiv" } } }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409": { $ref: "#/components/responses/PublishRefused" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/back-to-draft:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Move a scheduled post back to a draft (any member, SCR-44)
+      description: |
+        Flow 5 (AC-09, AC-11). Post row lock. `scheduled` → `draft`, version + 1, schedule cleared. A post that is
+        already a draft answers `unchanged`; one that is sending or went out is `409 POST_NOT_SCHEDULED` with the
+        post. Publishes `post.changed`.
+      operationId: movePostBackToDraft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ExpectedVersion" }
+            example: { expected_version: 3 }
+      responses:
+        "200":
+          description: Back in drafts
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostOutcome" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409": { $ref: "#/components/responses/PostStateConflict" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/delete-from-telegram:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Delete a published post from its chat within 48 hours (business owner, US-06)
+      description: |
+        Flow 8 (AC-15; ADR-0008). Memberships `FOR SHARE` → post row. Only a `published` post (`409
+        POST_NOT_PUBLISHED`; an already deleted one answers `unchanged`), published less than 48 hours ago (`409
+        POST_DELETE_WINDOW_PASSED`). Calls `bots.deletePost` and waits: on success `deleted` with who and when; a
+        Telegram refusal is `409 POST_DELETE_REFUSED` and the post stays published; no answer is
+        `503 TELEGRAM_UNAVAILABLE`.
+      operationId: deletePostFromTelegram
+      responses:
+        "200":
+          description: Deleted from the chat, kept as a record
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PostOutcome" }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "#/components/responses/OwnerOnlyOrAccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+        "409":
+          description: Not published, past 48 hours, or Telegram refused
+          content:
+            application/json:
+              schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+              examples:
+                window:
+                  value: { error: { code: POST_DELETE_WINDOW_PASSED, message: "The bot can delete a post only within 48 hours" } }
+                refused:
+                  value: { error: { code: POST_DELETE_REFUSED, message: "Telegram did not let the bot delete this post" } }
+        "503": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/TelegramUnavailable" }
+
+  /api/workspaces/{workspaceId}/posts/{postId}/seen:
+    parameters:
+      - $ref: "../../shared-inbox/contracts/openapi.yaml#/components/parameters/WorkspaceId"
+      - $ref: "#/components/parameters/PostId"
+    post:
+      x-delta: added
+      tags: [posts]
+      summary: Mark a failed, missed or not confirmed post as seen for the team (US-05)
+      description: Flow 9 (AC-13; sequences flag). Called by the post page when it shows a post needing attention. Clears the shared mark; a post that does not need attention answers `unchanged`. Publishes `post.changed`.
+      operationId: markPostSeen
+      responses:
+        "200":
+          description: Seen
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Outcome" }
+              example: { outcome: seen }
+        "401": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/Unauthenticated" }
+        "403": { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/responses/AccessRemoved" }
+        "404": { $ref: "#/components/responses/PostsItemNotFound" }
+
+  /api/telegram/webhook/{botId}:
+    post:
+      x-delta: changed
+      tags: [bots]
+      summary: Receive a business bot's update — now also group and channel facts (ADR-0003)
+      description: |
+        Unchanged auth and answers (bot-connection contract). Changed: `channel_post` is registered in
+        `allowed_updates`; for group, supergroup and channel chats the classifier takes four facts — a connect code
+        (`/connect` command addressed to the bot, or a channel post containing `tgp_…`), `my_chat_member` (the
+        bot's status and rights), a `migrate_to_chat_id` service message and a title change — and drops every other
+        update from those chats before any write. Always answered as accepted, so Telegram never retries a
+        dropped update.
+      operationId: receiveTelegramUpdate
+      externalDocs:
+        description: Defined in the bot-connection contract
+        url: ../../bot-connection/contracts/openapi.yaml
+
+components:
+  securitySchemes:
+    SessionCookie:
+      $ref: "../../shared-inbox/contracts/openapi.yaml#/components/securitySchemes/SessionCookie"
+
+  parameters:
+    PostId:
+      name: postId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    DestinationId:
+      name: destinationId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    CodeId:
+      name: codeId
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    PostsItemNotFound:
+      description: No such post, destination or code in this workspace (also another workspace's id) — no hint it exists
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example: { error: { code: NOT_FOUND, message: "Not found" } }
+    OwnerOnlyOrAccessRemoved:
+      description: The caller is an operator (`OWNER_ONLY`) or was deactivated (`ACCESS_REMOVED`); nothing changed
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          examples:
+            ownerOnly:
+              value: { error: { code: OWNER_ONLY, message: "Only a business owner can do this" } }
+            accessRemoved:
+              value: { error: { code: ACCESS_REMOVED, message: "Your access to this workspace was removed" } }
+    PostTextInvalid:
+      description: Malformed body (`VALIDATION_ERROR`) or the text breaks the shared rule (`POST_TEXT_INVALID`)
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example: { error: { code: POST_TEXT_INVALID, message: "The text must be 1 to 4096 characters as Telegram counts them", details: { field: text, min_length: 1, max_length: 4096, length: 4101 } } }
+    PostStateConflict:
+      description: A teammate saved a newer version (`POST_DRAFT_CHANGED`), or the post is not in the state the action needs (`POST_NOT_A_DRAFT`, `POST_NOT_SCHEDULED`); `details.post` carries the current post
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          example: { error: { code: POST_DRAFT_CHANGED, message: "A teammate changed this draft", details: { current_version: 4 } } }
+    PublishRefused:
+      description: Publish or schedule refused; nothing queued
+      content:
+        application/json:
+          schema: { $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/ErrorEnvelope" }
+          examples:
+            changed:
+              value: { error: { code: POST_DRAFT_CHANGED, message: "The draft changed since you opened this", details: { current_version: 4 } } }
+            destination:
+              value: { error: { code: DESTINATION_UNAVAILABLE, message: "The bot can no longer post to Test Channel", details: { destination_id: "01920000-0000-7000-8000-000000000701", problem: no_post_right } } }
+            bot:
+              value: { error: { code: POSTS_NEED_WORKING_BOT, message: "The bot is not working — check Settings, Bot" } }
+            daily:
+              value: { error: { code: POST_DAILY_LIMIT_REACHED, message: "30 posts were sent in the last 24 hours", details: { limit: 30, frees_at: "2026-11-04T08:12:00Z" } } }
+            scheduled:
+              value: { error: { code: POST_SCHEDULED_LIMIT_REACHED, message: "100 posts are already scheduled", details: { limit: 100 } } }
+            zone:
+              value: { error: { code: TIME_ZONE_REQUIRED, message: "Confirm the workspace time zone first" } }
+            zoneChanged:
+              value: { error: { code: TIME_ZONE_CHANGED, message: "The workspace time zone changed", details: { time_zone: "Europe/Warsaw" } } }
+
+  schemas:
+    PostState:
+      type: string
+      enum: [draft, scheduled, sending, published, failed, missed, not_confirmed, deleted]
+    PostOutcomeReason:
+      description: Why a post failed or was missed (data-model posts.outcome_reason)
+      type: string
+      enum: [bot_not_working, not_current_bot, destination_unavailable, no_post_right, chat_gone, text_refused, telegram_error, daily_limit, service_down, bot_paused, chat_rate_limited]
+    DraftNotice:
+      type: string
+      enum: [owner_deactivated, owner_role_changed, destination_removed]
+    DestinationKind:
+      type: string
+      enum: [channel, group]
+    DestinationProblem:
+      description: Stored problems plus `not_current_bot`, computed when the destination belongs to a replaced bot
+      type: string
+      enum: [no_post_right, not_member, chat_gone, not_current_bot]
+    PostText:
+      description: Trimmed, at most 4096 UTF-16 code units (packages/shared/src/broadcast-text.ts); empty only in a draft
+      type: string
+      maxLength: 4096
+    MemberRef:
+      $ref: "../../shared-inbox/contracts/openapi.yaml#/components/schemas/MemberRef"
+    DestinationRef:
+      type: object
+      required: [id, kind, title, username, availability, problem]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/DestinationKind" }
+        title: { type: string, minLength: 1 }
+        username: { type: [string, "null"] }
+        availability: { type: string, enum: [available, unavailable] }
+        problem: { oneOf: [{ $ref: "#/components/schemas/DestinationProblem" }, { type: "null" }] }
+    Destination:
+      allOf:
+        - $ref: "#/components/schemas/DestinationRef"
+        - type: object
+          required: [scheduled_count, connected_by, connected_at]
+          properties:
+            scheduled_count: { type: integer, minimum: 0 }
+            connected_by: { $ref: "#/components/schemas/MemberRef" }
+            connected_at: { type: string, format: date-time }
+    DestinationList:
+      type: object
+      required: [workspace_id, time_zone, scheduled_total, items]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        time_zone: { type: [string, "null"], maxLength: 64 }
+        scheduled_total: { type: integer, minimum: 0 }
+        items: { type: array, maxItems: 20, items: { $ref: "#/components/schemas/Destination" } }
+    DestinationCodeCreated:
+      type: object
+      required: [id, code, group_command, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        code: { type: string, pattern: "^tgp_[A-Za-z0-9_-]{22,64}$" }
+        group_command: { type: string }
+        expires_at: { type: string, format: date-time }
+    DestinationCodeStatus:
+      type: object
+      required: [id, status, expires_at, needed_right, destination_id]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [waiting, connected, no_post_right, expired, replaced] }
+        expires_at: { type: string, format: date-time }
+        needed_right: { type: [string, "null"], enum: [post_messages, send_messages, null] }
+        destination_id: { type: [string, "null"], format: uuid }
+    DestinationRemoved:
+      type: object
+      required: [outcome, returned_to_draft]
+      properties:
+        outcome: { type: string, enum: [removed, unchanged] }
+        returned_to_draft: { type: integer, minimum: 0 }
+    TimeZoneSet:
+      type: object
+      required: [time_zone]
+      properties:
+        time_zone: { type: string, minLength: 1, maxLength: 64 }
+    TimeZoneSaved:
+      type: object
+      required: [outcome, time_zone, relabelled_scheduled]
+      properties:
+        outcome: { type: string, enum: [saved, unchanged] }
+        time_zone: { type: string }
+        relabelled_scheduled: { type: integer, minimum: 0 }
+    PostSummary:
+      type: object
+      required: [id, text_start, destination, state, scheduled_for, published_at, outcome_reason, needs_attention, last_changed_by, last_changed_at]
+      properties:
+        id: { type: string, format: uuid }
+        text_start: { type: string, maxLength: 120, description: The first 120 characters of the text }
+        destination: { oneOf: [{ $ref: "#/components/schemas/DestinationRef" }, { type: "null" }] }
+        state: { $ref: "#/components/schemas/PostState" }
+        scheduled_for: { type: [string, "null"], format: date-time }
+        published_at: { type: [string, "null"], format: date-time }
+        outcome_reason: { oneOf: [{ $ref: "#/components/schemas/PostOutcomeReason" }, { type: "null" }] }
+        needs_attention: { type: boolean }
+        last_changed_by: { $ref: "#/components/schemas/MemberRef" }
+        last_changed_at: { type: string, format: date-time }
+    PostList:
+      type: object
+      required: [workspace_id, time_zone, truncated, items]
+      properties:
+        workspace_id: { type: string, format: uuid }
+        time_zone: { type: [string, "null"] }
+        truncated: { type: boolean }
+        items: { type: array, maxItems: 200, items: { $ref: "#/components/schemas/PostSummary" } }
+    Post:
+      type: object
+      required: [id, workspace_id, state, version, text, silent, destination, author, last_changed_by, last_changed_at, created_at, schedule, published_at, telegram_link, deletable_until, outcome_reason, outcome_at, needs_attention, draft_notice, deleted_at, deleted_by]
+      properties:
+        id: { type: string, format: uuid }
+        workspace_id: { type: string, format: uuid }
+        state: { $ref: "#/components/schemas/PostState" }
+        version: { type: integer, minimum: 1 }
+        text: { $ref: "#/components/schemas/PostText" }
+        silent: { type: boolean }
+        destination: { oneOf: [{ $ref: "#/components/schemas/DestinationRef" }, { type: "null" }] }
+        author: { $ref: "#/components/schemas/MemberRef" }
+        last_changed_by: { $ref: "#/components/schemas/MemberRef" }
+        last_changed_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        schedule:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [kind, scheduled_for, scheduled_by]
+              properties:
+                kind: { type: string, enum: [now, time] }
+                scheduled_for: { type: string, format: date-time }
+                scheduled_by: { $ref: "#/components/schemas/MemberRef" }
+        published_at: { type: [string, "null"], format: date-time }
+        telegram_link: { type: [string, "null"], description: "t.me link to the message: public username or the c/ form for private chats" }
+        deletable_until: { type: [string, "null"], format: date-time, description: published_at + 48 h while published }
+        outcome_reason: { oneOf: [{ $ref: "#/components/schemas/PostOutcomeReason" }, { type: "null" }] }
+        outcome_at: { type: [string, "null"], format: date-time }
+        needs_attention: { type: boolean }
+        draft_notice: { oneOf: [{ $ref: "#/components/schemas/DraftNotice" }, { type: "null" }] }
+        deleted_at: { type: [string, "null"], format: date-time }
+        deleted_by: { oneOf: [{ $ref: "#/components/schemas/MemberRef" }, { type: "null" }] }
+    PostCreate:
+      type: object
+      properties:
+        text: { $ref: "#/components/schemas/PostText" }
+        destination_id: { type: [string, "null"], format: uuid }
+        silent: { type: boolean }
+    PostSave:
+      type: object
+      required: [expected_version]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        text: { $ref: "#/components/schemas/PostText" }
+        destination_id: { type: [string, "null"], format: uuid }
+        silent: { type: boolean }
+    ExpectedVersion:
+      type: object
+      required: [expected_version]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+    PostSchedule:
+      type: object
+      required: [expected_version, local_time, time_zone]
+      properties:
+        expected_version: { type: integer, minimum: 1 }
+        local_time: { type: string, pattern: "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}$", description: Wall time to the minute in time_zone }
+        time_zone: { type: string, maxLength: 64, description: The zone the dialog showed; must equal the workspace's }
+    PublishConfirmation:
+      type: object
+      required: [post_id, version, text, silent, destination, time_zone, sent_last_24h, daily_limit, frees_at, scheduled_waiting, scheduled_limit, blockers]
+      properties:
+        post_id: { type: string, format: uuid }
+        version: { type: integer, minimum: 1 }
+        text: { $ref: "#/components/schemas/PostText" }
+        silent: { type: boolean }
+        destination: { oneOf: [{ $ref: "#/components/schemas/DestinationRef" }, { type: "null" }] }
+        time_zone: { type: [string, "null"] }
+        sent_last_24h: { type: integer, minimum: 0 }
+        daily_limit: { type: integer, const: 30 }
+        frees_at: { type: [string, "null"], format: date-time }
+        scheduled_waiting: { type: integer, minimum: 0 }
+        scheduled_limit: { type: integer, const: 100 }
+        blockers:
+          type: array
+          items: { type: string, enum: [text_empty, no_destination, destination_unavailable, bot_not_working, daily_limit, not_a_draft] }
+    PostScheduled:
+      type: object
+      required: [outcome, post]
+      properties:
+        outcome: { type: string, enum: [queued, scheduled, already_scheduled] }
+        post: { $ref: "#/components/schemas/Post" }
+    PostOutcome:
+      type: object
+      required: [outcome, post]
+      properties:
+        outcome: { type: string, enum: [changed, unchanged] }
+        post: { $ref: "#/components/schemas/Post" }
+    Outcome:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: { type: string, enum: [deleted, seen, unchanged] }
+    PostAttention:
+      type: object
+      required: [count]
+      properties:
+        count: { type: integer, minimum: 0 }
