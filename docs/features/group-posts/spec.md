@@ -39,6 +39,22 @@ Assumptions taken in the autonomous pipeline run (2026-11-03). Each can be vetoe
 - **Delete after publishing.** A business owner can delete a published post from the chat within 48 hours of publishing it (Telegram's limit for a bot's own messages); it is then marked deleted with who did it and when. Editing a published post is not in this step (OQ-2).
 - **The bot is the Telegram bot.** Destinations belong to the Telegram bot connected now. Reconnecting the same Telegram bot keeps them; connecting a different one makes them unavailable until each is connected again with a code (as broadcasts' "current bot" rule).
 
+Clarifications (clarify, autonomous run 2026-11-03). Each picks the most sensible reading of a point where two builders could have diverged; any can be vetoed at review:
+
+- **The connect code is a command to the bot.** It is a short command addressed to the workspace's bot, so Telegram delivers it in a group even when the bot is not an admin there; in a channel it is posted as a channel post, which only the channel's admins with the right to post can do. Whoever posts it must be able to post in that chat; the code itself (single-use, 10 minutes, shown only to the business owner who created it) is the proof (AC-01).
+- **A destination is the chat, once per workspace.** A code posted in a chat that is already a destination of the workspace — available, unavailable or removed — revives that same destination (same slot of the 20, same posts) and refreshes its name; a removed destination comes back the same way. The destination's name follows renames that Telegram tells the bot about (AC-01, AC-14).
+- **Available or not, live.** Telegram's notices that the bot lost or regained its right to post, or left or rejoined the chat, mark the destination unavailable or available again at once; a send refused for missing rights marks it too. Publishing or scheduling to an unavailable destination is refused upfront, with what right is missing (AC-13).
+- **Removing a destination.** A business owner removes it after a confirmation that names how many scheduled posts target it; those return to drafts with a notice, and drafts keep it but cannot be published until another destination is picked or it comes back.
+- **Not working versus replaced.** A bot that stops working or is disconnected refuses all publishing and scheduling, and due posts fail with "the bot was not working". A different working bot refuses only destinations that belong to the old bot (unavailable until connected again with a code), and due posts to them fail with "this chat is not connected to the current bot" (AC-14).
+- **The 15-minute window covers every wait.** It runs from the scheduled time, or from the confirmation for "publish now", and is measured at the moment the send to Telegram starts. Inside the window a post waits for the service, the bot's send pause or a limit Telegram applies to that one chat; posts that became due during an outage still go out within their window, in scheduled-time order, at most one every 3 seconds per chat and one per second per bot. Past the window the post is missed with the reason (the service was down, the bot was paused, or Telegram limited posting to this chat) (AC-07, AC-12).
+- **Per-chat limits stay with posts.** A rate-limit answer to a post delays only posts to that chat and sets no bot-wide send pause; posts still wait for a send pause set by any other send (AC-17).
+- **The scheduling range is checked at confirmation.** "At least 2 minutes and at most 90 days ahead" is measured when the owner confirms (scheduling or changing the time), not when the picker was opened (AC-10).
+- **Changing the workspace time zone.** Scheduled posts keep their moment and are shown in the new zone; the confirmation for the change says how many scheduled posts it re-labels. Until a time zone is set, the first owner who schedules confirms it (prefilled from their browser) and it is saved for the workspace; nothing can be scheduled before that (AC-09).
+- **Limits are counted on what went out.** The 30-per-24-hours limit counts posts sent to Telegram — published, not confirmed and later deleted ones — and is checked at "publish now" and when a scheduled post goes out (which then fails with that reason); scheduling itself checks only the 100 waiting (AC-16).
+- **Needing attention is shared.** Failed, missed and not confirmed posts are counted next to Posts in the navigation for the whole team until any member opens the post (AC-13).
+- **Duplicates and authors.** A duplicate copies the text, the destination and the sound option into a new draft whose author is the member who duplicated it. A scheduled post that returns to a draft keeps its author (AC-07, AC-18).
+- **The Posts page.** One list of every post, the most recently changed first, with filters by state (drafts, scheduled, published, needing attention); scheduled posts show their time in the workspace's zone. The draft preview is the plain text with its line breaks, without a link card.
+
 Critic pass (2026-11-03), resolved as amendments: a bot that is not working makes a due post fail, a paused bot or an outage makes it missed (AC-12, AC-14); changing a scheduled post's text, destination or sound option returns it to a draft, an owner changing its time confirms it again (AC-09, AC-11); the roadmap's admin rule is quoted for channels only; the on-time bound is for the first post due in a chat; AC-04 no longer claims a chat is exclusive to one workspace; US-08 covers the end customer side of AC-17.
 
 ## 2. Goals
@@ -148,7 +164,7 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 
 **Given** a business owner with a draft for "Acme Flowers News" and a working bot
 **When** the owner opens Publish, sees the destination's Telegram name and kind and the exact text, and confirms
-**Then** the post appears in the channel from the bot within seconds, once, and is marked published with the time, the owner who published it and a way to open it in Telegram; its text and destination never change afterwards, and it can be duplicated into a new draft
+**Then** the post appears in the channel from the bot within seconds (if the bot is paused by Telegram it waits, at most 15 minutes, then is marked missed), once, and is marked published with the time, the owner who published it and a way to open it in Telegram; its text and destination never change afterwards, and it can be duplicated into a new draft
 
 ### AC-08 (US-03, US-04) — domain invariant
 
@@ -164,9 +180,9 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 
 ### AC-10 (US-04) — error
 
-**Given** a business owner scheduling a post
-**When** the chosen time is less than 2 minutes ahead, more than 90 days ahead, or a local time the daylight-saving change skips in the workspace's time zone
-**Then** the post is not scheduled and the owner is told the allowed range, or that this time does not exist on that day
+**Given** a business owner scheduling a post or changing a scheduled post's time
+**When** at the moment they confirm, the chosen time is less than 2 minutes ahead, more than 90 days ahead, the destination is unavailable, or a local time the daylight-saving change skips in the workspace's time zone
+**Then** the post is not scheduled and the owner is told the allowed range, that this time does not exist on that day, or what right the bot is missing in that chat
 
 ### AC-11 (US-04) — domain invariant
 
@@ -177,20 +193,20 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 ### AC-12 (US-04, US-05) — cross-context
 
 **Given** a post scheduled for 09:00
-**When** it cannot go out by 09:15 because the service was down or the bot was paused by Telegram
-**Then** it is marked missed with the reason, is never published later, and counts as needing attention; after an outage, overdue posts are not sent all at once
+**When** it cannot go out by 09:15 because the service was down, the bot was paused by Telegram or Telegram limited posting to that chat
+**Then** it is marked missed with the reason, is never published later, and counts as needing attention; after an outage, posts still inside their window go out in scheduled-time order, paced, and the rest are missed
 
 ### AC-13 (US-05) — error
 
 **Given** a published-now or scheduled post
 **When** Telegram refuses it — the bot lost the right to post or was removed from the chat, the chat no longer exists, or the text was refused
-**Then** the post is marked failed with that reason in plain language, is not tried again, shows next to Posts in the navigation until a member opens it, and the destination shows what is wrong when the bot can no longer post there
+**Then** the post is marked failed with that reason in plain language, is not tried again, is counted next to Posts in the navigation for the whole team until any member opens it, and the destination is marked unavailable with what is wrong when the bot can no longer post there
 
 ### AC-14 (US-01, US-05) — cross-context
 
 **Given** a workspace with destinations and scheduled posts
 **When** its bot stops working or is disconnected, or a different Telegram bot is connected
-**Then** publishing and scheduling are refused with a way to the bot settings; scheduled posts whose time comes meanwhile fail with "the bot was not working"; destinations of a different bot show as unavailable until connected again with a code, while reconnecting the same bot keeps them; a group that Telegram upgraded keeps working as the same destination
+**Then** while the bot is not working, publishing and scheduling are refused with a way to the bot settings and posts whose time comes fail with "the bot was not working"; with a different working bot, only the old bot's destinations are unavailable until connected again with a code, and posts due to them fail with "this chat is not connected to the current bot"; while reconnecting the same bot keeps them; a group that Telegram upgraded keeps working as the same destination
 
 ### AC-15 (US-06) — happy path
 
@@ -200,9 +216,9 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 
 ### AC-16 (US-03, US-04) — domain invariant
 
-**Given** a workspace that published 30 posts in the last 24 hours, or holds 100 scheduled posts waiting
-**When** a business owner publishes another post, or schedules one more
-**Then** the system refuses and says the daily posting limit or the scheduled-post limit was reached and when posting is possible again; a scheduled post whose time comes while the daily limit is reached fails with that reason
+**Given** a workspace that sent 30 posts to Telegram in the last 24 hours, or holds 100 scheduled posts waiting
+**When** a business owner publishes another post now, or schedules one more while 100 are waiting
+**Then** the system refuses and says the daily posting limit (and when posting is possible again) or the scheduled-post limit was reached; a scheduled post whose time comes while the daily limit is reached fails with that reason
 
 ### AC-17 (US-07, US-08) — cross-context
 
@@ -222,7 +238,7 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 |---|---|---|
 | Scheduled post on time | p95 ≤ 30 s and max ≤ 60 s from the scheduled time to Telegram accepting it, while the service and bot are up, for the first post due in a chat at that time (each further post due together in the same chat adds ≤ 3 s) | post timing log (scheduled vs accepted); integration test with a fake clock and the fake Telegram |
 | Publish now | p95 ≤ 5 s from confirm to "published" shown | request + send timing log |
-| Missed window | 0 posts published more than 15 min after their scheduled time | integrity query in the run book; integration test with an outage longer than the window |
+| Missed window | 0 posts whose send to Telegram started more than 15 min after their scheduled time (or their "publish now" confirmation) | integrity query in the run book; integration test with an outage longer than the window |
 | At most once | 0 posts sent twice, including after a restart at the moment of sending, a double confirm or two owners | integration test: concurrent publish, restart mid-send, unanswered send; integrity query |
 | What was confirmed goes out | 0 posts whose sent text or destination differs from the version an owner confirmed | integration test per edit path; integrity query |
 | Destination connect | p95 ≤ 5 s from the code posted in the chat to the destination shown in an open panel | update handling timing log; integration test with the fake Telegram |
@@ -261,3 +277,28 @@ Critic pass (2026-11-03), resolved as amendments: a bot that is not working make
 - [ ] **OQ-1** Should posts carry photos (and later video or files)? Every scheduler researched supports them. Default now: plain text only. — owner: Dmytro Hopko, due: after the first 30 days of pilot posting
 - [ ] **OQ-2** Should a business owner be able to edit a published post in place instead of deleting and posting again? Default now: no; delete within 48 hours. — owner: Dmytro Hopko, due: after the first 30 days of pilot posting
 - [ ] **OQ-3** Should a failed or missed scheduled post also reach the scheduling owner through their Telegram link, not only the panel? Default now: panel only (marker and navigation count). — owner: Dmytro Hopko, due: after the first 30 days of pilot posting, or earlier if the §7 failed-share alert fires
+
+## Clarify log (2026-11-03)
+
+20 findings were merged from the self-sweep (5) and the clean-context devil's-advocate (15); none overlapped exactly. All 20 are resolved in place (§1 Clarifications and the AC named); none is deferred. OQ-1…OQ-3 stay open with their owner and due date.
+
+- conflicting-requirement · AC-16, §1 Limits · resolved: does the daily limit block scheduling → no; it counts sends and is checked at publish now and when a post goes out; scheduling checks only the 100 waiting.
+- conflicting-requirement · §1, AC-12 · resolved: catch-up after an outage → posts inside their 15-minute window still go out, in order, paced per chat and per bot; the rest are missed.
+- under-specified-AC · AC-07 · resolved: publish now during a send pause → waits up to 15 minutes from the confirmation, then missed.
+- under-specified-AC · AC-12 · resolved: a per-chat limit past the window → missed with that reason.
+- under-specified-AC · §1 · resolved: changing the workspace time zone → scheduled posts keep their moment, shown in the new zone, after a confirmation naming how many.
+- under-specified-AC · AC-13 · resolved: who clears the attention count → shared; counts failed, missed and not confirmed.
+- under-specified-AC · AC-14 · resolved: not working versus replaced → all refused vs only the old bot's destinations, with distinct failure reasons.
+- under-specified-AC · AC-13, §1 · resolved: what makes a destination unavailable → Telegram's rights / membership notices and a refused send, both ways, live; publishing to it refused upfront (AC-10 too).
+- under-specified-AC · AC-01, AC-14 · resolved: reconnecting a known chat → revives the same destination and slot.
+- under-specified-AC · §6 · resolved: when the 15 minutes are measured → the moment the send to Telegram starts.
+- under-specified-AC · AC-07 · resolved: what a duplicate copies → text, destination, sound option; the duplicator is the author.
+- under-specified-AC · AC-10 · resolved: the 2-minute / 90-day range → checked at confirmation.
+- under-specified-AC · §1 (self) · resolved: removing a destination with scheduled posts → they return to drafts after a confirmation naming how many.
+- unstated-assumption · AC-01 · resolved: can a non-admin bot receive the code in a group → the code is a command addressed to the bot; groups need no admin bot.
+- unstated-assumption · AC-17 · resolved: per-chat versus bot-wide limit → a rate-limit answer to a post delays only that chat's posts and sets no send pause.
+- unstated-assumption · §1 · resolved: time zone not yet set → the first owner who schedules confirms it for the workspace.
+- vague-term · §1 · resolved: "someone who can post there" → anyone able to post in the chat who has the code.
+- vague-term · AC-05 · resolved: the preview → plain text with line breaks, no link card.
+- vague-term · §1 (self) · resolved: the Posts page → one list, most recently changed first, filters by state.
+- vague-term · §1 (self) · resolved: the destination's name → follows renames Telegram tells the bot about.
