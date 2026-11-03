@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/publish.ts", "apps/api/src/modules/
 owner: "Dmytro Hopko"
 estimate: "L"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T11 — Add the publish confirmation, publish now and schedule / change time against the shown version, queuing one posts.send job in the transaction

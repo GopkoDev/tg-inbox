@@ -182,7 +182,7 @@ export function createPostRepo(db: Db) {
         })
         .where('workspace_id', '=', workspaceId)
         .where('id', '=', id)
-        .where('state', '=', 'draft')
+        .where('state', 'in', ['draft', 'scheduled'])
         .where('version', '=', expectedVersion)
         .returningAll()
         .executeTakeFirst();
@@ -367,6 +367,18 @@ export function createPostRepo(db: Db) {
           .where('state', 'in', SENT_STATES)
           .where('sending_started_at', '>=', since),
       );
+    },
+
+    /** When each post handed to Telegram at or after `since` was claimed (the daily limit's window). */
+    async sentTimesSince(workspaceId: string, since: Date, tx?: Db): Promise<Date[]> {
+      const rows = await (tx ?? db)
+        .selectFrom('posts')
+        .select('sending_started_at')
+        .where('workspace_id', '=', workspaceId)
+        .where('state', 'in', SENT_STATES)
+        .where('sending_started_at', '>=', since)
+        .execute();
+      return rows.map((r) => r.sending_started_at!);
     },
 
     async scheduledByAccount(

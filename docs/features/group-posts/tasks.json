@@ -236,7 +236,7 @@
         "apps/api/src/modules/posts/app/publish-confirmation.ts"
       ],
       "file": "docs/features/group-posts/tasks/t11-publish-and-schedule.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T12",
