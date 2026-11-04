@@ -38,6 +38,9 @@ const lazyPage = (load: () => Promise<Record<string, unknown>>, name: string) =>
   );
 };
 
+/** One element for every post address, so React keeps a single page instance across them. */
+const postPage = lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage');
+
 /** A redirect decided before anything renders, so the address is final when the frame mounts. */
 const to =
   (section: string) =>
@@ -111,22 +114,22 @@ const workspaceRoute: RouteObject = {
         {
           path: 'new',
           handle: { crumb: 'New post' },
-          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+          element: postPage,
         },
         {
           path: ':postId',
           handle: { crumb: 'Post', Crumb: PostCrumb },
-          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+          element: postPage,
         },
         {
           path: ':postId/publish',
           handle: { crumb: 'Post', Crumb: PostCrumb },
-          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+          element: postPage,
         },
         {
           path: ':postId/schedule',
           handle: { crumb: 'Post', Crumb: PostCrumb },
-          element: lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage'),
+          element: postPage,
         },
       ],
     },

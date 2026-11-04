@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/app/routes.tsx", "apps/web/src/pages/PostDetailPage.t
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T35 — Keep one post page instance across new / :id / publish / schedule with real lazy routes, drop the second React root, and test with the real lazy route shape

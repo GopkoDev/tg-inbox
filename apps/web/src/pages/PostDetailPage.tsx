@@ -1,15 +1,6 @@
 import { instantToLocal } from '@tg/shared';
-import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { createRoot, type Root } from 'react-dom/client';
-import {
-  Navigate,
-  UNSAFE_LocationContext as LocationContext,
-  UNSAFE_NavigationContext as NavigationContext,
-  UNSAFE_RouteContext as RouteContext,
-  useLocation,
-  useNavigate,
-  useParams,
-} from 'react-router';
+import { useContext, useEffect, useState, type ReactNode } from 'react';
+import { Navigate, useLocation, useNavigate, useParams } from 'react-router';
 import { listDestinations } from '@/features/posts/api';
 import { PostEditor } from '@/features/posts/editor/PostEditor';
 import { PostPage } from '@/features/posts/page/PostPage';
@@ -157,60 +148,16 @@ function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
   );
 }
 
-// The routes mount this page once per address; the tree below lives in one separate root that
-// outlives those mounts, so moving new -> :id -> publish / schedule keeps the editor (its focus,
-// its pending save) instead of remounting it (F16). It is torn down when no address claims it.
-let host: { root: Root; el: HTMLDivElement } | null = null;
-let claims = 0;
-
+/** One lazy component serves all four post addresses, so React keeps the instance across them (F16). */
 export function PostDetailPage() {
   const { workspaceId = '', postId } = useParams();
   const { pathname } = useLocation();
   const isOwner = useWorkspaceStore((s) => s.current?.role === 'owner');
-  const navigation = useContext(NavigationContext);
-  const location = useContext(LocationContext);
-  const route = useContext(RouteContext);
-  const guard = useContext(ShellGuardContext);
-  const slot = useRef<HTMLDivElement>(null);
 
-  useLayoutEffect(() => {
-    claims += 1;
-    if (!host) {
-      const el = document.createElement('div');
-      host = { root: createRoot(el), el };
-    }
-    if (slot.current && host.el.parentNode !== slot.current) slot.current.appendChild(host.el);
-    host.root.render(
-      <NavigationContext.Provider value={navigation}>
-        <LocationContext.Provider value={location}>
-          <RouteContext.Provider value={route}>
-            <ShellGuardContext.Provider value={guard}>
-              <PostSwitch
-                workspaceId={workspaceId}
-                postId={postId}
-                pathname={pathname}
-                isOwner={isOwner}
-              />
-            </ShellGuardContext.Provider>
-          </RouteContext.Provider>
-        </LocationContext.Provider>
-      </NavigationContext.Provider>,
-    );
-  });
+  // flush and close the store only on a real unmount of the post page
+  useEffect(() => () => usePostStore.getState().close(), []);
 
-  // a layout cleanup, so it runs before the next address's layout effect claims the host
-  useLayoutEffect(
-    () => () => {
-      const seen = claims;
-      queueMicrotask(() => {
-        if (claims !== seen) return;
-        host?.root.unmount();
-        host = null;
-        usePostStore.getState().close();
-      });
-    },
-    [],
+  return (
+    <PostSwitch workspaceId={workspaceId} postId={postId} pathname={pathname} isOwner={isOwner} />
   );
-
-  return <div ref={slot} />;
 }

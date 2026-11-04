@@ -796,7 +796,7 @@
         "apps/web/src/pages/PostDetailPage.routing.test.tsx"
       ],
       "file": "docs/features/group-posts/tasks/t35-web-single-post-route.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T36",

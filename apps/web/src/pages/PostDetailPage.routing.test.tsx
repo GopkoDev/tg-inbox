@@ -1,7 +1,7 @@
 import { ErrorCode, type Post } from '@tg/shared';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { useEffect } from 'react';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router';
+import { createContext, useContext, useEffect } from 'react';
+import { createMemoryRouter, Outlet, RouterProvider, type RouteObject } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ApiError } from '@/shared/api/client';
@@ -10,6 +10,7 @@ import { ShellGuardContext } from '@/shared/ui/app-shell-context';
 const api = vi.hoisted(() => ({ getPost: vi.fn(), listDestinations: vi.fn() }));
 const live = vi.hoisted(() => ({ onFrame: null as null | ((f: unknown) => void) }));
 const mounts = vi.hoisted(() => ({ editor: 0 }));
+const ShellProbe = createContext<string | null>(null);
 
 vi.mock('@/features/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/features/posts/api')>()),
@@ -29,7 +30,11 @@ vi.mock('@/features/posts/editor/PostEditor', () => ({
     useEffect(() => {
       mounts.editor += 1;
     }, []);
-    return <div data-testid="editor" />;
+    return (
+      <div data-testid="editor" data-shell={useContext(ShellProbe) ?? 'cut-off'}>
+        <textarea data-testid="editor-text" />
+      </div>
+    );
   },
 }));
 vi.mock('@/features/posts/publish/PublishDialog', () => ({
@@ -45,7 +50,7 @@ vi.mock('@/features/posts/publish/ScheduleDialog', () => ({
   ),
 }));
 
-import { PostDetailPage } from './PostDetailPage';
+import { routes } from '@/app/routes';
 
 const WS = '0198f0c0-0000-7000-8000-000000000001';
 const POST = '0198f0c0-0000-7000-8000-000000000701';
@@ -89,35 +94,40 @@ const scheduled = () =>
   } as Partial<Post>);
 
 let go: (to: string) => void = () => undefined;
-function Nav() {
-  const navigate = useNavigate();
-  useEffect(() => {
-    go = (to) => void navigate(to);
-  });
-  return null;
-}
 
-const NewAddress = () => <PostDetailPage />;
-const IdAddress = () => <PostDetailPage />;
-const PublishAddress = () => <PostDetailPage />;
-const ScheduleAddress = () => <PostDetailPage />;
+// The app's real posts routes (real lazy() + Suspense), mounted without the app shell.
+const findRoute = (list: RouteObject[], path: string): RouteObject | undefined => {
+  for (const r of list) {
+    if (r.path === path) return r;
+    const hit = r.children && findRoute(r.children, path);
+    if (hit) return hit;
+  }
+  return undefined;
+};
+const postsRoute = findRoute(routes, 'posts') as RouteObject;
 
-const renderAt = (path: string, role: 'owner' | 'operator' = 'owner') => {
+const renderAt = async (path: string, role: 'owner' | 'operator' = 'owner') => {
   useWorkspaceStore.setState({ current: { id: WS, name: 'Acme Flowers', role } });
-  return render(
+  const router = createMemoryRouter(
+    [
+      {
+        path: '/w/:workspaceId/posts',
+        element: <Outlet />,
+        children: postsRoute.children,
+      },
+    ],
+    { initialEntries: [path] },
+  );
+  const view = render(
     <ShellGuardContext.Provider value={vi.fn().mockResolvedValue('handled')}>
-      <MemoryRouter initialEntries={[path]}>
-        <Nav />
-        <Routes>
-          {/* the app lazy-loads each address separately, so each is its own element type */}
-          <Route path="/w/:workspaceId/posts/new" element={<NewAddress />} />
-          <Route path="/w/:workspaceId/posts/:postId" element={<IdAddress />} />
-          <Route path="/w/:workspaceId/posts/:postId/publish" element={<PublishAddress />} />
-          <Route path="/w/:workspaceId/posts/:postId/schedule" element={<ScheduleAddress />} />
-        </Routes>
-      </MemoryRouter>
+      <ShellProbe.Provider value="app-shell">
+        <RouterProvider router={router} />
+      </ShellProbe.Provider>
     </ShellGuardContext.Provider>,
   );
+  await screen.findByTestId('editor').catch(() => undefined);
+  go = (to) => void router.navigate(to);
+  return view;
 };
 const flush = () => act(async () => {});
 
@@ -131,7 +141,7 @@ beforeEach(() => {
 describe('post address (F14-F17)', () => {
   it('F17: an unknown post address shows the not-found card, not a retryable error', async () => {
     api.getPost.mockRejectedValue(new ApiError(404, ErrorCode.NOT_FOUND, 'nope'));
-    renderAt(`/w/${WS}/posts/${POST}`);
+    await renderAt(`/w/${WS}/posts/${POST}`);
     await flush();
     expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     expect(screen.queryByText("Couldn't load the post")).not.toBeInTheDocument();
@@ -141,7 +151,7 @@ describe('post address (F14-F17)', () => {
 
   it('F15: a live change from draft to scheduled switches the editor to the post page', async () => {
     api.getPost.mockResolvedValue(post());
-    renderAt(`/w/${WS}/posts/${POST}`);
+    await renderAt(`/w/${WS}/posts/${POST}`);
     await flush();
     expect(screen.getByTestId('editor')).toBeInTheDocument();
     api.getPost.mockResolvedValue(scheduled());
@@ -153,7 +163,7 @@ describe('post address (F14-F17)', () => {
 
   it('F15: a live back-to-draft switches the post page to the editor', async () => {
     api.getPost.mockResolvedValue(scheduled());
-    renderAt(`/w/${WS}/posts/${POST}`);
+    await renderAt(`/w/${WS}/posts/${POST}`);
     await flush();
     expect(screen.getByText(/Goes out/)).toBeInTheDocument();
     api.getPost.mockResolvedValue(post({ version: 3 }));
@@ -164,9 +174,9 @@ describe('post address (F14-F17)', () => {
 
   it('F16: /:id to /:id/publish keeps the same editor instance', async () => {
     api.getPost.mockResolvedValue(post());
-    renderAt(`/w/${WS}/posts/${POST}`);
+    await renderAt(`/w/${WS}/posts/${POST}`);
     await flush();
-    go(`/w/${WS}/posts/${POST}/publish`);
+    await act(async () => go(`/w/${WS}/posts/${POST}/publish`));
     await flush();
     expect(screen.getByTestId('publish-dialog')).toBeInTheDocument();
     expect(mounts.editor).toBe(1);
@@ -174,17 +184,39 @@ describe('post address (F14-F17)', () => {
 
   it('F16: /new to /:id keeps the same editor instance', async () => {
     api.getPost.mockResolvedValue(post());
-    renderAt(`/w/${WS}/posts/new`);
+    await renderAt(`/w/${WS}/posts/new`);
     await flush();
-    go(`/w/${WS}/posts/${POST}`);
+    await act(async () => go(`/w/${WS}/posts/${POST}`));
     await flush();
     expect(screen.getByTestId('editor')).toBeInTheDocument();
     expect(mounts.editor).toBe(1);
   });
 
+  it('F16: the page renders in the normal tree, so app-shell contexts reach the editor', async () => {
+    api.getPost.mockResolvedValue(post());
+    await renderAt(`/w/${WS}/posts/${POST}`);
+    await flush();
+    expect(screen.getByTestId('editor')).toHaveAttribute('data-shell', 'app-shell');
+  });
+
+  it('F16: /:id to /:id/schedule keeps focus and the pending text in the editor', async () => {
+    api.getPost.mockResolvedValue(post());
+    await renderAt(`/w/${WS}/posts/${POST}`);
+    await flush();
+    const text = screen.getByTestId('editor-text') as HTMLTextAreaElement;
+    text.focus();
+    fireEvent.change(text, { target: { value: 'pending words' } });
+    await act(async () => go(`/w/${WS}/posts/${POST}/schedule`));
+    await flush();
+    const after = screen.getByTestId('editor-text') as HTMLTextAreaElement;
+    expect(after).toBe(text);
+    expect(document.activeElement).toBe(text);
+    expect(mounts.editor).toBe(1);
+  });
+
   it('F14: an owner changes the time of a scheduled post in ScheduleDialog, prefilled in the workspace zone', async () => {
     api.getPost.mockResolvedValue(scheduled());
-    renderAt(`/w/${WS}/posts/${POST}`);
+    await renderAt(`/w/${WS}/posts/${POST}`);
     await flush();
     fireEvent.click(screen.getByRole('button', { name: 'Change time' }));
     await flush();
@@ -195,14 +227,14 @@ describe('post address (F14-F17)', () => {
 
   it('F14: /schedule on a scheduled post opens the dialog for an owner', async () => {
     api.getPost.mockResolvedValue(scheduled());
-    renderAt(`/w/${WS}/posts/${POST}/schedule`);
+    await renderAt(`/w/${WS}/posts/${POST}/schedule`);
     await flush();
     expect(screen.getByTestId('schedule-dialog')).toHaveAttribute('data-change-time', 'true');
   });
 
   it('F14: an operator is not offered Change time', async () => {
     api.getPost.mockResolvedValue(scheduled());
-    renderAt(`/w/${WS}/posts/${POST}`, 'operator');
+    await renderAt(`/w/${WS}/posts/${POST}`, 'operator');
     await flush();
     expect(screen.queryByRole('button', { name: 'Change time' })).not.toBeInTheDocument();
   });
