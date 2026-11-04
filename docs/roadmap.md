@@ -1,6 +1,6 @@
 ---
 status: living
-updated_at: '2026-11-03'
+updated_at: '2026-11-04'
 ---
 
 # Roadmap — tg-inbox
@@ -28,7 +28,7 @@ Businesses that run multi-operator support in Telegram answer customers from a s
 | 7 | Contacts — profile, operator tags and conversation history per contact | idea-brief.md §7 Recommendation | M | shipped → [`features/contacts`](features/contacts/spec.md) |
 | 8 | Broadcasts — a member drafts a message for an audience picked by contact tags or for a hand-picked broadcast group of contacts (added and removed while it is a draft) and a business owner launches it; once launched its recipients are frozen and it is read-only apart from a delivery report; throttled per bot, tracking who blocked the bot | idea-brief.md §7 Recommendation · roadmap.md § Decisions so far | L | shipped → [`features/broadcasts`](features/broadcasts/spec.md) |
 | 9 | AI reply drafts → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
-| 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | building → [`features/group-posts`](features/group-posts/spec.md) |
+| 10 | Group / channel posts — compose in the web and publish now or on a schedule to the business's group or channel | idea-brief.md §7 Recommendation | M | shipped → [`features/group-posts`](features/group-posts/spec.md) |
 | 11 | Platform MCP server → see [Not yet specified](#not-yet-specified) | idea-brief.md §7 Recommendation | fog | idea |
 | 12 | UI redesign — every shipped screen moves onto the design canon (side-navigation frame, owner Settings with Bot + Team), plus inbox / contacts / contact-profile preview screens on labelled sample data | [design-system.md](design-system.md) § Visual direction | S | shipped → [`features/ui-redesign`](features/ui-redesign/spec.md) |
 
@@ -108,3 +108,4 @@ flowchart LR
 | 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · [PR #6](https://github.com/GopkoDev/tg-inbox/pull/6) |
 | 7 · Contacts | 2026-10-19 | [changelog](features/contacts/_ship/changelog.md) · [PR #7](https://github.com/GopkoDev/tg-inbox/pull/7) |
 | 8 · Broadcasts | 2026-10-24 | [changelog](features/broadcasts/_ship/changelog.md) · [PR #8](https://github.com/GopkoDev/tg-inbox/pull/8) |
+| 10 · Group / channel posts | 2026-11-04 | [changelog](features/group-posts/_ship/changelog.md) |
