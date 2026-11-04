@@ -87,12 +87,12 @@ describe('ConnectCodeDialog (AC-01)', () => {
     expect(await screen.findByText(/Expires at .*\(Europe\/Kyiv\)/)).toBeInTheDocument();
   });
 
-  it('still shows the expiry while the workspace zone is unknown, without naming a zone', async () => {
+  it('shows the expiry as minutes left while the workspace zone is unknown, never an unlabelled clock time', async () => {
     useDestinationsStore.setState({ timeZone: null });
     open();
     await screen.findByText(/tgp_abc/);
-    expect(screen.getByText(/Expires/)).toBeInTheDocument();
-    expect(screen.queryByText(/\(Europe\/Kyiv\)/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Expires in \d+ min/)).toBeInTheDocument();
+    expect(screen.queryByText(/Expires at/)).not.toBeInTheDocument();
   });
 
   it('creates exactly one code per dialog open under StrictMode', async () => {

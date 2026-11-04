@@ -72,6 +72,8 @@ export function ConnectCodeDialog({
 }) {
   const [view, setView] = useState<View>({ kind: 'creating' });
   const [attempt, setAttempt] = useState(0);
+  // Minutes left on the code, taken once when it arrives (not during render).
+  const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
   const retry = () => {
     setView({ kind: 'creating' });
     setAttempt((n) => n + 1);
@@ -90,7 +92,11 @@ export function ConnectCodeDialog({
     }
     inFlight.current.promise.then(
       (created) => {
-        if (!cancelled) setView({ kind: 'code', created, status: 'waiting' });
+        if (cancelled) return;
+        setMinutesLeft(
+          Math.max(1, Math.ceil((Date.parse(created.expires_at) - Date.now()) / 60_000)),
+        );
+        setView({ kind: 'code', created, status: 'waiting' });
       },
       (error: unknown) => {
         if (cancelled) return;
@@ -249,7 +255,9 @@ export function ConnectCodeDialog({
             <p className="text-sm text-muted-foreground">
               {timeZone
                 ? `Expires at ${formatPostTime(created.expires_at, timeZone)} · `
-                : `Expires at ${new Date(created.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · `}
+                : // No workspace zone yet (set at the first schedule): minutes left, so no clock time
+                  // is shown in an unnamed zone (R4).
+                  `Expires in ${minutesLeft ?? 10} min · `}
               Waiting for the code…
               {view.kind === 'code' && (
                 <Loader2 className="ml-1 inline size-3 animate-spin" aria-hidden />
