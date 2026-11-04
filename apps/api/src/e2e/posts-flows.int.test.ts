@@ -11,13 +11,15 @@ import {
 import { buildApp } from '../app.js';
 import { buildDeps, type Deps } from '../deps.js';
 import { newId } from '../platform/ids.js';
+import { startJobs, type Jobs } from '../platform/jobs.js';
+import { POST_SEND_QUEUE } from '../modules/posts/infra/jobs.js';
 import { sendAnswers, startFakeTelegram, type FakeTelegram } from '../test/fake-telegram.js';
 import { insertAccount, insertSession } from '../test/fixtures/auth.js';
 import { insertBot } from '../test/fixtures/bots.js';
 import { signedDelivery, telegramUpdate } from '../test/fixtures/telegram.js';
 import { insertMembership, insertWorkspace } from '../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../test/postgres.js';
-import { integrityViolations, truncateAll } from './helpers.js';
+import { integrityViolations, postIntegrity, truncateAll } from './helpers.js';
 
 const CHANNEL_ID = -1001234567890;
 
@@ -31,6 +33,7 @@ describe('posts flows (postgres + pg-boss + fake Bot API)', () => {
   let fake: FakeTelegram;
   let deps: Deps;
   let app: FastifyInstance;
+  let boss: Jobs;
   let nextUpdate = 1;
   let nextMessage = 1;
   const workspaces: string[] = [];
@@ -42,8 +45,10 @@ describe('posts flows (postgres + pg-boss + fake Bot API)', () => {
     deps = buildDeps(config);
     app = await buildApp(config);
     await app.ready();
+    boss = await startJobs(database.url);
   }, 120_000);
   afterAll(async () => {
+    await boss?.stop();
     await app?.close();
     await deps?.destroy();
     await fake?.stop();
@@ -335,6 +340,160 @@ describe('posts flows (postgres + pg-boss + fake Bot API)', () => {
     expect(back.draft_notice).toBe('owner_deactivated');
     expect(sends(w)).toHaveLength(0);
   });
+
+  /** A scheduled post written directly (the API refuses past moments) with its `posts.send` job. */
+  async function seedDue(
+    w: W,
+    destinationId: string,
+    scheduledFor: Date,
+    text: string,
+    startAfter: Date = new Date(),
+  ) {
+    const id = newId();
+    const acc = w.owner.accountId;
+    await sql`insert into posts (id, workspace_id, destination_id, text, silent, state, version,
+      author_account_id, last_changed_by_account_id, last_changed_at, created_at, scheduled_for,
+      scheduled_by_account_id, schedule_kind, needs_attention)
+      values (${id}, ${w.ws}, ${destinationId}, ${text}, false, 'scheduled', 1, ${acc}, ${acc},
+      now(), now(), ${scheduledFor}, ${acc}, 'time', false)`.execute(deps.db);
+    await boss.send(
+      POST_SEND_QUEUE,
+      { post_id: id, workspace_id: w.ws, moment: scheduledFor.toISOString() },
+      { startAfter },
+    );
+    return id;
+  }
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+
+  it('after an outage posts past 15 minutes are missed, those inside the window go out in order, paced (AC-12)', async () => {
+    const w = await workspace();
+    const { destinationId } = await connectChannel(w);
+    // Enqueued in a scrambled order; scheduled-time order is: old, a, b, c.
+    const c = await seedDue(w, destinationId, minutesAgo(3), 'third');
+    const old = await seedDue(w, destinationId, minutesAgo(20), 'too old');
+    const b = await seedDue(w, destinationId, minutesAgo(5), 'second');
+    const a = await seedDue(w, destinationId, minutesAgo(8), 'first');
+
+    await vi.waitFor(async () => expect(sends(w)).toHaveLength(3), { timeout: 40_000 });
+    await vi.waitFor(
+      async () => {
+        for (const id of [a, b, c]) expect((await stateOf(w, id)).state).toBe('published');
+      },
+      { timeout: 20_000 },
+    );
+    const missed = await stateOf(w, old);
+    expect(missed.state).toBe('missed');
+    expect(missed.outcome_reason).toBe('service_down');
+    expect(missed.needs_attention).toBe(true);
+    expect(sends(w).map((s) => s.params.text)).toEqual(['first', 'second', 'third']);
+    const times = fake.sendTimes(w.token);
+    expect(times).toHaveLength(3);
+    for (let i = 1; i < times.length; i++) {
+      expect(times[i]! - times[i - 1]!).toBeGreaterThanOrEqual(2_900);
+    }
+    expect(await postIntegrity.startedLate(deps.db, w.ws)).toEqual([]);
+    expect(await postIntegrity.twoSendsOfOnePost(deps.db, w.ws)).toEqual([]);
+  }, 90_000);
+
+  it('a post scheduled through the API is published when its time comes and not before (AC-09)', async () => {
+    const w = await workspace();
+    const { destinationId } = await connectChannel(w);
+    await call(w.owner, 'POST', api(w.ws, '/time-zone'), { time_zone: 'Europe/Kyiv' });
+    const d = await draft(w, destinationId, 'Good morning');
+    const res = await call(w.owner, 'POST', api(w.ws, `/${d.id}/schedule`), {
+      expected_version: d.version,
+      local_time: tomorrow(),
+      time_zone: 'Europe/Kyiv',
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    const waiting = await stateOf(w, d.id);
+    expect(waiting.state).toBe('scheduled');
+    await new Promise((r) => setTimeout(r, 2500));
+    expect(sends(w)).toHaveLength(0);
+
+    // Bring the moment (and its job) to 4 s from now: the same row and job the API wrote.
+    const moment = new Date(Date.now() + 4_000);
+    await sql`update posts set scheduled_for = ${moment} where id = ${d.id}`.execute(deps.db);
+    await sql`update pgboss.job set start_after = ${moment},
+      data = jsonb_set(data, '{moment}', to_jsonb(${moment.toISOString()}::text))
+      where name = ${POST_SEND_QUEUE} and data->>'post_id' = ${d.id}`.execute(deps.db);
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(sends(w)).toHaveLength(0);
+    await vi.waitFor(async () => expect((await stateOf(w, d.id)).state).toBe('published'), {
+      timeout: 30_000,
+    });
+    const done = await stateOf(w, d.id);
+    // The DTO carries whole seconds.
+    expect(new Date(done.published_at!).getTime()).toBeGreaterThanOrEqual(
+      Math.floor(moment.getTime() / 1000) * 1000,
+    );
+    expect(new Date(done.published_at!).getTime() - moment.getTime()).toBeLessThan(60_000);
+    expect(sends(w)).toHaveLength(1);
+    expect(sends(w)[0]!.params).toMatchObject({ text: 'Good morning' });
+  }, 60_000);
+
+  it('deleting a published post through the API deletes it in Telegram and keeps its text (AC-15)', async () => {
+    const w = await workspace();
+    const { destinationId } = await connectChannel(w);
+    const d = await draft(w, destinationId, 'Oops, wrong price');
+    await call(w.owner, 'POST', api(w.ws, `/${d.id}/publish`), { expected_version: d.version });
+    await vi.waitFor(async () => expect((await stateOf(w, d.id)).state).toBe('published'), {
+      timeout: 20_000,
+    });
+    // Connecting the channel already removed the code message; count from here.
+    const deleteCalls = () => fake.calls(w.token).filter((c) => c.method === 'deleteMessage');
+    const before = deleteCalls().length;
+    const refused = await call(w.operator, 'POST', api(w.ws, `/${d.id}/delete-from-telegram`));
+    expect(refused.statusCode).toBe(403);
+    expect(deleteCalls()).toHaveLength(before);
+
+    const res = await call(w.owner, 'POST', api(w.ws, `/${d.id}/delete-from-telegram`));
+    expect(res.statusCode, res.body).toBe(200);
+    const deletes = deleteCalls().slice(before);
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0]!.params).toMatchObject({ chat_id: String(CHANNEL_ID) });
+    const after = await stateOf(w, d.id);
+    expect(after.state).toBe('deleted');
+    expect(after.deleted_at).not.toBeNull();
+    expect(after.deleted_by?.account_id).toBe(w.owner.accountId);
+    expect(after.text).toBe('Oops, wrong price');
+
+    // Past 48 hours the bot can no longer delete it.
+    const old = await draft(w, destinationId, 'Old news');
+    await call(w.owner, 'POST', api(w.ws, `/${old.id}/publish`), { expected_version: old.version });
+    await vi.waitFor(async () => expect((await stateOf(w, old.id)).state).toBe('published'), {
+      timeout: 20_000,
+    });
+    await sql`update posts set published_at = now() - interval '49 hours' where id = ${old.id}`.execute(
+      deps.db,
+    );
+    const late = await call(w.owner, 'POST', api(w.ws, `/${old.id}/delete-from-telegram`));
+    expect(late.statusCode).toBe(409);
+    expect((await stateOf(w, old.id)).state).toBe('published');
+    expect(deleteCalls()).toHaveLength(before + 1);
+  }, 60_000);
+
+  it('a scheduled post whose time comes at the daily limit fails with daily_limit and sends nothing (AC-16)', async () => {
+    const w = await workspace();
+    const { destinationId } = await connectChannel(w);
+    await sql`insert into posts (id, workspace_id, destination_id, text, silent, state, version,
+      author_account_id, last_changed_by_account_id, last_changed_at, created_at, scheduled_for,
+      scheduled_by_account_id, schedule_kind, sending_started_at, published_at, telegram_message_id,
+      outcome_at, needs_attention)
+      select gen_random_uuid(), ${w.ws}, ${destinationId}, 'sent', false, 'published', 1,
+        ${w.owner.accountId}, ${w.owner.accountId}, now(), now(), now(), ${w.owner.accountId}, 'now',
+        now() - interval '1 hour', now() - interval '1 hour', 800000 + g, now(), false
+      from generate_series(1, 30) g`.execute(deps.db);
+    const id = await seedDue(w, destinationId, minutesAgo(1), 'one too many');
+    await vi.waitFor(async () => expect((await stateOf(w, id)).state).toBe('failed'), {
+      timeout: 20_000,
+    });
+    const failed = await stateOf(w, id);
+    expect(failed.outcome_reason).toBe('daily_limit');
+    expect(failed.needs_attention).toBe(true);
+    expect(sends(w)).toHaveLength(0);
+    expect(await postIntegrity.overDailyCap(deps.db, w.ws)).toEqual([]);
+  }, 60_000);
 
   it('integrity queries find nothing after the suite (all ACs)', async () => {
     const w = await workspace();

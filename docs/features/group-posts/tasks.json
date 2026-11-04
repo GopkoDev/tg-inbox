@@ -777,7 +777,7 @@
         "apps/api/src/e2e/"
       ],
       "file": "docs/features/group-posts/tasks/t34-api-e2e-outage-load.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T35",

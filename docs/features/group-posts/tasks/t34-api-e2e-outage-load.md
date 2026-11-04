@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/e2e/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T34 — Add the missing API end-to-end suites: outage over 15 minutes and in-window catch-up, schedule → published on time, delete through the API, a due post failing on the daily limit, and posts-load (capture under group traffic, post 429 vs send pause, on-time)
