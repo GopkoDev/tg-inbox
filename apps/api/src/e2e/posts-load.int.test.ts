@@ -371,8 +371,15 @@ describe('posts under load (postgres + pg-boss + fake Bot API)', { timeout: 240_
       targets.push(conv);
     }
 
+    // Three posts per chat: the 3 s per-chat pace spreads the nine sends over the reply window,
+    // so the replies really go out while posts are being sent.
     const postIds: string[] = [];
-    for (const [i, c] of chats.entries()) postIds.push(await publishNow(w, c.id, `Post ${i}`));
+    for (let round = 0; round < 3; round++) {
+      for (const [i, c] of chats.entries()) {
+        postIds.push(await publishNow(w, c.id, `Post ${round}-${i}`));
+      }
+    }
+    const repliesStartedAt = new Date();
 
     const timedReply = async (conversationId: string) => {
       const started = performance.now();
@@ -416,6 +423,16 @@ describe('posts under load (postgres + pg-boss + fake Bot API)', { timeout: 240_
         for (const id of postIds) expect((await stateOf(w, id)).state).toBe('published');
       },
       { timeout: 60_000 },
+    );
+    // The posting really overlapped the replies: the last post went out after they started.
+    const lastPublished = await deps.db
+      .selectFrom('posts')
+      .select((eb) => eb.fn.max('published_at').as('at'))
+      .where('workspace_id', '=', w.ws)
+      .where('id', 'in', postIds)
+      .executeTakeFirstOrThrow();
+    expect(new Date(lastPublished.at as Date).getTime()).toBeGreaterThan(
+      repliesStartedAt.getTime() + 2 * SECOND,
     );
     expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
   }, 120_000);
