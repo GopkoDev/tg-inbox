@@ -42,7 +42,7 @@
 | T33 | Guard a live claim against a same-moment job, prove the owner re-check with a demoted-owner test, step older migration tests off migration 025, and bring the contract, data model and staged migrations in line with the new code results | app | Dmytro Hopko | M | — | done | COMMIT |
 | T34 | Add the missing API end-to-end suites: outage over 15 minutes and in-window catch-up, schedule → published on time, delete through the API, a due post failing on the daily limit, and posts-load (capture under group traffic, post 429 vs send pause, on-time) | tests | Dmytro Hopko | M | T33 | done | COMMIT |
 | T35 | Keep one post page instance across new / :id / publish / schedule with real lazy routes, drop the second React root, and test with the real lazy route shape | ui | Dmytro Hopko | M | — | done | COMMIT |
-| T36 | Show the destination-limit result in the connect dialog, and show the code expiry and the change-time prefill only in the workspace time zone | ui | Dmytro Hopko | M | T35 | todo | — |
+| T36 | Show the destination-limit result in the connect dialog, and show the code expiry and the change-time prefill only in the workspace time zone | ui | Dmytro Hopko | M | T35 | done | COMMIT |
 | T37 | Make the whole browser e2e suite pass, starting with the AC-01 connect flow that times out on «… is connected» | tests | Dmytro Hopko | M | T33, T35, T36 | todo | — |
 
 **Total:** 37 tasks (T25–T32 review follow-ups, T33–T37 re-review follow-ups, 2026-11-04).

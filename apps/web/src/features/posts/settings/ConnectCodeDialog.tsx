@@ -18,11 +18,13 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { createDestinationCode, getDestinationCode } from '../api';
 import { useDestinationsStore } from '../destinations-store';
+import { formatPostTime } from '../time';
 
 type View =
   | { kind: 'creating' }
   | { kind: 'refused'; code: 'POSTS_NEED_WORKING_BOT' | 'DESTINATION_LIMIT_REACHED' }
   | { kind: 'error' }
+  | { kind: 'limit' }
   | { kind: 'code'; created: DestinationCodeCreated; status: DestinationCodeStatus['status'] }
   | { kind: 'no_post_right'; created: DestinationCodeCreated; right: string };
 
@@ -30,9 +32,6 @@ const RIGHT: Record<string, string> = {
   post_messages: 'post messages',
   send_messages: 'send messages',
 };
-
-const clock = (iso: string) =>
-  new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -78,6 +77,7 @@ export function ConnectCodeDialog({
     setAttempt((n) => n + 1);
   };
   const items = useDestinationsStore((s) => s.items);
+  const timeZone = useDestinationsStore((s) => s.timeZone);
 
   useEffect(() => {
     let cancelled = false;
@@ -115,6 +115,7 @@ export function ConnectCodeDialog({
           created,
           right: RIGHT[s.needed_right ?? ''] ?? 'post messages',
         });
+      else if (s.status === 'destination_limit') setView({ kind: 'limit' });
       else {
         setView({ kind: 'code', created, status: s.status });
         if (s.status === 'connected') setConnectedId(s.destination_id);
@@ -187,6 +188,11 @@ export function ConnectCodeDialog({
             <AlertDescription>You can connect up to 20 channels and groups</AlertDescription>
           </Alert>
         )}
+        {view.kind === 'limit' && (
+          <Alert variant="destructive">
+            <AlertDescription>You can connect up to 20 channels and groups</AlertDescription>
+          </Alert>
+        )}
         {view.kind === 'error' && (
           <Alert variant="destructive">
             <AlertDescription>Couldn't create a code.</AlertDescription>
@@ -234,7 +240,8 @@ export function ConnectCodeDialog({
               </TabsContent>
             </Tabs>
             <p className="text-sm text-muted-foreground">
-              {`Expires at ${clock(created.expires_at)} · Waiting for the code…`}
+              {timeZone ? `Expires at ${formatPostTime(created.expires_at, timeZone)} · ` : ''}
+              Waiting for the code…
               {view.kind === 'code' && (
                 <Loader2 className="ml-1 inline size-3 animate-spin" aria-hidden />
               )}

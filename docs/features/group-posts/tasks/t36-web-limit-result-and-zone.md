@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/settings/ConnectCodeDialog.tsx", "apps
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T36 — Show the destination-limit result in the connect dialog, and show the code expiry and the change-time prefill only in the workspace time zone

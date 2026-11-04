@@ -816,7 +816,7 @@
         "apps/web/src/features/posts/time.ts"
       ],
       "file": "docs/features/group-posts/tasks/t36-web-limit-result-and-zone.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T37",

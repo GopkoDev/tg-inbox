@@ -20,6 +20,7 @@ vi.mock('@/shared/api/live-connection', () => ({
 }));
 
 import { MemoryRouter } from 'react-router';
+import { useDestinationsStore } from '../destinations-store';
 import { ConnectCodeDialog } from './ConnectCodeDialog';
 
 const WS = '0198f0c0-0000-7000-8000-000000000001';
@@ -41,6 +42,7 @@ const status = (s: string) => ({
 beforeEach(() => {
   vi.resetAllMocks();
   live.onFrame = null;
+  useDestinationsStore.setState({ timeZone: 'Europe/Kyiv' });
   api.create.mockResolvedValue(created);
   api.get.mockResolvedValue(status('waiting'));
 });
@@ -63,4 +65,31 @@ describe('ConnectCodeDialog (AC-01)', () => {
     act(() => live.onFrame?.({ type: 'destinations.changed', v: 1, workspace_id: WS }));
     await waitFor(() => expect(api.get.mock.calls.length).toBe(before + 1));
   }, 10_000);
+
+  const open = () =>
+    render(
+      <MemoryRouter>
+        <ConnectCodeDialog workspaceId={WS} onClose={() => undefined} />
+      </MemoryRouter>,
+    );
+
+  it('shows the destination-limit result, with no spinner and no waiting text', async () => {
+    api.get.mockResolvedValue(status('destination_limit'));
+    open();
+    expect(await screen.findByText(/up to 20 channels and groups/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Waiting/i)).not.toBeInTheDocument();
+    expect(document.querySelector('.animate-spin')).toBeNull();
+  });
+
+  it('shows the code expiry in the workspace zone, naming it', async () => {
+    open();
+    expect(await screen.findByText(/Expires at .*\(Europe\/Kyiv\)/)).toBeInTheDocument();
+  });
+
+  it('does not show a browser-zone expiry while the workspace zone is unknown', async () => {
+    useDestinationsStore.setState({ timeZone: null });
+    open();
+    await screen.findByText(/tgp_abc/);
+    expect(screen.queryByText(/Expires at/)).not.toBeInTheDocument();
+  });
 });

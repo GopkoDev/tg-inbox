@@ -97,16 +97,18 @@ function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
         onChanged={reload}
       />
     );
-    if (dialog === 'schedule' && current.state === 'scheduled' && current.schedule?.kind === 'time')
+    if (
+      dialog === 'schedule' &&
+      current.state === 'scheduled' &&
+      current.schedule?.kind === 'time' &&
+      zone
+    )
       overlay = (
         <ScheduleDialog
           workspaceId={workspaceId}
           postId={postId}
           changeTime
-          initialLocalTime={instantToLocal(
-            new Date(current.schedule.scheduled_for),
-            zone ?? Intl.DateTimeFormat().resolvedOptions().timeZone,
-          )}
+          initialLocalTime={instantToLocal(new Date(current.schedule.scheduled_for), zone)}
           onClose={close}
           onDone={done}
         />
