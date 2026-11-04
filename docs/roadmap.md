@@ -108,4 +108,4 @@ flowchart LR
 | 6 · Operator notifications | 2026-10-19 | [changelog](features/operator-notifications/_ship/changelog.md) · [PR #6](https://github.com/GopkoDev/tg-inbox/pull/6) |
 | 7 · Contacts | 2026-10-19 | [changelog](features/contacts/_ship/changelog.md) · [PR #7](https://github.com/GopkoDev/tg-inbox/pull/7) |
 | 8 · Broadcasts | 2026-10-24 | [changelog](features/broadcasts/_ship/changelog.md) · [PR #8](https://github.com/GopkoDev/tg-inbox/pull/8) |
-| 10 · Group / channel posts | 2026-11-04 | [changelog](features/group-posts/_ship/changelog.md) |
+| 10 · Group / channel posts | 2026-11-04 | [changelog](features/group-posts/_ship/changelog.md) · [PR #9](https://github.com/GopkoDev/tg-inbox/pull/9) |
