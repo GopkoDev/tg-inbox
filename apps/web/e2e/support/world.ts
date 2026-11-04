@@ -115,6 +115,8 @@ export interface World {
     postId: string,
     minutes: number,
   ): Promise<void>;
+  /** The owner publishes a draft now over HTTP (no browser page opens the post). */
+  publishPost(ownerEmail: string, workspaceId: string, postId: string): Promise<void>;
   /** `actor` creates a draft post over HTTP. Returns the post id. */
   draftPost(
     actor: string,
@@ -484,6 +486,15 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
         });
         if (res.statusCode !== 200)
           throw new Error(`schedule failed: ${res.statusCode} ${res.body}`);
+      },
+      async publishPost(ownerEmail, workspaceId, postId) {
+        const device = await deviceOf(ownerEmail);
+        const base = `/api/workspaces/${workspaceId}/posts/${postId}`;
+        const post = await device.get(base);
+        if (post.statusCode !== 200) throw new Error(`post read failed: ${post.body}`);
+        const res = await device.post(`${base}/publish`, { expected_version: post.json().version });
+        if (res.statusCode !== 200)
+          throw new Error(`publish failed: ${res.statusCode} ${res.body}`);
       },
       async draftPost(actor, workspaceId, text, destinationId) {
         const device = await deviceOf(actor);

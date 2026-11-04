@@ -143,7 +143,8 @@ export function ScheduleDialog({
   };
 
   const needsZone = data !== null && data.time_zone === null;
-  const blockers = data?.blockers.filter((b) => b !== 'daily_limit') ?? [];
+  const ignoredBlockers: string[] = changeTime ? ['daily_limit', 'not_a_draft'] : ['daily_limit'];
+  const blockers = data?.blockers.filter((b) => !ignoredBlockers.includes(b)) ?? [];
   const submitLabel = changeTime ? 'Change time' : 'Schedule';
 
   return (

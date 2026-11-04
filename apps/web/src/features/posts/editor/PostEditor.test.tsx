@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/shared/api/client';
 import { ShellGuardContext } from '@/shared/ui/app-shell-context';
-import { stubRadixDom } from '@/test/radix';
+import { openMenu, stubRadixDom } from '@/test/radix';
 
 const api = vi.hoisted(() => ({
   getPost: vi.fn(),
@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   savePost: vi.fn(),
   listDestinations: vi.fn(),
   duplicatePost: vi.fn(),
+  deletePostDraft: vi.fn(),
 }));
 vi.mock('../api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../api')>()),
@@ -20,6 +21,7 @@ vi.mock('../api', async (importOriginal) => ({
   savePost: (...a: unknown[]) => api.savePost(...a),
   listDestinations: (...a: unknown[]) => api.listDestinations(...a),
   duplicatePost: (...a: unknown[]) => api.duplicatePost(...a),
+  deletePostDraft: (...a: unknown[]) => api.deletePostDraft(...a),
 }));
 vi.mock('@/shared/api/live-connection', () => ({
   subscribeLive: () => () => undefined,
@@ -82,11 +84,11 @@ function Where() {
   const l = useLocation();
   return <div data-testid="where">{l.pathname}</div>;
 }
-function renderIt(postId: string | null, isOwner = true) {
+function renderIt(postId: string | null, isOwner = true, extra: { onNotADraft?: () => void } = {}) {
   return render(
     <ShellGuardContext.Provider value={guard}>
       <MemoryRouter initialEntries={[`/w/${WS}/posts/${postId ?? 'new'}`]}>
-        <PostEditor workspaceId={WS} postId={postId} isOwner={isOwner} />
+        <PostEditor workspaceId={WS} postId={postId} isOwner={isOwner} {...extra} />
         <Routes>
           <Route path="*" element={<Where />} />
         </Routes>
@@ -305,15 +307,16 @@ describe('SCR-37 PostEditor', () => {
     );
   });
 
-  it('not a draft anymore: the page switches to the post page (POST_NOT_A_DRAFT)', async () => {
+  it('not a draft anymore (POST_NOT_A_DRAFT): the editor hands over to the host to show the post page', async () => {
+    const onNotADraft = vi.fn();
     api.savePost.mockRejectedValue(
       new ApiError(409, ErrorCode.POST_NOT_A_DRAFT, 'not a draft', { state: 'scheduled' }),
     );
-    renderIt(POST);
+    renderIt(POST, true, { onNotADraft });
     await flush();
     typeText('x');
     await advance(600);
-    expect(screen.getByTestId('where')).toHaveTextContent(`/w/${WS}/posts/${POST}`);
+    expect(onNotADraft).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('post-not-a-draft')).toBeInTheDocument();
   });
 
@@ -338,12 +341,36 @@ describe('SCR-37 PostEditor', () => {
     expect(screen.getByRole('textbox', { name: 'Text' })).toBeInTheDocument();
   });
 
-  it('delete refused AC-18: FORBIDDEN from the delete dialog shows the author-or-owner alert', async () => {
-    const { deletePostDraft } = await import('../api');
-    expect(deletePostDraft).toBeDefined();
+  it('delete refused AC-18: FORBIDDEN after confirming shows the author-or-owner alert', async () => {
+    api.deletePostDraft.mockRejectedValue(new ApiError(403, ErrorCode.FORBIDDEN, 'no'));
     renderIt(POST, false);
     await flush();
-    expect(screen.getByRole('button', { name: 'More actions' })).toBeInTheDocument();
+    openMenu('More actions');
+    await flush();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete draft' }));
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await flush();
+    expect(api.deletePostDraft).toHaveBeenCalledWith(WS, POST);
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Only the author or a business owner can delete this draft',
+    );
+  });
+
+  it('delete: POST_NOT_A_DRAFT closes the dialog and tells the host', async () => {
+    const onNotADraft = vi.fn();
+    api.deletePostDraft.mockRejectedValue(
+      new ApiError(409, ErrorCode.POST_NOT_A_DRAFT, 'not a draft'),
+    );
+    renderIt(POST, true, { onNotADraft });
+    await flush();
+    openMenu('More actions');
+    await flush();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Delete draft' }));
+    await flush();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
+    await flush();
+    expect(onNotADraft).toHaveBeenCalledTimes(1);
   });
 });
 

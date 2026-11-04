@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/", "apps/web/src/pages/", "apps/web/e2
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T32 — Make the web tests assert real outcomes and run the browser e2e suite green, adding attention and change-time flows

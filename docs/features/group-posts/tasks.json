@@ -732,7 +732,7 @@
         "apps/web/e2e/"
       ],
       "file": "docs/features/group-posts/tasks/t32-web-tests-and-browser-e2e.md",
-      "status": "todo"
+      "status": "done"
     }
   ]
 }

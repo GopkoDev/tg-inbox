@@ -1,4 +1,5 @@
 import type { Browser, Page } from '@playwright/test';
+import { sendAnswers } from '../../api/src/test/fake-telegram.ts';
 import { expect, PASSWORD, test, type World } from './support/world.ts';
 
 /**
@@ -162,6 +163,7 @@ test('the owner schedules a draft for tomorrow 09:00 in Europe/Kyiv; every membe
   await expect(row).toContainText('09:00');
   await row.getByRole('link').first().click();
   await expect(ana.page.getByRole('button', { name: 'Change time' })).toHaveCount(0); // owner action
+  await expect(ana.page.getByText(/Only a business owner can change the time/)).toBeVisible(WAIT);
   await ana.page.getByRole('button', { name: 'Back to draft' }).click();
   await ana.page.getByRole('alertdialog').getByRole('button', { name: 'Move to drafts' }).click();
   await expect(ana.page.getByText('Draft').first()).toBeVisible(WAIT);
@@ -221,4 +223,61 @@ test('an operator sees no owner actions on a published post (edge case)', async 
   await expect(ana.page.getByText(/Published /)).toBeVisible(WAIT);
   await expect(ana.page.getByRole('button', { name: 'Delete from Telegram' })).toHaveCount(0);
   await expect(ana.page.getByRole('button', { name: 'Duplicate' })).toBeVisible();
+});
+
+test('a refused post counts next to Posts for the whole team until a member opens it (AC-13)', async ({
+  browser,
+  world,
+}) => {
+  const { workspaceId, token } = await acme(world);
+  const destinationId = await world.connectChannel(OWNER, workspaceId, token, CHANNEL);
+  await world.scriptBot(token, {
+    chatMembers: { [String(CHANNEL.id)]: { status: 'administrator', can_post_messages: true } },
+    sendMessage: [sendAnswers.chatNotFound()],
+  });
+  const text = 'This one is refused.';
+  const postId = await world.draftPost(OWNER, workspaceId, text, destinationId);
+  const ana = await open(browser, OPERATOR, workspaceId, '/posts');
+  const olga = await open(browser, OWNER, workspaceId, '/posts');
+  await world.publishPost(OWNER, workspaceId, postId);
+  // every member's nav counts the failed post until one of them opens it
+  const badge = (page: Page) => page.getByRole('img', { name: '1 post needs attention' });
+  await expect(badge(olga.page)).toBeVisible(SENDING);
+  await expect(badge(ana.page)).toBeVisible(SENDING);
+  await ana.page.getByRole('link', { name: 'Posts', exact: true }).click();
+  await postRow(ana.page, text).getByRole('link').first().click();
+  await expect(ana.page.getByText('Failed').first()).toBeVisible(WAIT);
+  await expect(ana.page.getByText('The chat no longer exists').first()).toBeVisible(WAIT);
+  await expect(badge(ana.page)).toHaveCount(0, WAIT);
+  await expect(badge(olga.page)).toHaveCount(0, WAIT);
+  expect((await world.sentMessages(token)).filter((m) => m.text === text)).toHaveLength(1);
+});
+
+test('an owner changes the time of a scheduled post; an operator is not offered it (AC-09)', async ({
+  browser,
+  world,
+}) => {
+  const { workspaceId, token } = await acme(world);
+  const destinationId = await world.connectChannel(OWNER, workspaceId, token, CHANNEL);
+  await world.setPostingTimeZone(OWNER, workspaceId, 'Europe/Kyiv');
+  const text = 'Moving this one.';
+  const postId = await world.draftPost(OWNER, workspaceId, text, destinationId);
+  await world.schedulePost(OWNER, workspaceId, postId, 120);
+  const dayAfter = new Date(Date.now() + 60 * 3_600_000).toISOString().slice(0, 10);
+
+  const ana = await open(browser, OPERATOR, workspaceId, `/posts/${postId}`);
+  await expect(ana.page.getByText(/Goes out /)).toBeVisible(WAIT);
+  await expect(ana.page.getByRole('button', { name: 'Change time' })).toHaveCount(0);
+
+  const olga = await open(browser, OWNER, workspaceId, `/posts/${postId}`);
+  await olga.page.getByRole('button', { name: 'Change time' }).click();
+  const dialog = olga.page.getByRole('alertdialog');
+  await dialog.getByLabel('Date').fill(dayAfter);
+  await dialog.getByLabel('Time').fill('10:30');
+  await dialog
+    .getByRole('button', { name: /^(Schedule|Change time|Confirm)/ })
+    .last()
+    .click();
+  await expect(olga.page.getByText(/Goes out .*10:30 \(Europe\/Kyiv\)/)).toBeVisible(WAIT);
+  await expect(ana.page.getByText(/10:30 \(Europe\/Kyiv\)/)).toBeVisible(WAIT);
 });

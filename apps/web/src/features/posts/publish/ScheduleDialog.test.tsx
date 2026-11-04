@@ -104,6 +104,31 @@ describe('SCR-39 ScheduleDialog', () => {
     expect(screen.getByLabelText('Time')).toHaveValue('09:00');
   });
 
+  it('change time (AC-09): the API calls a scheduled post "not a draft"; that does not block the owner changing its time', async () => {
+    api.getPublishConfirmation.mockResolvedValue(confirmation({ blockers: ['not_a_draft'] }));
+    api.schedulePost.mockResolvedValue({ outcome: 'scheduled', post: {} });
+    renderIt({ changeTime: true, initialLocalTime: '2026-11-04T09:00' });
+    const submit = await screen.findByRole('button', { name: 'Change time' });
+    expect(screen.queryByText('This post is no longer a draft')).toBeNull();
+    expect(submit).toBeEnabled();
+    fireEvent.change(screen.getByLabelText('Time'), { target: { value: '10:30' } });
+    fireEvent.click(submit);
+    expect(api.schedulePost).toHaveBeenCalledWith(WS, POST, {
+      expected_version: 3,
+      local_time: '2026-11-04T10:30',
+      time_zone: 'Europe/Kyiv',
+    });
+  });
+
+  it('scheduling a post that really is no longer a draft stays blocked (AC-11)', async () => {
+    api.getPublishConfirmation.mockResolvedValue(confirmation({ blockers: ['not_a_draft'] }));
+    renderIt();
+    await screen.findByText('Schedule the post');
+    fill();
+    expect(screen.getByText('This post is no longer a draft')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Schedule' })).toBeDisabled();
+  });
+
   it('time zone first: no zone yet asks to confirm it, saves, then shows the form (AC-09)', async () => {
     api.getPublishConfirmation.mockResolvedValue(confirmation({ time_zone: null }));
     api.setPostingTimeZone.mockResolvedValue({
