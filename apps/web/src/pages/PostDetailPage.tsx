@@ -10,6 +10,7 @@ import { ScheduleDialog } from '@/features/posts/publish/ScheduleDialog';
 import type { GuardFn } from '@/features/workspaces/guard';
 import { useWorkspaceStore } from '@/features/workspaces/store';
 import { ShellGuardContext } from '@/shared/ui/app-shell-context';
+import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
 import { NotFoundCard } from './NotFoundPage';
 
@@ -35,6 +36,8 @@ function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
   const status = usePostStore((s) => s.status);
   const [wasEditor, setWasEditor] = useState(false);
   const [zone, setZone] = useState<string | null>(null);
+  const [zoneFailed, setZoneFailed] = useState(false);
+  const [zoneTry, setZoneTry] = useState(0);
 
   useEffect(() => {
     if (!postId) return;
@@ -49,11 +52,11 @@ function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
     let live = true;
     listDestinations(workspaceId, { background: true })
       .then((list) => live && setZone(list.time_zone))
-      .catch(() => undefined);
+      .catch(() => live && setZoneFailed(true));
     return () => {
       live = false;
     };
-  }, [workspaceId]);
+  }, [workspaceId, zoneTry]);
 
   const reload = () => void usePostStore.getState().reload(guard);
   const step = postId ? pathname.split('/').pop() : null;
@@ -98,6 +101,28 @@ function PostSwitch({ workspaceId, postId, pathname, isOwner }: Address) {
       />
     );
     if (
+      dialog === 'schedule' &&
+      current.state === 'scheduled' &&
+      current.schedule?.kind === 'time' &&
+      !zone &&
+      zoneFailed
+    )
+      overlay = (
+        <div role="alert" className="flex items-center gap-3 p-4 text-sm">
+          <span>The workspace time zone could not be loaded.</span>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setZoneFailed(false);
+              setZoneTry((n) => n + 1);
+            }}
+          >
+            Retry
+          </Button>
+        </div>
+      );
+    else if (
       dialog === 'schedule' &&
       current.state === 'scheduled' &&
       current.schedule?.kind === 'time' &&

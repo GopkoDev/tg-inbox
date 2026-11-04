@@ -11,6 +11,8 @@ import { createDestinationRepo } from '../modules/posts/infra/destination-repo.j
 import { sendAnswers, startFakeTelegram, type FakeTelegram } from '../test/fake-telegram.js';
 import { insertAccount, insertSession } from '../test/fixtures/auth.js';
 import { insertBot } from '../test/fixtures/bots.js';
+import { insertContact } from '../test/fixtures/contacts.js';
+import { insertConversation, insertMessage } from '../test/fixtures/conversations.js';
 import { signedDelivery, telegramUpdate } from '../test/fixtures/telegram.js';
 import { insertMembership, insertWorkspace } from '../test/fixtures/workspaces.js';
 import { startTestDatabase, testConfig, type TestDatabase } from '../test/postgres.js';
@@ -340,4 +342,81 @@ describe('posts under load (postgres + pg-boss + fake Bot API)', { timeout: 240_
     expect(await postIntegrity.startedLate(deps.db, w.ws)).toEqual([]);
     expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
   }, 90_000);
+
+  it('replies keep their speed at 2 per second while posts go out (AC-17)', async () => {
+    const w = await workspace();
+    const chats = [await destination(w), await destination(w), await destination(w, 'group')];
+    const REPLIES = 12;
+    const targets: string[] = [];
+    for (let i = 0; i < REPLIES; i++) {
+      const at = new Date(Date.now() - 60_000);
+      const conv = await insertConversation(deps.db, {
+        workspaceId: w.ws,
+        contactId: await insertContact(deps.db, {
+          workspaceId: w.ws,
+          telegramUserId: BigInt(620_000 + i),
+        }),
+        waitingSince: at,
+        waitingStartedBy: 'message',
+        lastMessageReceivedAt: at,
+        lastActivityAt: at,
+      });
+      await insertMessage(deps.db, {
+        workspaceId: w.ws,
+        conversationId: conv,
+        telegramMessageId: 1n,
+        receivedAt: at,
+        sentAt: at,
+      });
+      targets.push(conv);
+    }
+
+    const postIds: string[] = [];
+    for (const [i, c] of chats.entries()) postIds.push(await publishNow(w, c.id, `Post ${i}`));
+
+    const timedReply = async (conversationId: string) => {
+      const started = performance.now();
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/workspaces/${w.ws}/inbox/conversations/${conversationId}/replies`,
+        cookies: w.owner.cookies,
+        payload: { client_key: newId(), body: `Reply ${conversationId}`, last_seen_reply_id: null },
+      });
+      expect(res.statusCode, res.body.slice(0, 300)).toBe(201);
+      const replyId = (res.json() as { id: string }).id;
+      for (;;) {
+        const row = await deps.db
+          .selectFrom('replies')
+          .select('state')
+          .where('id', '=', replyId)
+          .executeTakeFirstOrThrow();
+        if (row.state !== 'sending') {
+          expect(row.state).toBe('sent');
+          return performance.now() - started;
+        }
+        if (performance.now() - started > 15 * SECOND) throw new Error('a reply did not leave');
+        await sleep(20);
+      }
+    };
+    const latencies: number[] = [];
+    const inFlight: Promise<void>[] = [];
+    for (const conv of targets) {
+      inFlight.push(timedReply(conv).then((ms) => void latencies.push(ms)));
+      await sleep(500);
+    }
+    await Promise.all(inFlight);
+
+    console.info(`[posts-load] reply p95 ${p95(latencies).toFixed(0)} ms`);
+    expect(latencies).toHaveLength(REPLIES);
+    expect(p95(latencies), `reply p95 ${Math.round(p95(latencies))} ms`).toBeLessThanOrEqual(
+      2 * SECOND,
+    );
+    await vi.waitFor(
+      async () => {
+        for (const id of postIds) expect((await stateOf(w, id)).state).toBe('published');
+      },
+      { timeout: 60_000 },
+    );
+    expect(await integrityViolations(deps.db, [w.ws])).toEqual([]);
+  }, 120_000);
 });

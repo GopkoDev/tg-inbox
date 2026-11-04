@@ -46,6 +46,6 @@
 | T37 | Make the whole browser e2e suite pass, starting with the AC-01 connect flow that times out on «… is connected» | tests | Dmytro Hopko | M | T33, T35, T36 | done | COMMIT |
 | T38 | Create exactly one connect code per dialog open and make the newest code the live one, show the expiry when the workspace has no time zone, and get the AC-01 browser flow green | ui | Dmytro Hopko | S | — | done | COMMIT |
 | T39 | After a send job throws following its claim, guarantee that a later run settles the post as not confirmed — never stuck in sending | app | Dmytro Hopko | S | — | done | COMMIT |
-| T40 | Measure reply latency while posts go out, and give change time an error or retry when the workspace zone cannot be read | tests | Dmytro Hopko | S | T39 | todo | — |
+| T40 | Measure reply latency while posts go out, and give change time an error or retry when the workspace zone cannot be read | tests | Dmytro Hopko | S | T39 | done | COMMIT |
 
 **Total:** 40 tasks (T25–T40 are review follow-ups, 2026-11-04).

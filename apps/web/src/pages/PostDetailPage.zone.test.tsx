@@ -1,4 +1,4 @@
-import { act, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useWorkspaceStore } from '@/features/workspaces/store';
@@ -61,6 +61,16 @@ describe('PostDetailPage change-time prefill (AC-09)', () => {
   it('prefills the change-time dialog in the workspace zone once it is known', async () => {
     h.list.mockResolvedValue({ items: [], time_zone: 'Europe/Kyiv', scheduled_total: 0 });
     await act(async () => void renderIt());
+    expect(await screen.findByTestId('schedule-dialog')).toHaveTextContent('2026-11-05T09:00');
+  });
+
+  it('shows an error with Retry when the workspace zone cannot be read, and recovers on retry', async () => {
+    h.list.mockRejectedValueOnce(new Error('network'));
+    h.list.mockResolvedValue({ items: [], time_zone: 'Europe/Kyiv', scheduled_total: 0 });
+    await act(async () => void renderIt());
+    expect(screen.queryByTestId('schedule-dialog')).not.toBeInTheDocument();
+    const retry = await screen.findByRole('button', { name: /retry|try again/i });
+    await act(async () => void fireEvent.click(retry));
     expect(await screen.findByTestId('schedule-dialog')).toHaveTextContent('2026-11-05T09:00');
   });
 });

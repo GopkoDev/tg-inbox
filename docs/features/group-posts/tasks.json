@@ -892,7 +892,7 @@
         "apps/web/src/pages/PostDetailPage.tsx"
       ],
       "file": "docs/features/group-posts/tasks/t40-reply-latency-and-zone-error.md",
-      "status": "todo"
+      "status": "done"
     }
   ]
 }

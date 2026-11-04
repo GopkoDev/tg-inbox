@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/e2e/posts-load.int.test.ts", "apps/web/src/pages/Post
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T40 — Measure reply latency while posts go out, and give change time an error or retry when the workspace zone cannot be read
