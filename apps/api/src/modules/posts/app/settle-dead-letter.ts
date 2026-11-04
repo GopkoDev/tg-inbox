@@ -1,5 +1,5 @@
 import type { PostSendDeps, PostSendJob } from './send-post.js';
-import { SEND_WINDOW_MS } from './send-post.js';
+import { CLAIM_STALE_MS, SEND_WINDOW_MS } from './send-post.js';
 
 export type DeadLetterDeps = Pick<
   PostSendDeps,
@@ -18,6 +18,12 @@ export function createDeadLetterSettler(deps: DeadLetterDeps) {
         if (!post) return;
         const now = clock.now();
         if (post.state === 'sending') {
+          const started = post.sendingStartedAt;
+          if (started && now.getTime() - started.getTime() <= CLAIM_STALE_MS) {
+            // A live claim must not be settled; a later run does it once the claim is stale.
+            await jobs.enqueueSend(tx, job, new Date(started.getTime() + CLAIM_STALE_MS + 1));
+            return;
+          }
           const row = await posts.markNotConfirmed(workspaceId, postId, now, tx);
           if (row) await signals.postChanged(tx, workspaceId, postId);
           return;

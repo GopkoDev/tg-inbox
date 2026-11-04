@@ -873,7 +873,7 @@
         "apps/api/src/modules/posts/infra/jobs.ts"
       ],
       "file": "docs/features/group-posts/tasks/t39-send-claim-retry-settles.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T40",

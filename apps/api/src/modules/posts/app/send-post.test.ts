@@ -563,7 +563,7 @@ describe('sendPost: Telegram refusals (AC-13)', () => {
 describe('dead-letter settler (AC-08, AC-12)', () => {
   it('settles a stale sending claim as not confirmed with attention', async () => {
     const h = setup();
-    const p = h.seed({ state: 'sending', sendingStartedAt: T0 });
+    const p = h.seed({ state: 'sending', sendingStartedAt: new Date(T0.getTime() - 60_000) });
     await h.settler.settle({ postId: p.id, workspaceId: WS, moment: T0.toISOString() });
     expect(h.sends).toHaveLength(0);
     expect(h.get(p.id)).toMatchObject({ state: 'not_confirmed', needsAttention: true });

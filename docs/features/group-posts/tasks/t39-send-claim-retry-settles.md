@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/send-post.ts", "apps/api/src/module
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T39 — After a send job throws following its claim, guarantee that a later run settles the post as not confirmed — never stuck in sending

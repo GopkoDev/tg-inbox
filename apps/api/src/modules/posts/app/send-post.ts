@@ -9,7 +9,7 @@ import type { PostSendJobs } from './publish.js';
 export const SEND_WINDOW_MS = 15 * 60_000;
 export const CHAT_PACE_MS = 3_000;
 const DEFAULT_RATE_LIMIT_MS = 30_000;
-const CLAIM_STALE_MS = 10_000 + 20_000; // send timeout + margin
+export const CLAIM_STALE_MS = 10_000 + 20_000; // send timeout + margin
 const DAY_MS = 24 * 3_600_000;
 const WORKING_BOT_STATES = ['connected', 'taken_over'];
 
@@ -99,7 +99,14 @@ export function createPostSender(deps: PostSendDeps) {
       if (!seen) return { kind: 'done' };
       if (seen.state === 'sending') {
         // Only the job of the claim's own moment may settle it (another job's claim may be live).
-        if (seen.scheduledFor?.toISOString() !== job.moment || !isStaleClaim(seen)) {
+        if (seen.scheduledFor?.toISOString() !== job.moment) return { kind: 'done' };
+        if (!isStaleClaim(seen)) {
+          // A live claim: queue a later run, in this transaction, that settles it once stale.
+          await jobs.enqueueSend(
+            tx,
+            job,
+            new Date(seen.sendingStartedAt!.getTime() + CLAIM_STALE_MS + 1),
+          );
           return { kind: 'done' };
         }
         await deps.lockPosts(tx, workspaceId);

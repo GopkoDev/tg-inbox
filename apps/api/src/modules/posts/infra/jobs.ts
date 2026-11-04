@@ -85,8 +85,9 @@ export interface PostJobsOptions {
 }
 
 /**
- * Registers the workers of the posts queues. A send that throws fails its job (pg-boss retries it;
- * the retry settles a claim without an outcome as not confirmed). Logs carry ids only.
+ * Registers the workers of the posts queues. A send that throws fails its job (pg-boss retries it; a retry that
+ * finds a live claim queues a later run, which settles a claim without an outcome as not
+ * confirmed once it is stale). Logs carry ids only.
  */
 export async function registerPostJobs(
   boss: Jobs,
