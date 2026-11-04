@@ -247,7 +247,7 @@ test('a refused post counts next to Posts for the whole team until a member open
   await ana.page.getByRole('link', { name: 'Posts', exact: true }).click();
   await postRow(ana.page, text).getByRole('link').first().click();
   await expect(ana.page.getByText('Failed').first()).toBeVisible(WAIT);
-  await expect(ana.page.getByText('The chat no longer exists').first()).toBeVisible(WAIT);
+  await expect(ana.page.getByText('This chat no longer exists').first()).toBeVisible(WAIT);
   await expect(badge(ana.page)).toHaveCount(0, WAIT);
   await expect(badge(olga.page)).toHaveCount(0, WAIT);
   expect((await world.sentMessages(token)).filter((m) => m.text === text)).toHaveLength(1);

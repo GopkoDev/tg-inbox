@@ -19,6 +19,7 @@ vi.mock('@/shared/api/live-connection', () => ({
   liveStatus: () => 'idle',
 }));
 
+import { StrictMode } from 'react';
 import { MemoryRouter } from 'react-router';
 import { useDestinationsStore } from '../destinations-store';
 import { ConnectCodeDialog } from './ConnectCodeDialog';
@@ -86,10 +87,23 @@ describe('ConnectCodeDialog (AC-01)', () => {
     expect(await screen.findByText(/Expires at .*\(Europe\/Kyiv\)/)).toBeInTheDocument();
   });
 
-  it('does not show a browser-zone expiry while the workspace zone is unknown', async () => {
+  it('still shows the expiry while the workspace zone is unknown, without naming a zone', async () => {
     useDestinationsStore.setState({ timeZone: null });
     open();
     await screen.findByText(/tgp_abc/);
-    expect(screen.queryByText(/Expires at/)).not.toBeInTheDocument();
+    expect(screen.getByText(/Expires/)).toBeInTheDocument();
+    expect(screen.queryByText(/\(Europe\/Kyiv\)/)).not.toBeInTheDocument();
+  });
+
+  it('creates exactly one code per dialog open under StrictMode', async () => {
+    render(
+      <StrictMode>
+        <MemoryRouter>
+          <ConnectCodeDialog workspaceId={WS} onClose={() => undefined} />
+        </MemoryRouter>
+      </StrictMode>,
+    );
+    await screen.findByText(/tgp_abc/);
+    expect(api.create).toHaveBeenCalledTimes(1);
   });
 });

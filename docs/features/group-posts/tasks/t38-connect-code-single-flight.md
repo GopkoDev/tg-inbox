@@ -9,8 +9,8 @@ files_hint: ["apps/web/src/features/posts/settings/ConnectCodeDialog.tsx", "apps
 owner: "Dmytro Hopko"
 estimate: "S"
 context_budget: "S"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T38 — Create exactly one connect code per dialog open and make the newest code the live one, show the expiry when the workspace has no time zone, and get the AC-01 browser flow green

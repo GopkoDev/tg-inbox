@@ -1,6 +1,6 @@
 import { Loader2 } from 'lucide-react';
 import type { DestinationCodeCreated, DestinationCodeStatus } from '@tg/shared';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { ApiError } from '@/shared/api/client';
 import { subscribeLive } from '@/shared/api/live-connection';
@@ -79,9 +79,16 @@ export function ConnectCodeDialog({
   const items = useDestinationsStore((s) => s.items);
   const timeZone = useDestinationsStore((s) => s.timeZone);
 
+  // One create per workspace + attempt: StrictMode re-runs the effect and must reuse the request.
+  const inFlight = useRef<{ key: string; promise: Promise<DestinationCodeCreated> } | null>(null);
+
   useEffect(() => {
     let cancelled = false;
-    createDestinationCode(workspaceId).then(
+    const key = `${workspaceId}:${attempt}`;
+    if (inFlight.current?.key !== key) {
+      inFlight.current = { key, promise: createDestinationCode(workspaceId) };
+    }
+    inFlight.current.promise.then(
       (created) => {
         if (!cancelled) setView({ kind: 'code', created, status: 'waiting' });
       },
@@ -240,7 +247,9 @@ export function ConnectCodeDialog({
               </TabsContent>
             </Tabs>
             <p className="text-sm text-muted-foreground">
-              {timeZone ? `Expires at ${formatPostTime(created.expires_at, timeZone)} · ` : ''}
+              {timeZone
+                ? `Expires at ${formatPostTime(created.expires_at, timeZone)} · `
+                : `Expires at ${new Date(created.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · `}
               Waiting for the code…
               {view.kind === 'code' && (
                 <Loader2 className="ml-1 inline size-3 animate-spin" aria-hidden />
