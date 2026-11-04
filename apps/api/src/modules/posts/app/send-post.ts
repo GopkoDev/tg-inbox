@@ -9,6 +9,7 @@ import type { PostSendJobs } from './publish.js';
 export const SEND_WINDOW_MS = 15 * 60_000;
 export const CHAT_PACE_MS = 3_000;
 const DEFAULT_RATE_LIMIT_MS = 30_000;
+const CLAIM_STALE_MS = 10_000 + 20_000; // send timeout + margin
 const DAY_MS = 24 * 3_600_000;
 const WORKING_BOT_STATES = ['connected', 'taken_over'];
 
@@ -85,6 +86,11 @@ export function createPostSender(deps: PostSendDeps) {
 
   const later = (d: Date | null, now: Date): d is Date => d !== null && d.getTime() > now.getTime();
 
+  /** A claim older than the send timeout plus a margin has no send in flight any more. */
+  const isStaleClaim = (p: PostRecord): boolean =>
+    p.sendingStartedAt === null ||
+    clock.now().getTime() - p.sendingStartedAt.getTime() > CLAIM_STALE_MS;
+
   /** Everything before the send, ending with the claim committed. */
   async function prepare(job: PostSendJob): Promise<Pre> {
     const { postId, workspaceId } = job;
@@ -93,11 +99,17 @@ export function createPostSender(deps: PostSendDeps) {
       if (!seen) return { kind: 'done' };
       if (seen.state === 'sending') {
         // Only the job of the claim's own moment may settle it (another job's claim may be live).
-        if (seen.scheduledFor?.toISOString() !== job.moment) return { kind: 'done' };
+        if (seen.scheduledFor?.toISOString() !== job.moment || !isStaleClaim(seen)) {
+          return { kind: 'done' };
+        }
         await deps.lockPosts(tx, workspaceId);
         if (seen.destinationId) await destinations.lock(workspaceId, seen.destinationId, tx);
         const locked = await posts.lock(workspaceId, postId, tx);
-        if (locked?.state === 'sending' && locked.scheduledFor?.toISOString() === job.moment) {
+        if (
+          locked?.state === 'sending' &&
+          locked.scheduledFor?.toISOString() === job.moment &&
+          isStaleClaim(locked)
+        ) {
           // A claim without an outcome: never sent again.
           await settleNotConfirmed(tx, workspaceId, postId);
         }

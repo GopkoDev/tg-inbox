@@ -9,8 +9,8 @@ files_hint: ["apps/api/src/modules/posts/app/send-post.ts", "apps/api/src/test/m
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T33 — Guard a live claim against a same-moment job, prove the owner re-check with a demoted-owner test, step older migration tests off migration 025, and bring the contract, data model and staged migrations in line with the new code results

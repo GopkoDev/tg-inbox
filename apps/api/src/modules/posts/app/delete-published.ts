@@ -2,8 +2,8 @@ import type { Post } from '@tg/shared';
 import type { Clock } from '../../../platform/clock.js';
 import type { Db } from '../../../platform/db.js';
 import {
-  AccessRemovedError,
   NotFoundError,
+  OwnerOnlyError,
   PostDeleteRefusedError,
   PostDeleteWindowPassedError,
   PostNotPublishedError,
@@ -43,7 +43,7 @@ export function createPostDeletion(deps: PostDeletionDeps) {
       await transaction(async (tx) => {
         const active = await workspaces.lockActiveOwners(tx, workspaceId, [actor.accountId]);
         if (!active.includes(actor.accountId)) {
-          throw new AccessRemovedError('Your access to this workspace was removed');
+          throw new OwnerOnlyError('Only a business owner can do this');
         }
         const row = await posts.lock(workspaceId, postId, tx);
         if (!row) throw new NotFoundError('Post not found');

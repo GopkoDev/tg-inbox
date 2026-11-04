@@ -280,7 +280,7 @@ describe('sendPost: the happy path (AC-08)', () => {
 
   it('settles a claim found without an outcome as not confirmed and never sends again', async () => {
     const h = setup();
-    const p = h.seed({ state: 'sending', sendingStartedAt: T0 });
+    const p = h.seed({ state: 'sending', sendingStartedAt: new Date(T0.getTime() - 10 * MIN) });
     await h.run(p);
     expect(h.sends).toHaveLength(0);
     expect(h.get(p.id)).toMatchObject({ state: 'not_confirmed', needsAttention: true });
@@ -623,6 +623,15 @@ describe('sendPost: review follow-up T25 (F1-F4)', () => {
     const h = setup();
     const p = h.seed({ state: 'sending', sendingStartedAt: T0 });
     await h.run(p, new Date(T0.getTime() - 5 * MIN));
+    expect(h.sends).toHaveLength(0);
+    expect(h.get(p.id).state).toBe('sending');
+    expect(h.store.signals).not.toContain(`post:${WS}:${p.id}`);
+  });
+
+  it('N1: a second job of the same moment leaves a live claim (started seconds ago) alone', async () => {
+    const h = setup();
+    const p = h.seed({ state: 'sending', sendingStartedAt: new Date(T0.getTime() - 2_000) });
+    await h.run(p);
     expect(h.sends).toHaveLength(0);
     expect(h.get(p.id).state).toBe('sending');
     expect(h.store.signals).not.toContain(`post:${WS}:${p.id}`);

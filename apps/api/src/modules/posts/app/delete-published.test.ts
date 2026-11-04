@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { fixedClock } from '../../../platform/clock.js';
 import {
-  AccessRemovedError,
+  OwnerOnlyError,
   NotFoundError,
   PostDeleteRefusedError,
   PostDeleteWindowPassedError,
@@ -145,12 +145,12 @@ describe('deletePostFromTelegram (AC-15)', () => {
     expect(h.store.posts[0]).toMatchObject({ state: 'published', deletedAt: null });
   });
 
-  it('refuses a member whose access was removed, calling nothing', async () => {
+  it('refuses an actor who is no longer an active owner, calling nothing', async () => {
     const h = setup({ ownerActive: false });
     const p = h.seed();
     await expect(
       h.deletion.deletePostFromTelegram(WS, { accountId: OWNER, role: 'owner' }, p.id),
-    ).rejects.toBeInstanceOf(AccessRemovedError);
+    ).rejects.toBeInstanceOf(OwnerOnlyError);
     expect(h.calls).toEqual([]);
   });
 

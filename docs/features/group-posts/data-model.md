@@ -129,7 +129,7 @@ erDiagram
 | `created_at`, `expires_at` | timestamptz | NOT NULL, `expires_at > created_at` | 10 minutes |
 | `used_at` | timestamptz | NULL; set iff `destination_id` set | single use |
 | `replaced_at` | timestamptz | NULL; never with `used_at` | a newer code of the same owner |
-| `result`, `result_at` | text, timestamptz | NULL together; `connected` / `no_post_right`; `connected` iff used | what the live dialog shows; expiry is derived from `expires_at` |
+| `result`, `result_at` | text, timestamptz | NULL together; `connected` / `no_post_right` (channel, no right to post) / `no_send_right` (group, may not send messages) / `destination_limit` (20 destinations reached); `connected` iff used | what the live dialog shows; expiry is derived from `expires_at` |
 | `destination_id` | uuid | NULL, FK → `destinations(workspace_id, id)` | the destination it connected or revived |
 
 ### `posts` (owned by posts)

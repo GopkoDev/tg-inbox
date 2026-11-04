@@ -156,7 +156,9 @@ paths:
       summary: Read a connect code's live result (business owner, SCR-34)
       description: |
         Flow 1 (AC-01, AC-02). `waiting` until used or expired; `connected` with the destination; `no_post_right`
-        with the right the bot needs (the code stays usable until it expires); `expired` once `expires_at`
+        with the right the bot needs (the code stays usable until it expires; `needed_right` is `post_messages` for a
+        channel and `send_messages` for a group); `destination_limit` when the workspace already has the maximum of 20
+        destinations so the chat was not connected (remove one and post a new code); `expired` once `expires_at`
         passed unused; `replaced` when a newer code of the same owner exists. Re-read on `destinations.changed`.
         Only the owner who created it can read it (another member gets `404`).
       operationId: getDestinationCode
@@ -814,7 +816,7 @@ components:
       required: [id, status, expires_at, needed_right, destination_id]
       properties:
         id: { type: string, format: uuid }
-        status: { type: string, enum: [waiting, connected, no_post_right, expired, replaced] }
+        status: { type: string, enum: [waiting, connected, no_post_right, destination_limit, expired, replaced] }
         expires_at: { type: string, format: date-time }
         needed_right: { type: [string, "null"], enum: [post_messages, send_messages, null] }
         destination_id: { type: [string, "null"], format: uuid }

@@ -756,7 +756,7 @@
         "docs/features/group-posts/migrations/"
       ],
       "file": "docs/features/group-posts/tasks/t33-fix-claim-owner-docs-migration-tests.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T34",
