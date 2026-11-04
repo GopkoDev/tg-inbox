@@ -569,6 +569,17 @@ describe('dead-letter settler (AC-08, AC-12)', () => {
     expect(h.get(p.id)).toMatchObject({ state: 'not_confirmed', needsAttention: true });
   });
 
+  it('leaves a live sending claim alone and queues a run for after it goes stale (never settles a live send)', async () => {
+    const h = setup();
+    const started = new Date(T0.getTime() - 5_000);
+    const p = h.seed({ state: 'sending', sendingStartedAt: started });
+    await h.settler.settle({ postId: p.id, workspaceId: WS, moment: T0.toISOString() });
+    expect(h.sends).toHaveLength(0);
+    expect(h.get(p.id)).toMatchObject({ state: 'sending', needsAttention: false });
+    expect(h.jobs).toHaveLength(1);
+    expect(h.jobs[0]?.startAfter.getTime()).toBeGreaterThan(started.getTime() + 30_000);
+  });
+
   it('settles a scheduled post more than 15 minutes past its moment as missed (service_down)', async () => {
     const h = setup({ now: new Date(T0.getTime() + 16 * MIN) });
     const p = h.seed();
