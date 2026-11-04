@@ -838,7 +838,7 @@
         "apps/web/src/features/posts/settings/"
       ],
       "file": "docs/features/group-posts/tasks/t37-browser-e2e-green.md",
-      "status": "todo"
+      "status": "done"
     }
   ]
 }

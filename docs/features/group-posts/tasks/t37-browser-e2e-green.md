@@ -9,8 +9,8 @@ files_hint: ["apps/web/e2e/", "apps/web/src/features/posts/settings/"]
 owner: "Dmytro Hopko"
 estimate: "M"
 context_budget: "M"
-status: "todo"
-step: ""
+status: "done"
+step: "COMMIT"
 ---
 
 # T37 — Make the whole browser e2e suite pass, starting with the AC-01 connect flow that times out on «… is connected»
