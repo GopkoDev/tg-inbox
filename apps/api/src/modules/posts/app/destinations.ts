@@ -76,21 +76,29 @@ export function createDestinations(deps: DestinationsDeps) {
       const ready = await bots.postReadiness(workspaceId);
       const username = await bots.botUsername(workspaceId);
       if (!ready || ready.state !== 'connected' || !username) throw new PostsNeedWorkingBotError();
-      const now = clock.now();
       const { code, hash } = newCode();
-      const id = newId();
-      const expiresAt = new Date(now.getTime() + CODE_TTL_MS);
-      await transaction(async (tx) => {
+      // The id and the time are taken after the posts:<ws> lock, so the code created by the later
+      // lock holder is also the later one and is the one left live (R1, AC-01).
+      const { id, expiresAt } = await transaction(async (tx) => {
         await lockActiveOwner(deps, tx, workspaceId, actor);
         if ((await destinations.countLive(workspaceId, tx)) >= DESTINATION_LIMIT) {
           throw new DestinationLimitReachedError();
         }
+        const now = clock.now();
+        const created = { id: newId(), expiresAt: new Date(now.getTime() + CODE_TTL_MS) };
         await codes.replacePrevious(workspaceId, actor.accountId, now, tx);
         await codes.insert(
           workspaceId,
-          { id, accountId: actor.accountId, codeHash: hash, createdAt: now, expiresAt },
+          {
+            id: created.id,
+            accountId: actor.accountId,
+            codeHash: hash,
+            createdAt: now,
+            expiresAt: created.expiresAt,
+          },
           tx,
         );
+        return created;
       });
       return {
         id,
