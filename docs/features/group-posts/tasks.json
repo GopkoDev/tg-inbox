@@ -839,6 +839,60 @@
       ],
       "file": "docs/features/group-posts/tasks/t37-browser-e2e-green.md",
       "status": "done"
+    },
+    {
+      "id": "T38",
+      "title": "Create exactly one connect code per dialog open and make the newest code the live one, show the expiry when the workspace has no time zone, and get the AC-01 browser flow green",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-02"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/web/src/features/posts/settings/ConnectCodeDialog.tsx",
+        "apps/api/src/modules/posts/app/destinations.ts",
+        "apps/api/src/modules/posts/infra/code-repo.ts",
+        "apps/web/e2e/posts.spec.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t38-connect-code-single-flight.md",
+      "status": "todo"
+    },
+    {
+      "id": "T39",
+      "title": "After a send job throws following its claim, guarantee that a later run settles the post as not confirmed — never stuck in sending",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-08"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/send-post.ts",
+        "apps/api/src/modules/posts/infra/jobs.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t39-send-claim-retry-settles.md",
+      "status": "todo"
+    },
+    {
+      "id": "T40",
+      "title": "Measure reply latency while posts go out, and give change time an error or retry when the workspace zone cannot be read",
+      "layer": "tests",
+      "deps": [
+        "T39"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-17"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/api/src/e2e/posts-load.int.test.ts",
+        "apps/web/src/pages/PostDetailPage.tsx"
+      ],
+      "file": "docs/features/group-posts/tasks/t40-reply-latency-and-zone-error.md",
+      "status": "todo"
     }
   ]
 }
