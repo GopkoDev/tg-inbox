@@ -7,12 +7,13 @@ const sections = [
   { to: 'bot', label: 'Bot', ownerOnly: true },
   { to: 'team', label: 'Team', ownerOnly: true },
   { to: 'tags', label: 'Tags', ownerOnly: true },
+  { to: 'channels', label: 'Channels & groups', ownerOnly: false },
   { to: 'notifications', label: 'Notifications', ownerOnly: false },
 ];
 
 /**
  * SCR-11 Settings: title, description, the section menu and the active section's outlet. The menu
- * follows the role: an owner sees Bot, Team, Tags and Notifications, an operator Notifications only.
+ * follows the role: an owner sees Bot, Team, Tags, Channels & groups and Notifications, an operator Channels & groups and Notifications.
  */
 export function SettingsLayout() {
   const isOwner = useWorkspaceStore((s) => s.current?.role === 'owner');

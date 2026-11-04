@@ -169,6 +169,8 @@ export interface GatewayCall {
     | 'deleteWebhook'
     | 'sendText'
     | 'sendBroadcast'
+    | 'sendPost'
+    | 'deletePost'
     | 'openFile';
   token: string;
   timeoutMs: number;
@@ -230,6 +232,15 @@ export function fakeGateway(): TelegramGateway & {
     async sendBroadcast(token: string, chatId: bigint, text: string, timeoutMs: number) {
       fake.calls.push({ method: 'sendBroadcast', token, timeoutMs, chatId, text });
       return fake.broadcastResult;
+    },
+    async sendPost() {
+      return { outcome: 'telegram_error' } as const;
+    },
+    async deletePost() {
+      return { outcome: 'refused' } as const;
+    },
+    async chatRights() {
+      return { canPost: true };
     },
     async getMe(token: string, timeoutMs: number) {
       fake.calls.push({ method: 'getMe', token, timeoutMs });

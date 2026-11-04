@@ -122,9 +122,9 @@ describe('classifyUpdate — capture (AC-01, AC-09)', () => {
 
 describe('classifyUpdate — ignore (AC-12)', () => {
   it.each([
-    ['group', { chatType: 'group' as const }, 'not_private'],
-    ['supergroup', { chatType: 'supergroup' as const }, 'not_private'],
-    ['channel', { chatType: 'channel' as const }, 'unsupported_update'],
+    ['group', { chatType: 'group' as const }, 'chat_ignored'],
+    ['supergroup', { chatType: 'supergroup' as const }, 'chat_ignored'],
+    ['channel', { chatType: 'channel' as const }, 'chat_ignored'],
     ['bot sender', { fromIsBot: true }, 'bot_sender'],
     ['business message', { businessConnectionId: 'bc-1' }, 'business'],
     ['message before the capture epoch', { date: DATE - 1 }, 'before_epoch'],
@@ -135,7 +135,7 @@ describe('classifyUpdate — ignore (AC-12)', () => {
   it('ignores a group message from a bot as not private', () => {
     expect(classifyUpdate(message({ chatType: 'group', fromIsBot: true }), opts)).toEqual({
       type: 'ignore',
-      reason: 'not_private',
+      reason: 'chat_ignored',
     });
   });
 
@@ -229,7 +229,7 @@ describe('classifyUpdate — edits (AC-10, AC-09 live location)', () => {
       chatType: 'group',
       text: 'x',
     });
-    expect(classifyUpdate(group, opts)).toEqual({ type: 'ignore', reason: 'not_private' });
+    expect(classifyUpdate(group, opts)).toEqual({ type: 'ignore', reason: 'chat_ignored' });
     const business = telegramEdit({
       updateId: 10,
       messageId: 46,
@@ -339,12 +339,12 @@ describe('classifyUpdate — my_chat_member blocks (ADR-0003, AC-14)', () => {
     });
   });
 
-  it.each(['group', 'supergroup', 'channel'] as const)('ignores a %s chat', (chatType) => {
-    expect(classifyUpdate(member({ chatType }), opts)).toEqual({
-      type: 'ignore',
-      reason: 'not_private',
-    });
-  });
+  it.each(['group', 'supergroup', 'channel'] as const)(
+    'is a chat_membership fact for a %s chat',
+    (chatType) => {
+      expect(classifyUpdate(member({ chatType }), opts).type).toBe('chat_membership');
+    },
+  );
 
   it.each(['administrator', 'left', 'restricted', 'creator'])('ignores the status %s', (status) => {
     expect(classifyUpdate(member({ status }), opts)).toEqual({

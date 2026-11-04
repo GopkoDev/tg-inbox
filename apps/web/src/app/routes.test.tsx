@@ -398,7 +398,7 @@ describe('broadcasts routes and crumbs (T30, SCR-15, SCR-24)', () => {
       within(nav)
         .getAllByRole('link')
         .map((l) => l.textContent),
-    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Settings']);
+    ).toEqual(['Inbox', 'Contacts', 'Broadcasts', 'Posts', 'Settings']);
     expect(within(nav).getByRole('link', { name: 'Broadcasts' })).toHaveAttribute(
       'aria-current',
       'page',

@@ -711,6 +711,11 @@ describe('assignment-statuses migrations 01-04', () => {
       expect(await nullable()).toEqual(['NO', 'NO', 'NO']);
       // Later features' migrations sit above the contract: step them off first.
       for (const name of [
+        'widen_destination_codes_result',
+        'create_posts',
+        'create_destination_codes',
+        'create_destinations',
+        'add_workspaces_time_zone',
         'add_bots_needs_token_at',
         'create_broadcast_items',
         'create_broadcast_recipients',
@@ -1227,7 +1232,7 @@ describe('operator-notifications migrations 04-08', () => {
       };
       expect(await state()).toEqual(full);
       // 03, 02 and 01 sit above 08: step them off first.
-      for (let i = 0; i < 23; i++) {
+      for (let i = 0; i < 28; i++) {
         const down = await migrator.migrateDown();
         expect(down.error).toBeUndefined();
       }
@@ -2446,6 +2451,8 @@ describe('broadcasts migration 09 (bots.needs_token_at)', () => {
       expect(await column()).toEqual([
         { is_nullable: 'YES', data_type: 'timestamp with time zone' },
       ]);
+      // The group-posts migrations sit above 20: step them off first.
+      for (let i = 0; i < 5; i++) expect((await migrator.migrateDown()).error).toBeUndefined();
       const down = await migrator.migrateDown();
       expect(down.error).toBeUndefined();
       expect(down.results?.[0]?.migrationName).toBe('1791681110020_add_bots_needs_token_at');

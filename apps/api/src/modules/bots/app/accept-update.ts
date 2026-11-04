@@ -1,10 +1,12 @@
 import { classifyUpdate, detectKind, type IgnoreReason } from '../domain/inbound.js';
-import type {
-  BotRecord,
-  BotRepo,
-  ContactsReach,
-  ConversationsApi,
-  InboundInterceptor,
+import {
+  noopChatEvents,
+  type BotRecord,
+  type BotRepo,
+  type ChatEventsPort,
+  type ContactsReach,
+  type ConversationsApi,
+  type InboundInterceptor,
 } from './ports.js';
 
 /** pino-compatible: the webhook route passes its request logger. */
@@ -21,6 +23,11 @@ export type AcceptOutcome =
   | 'consumed'
   /** A private block or unblock of the bot (`my_chat_member`), recorded in contacts (ADR-0003). */
   | 'reach'
+  /** A group / channel fact handed to the chat events port (nothing captured). */
+  | 'destination_code'
+  | 'chat_membership'
+  | 'chat_migrated'
+  | 'chat_renamed'
   | `ignored:${IgnoreReason}`;
 
 export interface AcceptUpdateDeps {
@@ -30,6 +37,8 @@ export interface AcceptUpdateDeps {
   interceptor: InboundInterceptor;
   /** Where a block or unblock of the bot is recorded (contacts, ADR-0003). */
   reach: ContactsReach;
+  /** Where group and channel facts go (posts); a no-op until bound. */
+  chatEvents?: ChatEventsPort;
 }
 
 /** A bot whose webhook secret matched: the only way the webhook learns a workspace id. */
@@ -74,6 +83,7 @@ export function createAcceptUpdate({
   conversations,
   interceptor,
   reach,
+  chatEvents = noopChatEvents,
 }: AcceptUpdateDeps): AcceptUpdate {
   const authenticate: AcceptUpdate['authenticate'] = async (botId, secret, log) => {
     // Controlled exception *bot by webhook id*: scoped by possession of the secret.
@@ -93,11 +103,41 @@ export function createAcceptUpdate({
       workspaceId: bot.workspaceId,
       ...(updateId !== undefined && { updateId }),
     };
-    const decision = classifyUpdate(body, { connectedAt: bot.connectedAt });
+    const decision = classifyUpdate(body, {
+      connectedAt: bot.connectedAt,
+      ...(bot.username && { botUsername: bot.username }),
+    });
 
     if (decision.type === 'ignore') {
       log.info({ ...ids, outcome: 'ignored', reason: decision.reason }, 'telegram update ignored');
       return `ignored:${decision.reason}`;
+    }
+    // Group and channel facts go to the port before the interceptor and capture; logged by
+    // outcome only: no code, title or chat id.
+    if (
+      decision.type === 'destination_code' ||
+      decision.type === 'chat_membership' ||
+      decision.type === 'chat_migrated' ||
+      decision.type === 'chat_renamed'
+    ) {
+      const outcome = decision.type;
+      const context = { workspaceId: bot.workspaceId, telegramBotId: bot.telegramBotId };
+      switch (decision.type) {
+        case 'destination_code':
+          await chatEvents.onDestinationCode({ ...context, ...decision });
+          break;
+        case 'chat_membership':
+          await chatEvents.onChatMembership({ ...context, ...decision });
+          break;
+        case 'chat_migrated':
+          await chatEvents.onChatMigrated({ ...context, ...decision });
+          break;
+        case 'chat_renamed':
+          await chatEvents.onChatRenamed({ ...context, ...decision });
+          break;
+      }
+      log.info({ ...ids, outcome }, 'telegram chat event handled');
+      return outcome;
     }
     // A block or unblock is never a message: recorded before the interceptor and capture, so it
     // makes no conversation, unread change or ping. Logged without the Telegram user id.

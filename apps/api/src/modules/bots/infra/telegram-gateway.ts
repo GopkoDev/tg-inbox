@@ -7,6 +7,7 @@ import {
   MAX_DOWNLOAD_BYTES,
   type FileFetch,
   type BroadcastSendAnswer,
+  type PostSendAnswer,
   type SendOutcome,
   type TelegramGateway,
 } from '../app/ports.js';
@@ -68,7 +69,7 @@ type Signal = Parameters<Api['getMe']>[0];
 const timeout = (ms: number) => AbortSignal.timeout(ms) as unknown as Signal;
 
 /** `my_chat_member` tells the bot about private blocks and unblocks (ADR-0003). */
-const ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member'] as const;
+const ALLOWED_UPDATES = ['message', 'edited_message', 'my_chat_member', 'channel_post'] as const;
 
 /**
  * grammY errors become typed outcomes here. Their messages, causes and URLs (which embed the
@@ -124,6 +125,8 @@ function sameUpdates(registered: readonly string[]): boolean {
 }
 
 /** A `400` about the recipient's chat, not the text (sad.md §11: reviewed with pilot data). */
+const RIGHTS_400 =
+  /not enough rights|have no rights|need administrator rights|CHAT_WRITE_FORBIDDEN|CHAT_SEND_PLAIN_FORBIDDEN|CHAT_ADMIN_REQUIRED/i;
 const CHAT_LEVEL_400 = /chat not found|user not found|PEER_ID_INVALID/i;
 
 /** Classifies a failed broadcast `sendMessage`; Telegram's description is matched, never kept. */
@@ -154,6 +157,33 @@ function classifyBroadcastError(err: unknown): BroadcastSendAnswer {
     return { outcome: 'error' };
   }
   return { outcome: 'unknown' };
+}
+
+/** Classifies a failed post `sendMessage`; Telegram's description is never kept. */
+function classifyPostError(err: unknown): PostSendAnswer {
+  if (err instanceof GrammyError) {
+    const code = err.error_code;
+    if (code === 401 || code === 404) return { outcome: 'bot_unauthorized' };
+    if (code === 403) return { outcome: 'no_post_right' };
+    if (code === 400) {
+      if (typeof err.parameters?.migrate_to_chat_id === 'number') return { outcome: 'chat_gone' };
+      if (RIGHTS_400.test(err.description)) return { outcome: 'no_post_right' };
+      return CHAT_LEVEL_400.test(err.description)
+        ? { outcome: 'chat_gone' }
+        : { outcome: 'text_refused' };
+    }
+    if (code === 429) {
+      const seconds = err.parameters.retry_after;
+      return typeof seconds === 'number' && seconds >= 0
+        ? { outcome: 'rate_limited', retryAfterMs: seconds * 1000 }
+        : { outcome: 'rate_limited' };
+    }
+    return { outcome: 'telegram_error' };
+  }
+  if (err instanceof HttpError && causeCodes(err).some((c) => NOT_WRITTEN.has(c))) {
+    return { outcome: 'telegram_error' };
+  }
+  return { outcome: 'no_answer' };
 }
 
 /** Same webhook when scheme, host and path match, ignoring a trailing slash. */
@@ -313,6 +343,57 @@ export function createTelegramGateway({
         };
       } catch (err) {
         return classifyBroadcastError(err);
+      }
+    },
+
+    async sendPost(token, chatId, text, silent, timeoutMs) {
+      try {
+        const sent = await api(token).sendMessage(
+          chatId,
+          text,
+          silent ? { disable_notification: true } : undefined,
+          timeout(timeoutMs),
+        );
+        return {
+          outcome: 'accepted',
+          messageId: BigInt(sent.message_id),
+          at: new Date(sent.date * 1000),
+        };
+      } catch (err) {
+        return classifyPostError(err);
+      }
+    },
+
+    async deletePost(token, chatId, messageId, timeoutMs) {
+      try {
+        await api(token).deleteMessage(chatId, Number(messageId), timeout(timeoutMs));
+        return { outcome: 'deleted' };
+      } catch (err) {
+        if (err instanceof GrammyError) return { outcome: 'refused' };
+        if (err instanceof HttpError && causeCodes(err).some((c) => NOT_WRITTEN.has(c))) {
+          return { outcome: 'refused' };
+        }
+        return { outcome: 'no_answer' };
+      }
+    },
+
+    async chatRights(token, chatId, telegramBotId, kind, timeoutMs) {
+      try {
+        const m = await api(token).getChatMember(chatId, Number(telegramBotId), timeout(timeoutMs));
+        const rights = m as {
+          status: string;
+          can_post_messages?: boolean;
+          can_send_messages?: boolean;
+        };
+        if (m.status === 'creator') return { canPost: true };
+        if (m.status === 'administrator') {
+          return { canPost: kind === 'channel' ? rights.can_post_messages === true : true };
+        }
+        if (m.status === 'member') return { canPost: kind !== 'channel' };
+        if (m.status === 'restricted') return { canPost: rights.can_send_messages === true };
+        return { canPost: false };
+      } catch {
+        return { canPost: false };
       }
     },
 

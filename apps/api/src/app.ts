@@ -8,6 +8,8 @@ import { registerAuth } from './modules/auth/http/routes.js';
 import { registerBots } from './modules/bots/http/routes.js';
 import { registerContacts } from './modules/contacts/http/routes.js';
 import { registerBroadcasts } from './modules/broadcasts/http/routes.js';
+import { registerPosts } from './modules/posts/http/routes.js';
+import { createPostQueues, registerPostJobs } from './modules/posts/infra/jobs.js';
 import { createBroadcastQueues, registerBroadcastJobs } from './modules/broadcasts/infra/jobs.js';
 import { registerBotJobs, SCHEDULE_HEALTH_CHECKS_QUEUE } from './modules/bots/infra/jobs.js';
 import { createDeliver } from './modules/inbox/app/deliver.js';
@@ -122,6 +124,14 @@ export async function buildApp(
   await registerBroadcastJobs(jobs, {
     sendLink: deps.sendLink,
     measure: deps.measureBlockedShare,
+    logger: app.log,
+    clock: deps.clock,
+  });
+  deps.bindPostJobs(jobs);
+  await createPostQueues(jobs);
+  await registerPostJobs(jobs, {
+    sender: deps.postSender,
+    deadLetter: deps.postDeadLetter,
     logger: app.log,
     clock: deps.clock,
   });
@@ -243,6 +253,10 @@ export async function buildApp(
         access: workspaceAccess,
         authenticate,
       }),
+    { prefix: '/api' },
+  );
+  await app.register(
+    async (api) => registerPosts(api, { ...deps.posts, access: workspaceAccess, authenticate }),
     { prefix: '/api' },
   );
   await app.register(

@@ -78,6 +78,8 @@ export interface NormalisedEdit {
 
 export type IgnoreReason =
   | 'not_private'
+  /** A group, supergroup or channel update that is none of the four chat facts. */
+  | 'chat_ignored'
   | 'bot_sender'
   | 'business'
   | 'before_epoch'
@@ -97,7 +99,47 @@ export interface ReachChange {
   at: Date;
 }
 
+export type ChatKind = 'group' | 'supergroup' | 'channel';
+
+/** A connect code posted in a group (`/connect tgp_…`) or channel (any post containing it). */
+export interface DestinationCode {
+  type: 'destination_code';
+  chatId: bigint;
+  kind: ChatKind;
+  title: string;
+  username: string | null;
+  messageId: bigint;
+  code: string;
+}
+
+/** The bot's own membership in a group or channel changed. */
+export interface ChatMembership {
+  type: 'chat_membership';
+  chatId: bigint;
+  kind: ChatKind;
+  title: string;
+  username: string | null;
+  status: string;
+  canPost: boolean;
+  date: Date;
+}
+
+export interface ChatMigrated {
+  type: 'chat_migrated';
+  chatId: bigint;
+  newChatId: bigint;
+}
+
+export interface ChatRenamed {
+  type: 'chat_renamed';
+  chatId: bigint;
+  title: string;
+}
+
+export type ChatFact = DestinationCode | ChatMembership | ChatMigrated | ChatRenamed;
+
 export type InboundDecision =
+  | ChatFact
   | { type: 'capture'; message: NormalisedMessage }
   | { type: 'edit'; edit: NormalisedEdit; sender: SenderProfile }
   | ({ type: 'reach' } & ReachChange)
@@ -144,7 +186,7 @@ function filter(
   const chat = message.chat;
   if (!isObject(chat) || !isInt(chat.id) || typeof chat.type !== 'string') return 'malformed';
   if (message.business_connection_id !== undefined) return 'business';
-  if (chat.type !== 'private') return 'not_private';
+  if (chat.type !== 'private') return 'chat_ignored';
   const from = message.from;
   if (!isObject(from) || !isInt(from.id) || typeof from.first_name !== 'string') {
     return 'malformed';
@@ -155,6 +197,91 @@ function filter(
     return 'before_epoch';
   }
   return { message, from };
+}
+
+const CHAT_KINDS: readonly string[] = ['group', 'supergroup', 'channel'];
+const isChatKind = (v: unknown): v is ChatKind => typeof v === 'string' && CHAT_KINDS.includes(v);
+
+const CODE_PATTERN = /tgp_[A-Za-z0-9_-]+/;
+const CONNECT_PATTERN = /^\/connect(?:@([A-Za-z0-9_]+))?\s+(tgp_[A-Za-z0-9_-]+)(?:\s|$)/;
+
+function chatIdentity(chat: Obj): { title: string; username: string | null } {
+  return { title: optionalString(chat.title) ?? '', username: optionalString(chat.username) };
+}
+
+/** Can the bot post in this chat with this membership? */
+function canPostAs(kind: ChatKind, member: Obj): boolean {
+  switch (member.status) {
+    case 'creator':
+      return true;
+    case 'administrator':
+      return kind === 'channel' ? member.can_post_messages === true : true;
+    case 'member':
+      return kind !== 'channel';
+    case 'restricted':
+      return kind !== 'channel' && member.can_send_messages === true;
+    default:
+      return false;
+  }
+}
+
+function classifyChatMembership(update: Obj, chat: Obj, member: Obj): InboundDecision {
+  return {
+    type: 'chat_membership',
+    chatId: BigInt(chat.id as number),
+    kind: chat.type as ChatKind,
+    ...chatIdentity(chat),
+    status: member.status as string,
+    canPost: canPostAs(chat.type as ChatKind, member),
+    date: new Date((update.date as number) * 1000),
+  };
+}
+
+/**
+ * A new message (or channel post) in a group, supergroup or channel: only a connect code, a
+ * migration or a rename is a fact; everything else is dropped, never captured (AC-17).
+ */
+function classifyChatMessage(
+  message: Obj,
+  botUsername: string | undefined,
+  allowCommand: boolean,
+): InboundDecision {
+  const chat = message.chat as Obj;
+  if (!isInt(message.message_id) || !isInt(chat.id)) return ignore('malformed');
+  if (message.business_connection_id !== undefined) return ignore('business');
+  const kind = chat.type as ChatKind;
+  const chatId = BigInt(chat.id);
+  if (isInt(message.migrate_to_chat_id)) {
+    return { type: 'chat_migrated', chatId, newChatId: BigInt(message.migrate_to_chat_id) };
+  }
+  if (typeof message.new_chat_title === 'string') {
+    return { type: 'chat_renamed', chatId, title: message.new_chat_title };
+  }
+  const text = optionalString(message.text);
+  let code: string | undefined;
+  if (kind === 'channel') {
+    code = text?.match(CODE_PATTERN)?.[0];
+  } else if (allowCommand && text !== null) {
+    const match = text.match(CONNECT_PATTERN);
+    const target = match?.[1];
+    if (
+      match &&
+      (target === undefined ||
+        botUsername === undefined ||
+        target.toLowerCase() === botUsername.toLowerCase())
+    ) {
+      code = match[2];
+    }
+  }
+  if (code === undefined) return ignore('chat_ignored');
+  return {
+    type: 'destination_code',
+    chatId,
+    kind,
+    ...chatIdentity(chat),
+    messageId: BigInt(message.message_id),
+    code,
+  };
 }
 
 /**
@@ -168,6 +295,7 @@ function classifyMemberUpdate(update: unknown): InboundDecision {
     return ignore('malformed');
   if (!isObject(from) || !isInt(from.id)) return ignore('malformed');
   if (!isObject(member) || typeof member.status !== 'string') return ignore('malformed');
+  if (isChatKind(chat.type)) return classifyChatMembership(update, chat, member);
   if (chat.type !== 'private') return ignore('not_private');
   if (member.status !== 'kicked' && member.status !== 'member') {
     return ignore('unsupported_status');
@@ -182,13 +310,28 @@ function classifyMemberUpdate(update: unknown): InboundDecision {
 
 export function classifyUpdate(
   update: unknown,
-  { connectedAt }: { connectedAt: Date },
+  { connectedAt, botUsername }: { connectedAt: Date; botUsername?: string },
 ): InboundDecision {
   if (!isObject(update) || !isInt(update.update_id)) return ignore('malformed');
+
+  if (update.channel_post !== undefined) {
+    const post = update.channel_post;
+    if (!isObject(post) || !isInt(post.date) || !isObject(post.chat)) return ignore('malformed');
+    return post.chat.type === 'channel'
+      ? classifyChatMessage(post, botUsername, false)
+      : ignore('chat_ignored');
+  }
 
   if (update.my_chat_member !== undefined) return classifyMemberUpdate(update.my_chat_member);
 
   if (update.message !== undefined) {
+    const raw = update.message;
+    if (isObject(raw) && isObject(raw.chat) && isChatKind(raw.chat.type)) {
+      if (!isInt(raw.date)) return ignore('malformed');
+      return raw.chat.type === 'channel'
+        ? ignore('chat_ignored')
+        : classifyChatMessage(raw, botUsername, true);
+    }
     const passed = filter(update.message, connectedAt, 'date');
     if (typeof passed === 'string') return ignore(passed);
     const { message, from } = passed;

@@ -108,6 +108,11 @@ describe('Telegram gateway (against the fake Bot API)', () => {
         webhookUrl: OUR_URL,
         allowedUpdates: ['my_chat_member', 'message', 'edited_message'],
       });
+      expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours_outdated');
+      fake.bot(TOKEN).script({
+        webhookUrl: OUR_URL,
+        allowedUpdates: ['channel_post', 'my_chat_member', 'message', 'edited_message'],
+      });
       expect(await gateway.getWebhook(TOKEN, OUR_URL, OWNER_ACTION_TIMEOUT)).toBe('ours');
       // Another service's webhook stays foreign whatever it subscribes to.
       fake.bot(TOKEN).script({
@@ -145,7 +150,7 @@ describe('Telegram gateway (against the fake Bot API)', () => {
             params: {
               url: OUR_URL,
               secret_token: SECRET,
-              allowed_updates: ['message', 'edited_message', 'my_chat_member'],
+              allowed_updates: ['message', 'edited_message', 'my_chat_member', 'channel_post'],
               max_connections: 7,
               drop_pending_updates: dropPending,
             },
@@ -367,6 +372,123 @@ describe('Telegram gateway (against the fake Bot API)', () => {
       );
       for (const bad of [TOKEN, 'secret reply', fake.apiRoot])
         expect(serialised).not.toContain(bad);
+    });
+  });
+});
+
+describe('Telegram gateway posts (group-posts T6, AC-07, AC-13, AC-15, AC-17)', () => {
+  let fake: FakeTelegram;
+  let gateway: ReturnType<typeof createTelegramGateway>;
+  const GROUP = '-1001234567890';
+
+  beforeAll(async () => {
+    fake = await startFakeTelegram();
+    gateway = createTelegramGateway({ apiRoot: fake.apiRoot, maxConnections: 7 });
+  });
+  afterAll(async () => {
+    await fake.stop();
+  });
+  beforeEach(() => {
+    fake.reset();
+  });
+
+  const noRight = {
+    kind: 'error' as const,
+    status: 403,
+    body: {
+      ok: false,
+      error_code: 403,
+      description: 'Forbidden: bot is not a member of the channel chat',
+    },
+  };
+
+  it('sendPost sends plain text with disable_notification and the chat id as a string', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.ok(41)] });
+    const out = await gateway.sendPost(TOKEN, GROUP, 'Hi <b>x</b>', true, SEND_TIMEOUT);
+    expect(out).toMatchObject({ outcome: 'accepted', messageId: 41n });
+    const call = fake.calls(TOKEN).find((c) => c.method === 'sendMessage')!;
+    expect(call.params.chat_id).toBe(GROUP);
+    expect(call.params.disable_notification).toBe(true);
+    expect(call.params).not.toHaveProperty('parse_mode');
+  });
+
+  it.each([
+    ['a kicked bot (403)', noRight, 'no_post_right'],
+    ['chat not found', sendAnswers.chatNotFound(), 'chat_gone'],
+    ['a text too long', sendAnswers.textTooLong(), 'text_refused'],
+    ['a 5xx', sendAnswers.serverError(), 'telegram_error'],
+    ['no answer after the write', sendAnswers.resetAfterWrite(), 'no_answer'],
+  ])('sendPost classifies %s', async (_n, answer, outcome) => {
+    fake.bot(TOKEN).script({ sendMessage: [answer] });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome,
+    });
+  });
+
+  it('sendPost classifies a 429 as rate_limited with retryAfterMs', async () => {
+    fake.bot(TOKEN).script({ sendMessage: [sendAnswers.tooMany(7)] });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'rate_limited',
+      retryAfterMs: 7000,
+    });
+  });
+
+  it.each([
+    [
+      'not enough rights to send text messages',
+      'Bad Request: not enough rights to send text messages to the chat',
+    ],
+    ['have no rights to send a message', 'Bad Request: have no rights to send a message'],
+    [
+      'need administrator rights in the channel chat',
+      'Bad Request: need administrator rights in the channel chat',
+    ],
+    ['CHAT_WRITE_FORBIDDEN', 'Bad Request: CHAT_WRITE_FORBIDDEN'],
+  ])('sendPost classifies a 400 "%s" as no_post_right (AC-13)', async (_n, description) => {
+    fake.bot(TOKEN).script({
+      sendMessage: [
+        { kind: 'error', status: 400, body: { ok: false, error_code: 400, description } },
+      ],
+    });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'no_post_right',
+    });
+  });
+
+  it('sendPost classifies a group upgraded to a supergroup (migrate_to_chat_id) as chat_gone (AC-14)', async () => {
+    fake.bot(TOKEN).script({
+      sendMessage: [
+        {
+          kind: 'error',
+          status: 400,
+          body: {
+            ok: false,
+            error_code: 400,
+            description: 'Bad Request: group chat was upgraded to a supergroup chat',
+            parameters: { migrate_to_chat_id: -1001999999999 },
+          },
+        },
+      ],
+    });
+    expect(await gateway.sendPost(TOKEN, GROUP, 'x', false, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'chat_gone',
+    });
+  });
+
+  it('deletePost with no answer within the timeout is no_answer, not refused (AC-15)', async () => {
+    fake.bot(TOKEN).script({ deleteMessage: [sendAnswers.hang(5000)] });
+    expect(await gateway.deletePost(TOKEN, GROUP, 41n, 200)).toMatchObject({
+      outcome: 'no_answer',
+    });
+  });
+
+  it('deletePost deletes, or reports a refusal', async () => {
+    fake.bot(TOKEN).script({ deleteMessage: [sendAnswers.ok(0), sendAnswers.chatNotFound()] });
+    expect(await gateway.deletePost(TOKEN, GROUP, 41n, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'deleted',
+    });
+    expect(await gateway.deletePost(TOKEN, GROUP, 42n, SEND_TIMEOUT)).toMatchObject({
+      outcome: 'refused',
     });
   });
 });

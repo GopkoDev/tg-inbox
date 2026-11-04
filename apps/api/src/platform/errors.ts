@@ -560,6 +560,164 @@ export class BroadcastLaunchLimitReachedError extends AppError {
   }
 }
 
+// ───────── group-posts ─────────
+
+export class PostTextInvalidError extends AppError {
+  readonly code = ErrorCode.POST_TEXT_INVALID;
+  readonly statusCode = 400;
+
+  constructor(
+    details?: unknown,
+    message = 'The text must be 1 to 4096 characters as Telegram counts them',
+  ) {
+    super(message, details);
+  }
+}
+
+export class PostDraftChangedError extends AppError {
+  readonly code = ErrorCode.POST_DRAFT_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'A teammate changed this draft') {
+    super(message, details);
+  }
+}
+
+export class PostNotADraftError extends AppError {
+  readonly code = ErrorCode.POST_NOT_A_DRAFT;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'This post is no longer a draft') {
+    super(message, details);
+  }
+}
+
+export class PostNotScheduledError extends AppError {
+  readonly code = ErrorCode.POST_NOT_SCHEDULED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'This post is not scheduled') {
+    super(message, details);
+  }
+}
+
+export class PostNotPublishedError extends AppError {
+  readonly code = ErrorCode.POST_NOT_PUBLISHED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'This post is not published') {
+    super(message, details);
+  }
+}
+
+export class PostScheduleOutOfRangeError extends AppError {
+  readonly code = ErrorCode.POST_SCHEDULE_OUT_OF_RANGE;
+  readonly statusCode = 400;
+
+  constructor(details?: unknown, message = 'Pick a time between 2 minutes and 90 days from now') {
+    super(message, details);
+  }
+}
+
+export class PostTimeDoesNotExistError extends AppError {
+  readonly code = ErrorCode.POST_TIME_DOES_NOT_EXIST;
+  readonly statusCode = 400;
+
+  constructor(details?: unknown, message = 'That local time does not exist on that day') {
+    super(message, details);
+  }
+}
+
+export class PostDailyLimitReachedError extends AppError {
+  readonly code = ErrorCode.POST_DAILY_LIMIT_REACHED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = '30 posts were sent in the last 24 hours') {
+    super(message, details);
+  }
+}
+
+export class PostScheduledLimitReachedError extends AppError {
+  readonly code = ErrorCode.POST_SCHEDULED_LIMIT_REACHED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = '100 posts are already scheduled') {
+    super(message, details);
+  }
+}
+
+export class PostDeleteWindowPassedError extends AppError {
+  readonly code = ErrorCode.POST_DELETE_WINDOW_PASSED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'The bot can delete a post only within 48 hours') {
+    super(message, details);
+  }
+}
+
+export class PostDeleteRefusedError extends AppError {
+  readonly code = ErrorCode.POST_DELETE_REFUSED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'Telegram did not let the bot delete this post') {
+    super(message, details);
+  }
+}
+
+export class DestinationUnavailableError extends AppError {
+  readonly code = ErrorCode.DESTINATION_UNAVAILABLE;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'The bot can no longer post to this destination') {
+    super(message, details);
+  }
+}
+
+export class DestinationLimitReachedError extends AppError {
+  readonly code = ErrorCode.DESTINATION_LIMIT_REACHED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'A workspace can have at most 20 channels and groups') {
+    super(message, details);
+  }
+}
+
+export class PostsNeedWorkingBotError extends AppError {
+  readonly code = ErrorCode.POSTS_NEED_WORKING_BOT;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'The bot is not working — check Settings, Bot') {
+    super(message, details);
+  }
+}
+
+export class TimeZoneRequiredError extends AppError {
+  readonly code = ErrorCode.TIME_ZONE_REQUIRED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'Confirm the workspace time zone first') {
+    super(message, details);
+  }
+}
+
+export class TimeZoneInvalidError extends AppError {
+  readonly code = ErrorCode.TIME_ZONE_INVALID;
+  readonly statusCode = 400;
+
+  constructor(details?: unknown, message = 'Pick a time zone from the list') {
+    super(message, details);
+  }
+}
+
+export class TimeZoneChangedError extends AppError {
+  readonly code = ErrorCode.TIME_ZONE_CHANGED;
+  readonly statusCode = 409;
+
+  constructor(details?: unknown, message = 'The workspace time zone changed') {
+    super(message, details);
+  }
+}
+
 /**
  * Telegram did not answer in time, answered 5xx / 429, or setWebhook failed — the first 5xx
  * AppError. Its message never carries Telegram's error text or URL.

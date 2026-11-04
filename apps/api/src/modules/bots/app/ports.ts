@@ -2,6 +2,12 @@ import type { Readable } from 'node:stream';
 import type { Db } from '../../../platform/db.js';
 import type { BotState } from '../domain/connection.js';
 import type {
+  ChatMembership,
+  ChatMigrated,
+  ChatRenamed,
+  DestinationCode,
+} from '../domain/inbound.js';
+import type {
   InboundKind,
   NormalisedEdit,
   NormalisedMessage,
@@ -230,6 +236,28 @@ export type BroadcastSendAnswer =
   | { outcome: 'error' }
   | { outcome: 'unknown' };
 
+/**
+ * Telegram's answer to a post in a channel or group. `no_post_right`: a `403` (kicked, no right);
+ * `chat_gone`: chat not found; `text_refused`: any other `400`; `no_answer`: no answer after the
+ * write (it may have been published).
+ */
+export type PostSendAnswer =
+  | { outcome: 'accepted'; messageId: bigint; at: Date }
+  | { outcome: 'no_post_right' }
+  | { outcome: 'chat_gone' }
+  | { outcome: 'text_refused' }
+  | { outcome: 'bot_unauthorized' }
+  | { outcome: 'rate_limited'; retryAfterMs?: number }
+  | { outcome: 'telegram_error' }
+  | { outcome: 'no_answer' };
+
+/** Whether Telegram deleted a published post. */
+export type PostDeleteAnswer =
+  | { outcome: 'deleted' }
+  | { outcome: 'refused' }
+  /** No answer within the timeout, or a network failure: nothing is known. */
+  | { outcome: 'no_answer' };
+
 /** What `broadcasts` gets back from `sendBroadcastMessage` (sad.md §5, flow 12). */
 export type BroadcastSendOutcome =
   | { outcome: 'delivered'; messageId: bigint; at: Date }
@@ -300,6 +328,32 @@ export interface TelegramGateway {
     text: string,
     timeoutMs: number,
   ): Promise<BroadcastSendAnswer>;
+  /**
+   * A post's plain text to a channel or group (`chatId` passed as a string, no `parse_mode`).
+   * Never throws.
+   */
+  sendPost(
+    token: string,
+    chatId: string,
+    text: string,
+    silent: boolean,
+    timeoutMs: number,
+  ): Promise<PostSendAnswer>;
+  /** Deletes a post the bot published; any failure is a refusal. Never throws. */
+  deletePost(
+    token: string,
+    chatId: string,
+    messageId: bigint,
+    timeoutMs: number,
+  ): Promise<PostDeleteAnswer>;
+  /** Whether the bot may post in a channel or group (its own membership there); false on any failure. */
+  chatRights(
+    token: string,
+    chatId: string,
+    telegramBotId: bigint,
+    kind: string,
+    timeoutMs: number,
+  ): Promise<{ canPost: boolean }>;
   getMe(token: string, timeoutMs: number): Promise<GetMeResult>;
   getWebhook(token: string, ourUrl: string, timeoutMs: number): Promise<WebhookTarget>;
   /**
@@ -396,3 +450,27 @@ export interface ContactsReach {
     at: Date,
   ): Promise<unknown>;
 }
+
+/** Context every chat fact carries: the workspace and Telegram bot that received it. */
+export interface ChatEventContext {
+  workspaceId: string;
+  telegramBotId: bigint;
+}
+
+/**
+ * Group / channel facts `bots` classifies and hands to `posts` (ADR-0003). Late-bound by the
+ * composition root; a no-op until bound. Nothing of a destination is captured.
+ */
+export interface ChatEventsPort {
+  onDestinationCode(event: ChatEventContext & Omit<DestinationCode, 'type'>): Promise<unknown>;
+  onChatMembership(event: ChatEventContext & Omit<ChatMembership, 'type'>): Promise<unknown>;
+  onChatMigrated(event: ChatEventContext & Omit<ChatMigrated, 'type'>): Promise<unknown>;
+  onChatRenamed(event: ChatEventContext & Omit<ChatRenamed, 'type'>): Promise<unknown>;
+}
+
+export const noopChatEvents: ChatEventsPort = {
+  onDestinationCode: async () => undefined,
+  onChatMembership: async () => undefined,
+  onChatMigrated: async () => undefined,
+  onChatRenamed: async () => undefined,
+};

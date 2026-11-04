@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS destinations_workspace_id_removed_by_account_id_idx;
+DROP INDEX IF EXISTS destinations_workspace_id_connected_by_account_id_idx;
+DROP INDEX IF EXISTS destinations_workspace_id_live_idx;
+DROP TABLE IF EXISTS destinations;

@@ -15,6 +15,7 @@ import { createSignInFailureRepo } from './modules/auth/infra/sign-in-failure-re
 import { createAcceptInvitation } from './modules/workspaces/app/accept-invitation.js';
 import { publish } from './platform/realtime.js';
 import { createWorkspaceAccess } from './modules/workspaces/app/access.js';
+import { createWorkspaceTimeZone } from './modules/workspaces/app/time-zone.js';
 import { createTeam } from './modules/workspaces/app/team.js';
 import { KyselyUnitOfWork, workspaceRepos } from './modules/workspaces/infra/unit-of-work.js';
 import { createWorkspaceAdmin } from './modules/workspaces/app/admin.js';
@@ -39,6 +40,27 @@ import { createPingReadiness } from './modules/bots/app/ping-readiness.js';
 import { createSendMemberMessage } from './modules/bots/app/send-member-message.js';
 import { createInboxBotStatus } from './modules/bots/app/inbox-status.js';
 import { createLaunchReadiness } from './modules/bots/app/launch-readiness.js';
+import { createBotRights } from './modules/bots/app/bot-rights.js';
+import { createDeletePost } from './modules/bots/app/delete-post.js';
+import { createPostReadiness } from './modules/bots/app/post-readiness.js';
+import { createSendPost } from './modules/bots/app/send-post.js';
+import { POST_MESSAGES_PER_SECOND } from './modules/bots/app/pacer.js';
+import { createChatEvents } from './modules/posts/app/chat-events.js';
+import { createPostDeactivation } from './modules/posts/app/deactivation.js';
+import { createPostDeletion } from './modules/posts/app/delete-published.js';
+import { createDestinationReads } from './modules/posts/app/destination-reads.js';
+import { createDestinations } from './modules/posts/app/destinations.js';
+import { createPostDrafts } from './modules/posts/app/drafts.js';
+import { createPostReads } from './modules/posts/app/post-reads.js';
+import { createPostPublishing } from './modules/posts/app/publish.js';
+import { createDeadLetterSettler } from './modules/posts/app/settle-dead-letter.js';
+import { createPostSender } from './modules/posts/app/send-post.js';
+import { createPostingTimeZone } from './modules/posts/app/time-zone.js';
+import { createCodeRepo } from './modules/posts/infra/code-repo.js';
+import { createDestinationRepo } from './modules/posts/infra/destination-repo.js';
+import { createPostJobs } from './modules/posts/infra/jobs.js';
+import { createPostRepo, lockPosts } from './modules/posts/infra/post-repo.js';
+import { createPostSignals } from './modules/posts/infra/signals.js';
 import { createMeasureBlockedShare } from './modules/broadcasts/app/blocked-share.js';
 import { createDrafts } from './modules/broadcasts/app/drafts.js';
 import { createDuplicate } from './modules/broadcasts/app/duplicate.js';
@@ -180,6 +202,7 @@ export function buildDeps(
     sessions: sessionUseCases,
     clock,
   });
+  const workspaceTimeZone = createWorkspaceTimeZone({ db });
   // --- end workspaces dependencies ---
 
   const workspaceAdmin = createWorkspaceAdmin({
@@ -236,6 +259,8 @@ export function buildDeps(
     onMembershipDeactivated: async (tx, event) => {
       await conversations.unassignDeactivatedMember(tx, event);
       await linkLifecycle.removeLinkOnDeactivation(tx, event);
+      // The member's scheduled posts go back to drafts, inside the same transaction (sad.md §4).
+      await postDeactivation.returnScheduledOfDeactivated(tx, event);
     },
     publicWebUrl: config.PUBLIC_WEB_URL,
   });
@@ -360,6 +385,69 @@ export function buildDeps(
     clock,
   });
 
+  // --- posts: chat facts come from `bots` (classified, ADR-0003), sends go through `bots`; the
+  // pg-boss queue starts after `buildDeps()`, so the jobs port is late-bound (`bindPostJobs`). ---
+  const postRepo = createPostRepo(db);
+  const destinationRepo = createDestinationRepo(db);
+  const codeRepo = createCodeRepo(db);
+  const postSignals = createPostSignals();
+  const postJobs = createPostJobs();
+  const postReadiness = createPostReadiness({ bots: botRepo }).postReadiness;
+  const botRights = createBotRights({ bots: botRepo, telegram }).botRights;
+  const deletePost = createDeletePost({ bots: botRepo, telegram, markNeedsToken }).deletePost;
+  const sendPost = createSendPost({
+    bots: botRepo,
+    telegram,
+    markNeedsToken,
+    clock,
+    // Posts have their own pacer, apart from replies and broadcasts.
+    pacer: createPacer({ perSecond: POST_MESSAGES_PER_SECOND }),
+  }).sendPost;
+  const postWorkspaces = {
+    // `transaction` always hands out a Kysely transaction; the ports type it as the shared executor.
+    lockActiveMembers: (tx: unknown, workspaceId: string, ids: readonly string[]) =>
+      workspaceAccess.lockActiveMembers(tx as Transaction<DB>, workspaceId, ids),
+    lockActiveOwners: (tx: unknown, workspaceId: string, ids: readonly string[]) =>
+      workspaceAccess.lockActiveOwners(tx as Transaction<DB>, workspaceId, ids),
+    displayNames: workspaceAccess.displayNames,
+  };
+  const currentBotId = async (workspaceId: string) =>
+    (await postReadiness(workspaceId))?.telegramBotId ?? null;
+  const postBots = {
+    postReadiness,
+    sendPost,
+    botUsername: async (workspaceId: string) =>
+      (await pingReadiness(workspaceId))?.username ?? null,
+  };
+  const postReads = createPostReads({
+    posts: postRepo,
+    destinations: destinationRepo,
+    workspaces: postWorkspaces,
+    workspaceSettings: workspaceTimeZone,
+    currentBotId,
+    transaction,
+    signals: postSignals,
+    clock,
+  });
+  const postViews = { postView: postReads.getPost };
+  const postDeactivation = createPostDeactivation({
+    posts: postRepo,
+    signals: postSignals,
+    clock,
+  });
+  // Group and channel facts the bots classifier hands over (ADR-0003); only codes, the bot's own
+  // membership and rights, a group's upgrade and a rename.
+  const chatEvents = createChatEvents({
+    transaction,
+    lockPosts,
+    codes: codeRepo,
+    destinations: destinationRepo,
+    bots: { postReadiness, botRights, deletePost },
+    signals: postSignals,
+    clock,
+  });
+  // --- end posts (the use cases that need only the repos are built below, after `bots`) ---
+
   const bots = {
     settings: botSettings,
     markNeedsToken,
@@ -397,6 +485,7 @@ export function buildDeps(
       conversations,
       interceptor,
       reach: contactReach,
+      chatEvents,
     }),
     healthCheck: createHealthCheck({
       bots: botRepo,
@@ -660,6 +749,79 @@ export function buildDeps(
   });
   // --- end broadcasts dependencies ---
 
+  // --- posts use cases behind `registerPosts` ---
+  const postDrafts = createPostDrafts({
+    transaction,
+    posts: postRepo,
+    destinations: destinationRepo,
+    signals: postSignals,
+    views: postViews,
+    clock,
+  });
+  const postPublishing = createPostPublishing({
+    transaction,
+    posts: postRepo,
+    destinations: destinationRepo,
+    workspaces: postWorkspaces,
+    lockPosts,
+    workspaceSettings: workspaceTimeZone,
+    bots: postBots,
+    jobs: postJobs,
+    signals: postSignals,
+    views: postViews,
+    clock,
+  });
+  const postDeletion = createPostDeletion({
+    transaction,
+    posts: postRepo,
+    destinations: destinationRepo,
+    workspaces: postWorkspaces,
+    bots: { deletePost },
+    signals: postSignals,
+    views: postViews,
+    clock,
+  });
+  const postDestinations = createDestinations({
+    transaction,
+    codes: codeRepo,
+    destinations: destinationRepo,
+    posts: postRepo,
+    workspaces: postWorkspaces,
+    lockPosts,
+    bots: postBots,
+    signals: postSignals,
+    clock,
+  });
+  const postTimeZone = createPostingTimeZone({
+    transaction,
+    posts: postRepo,
+    workspaces: postWorkspaces,
+    lockPosts,
+    workspaceSettings: workspaceTimeZone,
+    signals: postSignals,
+  });
+  const destinationReads = createDestinationReads({
+    destinations: destinationRepo,
+    posts: postRepo,
+    workspaces: postWorkspaces,
+    workspaceSettings: workspaceTimeZone,
+    currentBotId,
+  });
+  const postSendDeps = {
+    transaction,
+    clock,
+    posts: postRepo,
+    destinations: destinationRepo,
+    workspaces: postWorkspaces,
+    lockPosts,
+    bots: postBots,
+    jobs: postJobs,
+    signals: postSignals,
+  };
+  const postSender = createPostSender(postSendDeps);
+  const postDeadLetter = createDeadLetterSettler(postSendDeps);
+  // --- end posts ---
+
   return {
     config,
     clock,
@@ -674,6 +836,7 @@ export function buildDeps(
     acceptInvitation,
     team,
     workspaceAdmin,
+    workspaceTimeZone,
     contacts,
     contactReads,
     tagWrites,
@@ -712,6 +875,22 @@ export function buildDeps(
     measureBlockedShare,
     /** Binds the started job queue to the broadcasts jobs (the queue starts after `buildDeps()`). */
     bindBroadcastJobs: (boss: Jobs) => broadcastJobs.bind(boss),
+    /** The posts use cases behind `registerPosts`. */
+    posts: {
+      reads: postReads,
+      drafts: postDrafts,
+      publishing: postPublishing,
+      deletion: postDeletion,
+      destinations: postDestinations,
+      destinationReads,
+      timeZone: postTimeZone,
+    },
+    /** One scheduled post send (the `posts.send` worker). */
+    postSender: { send: postSender.sendPost },
+    /** Settles what a dead-lettered `posts.send` job left (the `posts.send-dlq` worker). */
+    postDeadLetter,
+    /** Binds the started job queue to the posts jobs (the queue starts after `buildDeps()`). */
+    bindPostJobs: (boss: Jobs) => postJobs.bind(boss),
     inboxReads,
     inboxMedia,
     changeState,

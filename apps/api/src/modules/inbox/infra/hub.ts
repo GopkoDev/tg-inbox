@@ -239,6 +239,15 @@ export function createLiveHub(deps: LiveHubDeps): LiveHub {
           broadcast_id: signal.broadcast_id,
           change: signal.change,
         };
+      } else if (signal.type === 'post.changed') {
+        frame = {
+          type: 'post.changed',
+          v: 1,
+          workspace_id: signal.workspace_id,
+          post_id: signal.post_id,
+        };
+      } else if (signal.type === 'destinations.changed') {
+        frame = { type: 'destinations.changed', v: 1, workspace_id: signal.workspace_id };
       } else if (signal.type === 'telegram_link.changed') {
         frame = { type: 'telegram_link.changed', v: 1, workspace_id: signal.workspace_id };
         onlyAccount = signal.account_id;

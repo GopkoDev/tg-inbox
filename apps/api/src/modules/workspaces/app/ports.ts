@@ -74,6 +74,7 @@ export interface MembershipRepo {
    * ones. A concurrent deactivation's `UPDATE` waits for the transaction (and vice versa).
    */
   lockActiveAccountIds(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
+  lockActiveOwnerAccountIds(workspaceId: string, accountIds: readonly string[]): Promise<string[]>;
   /** Account ids of the active members of this workspace. */
   listActiveAccountIds(workspaceId: string): Promise<string[]>;
   /** Returns whether a row of this workspace was changed. `activeSince` is kept when omitted. */

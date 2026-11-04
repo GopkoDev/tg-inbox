@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Contact, Inbox, LogOut, Megaphone, Settings, X } from 'lucide-react';
+import { ChevronsUpDown, Contact, Inbox, LogOut, Megaphone, Send, Settings, X } from 'lucide-react';
 import {
   Fragment,
   type ComponentType,
@@ -21,6 +21,7 @@ import {
 import { NotFoundCard } from '@/pages/NotFoundPage';
 import { getMe } from '@/features/auth/api';
 import { useAttentionStore } from '@/features/attention/store';
+import { usePostAttentionStore } from '@/features/posts/attention-store';
 import { useAuthStore } from '@/features/auth/store';
 import { startNotifier } from '@/features/notifications/notifier';
 import { useSignOut } from '@/features/auth/useSignOut';
@@ -188,7 +189,7 @@ function ShellBreadcrumb({ workspaceId }: { workspaceId: string }) {
 
 /**
  * The workspace area frame (SCR-07): an inset sidebar (workspace switcher, Inbox / Contacts /
- * Broadcasts / Settings, account menu with sign-out), an inset header (trigger + breadcrumb) and the
+ * Broadcasts / Posts / Settings, account menu with sign-out), an inset header (trigger + breadcrumb) and the
  * dismissible `access-removed` notice. It is the layout route of `/w/:workspaceId`: it enters the
  * workspace of the URL (`useWorkspaceFromUrl`) and renders the matched screen (`<Outlet/>`, keyed
  * on the workspace) only once that entry is `ready` — a skeleton before, not-found / a retry row
@@ -244,6 +245,12 @@ export function AppShell() {
     useAttentionStore.getState().start(workspaceId, (error, id) => guardRef.current(error, id));
     return () => useAttentionStore.getState().stop();
   }, [entered, workspaceId]);
+  // The count of posts needing attention (SCR-15), same lifecycle as the inbox count.
+  useEffect(() => {
+    if (!entered) return;
+    usePostAttentionStore.getState().start(workspaceId, (error, id) => guardRef.current(error, id));
+    return () => usePostAttentionStore.getState().stop();
+  }, [entered, workspaceId]);
   // Desktop notifications (OS-02): this tab offers new customer messages to the worker, and opens
   // a conversation in place when the worker asks after a click.
   const accountId = useAuthStore((s) => s.account?.id);
@@ -264,6 +271,9 @@ export function AppShell() {
     });
   }, [entered, workspaceId, accountId, workspaceName]);
   const attention = useAttentionStore((s) =>
+    entered && s.workspaceId === workspaceId ? s.count : null,
+  );
+  const postAttention = usePostAttentionStore((s) =>
     entered && s.workspaceId === workspaceId ? s.count : null,
   );
   useEffect(() => {
@@ -288,6 +298,7 @@ export function AppShell() {
         { to: `${base}/inbox`, label: 'Inbox', icon: Inbox },
         { to: `${base}/contacts`, label: 'Contacts', icon: Contact },
         { to: `${base}/broadcasts`, label: 'Broadcasts', icon: Megaphone },
+        { to: `${base}/posts`, label: 'Posts', icon: Send },
         { to: `${base}/settings`, label: 'Settings', icon: Settings },
       ]
     : [];
@@ -311,7 +322,11 @@ export function AppShell() {
                           <SidebarMenuButton
                             asChild
                             tooltip={
-                              label === 'Inbox' && attention ? `Inbox (${attention})` : label
+                              label === 'Inbox' && attention
+                                ? `Inbox (${attention})`
+                                : label === 'Posts' && postAttention
+                                  ? `Posts (${postAttention})`
+                                  : label
                             }
                           >
                             <NavLink to={to} className={ACTIVE}>
@@ -325,6 +340,14 @@ export function AppShell() {
                               aria-label={`${attention} ${attention === 1 ? 'conversation needs' : 'conversations need'} you`}
                             >
                               {attention}
+                            </SidebarMenuBadge>
+                          ) : null}
+                          {label === 'Posts' && postAttention ? (
+                            <SidebarMenuBadge
+                              role="img"
+                              aria-label={`${postAttention} ${postAttention === 1 ? 'post needs' : 'posts need'} attention`}
+                            >
+                              {postAttention}
                             </SidebarMenuBadge>
                           ) : null}
                         </SidebarMenuItem>

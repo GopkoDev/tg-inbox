@@ -7,6 +7,7 @@ import {
 } from 'react-router';
 import { ConversationCrumb } from '@/features/inbox/ConversationCrumb';
 import { BroadcastCrumb } from '@/features/broadcasts/BroadcastCrumb';
+import { PostCrumb } from '@/features/posts/PostCrumb';
 import { ContactCrumb } from '@/features/contacts/ContactCrumb';
 import { SettingsIndexRedirect } from '@/features/settings/SettingsIndexRedirect';
 import { LandingRedirect } from '@/features/workspaces/LandingRedirect';
@@ -36,6 +37,9 @@ const lazyPage = (load: () => Promise<Record<string, unknown>>, name: string) =>
     </Suspense>
   );
 };
+
+/** One element for every post address, so React keeps a single page instance across them. */
+const postPage = lazyPage(() => import('@/pages/PostDetailPage'), 'PostDetailPage');
 
 /** A redirect decided before anything renders, so the address is final when the frame mounts. */
 const to =
@@ -101,6 +105,35 @@ const workspaceRoute: RouteObject = {
       ],
     },
     {
+      // SCR-36 the list; SCR-37 while a draft and SCR-40 otherwise (chosen from the read), with
+      // /publish (SCR-38) and /schedule (SCR-39) over the post.
+      path: 'posts',
+      handle: { crumb: 'Posts' },
+      children: [
+        { index: true, element: lazyPage(() => import('@/pages/PostsPage'), 'PostsPage') },
+        {
+          path: 'new',
+          handle: { crumb: 'New post' },
+          element: postPage,
+        },
+        {
+          path: ':postId',
+          handle: { crumb: 'Post', Crumb: PostCrumb },
+          element: postPage,
+        },
+        {
+          path: ':postId/publish',
+          handle: { crumb: 'Post', Crumb: PostCrumb },
+          element: postPage,
+        },
+        {
+          path: ':postId/schedule',
+          handle: { crumb: 'Post', Crumb: PostCrumb },
+          element: postPage,
+        },
+      ],
+    },
+    {
       path: 'settings',
       handle: { crumb: 'Settings' },
       element: lazyPage(() => import('@/pages/SettingsPage'), 'SettingsPage'),
@@ -120,6 +153,11 @@ const workspaceRoute: RouteObject = {
           path: 'tags',
           handle: { crumb: 'Tags' },
           element: lazyPage(() => import('@/pages/TagSettingsPage'), 'TagSettingsPage'),
+        },
+        {
+          path: 'channels',
+          handle: { crumb: 'Channels & groups' },
+          element: lazyPage(() => import('@/pages/ChannelsSettingsPage'), 'ChannelsSettingsPage'),
         },
         {
           path: 'notifications',

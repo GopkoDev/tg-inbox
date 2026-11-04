@@ -159,6 +159,22 @@ export class KyselyMembershipRepo implements MembershipRepo {
     return rows.filter((r) => r.state === 'active').map((r) => r.account_id);
   }
 
+  /** `FOR SHARE` on the memberships of `accountIds`; of them, the active business owners. */
+  async lockActiveOwnerAccountIds(
+    workspaceId: string,
+    accountIds: readonly string[],
+  ): Promise<string[]> {
+    if (accountIds.length === 0) return [];
+    const rows = await this.db
+      .selectFrom('memberships')
+      .select(['account_id', 'state', 'role'])
+      .where('workspace_id', '=', workspaceId)
+      .where('account_id', 'in', [...accountIds])
+      .forShare()
+      .execute();
+    return rows.filter((r) => r.state === 'active' && r.role === 'owner').map((r) => r.account_id);
+  }
+
   async listActiveAccountIds(workspaceId: string): Promise<string[]> {
     const rows = await this.db
       .selectFrom('memberships')

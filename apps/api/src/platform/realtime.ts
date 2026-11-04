@@ -72,6 +72,19 @@ const broadcastChanged = z.object({
   change: z.enum(['draft', 'group', 'status', 'report', 'deleted']),
 });
 
+const postChanged = z.object({
+  type: z.literal('post.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+  post_id: id,
+});
+
+const destinationsChanged = z.object({
+  type: z.literal('destinations.changed'),
+  v: z.literal(1),
+  workspace_id: id,
+});
+
 const tagsChanged = z.object({
   type: z.literal('tags.changed'),
   v: z.literal(1),
@@ -86,6 +99,8 @@ export const realtimeSignalSchema = z.discriminatedUnion('type', [
   contactChanged,
   tagsChanged,
   broadcastChanged,
+  postChanged,
+  destinationsChanged,
 ]);
 
 export type RealtimeSignal = z.infer<typeof realtimeSignalSchema>;

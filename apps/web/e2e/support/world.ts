@@ -88,6 +88,42 @@ export interface World {
     text: string,
     audience?: { tagIds: string[]; excludeTagIds?: string[] },
   ): Promise<string>;
+  /**
+   * Telegram delivers a `channel_post` from the channel `chat` to the bot's webhook (the owner
+   * posting the connect code there, say). Returns the HTTP status of the delivery.
+   */
+  channelPost(
+    token: string,
+    chat: { id: number; title: string; username?: string },
+    text: string,
+  ): Promise<number>;
+  /** `actor` sets the workspace's posting time zone over HTTP. */
+  setPostingTimeZone(actor: string, workspaceId: string, timeZone: string): Promise<void>;
+  /** The owner connects a channel over HTTP (code + the channel post). Returns the destination id. */
+  connectChannel(
+    ownerEmail: string,
+    workspaceId: string,
+    token: string,
+    chat: { id: number; title: string; username?: string },
+  ): Promise<string>;
+  /** The `deleteMessage` calls the bot made. */
+  deletedMessages(token: string): Promise<Record<string, unknown>[]>;
+  /** The owner schedules a draft over HTTP for `minutes` from now, in the workspace's zone. */
+  schedulePost(
+    ownerEmail: string,
+    workspaceId: string,
+    postId: string,
+    minutes: number,
+  ): Promise<void>;
+  /** The owner publishes a draft now over HTTP (no browser page opens the post). */
+  publishPost(ownerEmail: string, workspaceId: string, postId: string): Promise<void>;
+  /** `actor` creates a draft post over HTTP. Returns the post id. */
+  draftPost(
+    actor: string,
+    workspaceId: string,
+    text: string,
+    destinationId?: string,
+  ): Promise<string>;
 }
 
 interface Backend {
@@ -369,6 +405,105 @@ export const test = base.extend<{ world: World }, { backend: Backend }>({
             throw new Error(`save audience failed: ${res.statusCode} ${res.body}`);
         }
         return draft.id;
+      },
+      async channelPost(token, chat, text) {
+        const set = (await fake.calls(token)).filter((c) => c.method === 'setWebhook').at(-1);
+        if (!set) throw new Error('the bot has no webhook registered');
+        const url = String(set.params.url);
+        const chatObject = {
+          id: chat.id,
+          type: 'channel',
+          title: chat.title,
+          username: chat.username,
+        };
+        const res = await signedDelivery(
+          app,
+          { id: url.slice(url.lastIndexOf('/') + 1), secret: String(set.params.secret_token) },
+          {
+            update_id: nextUpdate++,
+            channel_post: {
+              message_id: nextUpdate + 1000,
+              date: Math.floor(Date.now() / 1000),
+              chat: chatObject,
+              sender_chat: chatObject,
+              text,
+            },
+          },
+        );
+        return res.statusCode;
+      },
+      async setPostingTimeZone(actor, workspaceId, timeZone) {
+        const device = await deviceOf(actor);
+        const res = await device.post(`/api/workspaces/${workspaceId}/posts/time-zone`, {
+          time_zone: timeZone,
+        });
+        if (res.statusCode !== 200)
+          throw new Error(`time zone failed: ${res.statusCode} ${res.body}`);
+      },
+      async connectChannel(ownerEmail, workspaceId, token, chat) {
+        const device = await deviceOf(ownerEmail);
+        const base = `/api/workspaces/${workspaceId}/posts/destinations`;
+        const created = await device.post(`${base}/connect-codes`);
+        if (created.statusCode !== 201) throw new Error(`code failed: ${created.body}`);
+        const status = await world.channelPost(token, chat, created.json().code as string);
+        if (status !== 200) throw new Error(`channel post failed: ${status}`);
+        const list = await device.get(base);
+        const hit = (list.json().items as { id: string; title: string }[]).find(
+          (d) => d.title === chat.title,
+        );
+        if (!hit) throw new Error(`channel ${chat.title} was not connected`);
+        return hit.id;
+      },
+      async deletedMessages(token) {
+        return (await fake.calls(token))
+          .filter((c) => c.method === 'deleteMessage')
+          .map((c) => c.params);
+      },
+      async schedulePost(ownerEmail, workspaceId, postId, minutes) {
+        const device = await deviceOf(ownerEmail);
+        const base = `/api/workspaces/${workspaceId}/posts/${postId}`;
+        const zone = 'Europe/Kyiv';
+        const post = await device.get(base);
+        if (post.statusCode !== 200) throw new Error(`post read failed: ${post.body}`);
+        const at = new Date(Date.now() + minutes * 60_000);
+        const parts = Object.fromEntries(
+          new Intl.DateTimeFormat('en-CA', {
+            timeZone: zone,
+            hourCycle: 'h23',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+            .formatToParts(at)
+            .map((p) => [p.type, p.value]),
+        );
+        const res = await device.post(`${base}/schedule`, {
+          expected_version: post.json().version,
+          local_time: `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`,
+          time_zone: zone,
+        });
+        if (res.statusCode !== 200)
+          throw new Error(`schedule failed: ${res.statusCode} ${res.body}`);
+      },
+      async publishPost(ownerEmail, workspaceId, postId) {
+        const device = await deviceOf(ownerEmail);
+        const base = `/api/workspaces/${workspaceId}/posts/${postId}`;
+        const post = await device.get(base);
+        if (post.statusCode !== 200) throw new Error(`post read failed: ${post.body}`);
+        const res = await device.post(`${base}/publish`, { expected_version: post.json().version });
+        if (res.statusCode !== 200)
+          throw new Error(`publish failed: ${res.statusCode} ${res.body}`);
+      },
+      async draftPost(actor, workspaceId, text, destinationId) {
+        const device = await deviceOf(actor);
+        const res = await device.post(`/api/workspaces/${workspaceId}/posts`, {
+          text,
+          ...(destinationId && { destination_id: destinationId }),
+        });
+        if (res.statusCode !== 201) throw new Error(`draft failed: ${res.statusCode} ${res.body}`);
+        return res.json().id as string;
       },
     };
     await use(world);
