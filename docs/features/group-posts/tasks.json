@@ -857,7 +857,7 @@
         "apps/web/e2e/posts.spec.ts"
       ],
       "file": "docs/features/group-posts/tasks/t38-connect-code-single-flight.md",
-      "status": "todo"
+      "status": "done"
     },
     {
       "id": "T39",
