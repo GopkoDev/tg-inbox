@@ -733,6 +733,112 @@
       ],
       "file": "docs/features/group-posts/tasks/t32-web-tests-and-browser-e2e.md",
       "status": "done"
+    },
+    {
+      "id": "T33",
+      "title": "Guard a live claim against a same-moment job, prove the owner re-check with a demoted-owner test, step older migration tests off migration 025, and bring the contract, data model and staged migrations in line with the new code results",
+      "layer": "app",
+      "deps": [],
+      "acs": [
+        "AC-01",
+        "AC-02",
+        "AC-03",
+        "AC-07",
+        "AC-08"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/api/src/modules/posts/app/send-post.ts",
+        "apps/api/src/test/migrations.int.test.ts",
+        "apps/api/src/modules/posts/app/publish.test.ts",
+        "docs/features/group-posts/contracts/openapi.yaml",
+        "docs/features/group-posts/data-model.md",
+        "docs/features/group-posts/migrations/"
+      ],
+      "file": "docs/features/group-posts/tasks/t33-fix-claim-owner-docs-migration-tests.md",
+      "status": "todo"
+    },
+    {
+      "id": "T34",
+      "title": "Add the missing API end-to-end suites: outage over 15 minutes and in-window catch-up, schedule → published on time, delete through the API, a due post failing on the daily limit, and posts-load (capture under group traffic, post 429 vs send pause, on-time)",
+      "layer": "tests",
+      "deps": [
+        "T33"
+      ],
+      "acs": [
+        "AC-09",
+        "AC-12",
+        "AC-15",
+        "AC-16",
+        "AC-17"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/api/src/e2e/"
+      ],
+      "file": "docs/features/group-posts/tasks/t34-api-e2e-outage-load.md",
+      "status": "todo"
+    },
+    {
+      "id": "T35",
+      "title": "Keep one post page instance across new / :id / publish / schedule with real lazy routes, drop the second React root, and test with the real lazy route shape",
+      "layer": "ui",
+      "deps": [],
+      "acs": [
+        "AC-05",
+        "AC-06",
+        "AC-11"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/web/src/app/routes.tsx",
+        "apps/web/src/pages/PostDetailPage.tsx",
+        "apps/web/src/pages/PostDetailPage.routing.test.tsx"
+      ],
+      "file": "docs/features/group-posts/tasks/t35-web-single-post-route.md",
+      "status": "todo"
+    },
+    {
+      "id": "T36",
+      "title": "Show the destination-limit result in the connect dialog, and show the code expiry and the change-time prefill only in the workspace time zone",
+      "layer": "ui",
+      "deps": [
+        "T35"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-09"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/web/src/features/posts/settings/ConnectCodeDialog.tsx",
+        "apps/web/src/pages/PostDetailPage.tsx",
+        "apps/web/src/features/posts/time.ts"
+      ],
+      "file": "docs/features/group-posts/tasks/t36-web-limit-result-and-zone.md",
+      "status": "todo"
+    },
+    {
+      "id": "T37",
+      "title": "Make the whole browser e2e suite pass, starting with the AC-01 connect flow that times out on «… is connected»",
+      "layer": "tests",
+      "deps": [
+        "T33",
+        "T35",
+        "T36"
+      ],
+      "acs": [
+        "AC-01",
+        "AC-09",
+        "AC-13"
+      ],
+      "dod": "a RED test reproduces each item before the fix and passes after; gate clean",
+      "files_hint": [
+        "apps/web/e2e/",
+        "apps/web/src/features/posts/settings/"
+      ],
+      "file": "docs/features/group-posts/tasks/t37-browser-e2e-green.md",
+      "status": "todo"
     }
   ]
 }
